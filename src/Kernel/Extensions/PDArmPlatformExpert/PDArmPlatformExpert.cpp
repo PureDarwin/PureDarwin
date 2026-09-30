@@ -44,6 +44,7 @@ protected:
 	void publishBcm283xFramebuffer(void);
 	void startQemuRTC(void);
 	static void publishRTC(thread_call_param_t self, thread_call_param_t);
+	void publishSocNubs(void);
 };
 
 static bool pd_platform_is_bcm283x(void);
@@ -107,11 +108,51 @@ PDArmPlatformExpert::start(IOService *provider)
 	} else if (PDSg2002_isPlatform()) {
 		PDSg2002Watchdog_start();
 		PDSg2002_publish(this);
+	} else {
+		publishSocNubs();
+		PDSun50iWatchdog_startFromDeviceTree();
 	}
 #endif
 
 	return true;
 }
+
+#if defined(__arm64__)
+// true when a nul-separated compatible list names want
+static bool
+pd_compat_has(OSData *compat, const char *want)
+{
+	const char *s = compat != NULL ? (const char *)compat->getBytesNoCopy() : NULL;
+	unsigned int len = compat != NULL ? compat->getLength() : 0;
+
+	for (unsigned int o = 0; s != NULL && o < len; o += strnlen(s + o, len - o) + 1) {
+		if (strncmp(s + o, want, len - o) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// a board's own devices, imported from its tree by the loader. configure() stops at the root's
+// children and the peripherals sit one level down on a simple-bus
+void
+PDArmPlatformExpert::publishSocNubs(void)
+{
+	IORegistryEntry *root = IORegistryEntry::fromPath("/", gIODTPlane);
+	OSIterator *iter = root != NULL ? root->getChildIterator(gIODTPlane) : NULL;
+	IORegistryEntry *child;
+
+	while (iter != NULL && (child = (IORegistryEntry *)iter->getNextObject()) != NULL) {
+		if (!pd_compat_has(OSDynamicCast(OSData, child->getProperty("compatible")), "simple-bus")) {
+			continue;
+		}
+		IOLog("PDArmPlatformExpert: publishing the devices on %s\n", child->getName(gIODTPlane));
+		createNubs(this, IODTFindMatchingEntries(child, kIODTExclusive, NULL));
+	}
+	OSSafeReleaseNULL(iter);
+	OSSafeReleaseNULL(root);
+}
+#endif
 
 // QEMU virt's PL031 at 0x09010000 counts seconds since 1970 from the host clock. Without an IORTC
 // the calendar starts at 1970 and IOKitInitializeTime waits 30 s for one

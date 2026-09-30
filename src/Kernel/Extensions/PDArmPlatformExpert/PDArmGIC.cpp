@@ -244,7 +244,8 @@ gicr_frame(uint64_t mpidr)
 	if (gGicrAll == NULL) {
 		return NULL;
 	}
-	while (off + GIC_GICR_FRAME_SIZE <= gGicrSize) {
+	// GICR_TYPER.Last ends the walk; a vendor tree can size the region short of its last frame
+	while (off + GIC_GICR_TYPER + sizeof(uint64_t) <= round_page_64(gGicrSize)) {
 		uint64_t typer = *(volatile uint64_t *)(gGicrAll + off + GIC_GICR_TYPER);
 		if ((uint32_t)(typer >> 32) == want) {
 			return gGicrAll + off;

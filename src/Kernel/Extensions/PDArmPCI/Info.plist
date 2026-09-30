@@ -13,7 +13,7 @@
     <dict>
       <key>CFBundleIdentifier</key><string>org.puredarwin.driver.PDArmPCI</string>
       <key>IOClass</key><string>PDArmPCI</string>
-      <key>IONameMatch</key><string>pci</string>
+      <key>IONameMatch</key><string>pci-host-ecam-generic</string>
       <key>IOProviderClass</key><string>IOPlatformDevice</string>
       <key>IOProbeScore</key><integer>90000</integer>
     </dict>
