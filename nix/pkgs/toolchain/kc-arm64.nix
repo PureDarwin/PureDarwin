@@ -81,6 +81,7 @@ stdenv.mkDerivation {
       -kext "$KEXTS/PDSg2002Eth.kext" \
       -kext "$KEXTS/PDWatchdog.kext" \
       -kext "$KEXTS/PDDiskImages2.kext" \
+      -kext "$KEXTS/PDKeyStore.kext" \
       -kext "$KEXTS/IOVirtIOBlock.kext" \
       -kext "$KEXTS/IOVirtIONet.kext" \
       "''${codeless[@]}" \
