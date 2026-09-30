@@ -14,6 +14,10 @@
 extern int copyin(const user_addr_t uaddr, void *kaddr, size_t len);
 extern int copyout(const void *kaddr, user_addr_t udaddr, size_t len);
 #include <kern/cs_blobs.h>
+#include <string.h>
+#include <sys/codesign.h>
+#include <pexpert/device_tree.h>
+#include <machine/machine_routines.h>
 #include <security/mac_policy.h>
 
 /*
@@ -177,6 +181,51 @@ pd_OSEntitlements_copyEntitlementAsOSObjectWithProc(const proc_t proc, const cha
 	return *entitlement_object != NULL ? KERN_SUCCESS : KERN_FAILURE;
 }
 
+// Trust cache modules as the loader hands them over: version 1 (22-byte entries) or 2 (24),
+// sorted by cdhash. Only the static module is loaded, the build merges Apple's caches into it
+struct pd_tc_module {
+	uint32_t version;
+	uint8_t  uuid[16];
+	uint32_t num_entries;
+	uint8_t  entries[];
+} __attribute__((packed));
+
+#define PD_TC_MAX_MODULES 4
+static const struct pd_tc_module *pd_tc_modules[PD_TC_MAX_MODULES];
+static unsigned pd_tc_count;
+
+static size_t
+pd_tc_entry_size(const struct pd_tc_module *m)
+{
+	return m->version == 1 ? 22 : m->version == 2 ? 24 : 0;
+}
+
+static const uint8_t *
+pd_tc_find(const uint8_t *cdhash)
+{
+	for (unsigned i = 0; i < pd_tc_count; i++) {
+		const struct pd_tc_module *m = pd_tc_modules[i];
+		size_t esz = pd_tc_entry_size(m);
+		size_t lo = 0, hi = m->num_entries;
+
+		while (lo < hi) {
+			size_t mid = lo + (hi - lo) / 2;
+			const uint8_t *e = m->entries + mid * esz;
+			int c = memcmp(cdhash, e, kTCEntryHashSize);
+
+			if (c == 0) {
+				return e;
+			}
+			if (c < 0) {
+				hi = mid;
+			} else {
+				lo = mid + 1;
+			}
+		}
+	}
+	return NULL;
+}
+
 static TCReturn_t
 pd_tc_ok(void)
 {
@@ -188,7 +237,21 @@ static TCReturn_t
 pd_tc_loadModule(TrustCacheRuntime_t *runtime, const TCType_t type, TrustCache_t *trustCache,
     const uintptr_t dataAddr, const size_t dataSize)
 {
-	(void)runtime; (void)type; (void)trustCache; (void)dataAddr; (void)dataSize;
+	(void)runtime; (void)type;
+	const struct pd_tc_module *m = (const struct pd_tc_module *)dataAddr;
+	size_t esz;
+
+	if (dataSize < sizeof(*m) || (esz = pd_tc_entry_size(m)) == 0 ||
+	    (dataSize - sizeof(*m)) / esz < m->num_entries || pd_tc_count >= PD_TC_MAX_MODULES) {
+		TCReturn_t ret = { 0, kTCReturnError, 0 };
+		return ret;
+	}
+	if (trustCache != NULL) {
+		trustCache->tc_data = (void *)dataAddr;
+		trustCache->tc_length = sizeof(*m) + m->num_entries * esz;
+	}
+	pd_tc_modules[pd_tc_count++] = m;
+	printf("AMFI: trust cache module v%u, %u entries\n", m->version, m->num_entries);
 	return pd_tc_ok();
 }
 
@@ -208,9 +271,14 @@ pd_tc_query(const TrustCacheRuntime_t *runtime, TCQueryType_t queryType,
 {
 	(void)runtime;
 	(void)queryType;
-	(void)CDHash;
+	const uint8_t *e = pd_tc_find(CDHash);
+
 	queryToken->trustCache = NULL;
-	queryToken->trustCacheEntry = NULL;
+	queryToken->trustCacheEntry = e;
+	if (e == NULL) {
+		TCReturn_t ret = { 0, kTCReturnNotFound, 0 };
+		return ret;
+	}
 	return pd_tc_ok();
 }
 
@@ -413,9 +481,14 @@ pd_amfi_vnode_check_signature(struct vnode *vp, struct label *label, cpu_type_t 
     struct cs_blob *cs_blob, unsigned int *cs_flags, unsigned int *signer_type, int flags,
     unsigned int platform, char **fatal_failure_desc, size_t *fatal_failure_desc_len)
 {
-	(void)vp; (void)label; (void)cpu_type; (void)cs_blob; (void)signer_type;
+	(void)vp; (void)label; (void)cpu_type; (void)signer_type;
 	(void)flags; (void)platform; (void)fatal_failure_desc; (void)fatal_failure_desc_len;
 	*cs_flags |= CS_SIGNED;
+	// platform binaries are the ones Apple's trust caches list, as with the real AMFI
+	const uint8_t *cdhash = csblob_get_cdhash(cs_blob);
+	if (cdhash != NULL && pd_tc_find(cdhash) != NULL) {
+		*cs_flags |= CS_PLATFORM_BINARY;
+	}
 	return 0;
 }
 
@@ -513,12 +586,44 @@ static struct mac_policy_conf pd_amfi_policy = {
 
 static mac_policy_handle_t pd_amfi_handle;
 
+// The loader places Apple's trust caches at /chosen/memory-map/TrustCache (offsets header, then modules).
+// XNU's own static load needs an image4 provider, so AMFI reads them here before its policy registers
+static void
+pd_tc_load_from_dt(void)
+{
+#if defined(__arm64__)
+	DTEntry memory_map;
+	const struct { uint64_t paddr; uint64_t length; } *range;
+	unsigned int size;
+
+	if (SecureDTLookupEntry(NULL, "chosen/memory-map", &memory_map) != kSuccess ||
+	    SecureDTGetProperty(memory_map, "TrustCache", (const void **)&range, &size) != kSuccess ||
+	    size != sizeof(*range) || range->length < 8) {
+		printf("AMFI: no trust caches from the loader\n");
+		return;
+	}
+
+	const uint8_t *base = (const uint8_t *)ml_static_ptovirt(range->paddr);
+	const uint32_t *hdr = (const uint32_t *)base;
+	uint32_t n = hdr[0];
+
+	for (uint32_t i = 0; i < n && 4 + (uint64_t)(i + 1) * 4 <= range->length; i++) {
+		uint32_t off = hdr[1 + i];
+		if (off >= range->length) {
+			break;
+		}
+		(void)pd_tc_loadModule(NULL, kTCTypeStatic, NULL, (uintptr_t)(base + off), range->length - off);
+	}
+#endif
+}
+
 kern_return_t
 amfi_kext_start(kmod_info_t *ki, void *d)
 {
 	int error;
 
 	(void)ki;
+	pd_tc_load_from_dt();
 	amfi_interface_register(&pd_amfi_interface);
 	amfi_core_entitlements_register((const CEKernelAPI_t *)&pd_core_entitlements_storage);
 	error = mac_policy_register(&pd_amfi_policy, &pd_amfi_handle, d);
