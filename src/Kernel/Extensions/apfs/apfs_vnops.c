@@ -218,7 +218,11 @@ apfs_vnop_ioctl(struct vnop_ioctl_args *ap)
 {
 	switch (ap->a_command) {
 	case F_FULLFSYNC:
-		return 0;
+	case F_BARRIERFSYNC: {
+		struct apfs_node *node = VTOAPFS(ap->a_vp);
+
+		return node != NULL ? apfs_batch_sync(node->amp) : 0;
+	}
 	case FSIOC_KERNEL_ROOTAUTH:
 		// arm64 bsd_init() panics unless the root volume vouches for its seal.
 		// There is nothing to check here
@@ -585,12 +589,12 @@ out:
 	return error;
 }
 
-// Bytes handed to libapfsrw per transaction. Larger writes loop
+// Bytes handed to libapfsrw per op. Larger writes loop
 #define APFS_WRITE_CHUNK	(1u << 20)
 
 // apfsrw's transaction state is single-threaded:
 // one writer at a time, and the reload happens under the same lock
-#define APFS_RW_LOCK(amp)	apfs_rw_lock(amp)
+#define APFS_RW_LOCK(amp)	apfs_rw_lock_write(amp)
 #define APFS_RW_UNLOCK(amp)	apfs_rw_unlock(amp)
 
 static int apfsrw_to_errno(int err)
@@ -620,7 +624,7 @@ apfs_drop_cached_pages(struct apfs_node *node, off_t start, off_t end)
 		(void)ubc_msync(node->vp, start, end, NULL, UBC_INVALIDATE);
 }
 
-// Write [off, off+len) from a kernel buffer, one libapfsrw transaction
+// Write [off, off+len) from a kernel buffer, one op of the container's open transaction
 static int
 apfs_write_range(struct apfs_node *node, const char *path, uint64_t off,
     const void *buf, size_t len, vfs_context_t ctx)
@@ -633,7 +637,7 @@ apfs_write_range(struct apfs_node *node, const char *path, uint64_t off,
 		APFS_RW_UNLOCK(node->amp);
 		return apfsrw_to_errno(error);
 	}
-	error = apfs_reload_container(node->amp, ctx);
+	error = apfs_write_done(node->amp);
 	if (error == 0) {
 		if (off + len > node->size)
 			node->size = off + len;
@@ -688,7 +692,7 @@ apfs_vnop_pageout(struct vnop_pageout_args *ap)
 		if (error != 0) {
 			error = apfsrw_to_errno(error);
 		} else {
-			error = apfs_reload_container(node->amp, ap->a_context);
+			error = apfs_write_done(node->amp);
 			if (error == 0)
 				node->mtime_ns = node->ctime_ns = apfsrw_now_ns();
 		}
@@ -788,7 +792,7 @@ apfs_truncate(struct apfs_node *node, uint64_t size, vfs_context_t ctx)
 		APFS_RW_UNLOCK(node->amp);
 		return apfsrw_to_errno(error);
 	}
-	error = apfs_reload_container(node->amp, ctx);
+	error = apfs_write_done(node->amp);
 	old = node->size;
 	if (error == 0) {
 		node->size = size;
@@ -873,7 +877,7 @@ apfs_vnop_setattr(struct vnop_setattr_args *ap)
 		APFS_RW_UNLOCK(node->amp);
 		return apfsrw_to_errno(error);
 	}
-	error = apfs_reload_container(node->amp, ap->a_context);
+	error = apfs_write_done(node->amp);
 	APFS_RW_UNLOCK(node->amp);
 	if (error)
 		return error;
@@ -987,8 +991,8 @@ apfs_vnop_mkdir(struct vnop_mkdir_args *ap)
 		return apfsrw_to_errno(error);
 	}
 
-	// The write moved the volume on. The kext's cached paddrs are now stale
-	error = apfs_reload_container(dnode->amp, ap->a_context);
+	// the write moved the volume on, reads follow it
+	error = apfs_write_done(dnode->amp);
 	APFS_RW_UNLOCK(dnode->amp);
 	if (error)
 		return error;
@@ -1034,8 +1038,8 @@ apfs_delete_entry(vnode_t dvp, vnode_t vp, struct componentname *cnp,
 		return apfsrw_to_errno(error);
 	}
 
-	// The write moved the volume on. Drop the stale cached view
-	error = apfs_reload_container(dnode->amp, ctx);
+	// the write moved the volume on, reads follow it
+	error = apfs_write_done(dnode->amp);
 	APFS_RW_UNLOCK(dnode->amp);
 	if (error)
 		return error;
@@ -1098,7 +1102,7 @@ apfs_vnop_link(struct vnop_link_args *ap)
 		APFS_RW_UNLOCK(dnode->amp);
 		return apfsrw_to_errno(error);
 	}
-	error = apfs_reload_container(dnode->amp, ap->a_context);
+	error = apfs_write_done(dnode->amp);
 	APFS_RW_UNLOCK(dnode->amp);
 	if (error)
 		return error;
@@ -1141,7 +1145,7 @@ apfs_vnop_symlink(struct vnop_symlink_args *ap)
 		APFS_RW_UNLOCK(dnode->amp);
 		return apfsrw_to_errno(error);
 	}
-	error = apfs_reload_container(dnode->amp, ap->a_context);
+	error = apfs_write_done(dnode->amp);
 	APFS_RW_UNLOCK(dnode->amp);
 	if (error)
 		return error;
@@ -1180,7 +1184,7 @@ apfs_vnop_rename(struct vnop_rename_args *ap)
 		APFS_RW_UNLOCK(fdnode->amp);
 		return apfsrw_to_errno(error);
 	}
-	error = apfs_reload_container(fdnode->amp, ap->a_context);
+	error = apfs_write_done(fdnode->amp);
 	APFS_RW_UNLOCK(fdnode->amp);
 	if (error)
 		return error;
@@ -1236,7 +1240,7 @@ apfs_vnop_mknod(struct vnop_mknod_args *ap)
 		return apfsrw_to_errno(error);
 	}
 
-	error = apfs_reload_container(dnode->amp, ap->a_context);
+	error = apfs_write_done(dnode->amp);
 	APFS_RW_UNLOCK(dnode->amp);
 	if (error)
 		return error;
@@ -1291,7 +1295,7 @@ apfs_vnop_create(struct vnop_create_args *ap)
 		return apfsrw_to_errno(error);
 	}
 
-	error = apfs_reload_container(dnode->amp, ap->a_context);
+	error = apfs_write_done(dnode->amp);
 	APFS_RW_UNLOCK(dnode->amp);
 	if (error)
 		return error;
@@ -1310,10 +1314,14 @@ apfs_vnop_create(struct vnop_create_args *ap)
 }
 
 static int
-apfs_vnop_fsync(__unused struct vnop_fsync_args *ap)
+apfs_vnop_fsync(struct vnop_fsync_args *ap)
 {
-	// Every mutation commits on its own, nothing is left to write
-	return 0;
+	struct apfs_node *node = VTOAPFS(ap->a_vp);
+
+	// vclean fsyncs every vnode it recycles, those writes can wait for the batch
+	if (node == NULL || ap->a_waitfor == MNT_NOWAIT || vnode_isrecycled(ap->a_vp))
+		return 0;
+	return apfs_batch_sync(node->amp);
 }
 
 static int
@@ -1478,7 +1486,7 @@ apfs_vnop_setxattr(struct vnop_setxattr_args *ap)
 	APFS_RW_LOCK(node->amp);
 	error = apfsrw_set_xattr(node->amp->rw, path, ap->a_name, buf, n, mode);
 	if (error == 0)
-		error = apfs_reload_container(node->amp, ap->a_context);
+		error = apfs_write_done(node->amp);
 	else
 		error = apfsrw_to_errno(error);
 	APFS_RW_UNLOCK(node->amp);
@@ -1525,7 +1533,7 @@ apfs_vnop_removexattr(struct vnop_removexattr_args *ap)
 		APFS_RW_LOCK(node->amp);
 		error = apfsrw_remove_xattr(node->amp->rw, path, ap->a_name);
 		if (error == 0)
-			error = apfs_reload_container(node->amp, ap->a_context);
+			error = apfs_write_done(node->amp);
 		else
 			error = error == APFSRW_ENOENT ? ENOATTR :
 			    apfsrw_to_errno(error);

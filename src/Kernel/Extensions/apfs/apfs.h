@@ -393,6 +393,17 @@ struct apfs_container {
 	struct apfs_mount *c_last_writer;	// Whose commit bumped c_generation last
 	struct apfsrw_kern_dev c_rw_dev;
 	uint64_t c_block_count;		// nx_block_count, for handles apfs.kext opens on it itself
+	// the container's one open transaction lives in this mount's handle, NULL when none is open
+	struct apfs_mount *c_batch_amp;
+	uint32_t c_batch_ops;
+	uint64_t c_batch_abs;		// mach time of its first uncommitted op, 0 when clean
+	void *c_batch_timer;		// thread_call_t: commits a batch left idle
+	int c_lock_depth;
+	uint64_t c_lock_abs;
+	// cumulative, for the commit stat line
+	uint64_t c_st_commits, c_st_ops, c_st_hold_abs, c_st_attach_abs;
+	// who wrote since the last stat line, the busiest shown on it
+	struct { int pid; uint32_t ops; char name[17]; } c_st_writers[8];
 };
 
 struct apfs_mount {
@@ -407,6 +418,7 @@ struct apfs_mount {
 	// notably AF_UNIX sockets, where unp_bind() stores the listener in vp->v_socket
 	void *am_hash_lock;		// IOLock*
 	int am_probe_logged;		// container dumped to the log once
+	uint64_t rgen;			// read view generation: keys every read cache, bumped when the view moves
 	void *am_rw_lock;		/* cont->c_lock: serialises every apfsrw
 					 * mutation + the reload after it */
 	LIST_HEAD(apfs_node_bucket, apfs_node) am_node_hash[APFS_NODE_HASH_SIZE];
@@ -420,7 +432,7 @@ struct apfs_mount {
 	uint32_t max_file_systems;
 	struct apfs_nx_superblock nx;
 	struct apfs_superblock apfs;
-	apfs_xid_t xid;
+	apfs_xid_t xid;			// omap lookups: the committed xid, or the next one while a batch is open
 	apfs_oid_t fs_oid;
 	apfs_paddr_t fs_paddr;
 	apfs_oid_t container_omap_oid;
@@ -433,19 +445,19 @@ struct apfs_mount {
 	apfs_paddr_t volume_omap_tree_paddr;
 	apfs_oid_t root_tree_oid;
 	apfs_paddr_t root_tree_paddr;
-	// Resolved omap entries for the current xid: a virtual tree asks the omap for
-	// every child on every walk, and between commits the answer cannot change
+	// Resolved omap entries for the current view: a virtual tree asks the omap for
+	// every child on every walk, and while the view stands the answer cannot change
 	struct apfs_omap_cache_ent {
 		apfs_paddr_t tree;
 		apfs_oid_t oid;
-		apfs_xid_t xid;
+		uint64_t gen;
 		struct apfs_omap_val val;
 	} *omap_cache;
-	// Blocks whose checksum passed at this xid: content only changes under a new xid
-	struct apfs_verified_ent { apfs_paddr_t paddr; apfs_xid_t xid; } *verified;
-	// Tree nodes read at this xid, content and all: nodes are copied on write, never rewritten
+	// Blocks whose checksum passed in this view
+	struct apfs_verified_ent { apfs_paddr_t paddr; uint64_t gen; } *verified;
+	// Tree nodes read in this view, content and all
 	uint8_t *ncache;
-	struct apfs_ncache_ent { apfs_paddr_t paddr; apfs_xid_t xid; } *ncache_ents;
+	struct apfs_ncache_ent { apfs_paddr_t paddr; uint64_t gen; } *ncache_ents;
 };
 #define APFS_VERIFIED_ENTS	8192
 #define APFS_NCACHE_ENTS	512
@@ -470,8 +482,8 @@ struct apfs_node {
 	uint64_t mtime_ns;
 	uint64_t ctime_ns;
 	uint64_t crtime_ns;
-	// Last extent found for this file. Valid only while a_ext_xid matches
-	uint64_t a_ext_logical, a_ext_len, a_ext_phys, a_ext_xid;
+	// Last extent found for this file. Valid only while a_ext_gen matches amp->rgen
+	uint64_t a_ext_logical, a_ext_len, a_ext_phys, a_ext_gen;
 	int a_ext_valid;
 };
 
@@ -499,11 +511,20 @@ int apfs_lookup_xattr(struct apfs_mount *amp, uint64_t fileid, const char *name,
     void *buf, size_t bufsize, size_t *outlen);
 int apfs_list_xattrs(struct apfs_mount *amp, uint64_t fileid, char *buf,
     size_t bufsize, size_t *outlen);
-int apfs_reload_container(struct apfs_mount *amp, vfs_context_t ctx);
 // Take the container lock.
 // If another volume committed since this mount last looked, its view is re-read first. Recursive
 void apfs_rw_lock(struct apfs_mount *amp);
 void apfs_rw_unlock(struct apfs_mount *amp);
+// the lock for a mutation: the container's open transaction moves to this mount's handle
+void apfs_rw_lock_write(struct apfs_mount *amp);
+// after a mutation succeeded: reads see it at once, a commit follows on the batch limits
+int apfs_write_done(struct apfs_mount *amp);
+// commit the container's open transaction. Container lock held
+int apfs_batch_commit(struct apfs_container *c);
+// commit, taking the lock: fsync, sync, F_FULLFSYNC
+int apfs_batch_sync(struct apfs_mount *amp);
+// whether [paddr, paddr+n) holds data this mount wrote but has not committed
+int apfs_batch_owns(struct apfs_mount *amp, apfs_paddr_t paddr, uint64_t n);
 // nx_fs_oid[] slot behind a volume device node (0 when the node is the raw container,
 // or the registry has nothing to say)
 int apfs_volume_slot_for_dev(dev_t dev, uint32_t *slot);

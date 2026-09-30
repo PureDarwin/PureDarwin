@@ -420,6 +420,10 @@ struct apfsrw {
     uint64_t batch_dirs;
     uint64_t batch_links;
     uint64_t batch_next_oid;
+    // state after the batch's last finished op: a failed op rolls back to it, not to the checkpoint
+    uint32_t op_alloced, op_deferred;
+    apfs_paddr_t op_root, op_vomap_tree, op_extref, op_fext;
+    int64_t op_alloc_delta, op_other_delta;
     // Current extent reference tree root. Must be tracked here:
     // inside a batch fs->apfs is not re-read, so the copy there goes stale after the first insert
     apfs_paddr_t extref_paddr;
@@ -2908,10 +2912,43 @@ static int defer_free(struct apfsrw *fs, uint64_t paddr, uint32_t n)
 
 // Give back everything this transaction allocated.
 // The checkpoint that would have referenced it never landed
+static void op_mark(struct apfsrw *fs)
+{
+    fs->op_alloced = fs->alloced_count;
+    fs->op_deferred = fs->deferred_count;
+    fs->op_root = fs->root_tree_paddr;
+    fs->op_vomap_tree = fs->volume_omap_tree_paddr;
+    fs->op_extref = fs->extref_paddr;
+    fs->op_fext = fs->fext_paddr;
+    fs->op_alloc_delta = fs->alloc_delta;
+    fs->op_other_delta = fs->other_delta;
+}
+
+// undo only the failed op of a batch: earlier ops' blocks were never rewritten in place
+static void op_rollback(struct apfsrw *fs)
+{
+    uint32_t i;
+
+    for (i = fs->op_alloced; i < fs->alloced_count; i++)
+        free_blocks(fs, fs->alloced[i], 1);
+    fs->alloced_count = fs->op_alloced;
+    fs->deferred_count = fs->op_deferred;
+    fs->root_tree_paddr = fs->op_root;
+    fs->volume_omap_tree_paddr = fs->op_vomap_tree;
+    fs->extref_paddr = fs->op_extref;
+    fs->fext_paddr = fs->op_fext;
+    fs->alloc_delta = fs->op_alloc_delta;
+    fs->other_delta = fs->op_other_delta;
+}
+
 static void txn_rollback(struct apfsrw *fs)
 {
     uint32_t i;
 
+    if (fs->batch) {
+        op_rollback(fs);
+        return;
+    }
     (void)ac_flush(fs);
     for (i = 0; i < fs->alloced_count; i++)
         free_blocks(fs, fs->alloced[i], 1);
@@ -3713,6 +3750,21 @@ static int insert_record(struct apfsrw *fs, struct rw_rec *r, uint32_t *count, c
     return APFSRW_OK;
 }
 
+// remove record idx and close the gap
+static void drop_record(struct apfsrw *fs, struct rw_rec *r, uint32_t *count,
+    uint32_t idx)
+{
+    uint32_t i;
+
+    rec_free(fs, r[idx].key);
+    rec_free(fs, r[idx].val);
+    for (i = idx; i + 1 < *count; i++) {
+        r[i] = r[i + 1];
+    }
+    (*count)--;
+    memset(&r[*count], 0, sizeof(r[*count]));
+}
+
 
 
 
@@ -3998,7 +4050,8 @@ static int txn_owns_block(const struct apfsrw *fs, apfs_paddr_t paddr)
 
     if (paddr <= 0)
         return 0;
-    for (i = fs->alloced_count; i > 0; i--)
+    // in a batch only this op's blocks: an earlier op's must stay intact for a rollback to it
+    for (i = fs->alloced_count; i > (fs->batch ? fs->op_alloced : 0); i--)
         if (fs->alloced[i - 1] == (uint64_t)paddr)
             return 1;
     return 0;
@@ -4958,6 +5011,8 @@ out:
     return err;
 }
 
+static int omap_del(struct apfsrw *fs, apfs_oid_t oid);
+
 static int fstree_del(struct apfsrw *fs, const void *key, uint16_t klen)
 {
     struct fpath p;
@@ -4966,6 +5021,7 @@ static int fstree_del(struct apfsrw *fs, const void *key, uint16_t klen)
     uint8_t *nbuf = NULL;
     uint32_t count = 0, lvl, i, idx = 0;
     uint16_t gone_klen = 0, gone_vlen = 0;
+    int64_t gone_nodes = 0;
     apfs_paddr_t out_pa = 0;
     int found = 0;
     int err;
@@ -5001,22 +5057,34 @@ static int fstree_del(struct apfsrw *fs, const void *key, uint16_t klen)
         err = APFSRW_ENOENT;
         goto out;
     }
-    // A leaf may end up empty:
-    // the parent keeps routing its key range here, which reads as ENOENT and refills on the next insert
     gone_klen = recs[idx].klen;
     gone_vlen = recs[idx].vlen;
-    rec_free(fs, recs[idx].key);
-    rec_free(fs, recs[idx].val);
-    for (i = idx; i + 1 < count; i++)
-        recs[i] = recs[i + 1];
-    count--;
-    recs[count].key = NULL;
-    recs[count].val = NULL;
-    recs[count].klen = 0;
-    recs[count].vlen = 0;
+    drop_record(fs, recs, &count, idx);
+    // an emptied non-root node leaves the tree: parent entry, object map entry and block
+    while (count == 0 && lvl != 0) {
+        err = omap_del(fs, p.oid[lvl]);
+        if (err != APFSRW_OK)
+            goto out;
+        defer_free(fs, (uint64_t)p.paddr[lvl], 1);
+        gone_nodes++;
+        lvl--;
+        idx = p.index[lvl];
+        err = read_object(fs, p.paddr[lvl], cur);
+        if (err != APFSRW_OK)
+            goto out;
+        err = load_leaf_records(fs, cur, &p.info, recs, &count);
+        if (err != APFSRW_OK)
+            goto out;
+        if (idx >= count) {
+            err = APFSRW_EINVAL;
+            goto out;
+        }
+        drop_record(fs, recs, &count, idx);
+    }
 
-    err = build_node(fs, cur, (lvl == 0), (uint16_t)(p.n - 1 - lvl), &p.info,
-        recs, count, nbuf);
+    // only the root can be empty here, and an empty tree is a single leaf
+    err = build_node(fs, cur, (lvl == 0),
+        count == 0 ? 0 : (uint16_t)(p.n - 1 - lvl), &p.info, recs, count, nbuf);
     if (err != APFSRW_OK)
         goto out;
     err = fs_publish_node(fs, nbuf, p.oid[lvl], p.paddr[lvl], 0, &out_pa);
@@ -5025,13 +5093,14 @@ static int fstree_del(struct apfsrw *fs, const void *key, uint16_t klen)
     if (lvl == 0)
         fs->root_tree_paddr = out_pa;
     else if (idx == 0 && count > 0) {
-        // The smallest key in this leaf changed
+        // The smallest key in this node changed
         err = fstree_fix_separator(fs, &p, lvl, recs[0].key, recs[0].klen);
         if (err != APFSRW_OK)
             goto out;
     }
 
-    err = fstree_bump_counts(fs, -1, 0, gone_klen, gone_vlen);
+    fs->alloc_delta -= gone_nodes;
+    err = fstree_bump_counts(fs, -1, -gone_nodes, gone_klen, gone_vlen);
 out:
     if (recs != NULL) {
         free_records(fs, recs, count);
@@ -5388,6 +5457,7 @@ static int txn_finish(struct apfsrw *fs, uint64_t next_oid, uint64_t dfiles,
     if (next_oid > fs->batch_next_oid)
         fs->batch_next_oid = next_oid;
     fs->batch_dirty = 1;
+    op_mark(fs);
     return APFSRW_OK;
 }
 
@@ -5442,8 +5512,8 @@ out:
     return err;
 }
 
-// Remove one record from a physical tree.
-// The leaf must keep at least one record (collapsing levels is not implemented)
+// Remove one record from a physical tree. A non-root node left empty is unlinked from its parent
+// and freed, repeating upward (fsck_apfs rejects btn_nkeys 0). An emptied root becomes an empty leaf
 static int phys_delete(struct apfsrw *fs, apfs_paddr_t tree_root,
     enum bkey_kind kind, const void *key, uint16_t klen,
     apfs_paddr_t *new_root)
@@ -5453,8 +5523,9 @@ static int phys_delete(struct apfsrw *fs, apfs_paddr_t tree_root,
     struct rw_rec *recs = NULL;
     uint8_t *b1 = NULL;
     uint8_t newmin[APFSRW_MAX_KEY];
-    uint16_t newmin_len = 0;
+    uint16_t newmin_len = 0, tree_level;
     uint32_t count = 0, i, idx = 0, lvl, l;
+    int64_t gone_nodes = 0;
     apfs_paddr_t child_new = 0;
     int found = 0;
     int err;
@@ -5479,6 +5550,16 @@ static int phys_delete(struct apfsrw *fs, apfs_paddr_t tree_root,
     if (err != APFSRW_OK)
         goto out;
     for (i = 0; i < count; i++) {
+        // object map keys match on the oid, newest version not past the key's xid
+        if (kind == BKEY_OMAP) {
+            if (recs[i].klen >= 16 && klen >= 16 &&
+                rd64(recs[i].key) == rd64(key) &&
+                rd64(recs[i].key + 8) <= rd64((const uint8_t *)key + 8)) {
+                idx = i;
+                found = 1;
+            }
+            continue;
+        }
         if (rec_cmp(recs[i].key, recs[i].klen, key, klen) == 0) {
             idx = i;
             found = 1;
@@ -5489,27 +5570,44 @@ static int phys_delete(struct apfsrw *fs, apfs_paddr_t tree_root,
         err = APFSRW_ENOENT;
         goto out;
     }
-    rec_free(fs, recs[idx].key);
-    rec_free(fs, recs[idx].val);
-    for (i = idx; i + 1 < count; i++)
-        recs[i] = recs[i + 1];
-    count--;
-    memset(&recs[count], 0, sizeof(recs[count]));
+    drop_record(fs, recs, &count, idx);
+    while (count == 0 && lvl != 0) {
+        defer_free(fs, (uint64_t)p.paddr[lvl], 1);
+        gone_nodes++;
+        lvl--;
+        idx = p.index[lvl];
+        err = read_object(fs, p.paddr[lvl], cur);
+        if (err != APFSRW_OK)
+            goto out;
+        err = load_leaf_records(fs, cur, &p.info, recs, &count);
+        if (err != APFSRW_OK)
+            goto out;
+        if (idx >= count) {
+            err = APFSRW_EINVAL;
+            goto out;
+        }
+        drop_record(fs, recs, &count, idx);
+    }
     if (idx == 0 && lvl != 0 && count > 0 &&
         recs[0].klen <= sizeof(newmin)) {
         memcpy(newmin, recs[0].key, recs[0].klen);
         newmin_len = recs[0].klen;
     }
 
-    err = build_node(fs, cur, (lvl == 0), (uint16_t)(p.n - 1 - lvl), &p.info,
-        recs, count, b1);
+    // only the root can be empty here, and an empty tree is a single leaf
+    tree_level = count == 0 ? 0 : (uint16_t)(p.n - 1 - lvl);
+    err = build_node(fs, cur, (lvl == 0), tree_level, &p.info, recs, count,
+        b1);
     if (err != APFSRW_OK)
         goto out;
-    if (lvl == 0) {
+    // a root leaf got its counts from build_node
+    if (lvl == 0 && tree_level > 0) {
         struct apfs_btree_info *bi = (struct apfs_btree_info *)
             (b1 + fs->block_size - sizeof(*bi));
 
         wr64(&bi->bt_key_count, rd64(&bi->bt_key_count) - 1);
+        wr64(&bi->bt_node_count,
+            (uint64_t)((int64_t)rd64(&bi->bt_node_count) - gone_nodes));
     }
     err = phys_write_node(fs, b1, p.paddr[lvl], &child_new);
     if (err != APFSRW_OK)
@@ -5541,12 +5639,15 @@ static int phys_delete(struct apfsrw *fs, apfs_paddr_t tree_root,
                 ((uint8_t *)cur + fs->block_size - sizeof(*bi));
 
             wr64(&bi->bt_key_count, rd64(&bi->bt_key_count) - 1);
+            wr64(&bi->bt_node_count,
+                (uint64_t)((int64_t)rd64(&bi->bt_node_count) - gone_nodes));
         }
         err = phys_write_node(fs, (uint8_t *)cur, p.paddr[pi], &child_new);
         if (err != APFSRW_OK)
             goto out;
     }
     *new_root = child_new;
+    fs->alloc_delta -= gone_nodes;
 out:
     if (recs != NULL) {
         free_records(fs, recs, count);
@@ -5554,6 +5655,22 @@ out:
     }
     free(b1);
     free(cur);
+    return err;
+}
+
+// Drop the volume object map entry of a freed file-system tree node
+static int omap_del(struct apfsrw *fs, apfs_oid_t oid)
+{
+    uint8_t key[16];
+    apfs_paddr_t root = 0;
+    int err;
+
+    wr64(key, oid);
+    wr64(key + 8, (uint64_t)(fs->xid + 1));
+    err = phys_delete(fs, fs->volume_omap_tree_paddr, BKEY_OMAP, key,
+        (uint16_t)sizeof(key), &root);
+    if (err == APFSRW_OK)
+        fs->volume_omap_tree_paddr = root;
     return err;
 }
 
@@ -6035,6 +6152,7 @@ int apfsrw_batch_begin(struct apfsrw *fs)
     fs->batch_dirs = 0;
     fs->batch_links = 0;
     fs->batch_next_oid = 0;
+    op_mark(fs);
     return APFSRW_OK;
 }
 
@@ -6049,6 +6167,23 @@ uint32_t apfsrw_batch_pending(struct apfsrw *fs)
 int apfsrw_batch_dirty(struct apfsrw *fs)
 {
     return fs != NULL && fs->batch && fs->batch_dirty;
+}
+
+uint32_t apfsrw_batch_blocks(struct apfsrw *fs)
+{
+    return fs == NULL || !fs->batch ? 0 : fs->alloced_count;
+}
+
+int apfsrw_batch_owns(struct apfsrw *fs, uint64_t paddr, uint64_t n)
+{
+    uint32_t i;
+
+    if (fs == NULL || !fs->batch)
+        return 0;
+    for (i = 0; i < fs->alloced_count; i++)
+        if (fs->alloced[i] >= paddr && fs->alloced[i] - paddr < n)
+            return 1;
+    return 0;
 }
 
 int apfsrw_batch_end(struct apfsrw *fs)
@@ -6847,8 +6982,6 @@ int apfsrw_write_range(struct apfsrw *fs, const char *path, uint64_t off,
         return APFSRW_EINVAL;
     if (!fs->writable)
         return APFSRW_EPERM;
-    if (fs->batch)
-        return APFSRW_EINVAL;
     if (len == 0)
         return APFSRW_OK;
     if (off + len < off || off + len > 0xffffffffULL)
@@ -6985,8 +7118,6 @@ int apfsrw_truncate(struct apfsrw *fs, const char *path, uint64_t size)
         return APFSRW_EINVAL;
     if (!fs->writable)
         return APFSRW_EPERM;
-    if (fs->batch)
-        return APFSRW_EINVAL;
     if (size > 0xffffffffULL)
         return APFSRW_EOVERFLOW;
 
@@ -8110,8 +8241,6 @@ int apfsrw_set_xattr(struct apfsrw *fs, const char *path, const char *name,
         return APFSRW_ENOTSUP;
     if (!fs->writable)
         return APFSRW_EPERM;
-    if (fs->batch)
-        return APFSRW_EINVAL;
 
     err = resolve_path(fs, path, &fileid, NULL);
     if (err != APFSRW_OK)
@@ -8157,8 +8286,6 @@ int apfsrw_remove_xattr(struct apfsrw *fs, const char *path, const char *name)
         return APFSRW_EINVAL;
     if (!fs->writable)
         return APFSRW_EPERM;
-    if (fs->batch)
-        return APFSRW_EINVAL;
 
     err = resolve_path(fs, path, &fileid, NULL);
     if (err != APFSRW_OK)
@@ -8790,8 +8917,6 @@ int apfsrw_rename(struct apfsrw *fs, const char *from, const char *to)
         return APFSRW_EINVAL;
     if (!fs->writable)
         return APFSRW_EPERM;
-    if (fs->batch)
-        return APFSRW_EINVAL;
 
     err = split_parent(fs, from, &fparent, &fname, &fnamelen);
     if (err != APFSRW_OK)

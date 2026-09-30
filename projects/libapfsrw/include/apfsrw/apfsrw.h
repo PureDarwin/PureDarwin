@@ -219,6 +219,10 @@ int apfsrw_batch_begin(struct apfsrw *fs);
 int apfsrw_batch_end(struct apfsrw *fs);
 uint32_t apfsrw_batch_pending(struct apfsrw *fs);
 int apfsrw_batch_dirty(struct apfsrw *fs);
+// blocks the open batch allocated, and whether any of [paddr, paddr+n) is one of them.
+// a failed op inside a batch undoes only itself
+uint32_t apfsrw_batch_blocks(struct apfsrw *fs);
+int apfsrw_batch_owns(struct apfsrw *fs, uint64_t paddr, uint64_t n);
 int apfsrw_mkdir(struct apfsrw *fs, const char *path, uint16_t mode,
     uint32_t uid, uint32_t gid);
 // Nodes with no contents of their own: sockets, fifos and device nodes.

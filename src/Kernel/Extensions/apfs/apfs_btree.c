@@ -170,13 +170,13 @@ apfs_read_object_phys(struct apfs_mount *amp, apfs_paddr_t paddr, void *out)
 		amp->verified = _MALLOC(APFS_VERIFIED_ENTS * sizeof(*ve), M_TEMP, M_WAITOK | M_ZERO);
 	if (amp->verified != NULL) {
 		ve = &amp->verified[((uint64_t)paddr ^ ((uint64_t)paddr >> 13)) % APFS_VERIFIED_ENTS];
-		if (ve->xid == amp->xid && ve->paddr == paddr && ve->xid != 0)
+		if (ve->gen == amp->rgen && ve->paddr == paddr && ve->gen != 0)
 			return 0;
 	}
 	error = apfs_verify_object_checksum(out, amp->block_size);
 	if (error == 0 && ve != NULL) {
 		ve->paddr = paddr;
-		ve->xid = amp->xid;
+		ve->gen = amp->rgen;
 	}
 	if (error) {
 		static int cksum_log_budget = 12;
@@ -201,7 +201,7 @@ apfs_read_object_phys(struct apfs_mount *amp, apfs_paddr_t paddr, void *out)
 	return 0;
 }
 
-// A B-tree node, from the node cache when it was read at this xid already
+// A B-tree node, from the node cache when it was read in this view already
 static int
 apfs_read_node(struct apfs_mount *amp, apfs_paddr_t paddr, void *out)
 {
@@ -224,7 +224,7 @@ apfs_read_node(struct apfs_mount *amp, apfs_paddr_t paddr, void *out)
 	if (amp->ncache != NULL) {
 		slot = (uint32_t)(((uint64_t)paddr ^ ((uint64_t)paddr >> 9)) % APFS_NCACHE_ENTS);
 		ne = &amp->ncache_ents[slot];
-		if (ne->xid == amp->xid && ne->paddr == paddr && ne->xid != 0) {
+		if (ne->gen == amp->rgen && ne->paddr == paddr && ne->gen != 0) {
 			memcpy(out, amp->ncache + (size_t)slot * amp->block_size, amp->block_size);
 			return 0;
 		}
@@ -233,7 +233,7 @@ apfs_read_node(struct apfs_mount *amp, apfs_paddr_t paddr, void *out)
 	if (error == 0 && ne != NULL) {
 		memcpy(amp->ncache + (size_t)slot * amp->block_size, out, amp->block_size);
 		ne->paddr = paddr;
-		ne->xid = amp->xid;
+		ne->gen = amp->rgen;
 	}
 	return error;
 }
@@ -401,7 +401,7 @@ apfs_omap_lookup_tree(struct apfs_mount *amp, apfs_paddr_t tree_paddr,
 			    M_WAITOK | M_ZERO);
 		if (amp->omap_cache != NULL) {
 			ce = &amp->omap_cache[(oid ^ (oid >> 11) ^ (uint64_t)tree_paddr) % APFS_OMAP_CACHE_ENTS];
-			if (ce->xid == xid && ce->oid == oid && ce->tree == tree_paddr && ce->xid != 0) {
+			if (ce->gen == amp->rgen && ce->oid == oid && ce->tree == tree_paddr && ce->gen != 0) {
 				memcpy(out, &ce->val, sizeof(*out));
 				return 0;
 			}
@@ -519,7 +519,7 @@ apfs_omap_lookup_tree(struct apfs_mount *amp, apfs_paddr_t tree_paddr,
 	if (ce != NULL) {
 		ce->tree = tree_paddr;
 		ce->oid = oid;
-		ce->xid = xid;
+		ce->gen = amp->rgen;
 		memcpy(&ce->val, &best, sizeof(best));
 	}
 out:
@@ -571,6 +571,7 @@ apfs_load_volume(struct apfs_mount *amp, __unused vfs_context_t ctx)
 		return ENOENT;
 
 	amp->xid = le64(amp->nx.nx_o.o_xid);
+	amp->rgen++;
 	amp->container_omap_oid = le64(amp->nx.nx_omap_oid);
 	amp->container_omap_paddr = (apfs_paddr_t)amp->container_omap_oid;
 
@@ -1499,7 +1500,7 @@ apfs_read_locked(struct apfs_node *apnode, uint64_t file_off, size_t n,
 
 	memset(&cur, 0, sizeof(cur));
 	cur.fileid = apnode->fileid;
-	if (apnode->a_ext_valid && apnode->a_ext_xid == amp->xid) {
+	if (apnode->a_ext_valid && apnode->a_ext_gen == amp->rgen) {
 		cur.logical = apnode->a_ext_logical;
 		cur.len = apnode->a_ext_len;
 		cur.phys = apnode->a_ext_phys;
@@ -1524,7 +1525,7 @@ apfs_read_locked(struct apfs_node *apnode, uint64_t file_off, size_t n,
 				apnode->a_ext_logical = cur.logical;
 				apnode->a_ext_len = cur.len;
 				apnode->a_ext_phys = cur.phys;
-				apnode->a_ext_xid = amp->xid;
+				apnode->a_ext_gen = amp->rgen;
 				apnode->a_ext_valid = 1;
 			}
 			if (!cur.found) {
@@ -1569,6 +1570,10 @@ apfs_read_locked(struct apfs_node *apnode, uint64_t file_off, size_t n,
 					run = APFS_MAX_RUN_BYTES;
 				run -= run % amp->block_size;
 			}
+			// blocks of the open batch are only in the buffer cache, the raw run would miss them
+			if (run != 0 && apfs_batch_owns(amp,
+			    (apfs_paddr_t)(cur.phys + block_index), run / amp->block_size))
+				run = 0;
 			if (run != 0) {
 				count = run;
 				error = apfs_read_run(amp,

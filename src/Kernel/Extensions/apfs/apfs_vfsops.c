@@ -5,6 +5,8 @@
 #include "apfsrw/apfsrw.h"
 
 #include <IOKit/IOLocks.h>
+#include <kern/thread_call.h>
+#include <mach/mach_time.h>
 
 #include <pexpert/pexpert.h>
 
@@ -45,6 +47,14 @@ static int apfs_open_fspec(user_addr_t data, vnode_t *devvpp,
 static int apfs_probe_container(struct apfs_mount *amp, vfs_context_t ctx);
 static int apfs_container_attach(struct apfs_mount *amp);
 static void apfs_container_detach(struct apfs_mount *amp);
+static void apfs_batch_timer_fire(thread_call_param_t p0, thread_call_param_t p1);
+
+// batch limits: whichever comes first commits the container's open transaction
+#define APFS_BATCH_MAX_OPS	1024
+#define APFS_BATCH_MAX_BLOCKS	8192		// allocated plus superseded, 32 MB at 4K
+#define APFS_BATCH_MAX_MS	1000
+// one stat line per this many commits
+#define APFS_BATCH_STAT_EVERY	256
 
 static struct vfsops apfs_vfsops = {
 	.vfs_mount = apfs_mount,
@@ -263,11 +273,17 @@ apfs_container_attach(struct apfs_mount *amp)
 			return ENOMEM;
 		}
 		c->c_lock = IORecursiveLockAlloc();
-		if (c->c_lock == NULL) {
+		c->c_batch_timer = thread_call_allocate(apfs_batch_timer_fire, c);
+		if (c->c_lock == NULL || c->c_batch_timer == NULL) {
+			if (c->c_lock != NULL)
+				IORecursiveLockFree((IORecursiveLock *)c->c_lock);
+			if (c->c_batch_timer != NULL)
+				thread_call_free((thread_call_t)c->c_batch_timer);
 			_FREE(c, M_TEMP);
 			IOLockUnlock(apfs_containers_lock);
 			return ENOMEM;
 		}
+		c->c_st_attach_abs = mach_absolute_time();
 		memcpy(c->c_uuid, amp->nx.nx_uuid, sizeof(c->c_uuid));
 		c->c_devvp = amp->devvp;
 		vnode_ref(c->c_devvp);
@@ -298,6 +314,9 @@ apfs_container_rele(struct apfs_container *c)
 		LIST_REMOVE(c, c_link);
 	IOLockUnlock(apfs_containers_lock);
 	if (last) {
+		// every mount committed on its way out, so the timer has nothing left to re-arm for
+		thread_call_cancel_wait((thread_call_t)c->c_batch_timer);
+		thread_call_free((thread_call_t)c->c_batch_timer);
 		buf_flushdirtyblks(c->c_devvp, 1, 0, "apfs_container");
 		vnode_rele(c->c_devvp);
 		IORecursiveLockFree((IORecursiveLock *)c->c_lock);
@@ -316,6 +335,125 @@ apfs_container_detach(struct apfs_mount *amp)
 	amp->io_devvp = NULLVP;
 	amp->am_rw_lock = NULL;
 	apfs_container_rele(c);
+}
+
+static void
+apfs_lock_enter(struct apfs_container *c)
+{
+	IORecursiveLockLock((IORecursiveLock *)c->c_lock);
+	if (c->c_lock_depth++ == 0)
+		c->c_lock_abs = mach_absolute_time();
+}
+
+static void
+apfs_lock_exit(struct apfs_container *c)
+{
+	if (--c->c_lock_depth == 0)
+		c->c_st_hold_abs += mach_absolute_time() - c->c_lock_abs;
+	IORecursiveLockUnlock((IORecursiveLock *)c->c_lock);
+}
+
+static uint64_t
+apfs_abs_ms(uint64_t abs)
+{
+	uint64_t ns = 0;
+
+	absolutetime_to_nanoseconds(abs, &ns);
+	return ns / 1000000ull;
+}
+
+static void
+apfs_batch_stat(struct apfs_container *c, const char *why)
+{
+	uint64_t now = mach_absolute_time();
+	uint64_t hold = c->c_st_hold_abs;
+
+	// the running hold counts too
+	if (c->c_lock_depth > 0)
+		hold += now - c->c_lock_abs;
+	APFSLOG("batch: %llu commits, %llu ops, lock held %llu ms of %llu ms (%s)",
+	    (unsigned long long)c->c_st_commits, (unsigned long long)c->c_st_ops,
+	    (unsigned long long)apfs_abs_ms(hold),
+	    (unsigned long long)apfs_abs_ms(now - c->c_st_attach_abs), why);
+	for (int n = 0; n < 4; n++) {
+		int best = -1;
+
+		for (int i = 0; i < 8; i++) {
+			if (c->c_st_writers[i].ops > 0 && (best < 0 || c->c_st_writers[i].ops > c->c_st_writers[best].ops))
+				best = i;
+		}
+		if (best < 0)
+			break;
+		APFSLOG("batch: writer %s[%d] %u ops", c->c_st_writers[best].name,
+		    c->c_st_writers[best].pid, c->c_st_writers[best].ops);
+		c->c_st_writers[best].ops = 0;
+	}
+	bzero(c->c_st_writers, sizeof(c->c_st_writers));
+}
+
+// counts the caller against its slot, or takes the quietest one
+static void
+apfs_note_writer(struct apfs_container *c)
+{
+	int pid = proc_selfpid(), slot = 0;
+
+	for (int i = 0; i < 8; i++) {
+		if (c->c_st_writers[i].pid == pid && c->c_st_writers[i].ops > 0) {
+			c->c_st_writers[i].ops++;
+			return;
+		}
+		if (c->c_st_writers[i].ops < c->c_st_writers[slot].ops)
+			slot = i;
+	}
+	c->c_st_writers[slot].pid = pid;
+	c->c_st_writers[slot].ops = 1;
+	proc_selfname(c->c_st_writers[slot].name, sizeof(c->c_st_writers[slot].name));
+}
+
+int
+apfs_batch_commit(struct apfs_container *c)
+{
+	struct apfs_mount *amp = c->c_batch_amp;
+	int dirty, err;
+
+	if (amp == NULL)
+		return 0;
+	dirty = apfsrw_batch_dirty(amp->rw);
+	err = apfsrw_batch_end(amp->rw);
+	c->c_batch_amp = NULL;
+	c->c_batch_ops = 0;
+	c->c_batch_abs = 0;
+	if (!dirty)
+		return 0;
+	if (err != APFSRW_OK)
+		APFSLOG("slot %u: batch commit failed: %s, back at the last checkpoint",
+		    amp->vol_slot, apfsrw_strerror(err));
+	// every mount re-reads. The writer's handle keeps its cache unless it fell back
+	++c->c_generation;
+	c->c_last_writer = err == APFSRW_OK ? amp : NULL;
+	if (err == APFSRW_OK && ++c->c_st_commits % APFS_BATCH_STAT_EVERY == 0)
+		apfs_batch_stat(c, "periodic");
+	return err == APFSRW_OK ? 0 : EIO;
+}
+
+static void
+apfs_batch_arm(struct apfs_container *c)
+{
+	uint64_t deadline;
+
+	clock_interval_to_deadline(APFS_BATCH_MAX_MS, NSEC_PER_MSEC, &deadline);
+	thread_call_enter_delayed((thread_call_t)c->c_batch_timer, deadline);
+}
+
+// nothing stays uncommitted longer than APFS_BATCH_MAX_MS after writes stop
+static void
+apfs_batch_timer_fire(thread_call_param_t p0, __unused thread_call_param_t p1)
+{
+	struct apfs_container *c = (struct apfs_container *)p0;
+
+	apfs_lock_enter(c);
+	(void)apfs_batch_commit(c);
+	apfs_lock_exit(c);
 }
 
 // volume add for ApfsFileSystemDriver (apfs_kpi.h): a live container changes only here,
@@ -346,7 +484,9 @@ pd_apfs_volume_add(const uint8_t container_uuid[16],
 	if (c != NULL) {
 		c->c_refs++;
 		IOLockUnlock(apfs_containers_lock);
-		IORecursiveLockLock((IORecursiveLock *)c->c_lock);
+		apfs_lock_enter(c);
+		// the add commits on a handle of its own, which must start from all the mounts wrote
+		(void)apfs_batch_commit(c);
 		dev = &c->c_rw_dev;
 		blocks = c->c_block_count;
 	} else if (fallback == NULL) {
@@ -372,7 +512,7 @@ pd_apfs_volume_add(const uint8_t container_uuid[16],
 		c->c_generation++;
 		c->c_last_writer = NULL;
 		buf_flushdirtyblks(c->c_devvp, 1, 0, "apfs_volume_add");
-		IORecursiveLockUnlock((IORecursiveLock *)c->c_lock);
+		apfs_lock_exit(c);
 		apfs_container_rele(c);
 	}
 	switch (err) {
@@ -385,13 +525,18 @@ pd_apfs_volume_add(const uint8_t container_uuid[16],
 	}
 }
 
-void
-apfs_rw_lock(struct apfs_mount *amp)
+static void
+apfs_rw_lock_common(struct apfs_mount *amp, int write)
 {
 	struct apfs_container *c = amp->cont;
 
 	// One recursive lock serialises the whole container
-	IORecursiveLockLock((IORecursiveLock *)c->c_lock);
+	apfs_lock_enter(c);
+	// one commit covers one volume's tree. Another volume's write, or a second mount of the
+	// batch's own volume reading around it, commits the open transaction first
+	if (c->c_batch_amp != NULL && c->c_batch_amp != amp &&
+	    (write || c->c_batch_amp->vol_slot == amp->vol_slot))
+		(void)apfs_batch_commit(c);
 	if (amp->seen_generation != c->c_generation) {
 		vfs_context_t ctx = vfs_context_current();
 		int error = 0;
@@ -408,12 +553,85 @@ apfs_rw_lock(struct apfs_mount *amp)
 			    "failed: %d", amp->vol_slot, error);
 		amp->seen_generation = c->c_generation;
 	}
+	if (write && c->c_batch_amp == NULL && amp->rw != NULL &&
+	    apfsrw_batch_begin(amp->rw) == APFSRW_OK)
+		c->c_batch_amp = amp;
+}
+
+void
+apfs_rw_lock(struct apfs_mount *amp)
+{
+	apfs_rw_lock_common(amp, 0);
+}
+
+void
+apfs_rw_lock_write(struct apfs_mount *amp)
+{
+	apfs_rw_lock_common(amp, 1);
 }
 
 void
 apfs_rw_unlock(struct apfs_mount *amp)
 {
-	IORecursiveLockUnlock((IORecursiveLock *)amp->cont->c_lock);
+	struct apfs_container *c = amp->cont;
+
+	// a busy container commits on age here, an idle one from the timer
+	if (c->c_lock_depth == 1 && c->c_batch_abs != 0 &&
+	    apfs_abs_ms(mach_absolute_time() - c->c_batch_abs) >= APFS_BATCH_MAX_MS)
+		(void)apfs_batch_commit(c);
+	apfs_lock_exit(c);
+}
+
+int
+apfs_write_done(struct apfs_mount *amp)
+{
+	struct apfs_container *c = amp->cont;
+	struct apfsrw_volume_info vi;
+
+	c->c_st_ops++;
+	apfs_note_writer(c);
+	if (c->c_batch_amp != amp) {
+		// no batch could open, so the op committed on its own
+		++c->c_generation;
+		c->c_last_writer = amp;
+		c->c_st_commits++;
+		return 0;
+	}
+	// reads walk the batch's trees, whose new nodes are mapped at the next xid
+	if (apfsrw_get_volume_info(amp->rw, &vi) == APFSRW_OK) {
+		amp->xid = vi.xid + 1;
+		amp->root_tree_paddr = (apfs_paddr_t)vi.root_tree_paddr;
+		amp->volume_omap_tree_paddr = (apfs_paddr_t)vi.volume_omap_tree_paddr;
+	}
+	amp->rgen++;
+	if (c->c_batch_abs == 0) {
+		c->c_batch_abs = mach_absolute_time();
+		apfs_batch_arm(c);
+	}
+	if (++c->c_batch_ops >= APFS_BATCH_MAX_OPS ||
+	    apfsrw_batch_blocks(amp->rw) + apfsrw_batch_pending(amp->rw) >= APFS_BATCH_MAX_BLOCKS)
+		(void)apfs_batch_commit(c);
+	return 0;
+}
+
+int
+apfs_batch_sync(struct apfs_mount *amp)
+{
+	int error;
+
+	if (amp == NULL || amp->cont == NULL)
+		return 0;
+	apfs_lock_enter(amp->cont);
+	error = apfs_batch_commit(amp->cont);
+	apfs_lock_exit(amp->cont);
+	return error;
+}
+
+int
+apfs_batch_owns(struct apfs_mount *amp, apfs_paddr_t paddr, uint64_t n)
+{
+	return amp->cont->c_batch_amp == amp &&
+	    apfsrw_batch_owns(amp->rw, (uint64_t)paddr, n);
 }
 
 static int
@@ -518,19 +736,6 @@ apfs_open_fspec(user_addr_t data, vnode_t *devvpp, vfs_context_t ctx)
 
 	dev = makedev(major(rootdev), minor_id);
 	return bdevvp(dev, devvpp);
-}
-
-int
-apfs_reload_container(struct apfs_mount *amp, vfs_context_t ctx)
-{
-	(void)ctx;
-
-	if (amp == NULL)
-		return EINVAL;
-	// Bump the generation and let the next lock re-read once. This mount stays stale on purpose
-	++amp->cont->c_generation;
-	amp->cont->c_last_writer = amp;
-	return 0;
 }
 
 static uint64_t
@@ -807,6 +1012,9 @@ apfs_unmount(struct mount *mp, int mntflags, vfs_context_t ctx)
 		// A departing mount must not stay the container's last writer
 		if (amp->cont != NULL) {
 			apfs_rw_lock(amp);
+			if (amp->cont->c_batch_amp == amp)
+				(void)apfs_batch_commit(amp->cont);
+			apfs_batch_stat(amp->cont, "unmount");
 			if (amp->cont->c_last_writer == amp)
 				amp->cont->c_last_writer = NULL;
 			apfs_rw_unlock(amp);
@@ -904,6 +1112,8 @@ apfs_sync(struct mount *mp, int waitfor, __unused vfs_context_t ctx)
 {
 	struct apfs_mount *amp = VFSTOAPFS(mp);
 
+	if (amp != NULL)
+		(void)apfs_batch_sync(amp);
 	if (amp && amp->io_devvp)
 		buf_flushdirtyblks(amp->io_devvp, waitfor == MNT_WAIT, 0,
 		    "apfs_sync");
