@@ -46,7 +46,7 @@ let
     "IOVirtIOFamily.kext" "IOVirtIOGPU.kext"
     "IONetworkingFamily.kext"
     "IOVirtIOBlock.kext" "IOVirtIONet.kext"
-    "PDWatchdog.kext"
+    "PDWatchdog.kext" "PDIOSurface.kext"
   ];
   kextBundle = t: if lib.hasSuffix ".kext" t then t else "${t}.kext";
   kextNames = map kextBundle kextTargets;
