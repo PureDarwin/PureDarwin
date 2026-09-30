@@ -132,3 +132,5 @@ add_dependencies(kexts Sandbox.kext)
 # IOWatchdog service that watchdogd opens at boot
 add_subdirectory(PDWatchdog)
 add_dependencies(kexts PDWatchdog.kext)
+add_subdirectory(PDDiskImages2)
+add_dependencies(kexts PDDiskImages2.kext)

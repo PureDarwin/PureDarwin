@@ -80,6 +80,7 @@ stdenv.mkDerivation {
       -kext "$KEXTS/IONetworkingFamily.kext" \
       -kext "$KEXTS/PDSg2002Eth.kext" \
       -kext "$KEXTS/PDWatchdog.kext" \
+      -kext "$KEXTS/PDDiskImages2.kext" \
       -kext "$KEXTS/IOVirtIOBlock.kext" \
       -kext "$KEXTS/IOVirtIONet.kext" \
       "''${codeless[@]}" \
