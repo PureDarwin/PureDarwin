@@ -1,0 +1,9 @@
+--- !tapi-tbd
+tbd-version: 4
+targets: [ arm64-macos, arm64e-macos ]
+install-name: '/usr/lib/system/libdispatch.dylib'
+current-version: 1542
+exports:
+  - targets: [ arm64-macos, arm64e-macos ]
+    symbols: [ _dispatch_apply_f ]
+...

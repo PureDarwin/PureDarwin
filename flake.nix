@@ -3565,6 +3565,7 @@
             vteArm64Build
             libwnckArm64Build
             llvmCrossArm64Build
+            airjitdArm64Build
             compilerRtArm64Build
             wineArm64Build
             asmjitTestArm64Build
@@ -4182,6 +4183,7 @@
             vte-arm64 = vteArm64Build;
             libwnck-arm64 = libwnckArm64Build;
             llvm-arm64 = llvmCrossArm64Build;
+            airjitd = airjitdArm64Build;
             compiler-rt-arm64 = compilerRtArm64Build;
             wine-arm64 = wineArm64Build;
             asmjit-test-arm64 = asmjitTestArm64Build;

@@ -631,6 +631,11 @@ let
     nativeTblgen = "${pkgs.llvmPackages_21.llvm}/bin/llvm-tblgen";
     nativeLlvmConfig = "${pkgs.llvmPackages_21.llvm.dev}/bin/llvm-config";
   };
+  airjitdArm64Build = mkArm64Build ./pkgs/gpu/airjitd.nix {
+    llvm = llvmCrossArm64Build;
+    libcxxDylib = libcxxDylibArm64Build;
+    libcxxabiDylib = libcxxabiDylibArm64Build;
+  };
   xvfbLibXxf86vmArm64Build = mkArm64Build ./pkgs/x11/xorg-cross-lib.nix {
     pname = "puredarwin-libXxf86vm";
     inherit (pkgs.libXxf86vm) version src;
@@ -2975,6 +2980,7 @@ in
     vteArm64Build
     libwnckArm64Build
     llvmCrossArm64Build
+    airjitdArm64Build
     compilerRtArm64Build
     wineArm64Build
     asmjitTestArm64Build
