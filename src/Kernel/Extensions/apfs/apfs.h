@@ -392,6 +392,7 @@ struct apfs_container {
 	uint64_t c_generation;
 	struct apfs_mount *c_last_writer;	// Whose commit bumped c_generation last
 	struct apfsrw_kern_dev c_rw_dev;
+	uint64_t c_block_count;		// nx_block_count, for handles apfs.kext opens on it itself
 };
 
 struct apfs_mount {

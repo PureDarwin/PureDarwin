@@ -69,7 +69,9 @@ protected:
     UInt32 scanVolumes(IOMedia *media, const uint8_t *nx, UInt32 blockSize,
                        UInt64 treePaddr, UInt32 maxFs);
     void rescanVolumes();
+    bool anyVolumeOpen();
     UInt64 _slotMask[2];
+    uint8_t _nxUuid[16];
 
 public:
     IOReturn createVolume(const char *name, uint16_t role, const uint8_t uuid[16],

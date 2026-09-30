@@ -1,13 +1,15 @@
 /* Copyright (c) 2026 PureDarwin contributors. SPDX-License-Identifier: MIT */
 #include <IOKit/IOBSD.h>
+#include <sys/errno.h>
 #include "ApfsFileSystemDriver.h"
 
 extern "C" {
 #include <apfsrw/apfsrw.h>
 }
+#include <apfs_kpi.h>
 
-// libapfsrw's transfers on the container media itself, which this driver opens as writer.
-// The BSD node would take IOMediaBSDClient's open lock from inside a user client call
+// libapfsrw i/o straight on the container media, for an add while no volume is open
+// (the bsd node would take IOMediaBSDClient's open lock inside a user client call)
 struct AFDMediaIO {
     IOService *client;
     IOMedia *media;
@@ -490,6 +492,7 @@ AppleAPFSContainer::start(IOService *provider)
         treePaddr = rd64((const uint8_t *)ombuf->getBytesNoCopy() + OM_TREE_OID_OFF);
         nxValid = true;
         uuid_unparse_upper(nx + NX_UUID_OFF, uuidStr);
+        memcpy(_nxUuid, nx + NX_UUID_OFF, sizeof(_nxUuid));
         setProperty("UUID", uuidStr);
         setProperty("ContainerBlockSize", blockSize, 32);
         maxFs = rd32(nx + NX_MAX_FS_OFF);
@@ -558,7 +561,7 @@ AppleAPFSContainer::scanVolumes(IOMedia *media, const uint8_t *nx, UInt32 blockS
     return published;
 }
 
-// After a volume is added: block zero mirrors the newest superblock, so read the object map from it again
+// after an add: re-read the omap from the newest superblock and publish only new slots
 void
 AppleAPFSContainer::rescanVolumes()
 {
@@ -567,7 +570,9 @@ AppleAPFSContainer::rescanVolumes()
     const uint8_t *nx;
     UInt32 maxFs;
 
-    if (media == NULL || !media->open(this, 0, kIOStorageAccessReader))
+    // open as a client of ourselves: an open of the provider in our own name would
+    // replace, then drop, the open IOPartitionScheme holds for the volumes
+    if (media == NULL || !open(this, 0, kIOStorageAccessReader))
         return;
     if (readLatestSuperblock(media, _blockSize, &nxbuf) == kIOReturnSuccess) {
         nx = (const uint8_t *)nxbuf->getBytesNoCopy();
@@ -580,65 +585,66 @@ AppleAPFSContainer::rescanVolumes()
                         rd64((const uint8_t *)ombuf->getBytesNoCopy() + OM_TREE_OID_OFF), maxFs);
         }
     }
-    media->close(this);
+    close(this);
     OSSafeReleaseNULL(ombuf);
     OSSafeReleaseNULL(nxbuf);
 }
 
-// Adds a volume through libapfsrw on the container's own device node, as newfs/diskutil do on macOS
+bool
+AppleAPFSContainer::anyVolumeOpen()
+{
+    OSIterator *it = _volumes != NULL ? OSCollectionIterator::withCollection(_volumes) : NULL;
+    IOMedia *vol;
+    bool busy = false;
+
+    while (it != NULL && (vol = OSDynamicCast(IOMedia, it->getNextObject())) != NULL) {
+        if (vol->isOpen())
+            busy = true;
+    }
+    OSSafeReleaseNULL(it);
+    return busy;
+}
+
+// Adds a volume, as newfs/diskutil do on macOS. apfs.kext makes the change: in the transaction
+// stream of the container's mounts when a volume is mounted, else on this driver's own I/O
 IOReturn
 AppleAPFSContainer::createVolume(const char *name, uint16_t role, const uint8_t uuid[16],
                                  uint32_t *slot)
 {
     IOMedia *media = OSDynamicCast(IOMedia, getProvider());
-    struct apfsrw_kern_dev dev;
-    struct apfsrw *fs = NULL;
+    struct apfsrw_kern_dev dev, *fallback = NULL;
     AFDMediaIO io;
     int err;
 
     if (media == NULL)
         return kIOReturnNotReady;
-    // a second libapfsrw instance would commit behind the mounted volumes' back and
-    // leave them on a stale container: refuse while any volume is open
-    if (_volumes != NULL) {
-        OSIterator *it = OSCollectionIterator::withCollection(_volumes);
-        IOMedia *vol;
-        bool busy = false;
-
-        while (it != NULL && (vol = OSDynamicCast(IOMedia, it->getNextObject())) != NULL) {
-            if (vol->isOpen())
-                busy = true;
-        }
-        OSSafeReleaseNULL(it);
-        if (busy) {
-            AFD_LOG("add volume '%s': container has open volumes", name);
+    // our own I/O would go behind whoever holds a volume open: offer it only when none is
+    if (!anyVolumeOpen()) {
+        if (!open(this, 0, kIOStorageAccessReaderWriter)) {
+            AFD_LOG("add volume '%s': media busy", name);
             return kIOReturnExclusiveAccess;
         }
+        io.client = this;
+        io.media = media;
+        memset(&dev, 0, sizeof(dev));
+        dev.block_size = _blockSize;
+        dev.dev_bsize = _blockSize;
+        dev.io = afdMediaIO;
+        dev.sync = afdMediaSync;
+        dev.io_ref = &io;
+        fallback = &dev;
     }
-    AFD_STEP("add '%s': open media", name);
-    if (!media->open(this, 0, kIOStorageAccessReaderWriter)) {
-        AFD_LOG("add volume '%s': media busy", name);
+    err = pd_apfs_volume_add(_nxUuid, fallback, _blockCount, name, role, uuid, slot);
+    if (fallback != NULL)
+        close(this);
+    if (err == ENOENT) {
+        // open volumes, none of them an apfs.kext mount (a raw reader, say)
+        AFD_LOG("add volume '%s': container has open volumes", name);
         return kIOReturnExclusiveAccess;
     }
-    io.client = this;
-    io.media = media;
-    memset(&dev, 0, sizeof(dev));
-    dev.block_size = _blockSize;
-    dev.dev_bsize = _blockSize;
-    dev.io = afdMediaIO;
-    dev.sync = afdMediaSync;
-    dev.io_ref = &io;
-    err = apfsrw_open_kernel(&dev, _blockCount, 1, 0, APFSRW_SLOT_CONTAINER, &fs);
-    AFD_STEP("open container %d", err);
-    if (err == APFSRW_OK) {
-        err = apfsrw_create_volume(fs, name, role, uuid, slot);
-        AFD_STEP("create %d", err);
-        apfsrw_close(fs);
-    }
-    media->close(this);
-    if (err != APFSRW_OK) {
-        AFD_LOG("add volume '%s': %s", name, apfsrw_strerror(err));
-        return kIOReturnError;
+    if (err != 0) {
+        AFD_LOG("add volume '%s': error %d", name, err);
+        return err == ENOSPC ? kIOReturnNoSpace : kIOReturnError;
     }
     AFD_LOG("added volume '%s' role 0x%x in slot %u", name, role, *slot);
     rescanVolumes();

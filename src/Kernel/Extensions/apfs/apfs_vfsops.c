@@ -1,6 +1,7 @@
 /* Copyright (c) 2026 PureDarwin contributors. SPDX-License-Identifier: MIT */
 
 #include "apfs.h"
+#include "apfs_kpi.h"
 #include "apfsrw/apfsrw.h"
 
 #include <IOKit/IOLocks.h>
@@ -273,6 +274,7 @@ apfs_container_attach(struct apfs_mount *amp)
 		c->c_rw_dev.devvp = c->c_devvp;
 		c->c_rw_dev.dev_bsize = amp->dev_bsize;
 		c->c_rw_dev.block_size = amp->block_size;
+		c->c_block_count = amp->block_count;
 		LIST_INSERT_HEAD(&apfs_containers, c, c_link);
 	}
 	c->c_refs++;
@@ -286,26 +288,100 @@ apfs_container_attach(struct apfs_mount *amp)
 }
 
 static void
-apfs_container_detach(struct apfs_mount *amp)
+apfs_container_rele(struct apfs_container *c)
 {
-	struct apfs_container *c = amp->cont;
 	int last;
 
-	if (c == NULL)
-		return;
 	IOLockLock(apfs_containers_lock);
 	last = (--c->c_refs == 0);
 	if (last)
 		LIST_REMOVE(c, c_link);
 	IOLockUnlock(apfs_containers_lock);
-	amp->cont = NULL;
-	amp->io_devvp = NULLVP;
-	amp->am_rw_lock = NULL;
 	if (last) {
 		buf_flushdirtyblks(c->c_devvp, 1, 0, "apfs_container");
 		vnode_rele(c->c_devvp);
 		IORecursiveLockFree((IORecursiveLock *)c->c_lock);
 		_FREE(c, M_TEMP);
+	}
+}
+
+static void
+apfs_container_detach(struct apfs_mount *amp)
+{
+	struct apfs_container *c = amp->cont;
+
+	if (c == NULL)
+		return;
+	amp->cont = NULL;
+	amp->io_devvp = NULLVP;
+	amp->am_rw_lock = NULL;
+	apfs_container_rele(c);
+}
+
+// volume add for ApfsFileSystemDriver (apfs_kpi.h): a live container changes only here,
+// under its lock and through its device's buffer cache, in the mounts' own transaction stream
+int
+pd_apfs_volume_add(const uint8_t container_uuid[16],
+    struct apfsrw_kern_dev *fallback, uint64_t fallback_blocks,
+    const char *name, uint16_t role, const uint8_t volume_uuid[16],
+    uint32_t *slot)
+{
+	struct apfs_container *c = NULL;
+	struct apfsrw *fs = NULL;
+	void *dev = fallback;
+	uint64_t blocks = fallback_blocks;
+	int err;
+
+	if (container_uuid == NULL || name == NULL || volume_uuid == NULL || slot == NULL)
+		return EINVAL;
+	// the filesystem registers (and makes the lock) before anything can mount
+	if (apfs_containers_lock == NULL)
+		return ENXIO;
+	// on the fallback path the list lock stays held, so no first mount attaches mid-commit
+	IOLockLock(apfs_containers_lock);
+	LIST_FOREACH(c, &apfs_containers, c_link) {
+		if (memcmp(c->c_uuid, container_uuid, sizeof(c->c_uuid)) == 0)
+			break;
+	}
+	if (c != NULL) {
+		c->c_refs++;
+		IOLockUnlock(apfs_containers_lock);
+		IORecursiveLockLock((IORecursiveLock *)c->c_lock);
+		dev = &c->c_rw_dev;
+		blocks = c->c_block_count;
+	} else if (fallback == NULL) {
+		IOLockUnlock(apfs_containers_lock);
+		return ENOENT;
+	}
+
+	// a handle without a volume makes the new trees fresh instead of copying a mounted
+	// volume's, which a sealed System would pass its features on through
+	err = apfsrw_open_kernel(dev, blocks, 1, 0, APFSRW_SLOT_CONTAINER, &fs);
+	if (err == APFSRW_OK) {
+		err = apfsrw_create_volume(fs, name, role, volume_uuid, slot);
+		apfsrw_close(fs);
+	}
+	APFSLOG("volume add '%s' role 0x%x, %s container: %s, slot %u", name, role,
+	    c != NULL ? "mounted" : "unmounted", apfsrw_strerror(err),
+	    err == APFSRW_OK ? *slot : 0);
+
+	if (c == NULL) {
+		IOLockUnlock(apfs_containers_lock);
+	} else {
+		// no mount made this commit: each drops its caches and re-reads on its next lock
+		c->c_generation++;
+		c->c_last_writer = NULL;
+		buf_flushdirtyblks(c->c_devvp, 1, 0, "apfs_volume_add");
+		IORecursiveLockUnlock((IORecursiveLock *)c->c_lock);
+		apfs_container_rele(c);
+	}
+	switch (err) {
+	case APFSRW_OK:		return 0;
+	case APFSRW_ENOSPC:	return ENOSPC;
+	case APFSRW_EINVAL:	return EINVAL;
+	case APFSRW_EPERM:	return EPERM;
+	case APFSRW_ENOMEM:	return ENOMEM;
+	default:		return EIO;
 	}
 }
 
