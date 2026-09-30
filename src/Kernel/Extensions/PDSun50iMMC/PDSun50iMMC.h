@@ -4,10 +4,11 @@
 #include <IOKit/IOService.h>
 #include <IOKit/IOMemoryDescriptor.h>
 
-// allwinner h616/h618 smhc0, the micro sd slot on the orange pi zero 3
+// allwinner h616/h618 and a733 smhc0, the micro sd slot on the orange pi zero 3 and zero 4
 // polled pio through the fifo, sd cards only
 
 class PDSun50iMMCDisk;
+struct PDSunxiMMCSoC;
 
 class PDSun50iMMC : public IOService
 {
@@ -32,6 +33,8 @@ private:
 	volatile uint8_t *fRegs;
 	volatile uint8_t *fCCU;
 	volatile uint8_t *fPIO;
+	const PDSunxiMMCSoC *fSoC;
+	bool fFastOK;
 	IOLock           *fLock;
 	uint32_t         *fBounce;
 	PDSun50iMMCDisk  *fDisk;
@@ -54,6 +57,7 @@ private:
 	bool     bringUpController(void);
 	bool     updateClock(void);
 	bool     setClock(uint32_t hz);
+	bool     enableFastPll(void);
 	bool     waitRint(uint32_t done, uint32_t timeoutMs);
 	bool     command(uint32_t idx, uint32_t arg, uint32_t flags,
 	    uint32_t *resp, uint32_t nblks = 0);

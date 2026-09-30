@@ -9,19 +9,60 @@ OSDefineMetaClassAndStructors(PDSun50iMMC, IOService);
 
 // register sequences follow u-boot drivers/mmc/sunxi_mmc.c for the h6 generation
 
-#define kCCUPhys		0x03001000ULL
-#define kPIOPhys		0x0300b000ULL
-
-// ccu, smhc0 module clock and bus gate/reset
-#define kCCU_MMC0_CLK		0x830
+// ccu module clock fields, the same on the h616 and the a733
 #define kMMC_CLK_ENABLE		(1u << 31)
 #define kMMC_CLK_SRC_OSC24M	(0u << 24)
-#define kMMC_CLK_SRC_PERIPH0	(1u << 24)
 #define kMMC_CLK_N(n)		((n) << 8)
 #define kMMC_CLK_M(m)		((m) - 1)
-#define kCCU_MMC_BGR		0x84c
 #define kMMC_BGR_GATE0		(1u << 0)
 #define kMMC_BGR_RESET0		(1u << 16)
+
+// where each soc keeps smhc0's clock and pins. the a733 values were read back from a running
+// board: module clock at ccu 0xd00, gate and reset at 0xd0c. linux feeds it from source 4,
+// pll-peri1's 300 mhz output, and vendor u-boot may leave that pll gated, so it is turned back on
+struct PDSunxiMMCSoC {
+	const char *name;
+	uint64_t ccuPhys;
+	uint64_t pioPhys;       // 0: firmware left the pins set up, leave them
+	uint32_t modClk;
+	uint32_t bgr;
+	uint32_t fastSrc;
+	uint32_t fastParentHz;
+	uint32_t fastPll;       // 0: the fast parent is always running
+	uint32_t fastPllCfg;    // its factors as linux programs them, anything else is left alone
+};
+
+static const PDSunxiMMCSoC kH616 = {
+	"h616", 0x03001000ULL, 0x0300b000ULL, 0x830, 0x84c, 1u << 24, 600000000u, 0, 0,
+};
+
+static const PDSunxiMMCSoC kA733 = {
+	"a733", 0x02002000ULL, 0, 0xd00, 0xd0c, 4u << 24, 150000000u, 0x0c0, 0x00126310,
+};
+
+// pll control: enable, ldo, lock enable, lock, and the output gates in the top byte
+#define kPLL_ON_BITS		0xff000000u
+#define kPLL_LOCK		(1u << 28)
+
+// the a733's micro sd slot; its other smhcs (sdio wifi, emmc) share the compatible
+#define kA733SMHC0Phys		0x04020000ULL
+
+// the vendor and the mainline compatible for the a733's smhc
+static bool
+pd_is_a733(IOService *provider)
+{
+	OSData *compat = OSDynamicCast(OSData, provider->getProperty("compatible"));
+	const char *s = compat != NULL ? (const char *)compat->getBytesNoCopy() : NULL;
+	unsigned int len = compat != NULL ? compat->getLength() : 0;
+
+	for (unsigned int o = 0; s != NULL && o < len; o += strnlen(s + o, len - o) + 1) {
+		if (strncmp(s + o, "allwinner,sunxi-mmc-v5p3x", len - o) == 0 ||
+		    strncmp(s + o, "allwinner,sun60i-a733-mmc", len - o) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
 
 // port f, sd pins pf0-pf5 on function 2
 #define kPIO_PF			0xb4
@@ -117,7 +158,6 @@ OSDefineMetaClassAndStructors(PDSun50iMMC, IOService);
 
 #define kIdentClockHz		400000
 #define kTransferClockHz	25000000
-#define kPeriph0Hz		600000000u
 #define kMaxBlocksPerCmd	128
 
 static volatile uint8_t *
@@ -151,10 +191,16 @@ PDSun50iMMC::start(IOService *provider)
 	if (!super::start(provider))
 		return false;
 
+	fSoC = pd_is_a733(provider) ? &kA733 : &kH616;
 	fRegMap = provider->mapDeviceMemoryWithIndex(0, kIOMapInhibitCache);
-	fCCU = map_phys(kCCUPhys, 0x1000, &fCCUMap);
-	fPIO = map_phys(kPIOPhys, 0x1000, &fPIOMap);
-	if (fRegMap == NULL || fCCU == NULL || fPIO == NULL) {
+	fCCU = map_phys(fSoC->ccuPhys, 0x1000 + (fSoC->modClk & ~0xfffu), &fCCUMap);
+	if (fSoC->pioPhys != 0)
+		fPIO = map_phys(fSoC->pioPhys, 0x1000, &fPIOMap);
+	if (fRegMap != NULL && fSoC == &kA733 && fRegMap->getPhysicalAddress() != kA733SMHC0Phys) {
+		OSSafeReleaseNULL(fRegMap);
+		return false;
+	}
+	if (fRegMap == NULL || fCCU == NULL || (fSoC->pioPhys != 0 && fPIO == NULL)) {
 		IOLog("PDSun50iMMC: cannot map registers\n");
 		return false;
 	}
@@ -222,14 +268,20 @@ bool
 PDSun50iMMC::bringUpController(void)
 {
 	// pf0-pf5 to the sd function with pull-ups and drive level 2
-	for (uint32_t pin = 0; pin <= 5; pin++) {
+	for (uint32_t pin = 0; fPIO != NULL && pin <= 5; pin++) {
 		mmio_rmw(fPIO, kPIO_PF + kPIO_CFG0, 0xfu << (pin * 4), kPF_FUNC_SDC0 << (pin * 4));
 		mmio_rmw(fPIO, kPIO_PF + kPIO_DRV0, 0x3u << (pin * 2), 2u << (pin * 2));
 		mmio_rmw(fPIO, kPIO_PF + kPIO_PULL0, 0x3u << (pin * 2), 1u << (pin * 2));
 	}
 
-	mmio_rmw(fCCU, kCCU_MMC_BGR, 0, kMMC_BGR_GATE0);
-	mmio_rmw(fCCU, kCCU_MMC_BGR, 0, kMMC_BGR_RESET0);
+	IOLog("PDSun50iMMC: %s smhc0, module clock 0x%08x, gctrl 0x%08x clkcr 0x%08x cmd 0x%08x status 0x%08x ntsr 0x%08x\n",
+	    fSoC->name, *(volatile uint32_t *)(fCCU + fSoC->modClk), rd(kGCTRL), rd(kCLKCR), rd(kCMD), rd(kSTATUS), rd(kNTSR));
+	mmio_rmw(fCCU, fSoC->bgr, 0, kMMC_BGR_GATE0);
+	mmio_rmw(fCCU, fSoC->bgr, 0, kMMC_BGR_RESET0);
+	// a controller with no running module clock never takes a command, not even the clock update
+	if (fSoC->fastPll)
+		*(volatile uint32_t *)(fCCU + fSoC->modClk) = kMMC_CLK_ENABLE | kMMC_CLK_SRC_OSC24M;
+	fFastOK = fSoC->fastPll == 0 || enableFastPll();
 
 	wr(kGCTRL, kGCTRL_RESET);
 	IODelay(1000);
@@ -248,6 +300,25 @@ PDSun50iMMC::bringUpController(void)
 }
 
 bool
+PDSun50iMMC::enableFastPll(void)
+{
+	volatile uint32_t *pll = (volatile uint32_t *)(fCCU + fSoC->fastPll);
+	uint32_t was = *pll;
+
+	if ((was & ~kPLL_ON_BITS) != fSoC->fastPllCfg) {
+		IOLog("PDSun50iMMC: fast pll 0x%08x not as expected, staying on 24 mhz\n", was);
+		return false;
+	}
+
+	*pll = was | kPLL_ON_BITS;
+	for (int i = 0; i < 1000 && (*pll & kPLL_LOCK) == 0; i++) {
+		IODelay(10);
+	}
+	IOLog("PDSun50iMMC: fast pll 0x%08x -> 0x%08x\n", was, *pll);
+	return (*pll & kPLL_LOCK) != 0;
+}
+
+bool
 PDSun50iMMC::updateClock(void)
 {
 	wr(kCMD, kCMD_START | kCMD_UPCLK_ONLY | kCMD_WAIT_PRE_OVER);
@@ -258,7 +329,8 @@ PDSun50iMMC::updateClock(void)
 		}
 		IODelay(1000);
 	}
-	IOLog("PDSun50iMMC: clock update timed out\n");
+	IOLog("PDSun50iMMC: clock update timed out, gctrl 0x%08x clkcr 0x%08x cmd 0x%08x rint 0x%08x status 0x%08x ntsr 0x%08x\n",
+	    rd(kGCTRL), rd(kCLKCR), rd(kCMD), rd(kRINT), rd(kSTATUS), rd(kNTSR));
 	return false;
 }
 
@@ -272,10 +344,11 @@ PDSun50iMMC::setClock(uint32_t hz)
 	if (!updateClock())
 		return false;
 
-	// periph0 is fed doubled with a fixed /2 behind it, so it counts as 600 mhz
-	if (hz > 24000000) {
-		src = kMMC_CLK_SRC_PERIPH0;
-		parent = kPeriph0Hz;
+	// h616: periph0 is fed doubled with a fixed /2 behind it, so it counts as 600 mhz
+	// a733: pll-peri1's 300 mhz output, halved by new timing mode, counts as 150 mhz
+	if (hz > 24000000 && fFastOK) {
+		src = fSoC->fastSrc;
+		parent = fSoC->fastParentHz;
 	}
 	div = (parent + hz - 1) / hz;
 	while (div > 16) {
@@ -284,7 +357,7 @@ PDSun50iMMC::setClock(uint32_t hz)
 	}
 	if (n > 3)
 		return false;
-	*(volatile uint32_t *)(fCCU + kCCU_MMC0_CLK) =
+	*(volatile uint32_t *)(fCCU + fSoC->modClk) =
 	    kMMC_CLK_ENABLE | src | kMMC_CLK_N(n) | kMMC_CLK_M(div);
 	wr(kNTSR, rd(kNTSR) | kNTSR_MODE_NEW);
 

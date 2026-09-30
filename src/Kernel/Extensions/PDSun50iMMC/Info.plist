@@ -29,6 +29,8 @@
 			<key>IONameMatch</key>
 			<array>
 				<string>sunxi-mmc</string>
+				<string>allwinner,sunxi-mmc-v5p3x</string>
+				<string>allwinner,sun60i-a733-mmc</string>
 			</array>
 			<key>IOProbeScore</key>
 			<integer>5000</integer>
