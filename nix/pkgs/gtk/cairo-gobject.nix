@@ -93,6 +93,6 @@ EOF
 
   meta = with lib; {
     description = "cairo-gobject, cross-built standalone for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

@@ -67,6 +67,6 @@ stdenv.mkDerivation {
   meta = with lib; {
     description = "GBM-shaped veneer over PDSurface so unmodified ports link";
     license = licenses.mit;
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

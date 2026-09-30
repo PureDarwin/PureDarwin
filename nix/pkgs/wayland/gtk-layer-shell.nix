@@ -177,6 +177,6 @@ EOF
     description = "gtk-layer-shell, cross-built for PureDarwin - lets GTK3 windows be docks and desktops under a wlr-layer-shell compositor";
     homepage = "https://github.com/wmww/gtk-layer-shell";
     license = licenses.lgpl3Plus;
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

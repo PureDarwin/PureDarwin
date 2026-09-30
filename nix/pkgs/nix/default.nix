@@ -25,7 +25,7 @@ let
   inherit (pkgs) stdenv;
 
   meta = {
-    platforms = lib.platforms.linux;
+    platforms = lib.platforms.unix;
   };
 
   # A static library built with CMake. Output layout: $out/{lib,include}.

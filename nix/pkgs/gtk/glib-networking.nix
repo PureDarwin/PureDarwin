@@ -118,6 +118,6 @@ EOF
 
   meta = with lib; {
     description = "glib-networking (GnuTLS GIO TLS backend), cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

@@ -126,6 +126,6 @@ EOF
     description = "Wayland compositor library for PureDarwin";
     homepage = "https://gitlab.freedesktop.org/wlroots/wlroots";
     license = licenses.mit;
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

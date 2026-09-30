@@ -104,7 +104,7 @@
           darwinCrossToolchain = pkgs.callPackage ./nix/pkgs/toolchain/toolchain.nix {
             inherit nativeLd;
           };
-          arm64CrossToolchain = if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/toolchain.nix {
+          arm64CrossToolchain = pkgs.callPackage ./nix/pkgs/toolchain/toolchain.nix {
             inherit nativeLd;
             target = "arm64-apple-darwin20.4";
             clangTarget = "arm64-apple-macosx26.5";

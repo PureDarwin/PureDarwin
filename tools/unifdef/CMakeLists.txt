@@ -1,4 +1,4 @@
-if(CMAKE_HOST_APPLE)
+if(CMAKE_HOST_APPLE AND NOT DEFINED ENV{NIX_UNIFDEF_PATH})
     add_executable(unifdef)
     target_sources(unifdef PRIVATE unifdef.c)
 elseif(DEFINED ENV{NIX_UNIFDEF_PATH})

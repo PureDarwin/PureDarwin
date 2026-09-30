@@ -34,7 +34,8 @@ endif()
 # a full developer directory, and on failure it prints its complaint on stdout
 # where the path should be, which then arrives at the compiler as
 # -fuse-ld=error:...  Resolve it once, here, and check the answer.
-if(CMAKE_HOST_APPLE)
+# The nix toolchain supplies its own ld64 on either host (NIX_NATIVE_LD_PATH).
+if(CMAKE_HOST_APPLE AND NOT NATIVE_LD64_EXECUTABLE)
     execute_process(COMMAND xcrun --find ld
         OUTPUT_VARIABLE _puredarwin_xcrun_ld
         OUTPUT_STRIP_TRAILING_WHITESPACE
@@ -55,10 +56,10 @@ function(add_darwin_executable name)
 
     add_executable(${name})
     target_compile_definitions(${name} PRIVATE __PUREDARWIN__)
-    if(CMAKE_HOST_APPLE)
-        target_link_options(${name} PRIVATE -fuse-ld=${PUREDARWIN_HOST_LD})
-    elseif(NATIVE_LD64_EXECUTABLE)
+    if(NATIVE_LD64_EXECUTABLE)
         target_link_options(${name} PRIVATE -fuse-ld=${NATIVE_LD64_EXECUTABLE})
+    elseif(CMAKE_HOST_APPLE)
+        target_link_options(${name} PRIVATE -fuse-ld=${PUREDARWIN_HOST_LD})
     elseif(PUREDARWIN_USE_LD64_LLD)
         target_link_options(${name} PRIVATE -fuse-ld=lld)
     else()
@@ -122,10 +123,10 @@ function(add_darwin_shared_library name)
         add_library(${name} SHARED)
     endif()
 
-    if(CMAKE_HOST_APPLE)
-        target_link_options(${name} PRIVATE -fuse-ld=${PUREDARWIN_HOST_LD})
-    elseif(NATIVE_LD64_EXECUTABLE)
+    if(NATIVE_LD64_EXECUTABLE)
         target_link_options(${name} PRIVATE -fuse-ld=${NATIVE_LD64_EXECUTABLE})
+    elseif(CMAKE_HOST_APPLE)
+        target_link_options(${name} PRIVATE -fuse-ld=${PUREDARWIN_HOST_LD})
     elseif(PUREDARWIN_USE_LD64_LLD)
         target_link_options(${name} PRIVATE -fuse-ld=lld)
     else()

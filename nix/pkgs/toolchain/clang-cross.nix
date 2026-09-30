@@ -140,6 +140,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "clang, cross-built to run on PureDarwin (links the cross-built libLLVM, drives cctools ld)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

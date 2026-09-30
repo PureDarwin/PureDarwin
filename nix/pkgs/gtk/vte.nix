@@ -186,6 +186,6 @@ EOF
 
   meta = with lib; {
     description = "vte terminal widget, cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

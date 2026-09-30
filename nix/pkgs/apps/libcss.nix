@@ -92,6 +92,6 @@ EOF
 
   meta = with lib; {
     description = "libcss (NetSurf CSS parsing/selection library), cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

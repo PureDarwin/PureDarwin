@@ -111,6 +111,6 @@ void wait_for_processes(void);
   dontFixup = true;
 
   meta = with lib; {
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

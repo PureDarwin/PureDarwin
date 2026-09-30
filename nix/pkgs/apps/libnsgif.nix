@@ -72,6 +72,6 @@ EOF
 
   meta = with lib; {
     description = "libnsgif (NetSurf GIF decoder), cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

@@ -103,6 +103,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "PureDarwin window-server RPC, serviced in process against Wayland";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

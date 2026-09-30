@@ -185,7 +185,7 @@ if(NOT PUREDARWIN_ARM32)
     target_link_options(libdyld PRIVATE -Wl,-u,__dyld_find_unwind_sections)
 endif()
 
-if(CMAKE_HOST_APPLE)
+if(CMAKE_HOST_APPLE AND NOT PUREDARWIN_NIX_TOOLCHAIN)
     set(_libdyld_apple_ld_stub_dir ${CMAKE_CURRENT_BINARY_DIR}/apple-ld-stubs)
     set(_libdyld_apple_ld_pthread_stub ${_libdyld_apple_ld_stub_dir}/libsystem_pthread.tbd)
     add_custom_command(

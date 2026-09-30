@@ -187,6 +187,6 @@ EOF
 
   meta = with lib; {
     description = "xfce4-terminal, cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

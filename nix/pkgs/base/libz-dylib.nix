@@ -64,6 +64,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "Real /usr/lib/libz.1.dylib for PureDarwin, matching the SDK's libz.tbd stub so SDK-linked -lz binaries actually resolve at runtime";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

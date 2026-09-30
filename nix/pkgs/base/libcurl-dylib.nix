@@ -149,6 +149,6 @@ EOF
 
   meta = with lib; {
     description = "Real /usr/lib/libcurl.4.dylib for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

@@ -177,6 +177,6 @@ EOF
 
   meta = with lib; {
     description = "libxfce4windowing, cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

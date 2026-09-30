@@ -70,6 +70,6 @@ stdenv.mkDerivation {
     description = "Ninja build tool, cross-built to run on PureDarwin";
     homepage = "https://ninja-build.org/";
     license = licenses.asl20;
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

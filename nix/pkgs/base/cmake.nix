@@ -121,6 +121,6 @@ EOF
     description = "CMake, cross-built to run on PureDarwin";
     homepage = "https://cmake.org/";
     license = licenses.bsd3;
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

@@ -26,6 +26,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "Native Wayland protocol scanner used during PureDarwin cross builds";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

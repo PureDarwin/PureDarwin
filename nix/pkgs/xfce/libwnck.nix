@@ -179,6 +179,6 @@ EOF
 
   meta = with lib; {
     description = "libwnck, cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

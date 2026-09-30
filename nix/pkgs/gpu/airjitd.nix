@@ -43,6 +43,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "PureDarwin AIR shader JIT daemon for the paravirtual GPU";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

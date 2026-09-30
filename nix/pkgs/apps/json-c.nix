@@ -70,6 +70,6 @@ EOF
     description = "JSON-C cross-built for PureDarwin";
     homepage = "https://github.com/json-c/json-c";
     license = licenses.mit;
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

@@ -67,6 +67,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "Info-ZIP unzip, cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

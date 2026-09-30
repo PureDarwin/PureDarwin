@@ -114,6 +114,6 @@ EOF
   meta = with lib; {
     description = "Simple Wayland compositor library for Darwin";
     license = licenses.mit;
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

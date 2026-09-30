@@ -66,6 +66,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "pkgconf, cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

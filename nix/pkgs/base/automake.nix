@@ -39,6 +39,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "GNU Automake, installed for PureDarwin (pure Perl - no cross-compiling needed)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

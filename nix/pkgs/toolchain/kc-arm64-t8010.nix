@@ -43,6 +43,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "PureDarwin arm64 T8010 (A10) boot kernel collection, assembled by kc-tools' kc-builder";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

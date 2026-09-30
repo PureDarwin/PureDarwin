@@ -170,6 +170,6 @@ LLVMCONFIG
 
   meta = with lib; {
     description = "LLVM ${llvmVersion} runtime libraries, cross-built for PureDarwin (llvmpipe/lavapipe backend)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

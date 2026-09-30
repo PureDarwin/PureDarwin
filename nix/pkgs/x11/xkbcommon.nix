@@ -96,6 +96,6 @@ EOF
 
   meta = with lib; {
     description = "Real cross-built libxkbcommon (+ libxkbcommon-x11), for i3/keyboard-layout consumers";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

@@ -69,6 +69,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "bzip2 compression tools and libbz2, cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }
