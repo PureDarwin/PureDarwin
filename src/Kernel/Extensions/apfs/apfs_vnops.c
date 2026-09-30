@@ -23,6 +23,11 @@
 #include <mach/mach_time.h>
 #include <string.h>
 
+// namei.h keeps it under BSD_KERNEL_PRIVATE
+#ifndef CN_FIRMLINK_NOFOLLOW
+#define CN_FIRMLINK_NOFOLLOW 0x01000000
+#endif
+
 static int apfs_vol_path(vnode_t vp, char *buf, int *len);
 
 int (**apfs_vnodeop_p)(void *);
@@ -351,6 +356,15 @@ apfs_vnop_lookup(struct vnop_lookup_args *ap)
 	error = apfs_vget(dnode->amp, fileid, ap->a_dvp, ap->a_vpp);
 	if (error == 0 && (cnp->cn_flags & MAKEENTRY))
 		cache_enter(ap->a_dvp, *ap->a_vpp, cnp);
+	// the name cache follows a firmlink by itself, a miss lands here and must do the same
+	if (error == 0 && vnode_isdir(*ap->a_vpp) && !(cnp->cn_flags & CN_FIRMLINK_NOFOLLOW)) {
+		vnode_t tvp;
+
+		if (vnode_getfirmlink(*ap->a_vpp, &tvp) == 0) {
+			vnode_put(*ap->a_vpp);
+			*ap->a_vpp = tvp;
+		}
+	}
 	return error;
 }
 

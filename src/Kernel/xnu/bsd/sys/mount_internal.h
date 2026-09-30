@@ -442,6 +442,8 @@ int  mount_refdrain(mount_t);
 errno_t vfs_rootmountalloc(const char *, const char *, mount_t *mpp);
 
 int vfs_mount_recovery(void);
+int vfs_mount_rosv_data(void);
+int vfs_setup_firmlinks(mount_t datamp);
 
 typedef uint32_t vfs_switch_root_flags_t;
 #define VFSSR_VIRTUALDEV_PROHIBITED     0x01 /* Not allowed to pivot into virtual devices (disk images).

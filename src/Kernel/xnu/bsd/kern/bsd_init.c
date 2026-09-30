@@ -1005,6 +1005,12 @@ bsd_init(void)
 	}
 #endif /* DEVFS */
 
+#if CONFIG_ROSV_STARTUP
+	// the Data volume of a System root, before launchd and after /dev for its device node
+	bsd_init_kprintf("calling vfs_mount_rosv_data\n");
+	(void)vfs_mount_rosv_data();
+#endif /* CONFIG_ROSV_STARTUP */
+
 #if CONFIG_BASESYSTEMROOT
 #if CONFIG_IMAGEBOOT
 	if (bsdmgroot_bootable()) {

@@ -36,6 +36,10 @@ struct apfs_mount_args {
 
 static int apfs_mount(struct mount *mp, vnode_t devvp, user_addr_t data,
     vfs_context_t ctx);
+static int apfs_mount_dev(struct mount *mp, vnode_t devvp, int own_devvp_ref,
+    vfs_context_t ctx);
+static int apfs_vfs_ioctl(struct mount *mp, u_long command, caddr_t data,
+    int flags, vfs_context_t ctx);
 static int apfs_start(struct mount *mp, int flags, vfs_context_t ctx);
 static int apfs_unmount(struct mount *mp, int mntflags, vfs_context_t ctx);
 static int apfs_root(struct mount *mp, vnode_t *vpp, vfs_context_t ctx);
@@ -70,6 +74,7 @@ static struct vfsops apfs_vfsops = {
 	.vfs_sync = apfs_sync,
 	.vfs_vget = apfs_vfs_vget,
 	.vfs_init = apfs_init,
+	.vfs_ioctl = apfs_vfs_ioctl,
 };
 
 static int
@@ -79,23 +84,29 @@ apfs_init(__unused struct vfsconf *vfsp)
 }
 
 static int
-apfs_mount(__unused struct mount *mp, vnode_t devvp, user_addr_t data,
+apfs_mount(struct mount *mp, vnode_t devvp, user_addr_t data,
+    vfs_context_t ctx)
+{
+	int error;
+
+	if (vfs_isupdate(mp))
+		return 0;
+	if (devvp != NULLVP)
+		return apfs_mount_dev(mp, devvp, 0, ctx);
+	error = apfs_open_fspec(data, &devvp, ctx);
+	if (error)
+		return error;
+	return apfs_mount_dev(mp, devvp, 1, ctx);
+}
+
+// own_devvp_ref: devvp came from bdevvp here, so its usecount is ours to drop on failure
+static int
+apfs_mount_dev(struct mount *mp, vnode_t devvp, int own_devvp_ref,
     vfs_context_t ctx)
 {
 	struct apfs_mount *amp;
 	struct vfsstatfs *sfs;
 	int error;
-	int own_devvp_ref = 0;
-
-	if (vfs_isupdate(mp))
-		return 0;
-
-	if (devvp == NULLVP) {
-		error = apfs_open_fspec(data, &devvp, ctx);
-		if (error)
-			return error;
-		own_devvp_ref = 1;
-	}
 
 	amp = (struct apfs_mount *)_MALLOC(sizeof(*amp), M_TEMP, M_WAITOK | M_ZERO);
 	if (amp == NULL) {
@@ -141,6 +152,14 @@ apfs_mount(__unused struct mount *mp, vnode_t devvp, user_addr_t data,
 	apfs_caches_alloc(amp);
 	if (apfs_volume_slot_for_dev(amp->dev, &amp->vol_slot) != 0)
 		amp->vol_slot = 0;
+	// a System volume with a Data sibling, or that Data volume, makes up a volume group
+	{
+		uint16_t role = apfs_role_for_dev(amp->dev);
+
+		amp->vol_group = role == APFS_VOL_ROLE_DATA ||
+		    (role == APFS_VOL_ROLE_SYSTEM &&
+		    apfs_role_dev(amp->dev, APFS_VOL_ROLE_DATA, NULL, NULL, 0) == 0);
+	}
 	error = apfs_container_attach(amp);
 	if (error)
 		goto fail;
@@ -226,7 +245,8 @@ apfs_mount(__unused struct mount *mp, vnode_t devvp, user_addr_t data,
 	sfs->f_fsid.val[1] = (int32_t)vfs_typenum(mp);
 	strlcpy(sfs->f_fstypename, APFS_MODULE_NAME, sizeof(sfs->f_fstypename));
 
-	APFSLOG("mounted volume slot %u read-write", amp->vol_slot);
+	APFSLOG("mounted volume slot %u read-write%s", amp->vol_slot,
+	    amp->vol_group ? ", volume group" : "");
 	return 0;
 
 fail:
@@ -1146,6 +1166,16 @@ apfs_getattr(__unused struct mount *mp, struct vfs_attr *fsap,
 		VFSATTR_RETURN(fsap, f_bfree, freeb);
 		VFSATTR_RETURN(fsap, f_bavail, freeb);
 		VFSATTR_RETURN(fsap, f_bused, amp->block_count - freeb);
+		// VOL_GROUPS on root is what makes xnu mount the Data volume by role
+		if (VFSATTR_IS_ACTIVE(fsap, f_capabilities)) {
+			vol_capabilities_attr_t *cap = &fsap->f_capabilities;
+
+			bzero(cap, sizeof(*cap));
+			if (amp->vol_group)
+				cap->capabilities[VOL_CAPABILITIES_FORMAT] = VOL_CAP_FMT_VOL_GROUPS;
+			cap->valid[VOL_CAPABILITIES_FORMAT] = VOL_CAP_FMT_VOL_GROUPS;
+			VFSATTR_SET_SUPPORTED(fsap, f_capabilities);
+		}
 		// ATTR_VOL_UUID: init_featureflags aborts when getattrlist on / fails for it
 		if (VFSATTR_IS_ACTIVE(fsap, f_uuid)) {
 			memcpy(fsap->f_uuid, amp->apfs.apfs_vol_uuid, sizeof(fsap->f_uuid));
@@ -1155,6 +1185,51 @@ apfs_getattr(__unused struct mount *mp, struct vfs_attr *fsap,
 	// Free inodes are not a resource in APFS. Report plenty
 	VFSATTR_RETURN(fsap, f_files, files + (1ull << 32));
 	VFSATTR_RETURN(fsap, f_ffree, 1ull << 32);
+	return 0;
+}
+
+// VFSIOC_MOUNT_BYROLE: mount the root container's volume with this role into mp
+static int
+apfs_vfs_ioctl(struct mount *mp, u_long command, caddr_t data,
+    __unused int flags, vfs_context_t ctx)
+{
+	fs_role_mount_args_t *frma = (fs_role_mount_args_t *)data;
+	struct apfs_mount *origin;
+	struct vfsstatfs *sfs;
+	vnode_t devvp = NULLVP;
+	char bsd[64];
+	dev_t dev;
+	int error;
+
+	if (command != VFSIOC_MOUNT_BYROLE)
+		return ENOTSUP;
+	if (frma == NULL || frma->root_mp == NULL ||
+	    strcmp(vfs_statfs(frma->root_mp)->f_fstypename, APFS_MODULE_NAME) != 0)
+		return EINVAL;
+	origin = VFSTOAPFS(frma->root_mp);
+	if (origin == NULL)
+		return EINVAL;
+	if (frma->mount_role > 0xffff ||
+	    apfs_role_dev(origin->dev, (uint16_t)frma->mount_role, &dev, bsd, sizeof(bsd)) != 0) {
+		APFSLOG("mount by role 0x%x: no such volume in the container", frma->mount_role);
+		return ENOENT;
+	}
+	error = bdevvp(dev, &devvp);
+	if (error) {
+		APFSLOG("mount by role 0x%x: bdevvp(%s) failed: %d", frma->mount_role, bsd, error);
+		return error;
+	}
+	// xnu looks f_mntfromname up afterwards for mnt_devvp
+	sfs = vfs_statfs(mp);
+	snprintf(sfs->f_mntfromname, sizeof(sfs->f_mntfromname), "/dev/%s", bsd);
+	error = apfs_mount_dev(mp, devvp, 1, ctx);
+	if (error) {
+		sfs->f_mntfromname[0] = '\0';
+		APFSLOG("mount by role 0x%x: %s failed: %d", frma->mount_role, bsd, error);
+		return error;
+	}
+	APFSLOG("mounted role 0x%x volume /dev/%s on %s", frma->mount_role, bsd,
+	    sfs->f_mntonname);
 	return 0;
 }
 

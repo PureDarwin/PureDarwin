@@ -1929,6 +1929,60 @@ vfs_mount_recovery(void)
 }
 
 /*
+ * Mount the Data volume of a root that is part of a volume group, then its firmlinks
+ */
+int
+vfs_mount_rosv_data(void)
+{
+#if CONFIG_ROSV_STARTUP
+	char datapath[] = PLATFORM_DATA_VOLUME_MOUNT_POINT; /* !const because of internal casting */
+	struct vfs_attr vfsattr;
+	mount_t datamp;
+	int error;
+
+	error = vnode_get(rootvnode);
+	if (error) {
+		printf("vnode_get(rootvnode) failed with error %d\n", error);
+		return error;
+	}
+
+	// only a root in a volume group (System + Data) has a Data volume to mount
+	VFSATTR_INIT(&vfsattr);
+	VFSATTR_WANTED(&vfsattr, f_capabilities);
+	if (vfs_getattr(rootvnode->v_mount, &vfsattr, vfs_context_kernel()) != 0 ||
+	    !VFSATTR_IS_SUPPORTED(&vfsattr, f_capabilities) ||
+	    !(vfsattr.f_capabilities.capabilities[VOL_CAPABILITIES_FORMAT] & VOL_CAP_FMT_VOL_GROUPS) ||
+	    !(vfsattr.f_capabilities.valid[VOL_CAPABILITIES_FORMAT] & VOL_CAP_FMT_VOL_GROUPS)) {
+		vnode_put(rootvnode);
+		return 0;
+	}
+
+	printf("attempting kernel mount for data volume... \n");
+	error = kernel_mount(rootvnode->v_mount->mnt_vfsstat.f_fstypename, NULLVP, NULLVP,
+	    datapath, (rootvnode->v_mount), 0, MNT_DONTBROWSE, (KERNEL_MOUNT_DATAVOL), vfs_context_kernel());
+	vnode_put(rootvnode);
+	if (error) {
+		printf("Failed to mount data volume (%d)\n", error);
+		return error;
+	}
+
+	datamp = vfs_getvfs_by_mntonname(datapath);
+	if (datamp == NULL) {
+		printf("data volume mounted but not found at %s\n", datapath);
+		return ENOENT;
+	}
+	printf("mounted data volume %s at %s\n", datamp->mnt_vfsstat.f_mntfromname, datapath);
+#if CONFIG_FIRMLINKS
+	vfs_setup_firmlinks(datamp);
+#endif
+	mount_iterdrop(datamp);
+	return 0;
+#else
+	return 0;
+#endif
+}
+
+/*
  * Lookup a mount point by filesystem identifier.
  */
 

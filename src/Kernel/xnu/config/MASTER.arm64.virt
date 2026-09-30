@@ -25,7 +25,7 @@
 #  BSD_RELEASE =    [ BSD_BASE no_printf_str no_kprintf_str secure_kernel ]
 #  BSD_DEV =        [ BSD_BASE config_netboot config_imageboot config_coredump pgo config_vnguard ]
 #  BSD_DEBUG =      [ BSD_BASE config_netboot config_imageboot config_coredump pgo config_vnguard ]
-#  FILESYS_BASE =   [ devfs fifo fs_compression config_protect config_mnt_rootsnap config_fse routefs namedstreams bindfs quota config_triggers config_ext_resolver]
+#  FILESYS_BASE =   [ devfs fifo fs_compression config_protect config_mnt_rootsnap config_fse routefs namedstreams bindfs quota config_triggers config_ext_resolver config_rosv_startup config_firmlinks]
 #  FILESYS_RELEASE= [ FILESYS_BASE ]
 #  FILESYS_DEV =    [ FILESYS_BASE fdesc ]
 #  FILESYS_DEBUG =  [ FILESYS_BASE fdesc ]

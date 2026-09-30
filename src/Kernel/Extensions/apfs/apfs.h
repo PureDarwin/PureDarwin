@@ -21,6 +21,9 @@
 #define APFS_NX_MAX_FILE_SYSTEMS 100
 #define APFS_ROOT_FILEID 2
 #define APFS_APSB_MAGIC  0x42535041U /* APFS_MAGIC 'BSPA', bytes read as "APSB" */
+// apfs_role values, the same numbers as xnu's VFS_*_ROLE
+#define APFS_VOL_ROLE_SYSTEM 0x0001
+#define APFS_VOL_ROLE_DATA   0x0040
 
 #define APFS_OBJECT_TYPE_MASK 0x0000ffffU
 #define APFS_OBJECT_TYPE_NX_SUPERBLOCK 0x00000001U
@@ -418,6 +421,7 @@ struct apfs_mount {
 	struct apfs_container *cont;
 	vnode_t io_devvp;		// cont->c_devvp: where blocks are read
 	uint32_t vol_slot;		// nx_fs_oid[] slot of this volume
+	int vol_group;			// System with a Data sibling, or Data: reports VOL_CAP_FMT_VOL_GROUPS
 	uint64_t seen_generation;
 	// One in-core vnode per file id. A fresh vnode per lookup breaks state hung off the vnode,
 	// notably AF_UNIX sockets, where unp_bind() stores the listener in vp->v_socket
@@ -538,5 +542,10 @@ int apfs_batch_owns(struct apfs_mount *amp, apfs_paddr_t paddr, uint64_t n);
 // nx_fs_oid[] slot behind a volume device node (0 when the node is the raw container,
 // or the registry has nothing to say)
 int apfs_volume_slot_for_dev(dev_t dev, uint32_t *slot);
+// registry RoleValue of the volume behind a device node, 0 when unknown
+uint16_t apfs_role_for_dev(dev_t dev);
+// the volume with this role in dev's container: its dev_t and BSD name (either may be NULL).
+// 0 when found
+int apfs_role_dev(dev_t dev, uint16_t role, dev_t *out, char *bsd, size_t len);
 
 #endif /* _PUREDARWIN_APFS_H_ */

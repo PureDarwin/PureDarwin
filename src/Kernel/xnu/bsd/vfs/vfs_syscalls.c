@@ -10572,6 +10572,168 @@ mkdirat(proc_t p, struct mkdirat_args *uap, __unused int32_t *retval)
 	           UIO_USERSPACE);
 }
 
+#if CONFIG_FIRMLINKS
+#define FIRMLINKS_FILE          "/usr/share/firmlinks"
+#define FIRMLINKS_FILE_MAX      (64 * 1024)
+
+// create each missing directory of tpath below the Data mount, owned and moded like its System twin
+static int
+firmlink_mkdir_data(mount_t datamp, char *tpath, const char *rel, vfs_context_t ctx)
+{
+	size_t base = strlen(datamp->mnt_vfsstat.f_mntonname) + 1;
+	size_t len = strlen(tpath);
+	char *spath;
+	int error = 0;
+
+	spath = zalloc_flags(ZV_NAMEI, Z_WAITOK | Z_ZERO);
+	for (size_t i = base; i <= len && error == 0; i++) {
+		struct vnode_attr sva, va;
+		vnode_t svp = NULLVP;
+		char c = tpath[i];
+
+		if (c != '/' && c != '\0') {
+			continue;
+		}
+		tpath[i] = '\0';
+		VATTR_INIT(&va);
+		VATTR_SET(&va, va_mode, 0755);
+		snprintf(spath, MAXPATHLEN, "/%s", rel);
+		spath[1 + (i - base)] = '\0';
+		if (vnode_lookup(spath, 0, &svp, ctx) == 0) {
+			VATTR_INIT(&sva);
+			VATTR_WANTED(&sva, va_mode);
+			VATTR_WANTED(&sva, va_uid);
+			VATTR_WANTED(&sva, va_gid);
+			if (vnode_getattr(svp, &sva, ctx) == 0) {
+				VATTR_SET(&va, va_mode, sva.va_mode & ALLPERMS);
+				VATTR_SET(&va, va_uid, sva.va_uid);
+				VATTR_SET(&va, va_gid, sva.va_gid);
+			}
+			vnode_put(svp);
+		}
+		error = mkdir1at(ctx, CAST_USER_ADDR_T(tpath), &va, AT_FDCWD, UIO_SYSSPACE);
+		if (error == EEXIST) {
+			error = 0;
+		} else if (error == 0) {
+			printf("firmlinks: created %s\n", tpath);
+		}
+		tpath[i] = c;
+	}
+	zfree(ZV_NAMEI, spath);
+	return error;
+}
+
+// firmlink one System directory to its Data twin, "/path<TAB>relative" as firmlinks lists it
+static int
+firmlink_setup_one(mount_t datamp, const char *src, const char *rel, char *tpath, vfs_context_t ctx)
+{
+	vnode_t svp = NULLVP, tvp = NULLVP;
+	int error;
+
+	error = vnode_lookup(src, 0, &svp, ctx);
+	if (error) {
+		return error;
+	}
+	if (!vnode_isdir(svp) || vnode_mount(svp) != rootvnode->v_mount) {
+		vnode_put(svp);
+		return ENOTDIR;
+	}
+
+	snprintf(tpath, MAXPATHLEN, "%s/%s", datamp->mnt_vfsstat.f_mntonname, rel);
+	error = vnode_lookup(tpath, 0, &tvp, ctx);
+	if (error == ENOENT) {
+		error = firmlink_mkdir_data(datamp, tpath, rel, ctx);
+		if (error == 0) {
+			error = vnode_lookup(tpath, 0, &tvp, ctx);
+		}
+	}
+	if (error == 0 && (!vnode_isdir(tvp) || vnode_mount(tvp) != datamp)) {
+		error = ENOTDIR;
+	}
+	if (error == 0) {
+		error = vnode_setasfirmlink(svp, tvp);
+	}
+	if (tvp) {
+		vnode_put(tvp);
+	}
+	vnode_put(svp);
+	return error;
+}
+
+// firmlink every System directory in /usr/share/firmlinks into the just mounted Data volume
+int
+vfs_setup_firmlinks(mount_t datamp)
+{
+	vfs_context_t ctx = vfs_context_kernel();
+	vnode_t fvp = NULLVP;
+	char *buf = NULL, *tpath = NULL, *line, *next;
+	int nset = 0, nfail = 0, nskip = 0;
+	off_t size = 0;
+	int resid = 0;
+	int error;
+
+	error = vnode_open(FIRMLINKS_FILE, FREAD, 0, 0, &fvp, ctx);
+	if (error) {
+		printf("firmlinks: cannot open %s: %d\n", FIRMLINKS_FILE, error);
+		return error;
+	}
+	error = vnode_size(fvp, &size, ctx);
+	if (error == 0 && (size <= 0 || size > FIRMLINKS_FILE_MAX)) {
+		error = EFBIG;
+	}
+	if (error == 0) {
+		buf = kalloc_data((vm_size_t)size + 1, Z_WAITOK | Z_ZERO);
+		error = vn_rdwr(UIO_READ, fvp, buf, (int)size, 0, UIO_SYSSPACE, IO_NODELOCKED,
+		    vfs_context_ucred(ctx), &resid, vfs_context_proc(ctx));
+	}
+	vnode_close(fvp, FREAD, ctx);
+	if (error) {
+		printf("firmlinks: cannot read %s: %d\n", FIRMLINKS_FILE, error);
+		goto out;
+	}
+	buf[size - resid] = '\0';
+
+	tpath = zalloc_flags(ZV_NAMEI, Z_WAITOK | Z_ZERO);
+	for (line = buf; line != NULL && *line != '\0'; line = next) {
+		char *tab, *end;
+		int lerr;
+
+		next = strchr(line, '\n');
+		if (next != NULL) {
+			*next++ = '\0';
+		}
+		end = line + strlen(line);
+		while (end > line && (end[-1] == '\r' || end[-1] == ' ')) {
+			*--end = '\0';
+		}
+		if (line[0] != '/' || (tab = strchr(line, '\t')) == NULL) {
+			continue;
+		}
+		*tab++ = '\0';
+		if (*tab == '\0' || *tab == '/') {
+			continue;
+		}
+		lerr = firmlink_setup_one(datamp, line, tab, tpath, ctx);
+		if (lerr == 0) {
+			nset++;
+		} else if (lerr == ENOENT) {
+			nskip++;
+		} else {
+			nfail++;
+			printf("firmlinks: %s -> %s failed: %d\n", line, tab, lerr);
+		}
+	}
+	printf("firmlinks: %d set, %d failed, %d without a System directory, into %s\n",
+	    nset, nfail, nskip, datamp->mnt_vfsstat.f_mntonname);
+	zfree(ZV_NAMEI, tpath);
+out:
+	if (buf != NULL) {
+		kfree_data(buf, (vm_size_t)size + 1);
+	}
+	return error;
+}
+#endif /* CONFIG_FIRMLINKS */
+
 static int
 rmdirat_internal(vfs_context_t ctx, int fd, user_addr_t dirpath,
     enum uio_seg segflg, int unlink_flags)
