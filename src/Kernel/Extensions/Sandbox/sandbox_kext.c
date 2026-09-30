@@ -25,6 +25,8 @@
 #include <libkern/OSAtomic.h>
 #include <IOKit/IOLib.h>
 #include <security/mac_policy.h>
+#include <sys/sysctl.h>
+#include <libkern/libkern.h>
 
 #include "sandbox_profile.h"
 
@@ -819,6 +821,17 @@ static struct mac_policy_conf sb_policy = {
 	.mpc_runtime_flags = 0,
 };
 
+// security.mac.sandbox: the atomic-file code in Security names its temp files after the
+// sentinel and gives up on a keychain when the lookup fails
+SYSCTL_DECL(_security_mac);
+SYSCTL_NODE(_security_mac, OID_AUTO, sandbox, CTLFLAG_RW | CTLFLAG_LOCKED, 0, "Sandbox");
+static char sb_sentinel[16];
+static int sb_audio_active;
+SYSCTL_STRING(_security_mac_sandbox, OID_AUTO, sentinel, CTLFLAG_RD | CTLFLAG_LOCKED,
+    sb_sentinel, 0, "Sandbox extension sentinel");
+SYSCTL_INT(_security_mac_sandbox, OID_AUTO, audio_active, CTLFLAG_RD | CTLFLAG_LOCKED,
+    &sb_audio_active, 0, "Audio active");
+
 kern_return_t
 sandbox_kext_start(kmod_info_t *ki, void *data)
 {
@@ -833,6 +846,11 @@ sandbox_kext_start(kmod_info_t *ki, void *data)
 		return KERN_FAILURE;
 	}
 	printf("Sandbox: policy registered (label slot %d)\n", sb_slot);
+
+	snprintf(sb_sentinel, sizeof(sb_sentinel), ".sb-%08x", (uint32_t)random());
+	sysctl_register_oid(&sysctl__security_mac_sandbox);
+	sysctl_register_oid(&sysctl__security_mac_sandbox_sentinel);
+	sysctl_register_oid(&sysctl__security_mac_sandbox_audio_active);
 	return KERN_SUCCESS;
 }
 
