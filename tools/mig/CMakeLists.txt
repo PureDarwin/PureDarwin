@@ -24,7 +24,7 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/lexxer.yy.c
     COMMENT "Lex lexxer.l" VERBATIM
 )
 
-if(CMAKE_HOST_APPLE)
+if(CMAKE_HOST_APPLE AND NOT DEFINED ENV{NIX_MIGCOM_PATH})
     add_executable(migcom)
     target_sources(migcom PRIVATE ${MIGCOM_SRCS})
     target_compile_definitions(migcom PRIVATE MIG_VERSION=\"\")

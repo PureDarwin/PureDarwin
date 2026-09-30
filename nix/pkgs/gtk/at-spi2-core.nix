@@ -154,6 +154,6 @@ EOF
 
   meta = with lib; {
     description = "AT-SPI2 core (libatspi, ATK, atk-bridge-2.0, registryd), cross-built for PureDarwin (X11/introspection/systemd disabled)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

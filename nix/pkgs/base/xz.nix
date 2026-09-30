@@ -65,6 +65,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "XZ compression utilities, cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

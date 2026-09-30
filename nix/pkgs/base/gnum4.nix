@@ -65,6 +65,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "GNU m4, cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

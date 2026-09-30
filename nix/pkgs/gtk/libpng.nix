@@ -59,6 +59,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "libpng, cross-built for PureDarwin (static; needed by cairo's SVG surface and gdk-pixbuf's PNG loader)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

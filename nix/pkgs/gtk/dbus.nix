@@ -153,6 +153,6 @@ CROSSFILE
 
   meta = with lib; {
     description = "D-Bus (libdbus + dbus-daemon), cross-built for PureDarwin (no systemd/SELinux/AppArmor/audit, kqueue/epoll off)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

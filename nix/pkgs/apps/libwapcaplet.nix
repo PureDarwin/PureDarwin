@@ -67,6 +67,6 @@ EOF
 
   meta = with lib; {
     description = "libwapcaplet (NetSurf string internment library), cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

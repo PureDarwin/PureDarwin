@@ -90,6 +90,6 @@ EOF
 
   meta = with lib; {
     description = "libxml2, cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

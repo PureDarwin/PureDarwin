@@ -93,11 +93,22 @@ LOG_SUPPORTED_KPI = $(call _LOG_HOST_LINK,SUPPORTED_KPI)
 # Host OS type
 UNAME_S := $(shell uname -s)
 
+# Where the target toolchain comes from. A mac with xcode should use xcode's.
+ifeq ($(UNAME_S),Darwin)
+	ifeq ($(NIX_DARWIN_TOOLCHAIN_DIR),)
+		XNU_TOOLCHAIN := xcode
+	else
+		XNU_TOOLCHAIN := cross
+	endif
+else ifeq ($(UNAME_S),Linux)
+	XNU_TOOLCHAIN := cross
+endif
+
 ifeq ($(VERBOSE),YES)
 	_v =
 	_vstdout =
 	_vstderr =
-	ifeq ($(UNAME_S),Darwin)
+	ifeq ($(XNU_TOOLCHAIN),xcode)
 		XCRUN = /usr/bin/xcrun -verbose
 	else
 		XCRUN = /usr/local/osxcross/bin/xcrun -verbose
@@ -106,7 +117,7 @@ else
 	_v = @
 	_vstdout = > /dev/null
 	_vstderr = 2&> /dev/null
-	ifeq ($(UNAME_S),Darwin)
+	ifeq ($(XNU_TOOLCHAIN),xcode)
 		XCRUN = /usr/bin/xcrun
 	else
 		XCRUN = /usr/local/osxcross/bin/xcrun
@@ -145,7 +156,7 @@ endif
 endif
 override HOST_SDKROOT = $(HOST_SDKROOT_RESOLVED)
 
-ifeq ($(UNAME_S),Darwin)
+ifeq ($(XNU_TOOLCHAIN),xcode)
 	ifeq ($(PLATFORM),)
 		export PLATFORMPATH := $(shell $(XCRUN) -sdk $(SDKROOT) -show-sdk-platform-path)
 		export PLATFORM := $(shell echo $(PLATFORMPATH) | sed 's,^.*/\([^/]*\)\.platform$$,\1,')
@@ -212,7 +223,7 @@ ifeq ($(UNAME_S),Darwin)
 	ifeq ($(NMEDIT),)
 		export NMEDIT := @NMEDIT_PATH@
 	endif
-else ifeq ($(UNAME_S),Linux)
+else ifeq ($(XNU_TOOLCHAIN),cross)
 
 	ifeq ($(PLATFORM),)
 		export PLATFORMPATH := $(shell $(XCRUN) -sdk $(SDKROOT) -show-sdk-platform-path)

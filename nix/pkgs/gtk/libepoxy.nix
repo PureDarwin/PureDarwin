@@ -130,6 +130,6 @@ EOF
 
   meta = with lib; {
     description = "libepoxy, cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

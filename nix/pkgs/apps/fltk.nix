@@ -135,6 +135,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "FLTK 1.3, cross-built for PureDarwin (X11 backend, no OpenGL)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

@@ -170,6 +170,6 @@ EOF
     description = "Sway Wayland compositor for PureDarwin's wlroots backend";
     homepage = "https://swaywm.org/";
     license = licenses.mit;
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

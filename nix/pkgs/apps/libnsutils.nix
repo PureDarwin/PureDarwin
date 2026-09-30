@@ -72,6 +72,6 @@ EOF
 
   meta = with lib; {
     description = "libnsutils (NetSurf utility library), cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

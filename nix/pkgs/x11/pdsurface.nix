@@ -67,6 +67,6 @@ stdenv.mkDerivation {
   meta = with lib; {
     description = "PureDarwin shareable graphics buffers, driver independent";
     license = licenses.bsd3;
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

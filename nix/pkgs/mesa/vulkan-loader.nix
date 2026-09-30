@@ -109,6 +109,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "Vulkan loader, cross-built for PureDarwin (dispatches to the lavapipe ICD)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

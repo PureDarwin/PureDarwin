@@ -77,6 +77,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "GNU Bison, cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

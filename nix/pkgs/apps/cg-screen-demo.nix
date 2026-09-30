@@ -28,6 +28,6 @@ stdenv.mkDerivation {
   meta = with lib; {
     description = "CoreGraphics bitmap-context scanout demo for PureDarwin";
     license = licenses.bsd3;
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

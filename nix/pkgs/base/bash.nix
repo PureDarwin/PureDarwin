@@ -82,6 +82,6 @@ stdenv.mkDerivation {
   meta = with lib; {
     description = "GNU Bash for PureDarwin (/bin/bash)";
     license = licenses.gpl3Plus;
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

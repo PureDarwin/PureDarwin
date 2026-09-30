@@ -121,6 +121,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "Dillo web browser, cross-built for PureDarwin against the X11 FLTK port (no JPEG/PNG/WebP)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

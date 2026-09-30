@@ -135,6 +135,6 @@ PDKCEOF
 
   meta = with lib; {
     description = "kc-tools (kc-builder, prelink-builder) built to run on PureDarwin, plus pd-rebuild-kc";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

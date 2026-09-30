@@ -117,6 +117,6 @@ EOF
 
   meta = with lib; {
     description = "libhubbub (NetSurf HTML5 parsing library), cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

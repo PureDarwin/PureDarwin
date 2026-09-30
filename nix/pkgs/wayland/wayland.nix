@@ -88,6 +88,6 @@ EOF
     description = "Wayland client and server libraries cross-built for PureDarwin";
     homepage = "https://wayland.freedesktop.org/";
     license = licenses.mit;
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

@@ -137,6 +137,6 @@ EOF
 
   meta = with lib; {
     description = "gdk-pixbuf, cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

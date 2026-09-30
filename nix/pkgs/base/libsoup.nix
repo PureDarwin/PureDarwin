@@ -131,6 +131,6 @@ EOF
 
   meta = with lib; {
     description = "libsoup 3, cross-built for PureDarwin (WebKitGTK's network backend)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

@@ -87,6 +87,6 @@ EOF
   meta = with lib; {
     description = "A primitive drawing library used by swc";
     license = licenses.mit;
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

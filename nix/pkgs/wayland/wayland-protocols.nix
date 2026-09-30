@@ -35,6 +35,6 @@ stdenv.mkDerivation {
     description = "Wayland protocol XML descriptions for PureDarwin compositor builds";
     homepage = "https://gitlab.freedesktop.org/wayland/wayland-protocols";
     license = licenses.mit;
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

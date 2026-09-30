@@ -45,6 +45,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "PureDarwin ARMv6 (BCM2835) prelinked kernel";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

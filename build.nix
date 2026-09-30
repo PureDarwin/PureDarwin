@@ -108,8 +108,9 @@ stdenv.mkDerivation ({
     cmake ninja bison flex perl bash ed unifdef tcsh
     pax coreutils findutils gawk gnused clang ruby iig python3
     nativeUnifdef nativeMigcom
+    activeCrossToolchain
   ] ++ lib.optionals (!isDarwinHost) [
-    activeCrossToolchain gnustep-base
+    gnustep-base
   ] ++ lib.optionals isDarwinHost [
     cctools
   ];
@@ -118,6 +119,8 @@ stdenv.mkDerivation ({
 
   configurePhase = ''
     runHook preConfigure
+    # xnu's SETUP tools run on the build machine. On a Mac they require stdenv's SDK (initially $SDKROOT), not ours.
+    hostSdkRoot="''${SDKROOT:-}"
     export DEVELOPER_DIR="${appleSdk}"
     export DARWIN_SDK_ROOT="$DEVELOPER_DIR/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
     # xnu's makefiles otherwise resolve these by shelling out to xcrun again,
@@ -125,6 +128,11 @@ stdenv.mkDerivation ({
     export SDKROOT="$DARWIN_SDK_ROOT"
     export SDKROOT_RESOLVED="$DARWIN_SDK_ROOT"
     export HOST_SDKROOT_RESOLVED="$DARWIN_SDK_ROOT"
+  '' + lib.optionalString isDarwinHost ''
+    if [ -n "$hostSdkRoot" ]; then
+      export HOST_SDKROOT_RESOLVED="$hostSdkRoot"
+    fi
+  '' + ''
     export PUREDARWIN_SDKROOT="$DARWIN_SDK_ROOT"
     export NIX_CXXSTDLIB_COMPILE=""
     export NIX_CXXSTDLIB_COMPILE_${lib.replaceStrings [ "-" "." ] [ "_" "_" ] stdenv.hostPlatform.config}=""
@@ -137,7 +145,7 @@ stdenv.mkDerivation ({
     if [ -e src/Kernel/xnu/Makefile ]; then
       sed -i 's#/bin/pwd#pwd#g' src/Kernel/xnu/Makefile
     fi
-  '' + lib.optionalString (!isDarwinHost) ''
+  '' + ''
     if [ -e src/Kernel/xnu/cmake/MakeInc.cmd.in ]; then
       sed -i "s#/usr/local/osxcross/bin/xcrun#${activeCrossToolchain}/bin/xcrun#g" \
         src/Kernel/xnu/cmake/MakeInc.cmd.in
@@ -168,7 +176,7 @@ EOF
       sed -i '1c#!${tcsh}/bin/tcsh -f' src/Kernel/xnu/SETUP/config/doconf
     fi
 
-  '' + lib.optionalString (!isDarwinHost) ''
+  '' + ''
     export NIX_NATIVE_LD_PATH="${nativeLd}/bin/ld"
     export NIX_HOST_CC_PATH="${clang}/bin/clang"
   '' + ''
@@ -177,9 +185,7 @@ EOF
   '' + ''
 
     cmake -S . -B build-nix -G Ninja \
-  '' + lib.optionalString (!isDarwinHost) ''
       -DCMAKE_TOOLCHAIN_FILE=cmake/nix-toolchain.cmake \
-  '' + ''
       -DCMAKE_BUILD_TYPE=Debug \
       -DOPENSSL_INCLUDE_DIR=${openssl.dev}/include \
       -DOPENSSL_CRYPTO_LIBRARY=${opensslCryptoLibrary} \
@@ -190,10 +196,6 @@ EOF
       -DLIBXML2_INCLUDE_DIR=${libxml2Include} \
       -DLIBXML2_LIBRARY=${libxml2Library} \
       -DPUREDARWIN_MACOSX_SDK="$DARWIN_SDK_ROOT" \
-  '' + lib.optionalString isDarwinHost ''
-      -DCMAKE_OSX_SYSROOT="$DARWIN_SDK_ROOT" \
-      -DCMAKE_CXX_FLAGS="-nostdinc++ -I$DARWIN_SDK_ROOT/usr/include/c++/v1" \
-  '' + ''
       -DPUREDARWIN_ARCH=${puredarwinArch} \
       ${lib.optionalString (activeCompilerRt != null)
         "-DPUREDARWIN_COMPILER_RT_PREFIX=${activeCompilerRt}"} \
@@ -254,10 +256,9 @@ echo "unsupported libtool invocation: $*" >&2
 exit 1
 EOF
     chmod +x .nix-stubs/libtool
-    export PATH="$PWD/.nix-stubs:$PWD/build-nix/tools/mig:$PWD/build-nix/tools/cctools/misc:$PWD/build-nix/tools/dtrace_ctf/tools:$PATH"
-  '' + lib.optionalString isDarwinHost ''
-    export PATH="$PWD/.nix-stubs:$PATH"
   '' + ''
+    export PATH="$PWD/.nix-stubs:$PWD/build-nix/tools/mig:$PWD/build-nix/tools/cctools/misc:$PWD/build-nix/tools/dtrace_ctf/tools:$PATH"
+
     ninja -C build-nix ${lib.escapeShellArgs buildTargets}
     runHook postBuild
   '';
@@ -402,7 +403,7 @@ EOF
   meta = with lib; {
     platforms = platforms.linux ++ platforms.darwin;
   };
-} // lib.optionalAttrs (!isDarwinHost) {
+
   NIX_DARWIN_TOOLCHAIN_DIR = "${activeCrossToolchain}/bin";
   NIX_DARWIN_HOST = nixDarwinHost;
 })

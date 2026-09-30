@@ -40,6 +40,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "Userspace HFS+ image manipulation (hfsplus tool)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

@@ -42,6 +42,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "GNU Autoconf, installed for PureDarwin (pure Perl/m4 - no cross-compiling needed)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

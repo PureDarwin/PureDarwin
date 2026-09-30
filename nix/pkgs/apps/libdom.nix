@@ -81,6 +81,6 @@ EOF
 
   meta = with lib; {
     description = "libdom (NetSurf DOM implementation), cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

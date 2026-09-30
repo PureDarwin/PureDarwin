@@ -89,6 +89,6 @@ stdenv.mkDerivation {
   dontFixup = true;
 
   meta = with lib; {
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

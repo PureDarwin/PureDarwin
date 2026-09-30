@@ -169,6 +169,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "Cocotron/ravynOS AppKit for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

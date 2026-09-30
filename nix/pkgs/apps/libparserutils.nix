@@ -94,6 +94,6 @@ EOF
 
   meta = with lib; {
     description = "libparserutils (NetSurf parser-building library), cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

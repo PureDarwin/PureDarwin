@@ -58,6 +58,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "Tiny xxd-compatible hex dump tool, cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

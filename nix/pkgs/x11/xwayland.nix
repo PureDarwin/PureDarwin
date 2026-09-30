@@ -200,6 +200,6 @@ EOF
   meta = with lib; {
     description = "X11 server running as a Wayland client on PureDarwin";
     license = licenses.mit;
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

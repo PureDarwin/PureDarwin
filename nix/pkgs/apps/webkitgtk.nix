@@ -159,6 +159,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "WebKitGTK for PureDarwin - configure probe (stage 2 of the port)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

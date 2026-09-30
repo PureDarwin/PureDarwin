@@ -112,6 +112,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "vulkaninfo and vkcube, cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

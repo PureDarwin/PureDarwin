@@ -34,6 +34,6 @@ EOF
     description = "Meson build system, running under PureDarwin's CPython";
     homepage = "https://mesonbuild.com/";
     license = licenses.asl20;
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

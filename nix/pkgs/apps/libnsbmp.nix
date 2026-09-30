@@ -67,6 +67,6 @@ EOF
 
   meta = with lib; {
     description = "libnsbmp (NetSurf BMP/ICO decoder), cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

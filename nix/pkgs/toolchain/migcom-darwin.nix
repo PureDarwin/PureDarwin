@@ -65,6 +65,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "Real Mach-O migcom + mig.sh, for PureDarwin's own image (not the native host-tool build used during our Nix build)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

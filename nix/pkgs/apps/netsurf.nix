@@ -173,6 +173,6 @@ EOF
 
   meta = with lib; {
     description = "NetSurf web browser (GTK3 frontend), cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

@@ -58,6 +58,6 @@ stdenv.mkDerivation {
   meta = with lib; {
     description = "Minimal visible Wayland startup client for PureDarwin";
     license = licenses.mit;
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

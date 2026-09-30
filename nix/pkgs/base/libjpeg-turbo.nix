@@ -60,6 +60,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "libjpeg-turbo, cross-built for PureDarwin (WebKitGTK requires JPEG)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

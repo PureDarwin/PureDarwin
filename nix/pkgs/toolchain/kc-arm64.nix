@@ -99,6 +99,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "PureDarwin arm64-virt boot kernel collection (kernel + kexts fileset), assembled by kc-tools' kc-builder";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

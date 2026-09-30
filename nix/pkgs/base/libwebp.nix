@@ -66,6 +66,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "libwebp, cross-built for PureDarwin (WebKitGTK requires WebP with demux)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

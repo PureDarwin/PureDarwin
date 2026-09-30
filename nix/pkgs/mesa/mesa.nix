@@ -337,6 +337,6 @@ EOF
 
   meta = with lib; {
     description = "Mesa softpipe (Gallium swrast) + OSMesa, cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

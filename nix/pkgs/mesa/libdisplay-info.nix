@@ -129,6 +129,6 @@ EOF
 
   meta = with lib; {
     description = "libdisplay-info, cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

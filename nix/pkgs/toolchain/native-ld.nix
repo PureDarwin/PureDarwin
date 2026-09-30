@@ -93,6 +93,9 @@ project(PUREDARWIN_NATIVE_LD)
 
 include(cmake/suppress_warnings.cmake)
 add_compile_options(-Wno-return-type -Wno-error=cpp -Wno-nullability-completeness)
+# ld64 takes &v[0] and &v[v.size()] of vectors that may be empty all over.
+# nixpkgs' Darwin libc++ traps on that by default, Apple's build does not.
+add_compile_definitions(_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE)
 
 add_subdirectory(src/Libraries/libSystem/corecrypto)
 add_subdirectory(src/Libraries/CommonCrypto)
@@ -152,6 +155,14 @@ exec "$(dirname "$0")/ld.real" "$@"
 EOF
     chmod +x $out/bin/ld $out/bin/ld.real
     cp build-nix-native/tools/cctools/misc/strip $out/bin/strip
+  '' + lib.optionalString stdenv.hostPlatform.isDarwin ''
+    # libtapi's install name is @rpath/libtapi.dylib and nothing here adds an
+    # LC_RPATH, so dyld aborts on the first link. name it by store path instead.
+    for bin in $out/bin/ld.real $out/bin/strip; do
+      install_name_tool -change @rpath/libtapi.dylib \
+        ${lib.getLib libtapi}/lib/libtapi.dylib "$bin"
+    done
+  '' + ''
     runHook postInstall
   '';
 

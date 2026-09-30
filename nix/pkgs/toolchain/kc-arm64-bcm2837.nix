@@ -50,6 +50,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "PureDarwin arm64 BCM2837 (Raspberry Pi 3) boot kernel collection, assembled by kc-tools' kc-builder";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

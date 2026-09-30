@@ -283,6 +283,6 @@ EOF
 
   meta = with lib; {
     description = "GTK3, cross-built for PureDarwin";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

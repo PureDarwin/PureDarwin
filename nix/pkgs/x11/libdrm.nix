@@ -112,6 +112,6 @@ EOF
   meta = with lib; {
     description = "PureDarwin userspace DRM ABI and format definitions";
     license = licenses.mit;
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }
