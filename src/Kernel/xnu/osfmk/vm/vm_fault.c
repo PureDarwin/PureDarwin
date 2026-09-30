@@ -2784,6 +2784,9 @@ vm_fault_cs_page_nx(
 // page-in PAC lowering is only done for faults into executable mappings
 static void vm_page_validate_cs_internal(vm_page_t page, vm_map_size_t fault_page_size,
     vm_map_offset_t fault_phys_offset, bool pac_lower);
+#if defined(__arm64__) && !__has_feature(ptrauth_calls)
+static void pd_pac_lower_page(uint32_t *words, size_t nwords);
+#endif
 
 /*
  * Check if the page being entered into the pmap violates code signing.
@@ -4860,6 +4863,12 @@ vm_fault_internal(
 	vm_grab_options_t       grab_options;
 	bool                    need_copy;
 	bool                    need_copy_on_read;
+#if defined(__arm64__) && !__has_feature(ptrauth_calls)
+	// a private file mapping copies an executable page up and lowers the copy, the file's page stays as signed
+	bool                    pd_exec_copy = false;
+	bool                    pd_entry_cow = false;
+	bool                    pd_own_map = false;
+#endif
 	vm_map_offset_t         trace_vaddr;
 	vm_map_offset_t         trace_real_vaddr;
 	vm_map_size_t           fault_page_size;
@@ -5099,6 +5108,11 @@ RetryFault:
 	fault_info->io_sync = FALSE;
 	fault_info->mark_zf_absent = FALSE;
 	fault_info->batch_pmap_op = FALSE;
+#if defined(__arm64__) && !__has_feature(ptrauth_calls)
+	pd_entry_cow = entry->needs_copy && map == original_map;
+	// the shared cache stays lowered in place: copying there unnests the shared region into every task
+	pd_own_map = map == original_map;
+#endif
 
 	/*
 	 * If the page is wired, we must fault for the current protection
@@ -5463,6 +5477,23 @@ upgrade_lock_and_retry:
 					}
 				}
 			}
+#if defined(__arm64__) && !__has_feature(ptrauth_calls)
+			// execute faults on a file's page take a private copy to lower, when the mapping can hold one
+			if (!need_copy &&
+			    (fault_type & VM_PROT_EXECUTE) &&
+			    !cur_object->internal &&
+			    pd_own_map && (cur_object != object || pd_entry_cow)) {
+				pd_exec_copy = true;
+				need_copy = TRUE;
+				vm_object_unlock(object);
+				if (cur_object != object) {
+					vm_object_unlock(cur_object);
+				}
+				object_lock_type = OBJECT_LOCK_EXCLUSIVE;
+				vm_fault_unlock_ctx(ctx, vml_ctx_for_vaddr);
+				goto RetryFault;
+			}
+#endif
 			/*
 			 *	Two cases of map in faults:
 			 *	    - At top level w/o copy object.
@@ -5812,6 +5843,13 @@ FastPmapEnter:
 			 *	the page copy.
 			 */
 			vm_page_copy(cur_m, m);
+#if defined(__arm64__) && !__has_feature(ptrauth_calls)
+			// the copy keeps the source's validation, then gets the lowering the file's page is spared
+			if (pd_exec_copy && (fault_type & VM_PROT_EXECUTE)) {
+				m->vmp_cs_validated = cur_m->vmp_cs_validated;
+				pd_pac_lower_page((uint32_t *)phystokv(ptoa(VM_PAGE_GET_PHYS_PAGE(m))), PAGE_SIZE / 4);
+			}
+#endif
 			vm_page_insert(m, object, vm_object_trunc_page(offset));
 			if (VM_MAP_PAGE_MASK(map) != PAGE_MASK) {
 				DEBUG4K_FAULT("map %p vaddr 0x%llx page %p [%p 0x%llx] copied to %p [%p 0x%llx]\n", map, (uint64_t)vaddr, cur_m, VM_PAGE_OBJECT(cur_m), cur_m->vmp_offset, m, VM_PAGE_OBJECT(m), m->vmp_offset);
@@ -6920,6 +6958,17 @@ handle_copy_delay:
 		vm_copied_on_read++;
 		need_copy_on_read = TRUE;
 		need_copy = TRUE;
+#if defined(__arm64__) && !__has_feature(ptrauth_calls)
+	} else if (!need_copy &&
+	    m != VM_PAGE_NULL &&
+	    (fault_type & VM_PROT_EXECUTE) &&
+	    !VM_PAGE_OBJECT(m)->internal &&
+	    pd_own_map && (VM_PAGE_OBJECT(m) != object || pd_entry_cow)) {
+		// same private copy as the fast path, the retry finds the page resident and copies it up
+		pd_exec_copy = true;
+		need_copy_on_read = TRUE;
+		need_copy = TRUE;
+#endif
 	} else {
 		need_copy_on_read = FALSE;
 	}
