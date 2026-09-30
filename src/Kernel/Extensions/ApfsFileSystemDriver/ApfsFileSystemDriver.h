@@ -42,14 +42,38 @@ class AppleAPFSContainer : public IOPartitionScheme
 
 protected:
     OSSet *_volumes;
+    UInt32 _blockSize;
+    UInt64 _blockCount;
+    UInt32 _maxFs;
+
+public:
+    UInt32 spaceBlockSize() const { return _blockSize; }
+    UInt64 spaceBlockCount() const { return _blockCount; }
+    UInt32 spaceMaxVolumes() const { return _maxFs; }
+    OSIterator *copyVolumeIterator() const
+    {
+        return _volumes != NULL ? OSCollectionIterator::withCollection(_volumes) : NULL;
+    }
+
+protected:
 
     IOReturn readBlock(IOMedia *media, UInt64 block, UInt32 blockSize,
                        IOBufferMemoryDescriptor **out);
+    IOReturn readLatestSuperblock(IOMedia *media, UInt32 blockSize,
+                                  IOBufferMemoryDescriptor **out);
     IOReturn omapLookup(IOMedia *media, UInt32 blockSize, UInt64 treePaddr,
                         UInt64 oid, UInt64 *paddrOut);
     AppleAPFSVolume *publishVolume(IOMedia *media, UInt32 blockSize,
                                    const uint8_t *nx, const uint8_t *vsb,
                                    UInt32 index);
+    UInt32 scanVolumes(IOMedia *media, const uint8_t *nx, UInt32 blockSize,
+                       UInt64 treePaddr, UInt32 maxFs);
+    void rescanVolumes();
+    UInt64 _slotMask[2];
+
+public:
+    IOReturn createVolume(const char *name, uint16_t role, const uint8_t uuid[16],
+                          uint32_t *slot);
 
 public:
     virtual bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
@@ -59,6 +83,9 @@ public:
     // Role of the volume published as diskNs(index)
     IOReturn volumeRole(UInt32 index, UInt16 *role);
 };
+
+// the space report selector 8 returns, keyed by BSD name as macOS does
+OSDictionary *AppleAPFSContainerCopySpaceInfo(AppleAPFSContainer *container);
 
 class AppleAPFSUserClient : public IOUserClient
 {

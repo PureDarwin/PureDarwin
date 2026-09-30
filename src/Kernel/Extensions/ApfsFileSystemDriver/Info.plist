@@ -53,6 +53,24 @@
 			<key>IOProviderClass</key>
 			<string>AppleAPFSMedia</string>
 		</dict>
+		<key>AppleAPFSContainerSchemeWhole</key>
+		<dict>
+			<key>CFBundleIdentifier</key>
+			<string>com.ravynos.driver.ApfsFileSystemDriver</string>
+			<key>IOClass</key>
+			<string>AppleAPFSContainerScheme</string>
+			<key>IOMatchCategory</key>
+			<string>IOStorage</string>
+			<key>IOProbeScore</key>
+			<integer>900</integer>
+			<key>IOPropertyMatch</key>
+			<dict>
+				<key>Whole</key>
+				<true/>
+			</dict>
+			<key>IOProviderClass</key>
+			<string>IOMedia</string>
+		</dict>
 		<key>AppleAPFSContainerSchemeISC</key>
 		<dict>
 			<key>CFBundleIdentifier</key>
