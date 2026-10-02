@@ -1347,8 +1347,8 @@ let
       mkdir -p .libXcursor-dylib
       (
         cd .libXcursor-dylib
-        ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar x "$out/lib/libXcursor.a"
-        ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang \
+        ${arm64CrossToolchain}/bin/arm64-apple-darwin20.4-ar x "$out/lib/libXcursor.a"
+        ${arm64CrossToolchain}/bin/arm64-apple-darwin20.4-clang \
           -isysroot "$DARWIN_SDK_ROOT" \
           -mmacosx-version-min=26.5 \
           -fuse-ld=${nativeLd}/bin/ld \
