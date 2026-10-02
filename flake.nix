@@ -1100,8 +1100,10 @@
               libXdmcp = xvfbLibXdmcpBuild;
               inherit (pkgs) meson ninja pkg-config xorgproto xtrans;
             };
+          # A Mac already has cctools' otool/install_name_tool in nixpkgs.
           hostOtoolBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/host-otool.nix { };
+            if isDarwin then pkgs.cctools
+            else pkgs.callPackage ./nix/pkgs/toolchain/host-otool.nix { };
           # aarch64 Windows PE toolchain (llvm-mingw equivalent) for Wine's
           # new WoW64 on arm64. See the file for the two nixpkgs bugs it works around.
           fexWow64Build =
@@ -1316,7 +1318,7 @@
           # cross-built host otool is only needed elsewhere.
           nativeMesonToolsDir =
             pkgs.runCommand "puredarwin-native-meson-tools" { } (
-              let toolsdir = if isDarwin then "${pkgs.cctools}" else "${hostOtoolBuild}"; in ''
+              let toolsdir = "${hostOtoolBuild}"; in ''
               mkdir -p $out/bin
               ln -s ${toolsdir}/bin/otool $out/bin/otool
               ln -s ${toolsdir}/bin/install_name_tool $out/bin/install_name_tool

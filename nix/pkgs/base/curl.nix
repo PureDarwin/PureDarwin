@@ -84,7 +84,10 @@ EOF
       --disable-ldap \
       --disable-ldaps \
       --disable-manual \
-      --disable-threaded-resolver
+      --disable-threaded-resolver \
+      `# darwin hosts have a perl the man-page scripts cannot reach through env. Linux has no perl` \
+      `# and skips them, so replicate that behavior everywhere` \
+      ac_cv_path_PERL=
 
     find . -name Makefile -exec sed -i \
       -e 's/-framework CoreServices//g' \

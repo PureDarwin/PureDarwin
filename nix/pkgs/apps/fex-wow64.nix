@@ -52,6 +52,10 @@ stdenv.mkDerivation (finalAttrs: {
       -DCMAKE_TOOLCHAIN_FILE=$PWD/Data/CMake/toolchain_mingw.cmake \
       -DMINGW_TRIPLE=aarch64-w64-mingw32 \
       -DENABLE_LTO=False \
+      `# required for mac host builds since /proc/cpuinfo doesn't exist (Scripts/aarch64_fit_native.py)` \
+      `# fallback on x86-64 linux is cortex-a57, which is mostly fine, but on an armv8.1+ linux host` \
+      `# this could emit instructions that trap on PD's oldest hardware (ref: toolchain.nix)` \
+      -DTUNE_CPU=apple-a10 \
       -DBUILD_TESTING=False \
       -DBUILD_TESTS=False \
       -DBUILD_THUNKS=False \
