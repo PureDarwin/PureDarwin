@@ -32,7 +32,9 @@ let
       useLLVM = true;
     };
     crossOverlays = [ pinLlvm ];
-    overlays = [ pinLlvm ];
+    # A Darwin stdenv is bootstrapped from llvmPackages itself. It asserts that
+    # nothing replaced it, so its default is already the pinned version.
+    overlays = if pkgs.stdenv.buildPlatform.isDarwin then [ ] else [ pinLlvm ];
   };
   # winpthreads supplies mingw's pthread.h/sched.h. nixpkgs' aarch64 build fails
   # because windres gets no include path from the wrapper, so its version.rc
