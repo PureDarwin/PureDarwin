@@ -583,8 +583,8 @@
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libffi";
-              version = pkgs.libffi.version;
-              src = pkgs.libffi.src;
+              version = pkgs.libffiReal.version;
+              src = pkgs.libffiReal.src;
               configureFlags = [
                 "--disable-docs"
                 "--disable-multi-os-directory"

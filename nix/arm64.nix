@@ -1996,8 +1996,8 @@ let
   # Core libraries.
   libffiArm64Build = mkArm64Build ./pkgs/x11/xorg-cross-lib.nix {
     pname = "puredarwin-libffi";
-    version = pkgs.libffi.version;
-    src = pkgs.libffi.src;
+    version = pkgs.libffiReal.version;
+    src = pkgs.libffiReal.src;
     configureFlags = [
       "--disable-docs"
       "--disable-multi-os-directory"

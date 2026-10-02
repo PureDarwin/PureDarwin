@@ -125,8 +125,8 @@ let
   });
   libffiRiscv64Build = mkRiscv64Build ./pkgs/x11/xorg-cross-lib.nix {
     pname = "puredarwin-libffi";
-    version = pkgs.libffi.version;
-    src = pkgs.libffi.src;
+    version = pkgs.libffiReal.version;
+    src = pkgs.libffiReal.src;
     # the riscv assembly is elf only, mach-o symbol names and sys_icache_invalidate for darwin
     patches = [ ./pkgs/base/libffi-riscv64-darwin.patch ];
     configureFlags = [
