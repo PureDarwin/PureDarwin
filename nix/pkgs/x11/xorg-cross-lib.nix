@@ -67,6 +67,9 @@ exec ${darwinCrossToolchain}/bin/${targetTriple}-clang \
 PDCCEOF
     chmod +x .pd-cc/cc
     export CC="$PWD/.pd-cc/cc"
+    # Build-machine helpers (mkheader and friends) otherwise default to gcc,
+    # which a Darwin stdenv does not have.
+    export CC_FOR_BUILD="''${CC_FOR_BUILD:-cc}"
 
     export CFLAGS="-isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -I${libSystem}/usr/include ${lib.concatMapStringsSep " " (dep: "-I${lib.getDev dep}/include") deps}"
     pd_dylib_maps=""

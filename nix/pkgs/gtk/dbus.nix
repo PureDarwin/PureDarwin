@@ -19,12 +19,13 @@
 , withX11 ? true
 , targetTriple ? "x86_64-apple-darwin20.4"
 , appleSdk
+, llvmPackages_21
 }:
 
 let
   targetInfo = import ../../lib/target-info.nix targetTriple;
-  rawClang = "/nix/store/h6wfr7hsc4013lzp1igizkcd1awx8mcm-clang-21.1.8/bin/clang";
-  rawClangxx = "/nix/store/h6wfr7hsc4013lzp1igizkcd1awx8mcm-clang-21.1.8/bin/clang++";
+  rawClang = "${llvmPackages_21.clang-unwrapped}/bin/clang";
+  rawClangxx = "${llvmPackages_21.clang-unwrapped}/bin/clang++";
 in
 stdenv.mkDerivation {
   pname = "puredarwin-dbus${lib.optionalString (!withX11) "-nox"}";
