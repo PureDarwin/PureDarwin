@@ -110,14 +110,14 @@
             clangTarget = "arm64-apple-macosx26.5";
           };
           # riscv64 mach-o through the patched llvm and the in-tree ld64
-          riscv64CrossToolchain = if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/toolchain.nix {
+          riscv64CrossToolchain = pkgs.callPackage ./nix/pkgs/toolchain/toolchain.nix {
             inherit nativeLd;
             llvmPackages_21 = llvmRiscvMachO;
             target = "riscv64-apple-darwin20.4";
             clangTarget = "riscv64-apple-macosx26.5";
           };
           # userland builtins, hard float rv64gc/lp64d like everything outside the kernel
-          compilerRtRiscv64Build = if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/compiler-rt.nix {
+          compilerRtRiscv64Build = pkgs.callPackage ./nix/pkgs/toolchain/compiler-rt.nix {
             darwinCrossToolchain = riscv64CrossToolchain;
             nativeMesonTools = nativeMesonToolsDir;
             inherit nativeLd;
@@ -126,14 +126,14 @@
             targetTriple = "riscv64-apple-darwin20.4";
             targetArch = "riscv64";
           };
-          compilerRtRiscv64Kernel = if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/compiler-rt-riscv64-kernel.nix {
+          compilerRtRiscv64Kernel = pkgs.callPackage ./nix/pkgs/toolchain/compiler-rt-riscv64-kernel.nix {
             inherit riscv64CrossToolchain;
             llvmSrc = pkgs.llvmPackages_21.libllvm.monorepoSrc;
             llvmVersion = pkgs.llvmPackages_21.llvm.version;
           };
           # The Pi Zero's ARM1176 is ARMv6; there is no macosx deployment
           # target for 32-bit ARM, so the triple stays a plain darwin one.
-          armv6CrossToolchain = if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/toolchain.nix {
+          armv6CrossToolchain = pkgs.callPackage ./nix/pkgs/toolchain/toolchain.nix {
             inherit nativeLd;
             target = "armv6-apple-darwin20.4";
             clangTarget = "armv6-apple-darwin20.4";
@@ -228,7 +228,7 @@
               ++ [ "basename" "chown" "dirname" "echo" "false" "getopt" "hostname" "jot" "kill" "logname" "mktemp" "nice" "nohup" "passwd" "printenv" "pwd" "renice" "seq" "shlock" "sleep" "tee" "test_cmd" "true" "tsort" "uname" "yes" "uuencode" "uudecode" ]
               # text_cmds
               ++ [ "banner" "cat" "colrm" "comm" "cut" "expand" "fold" "head" "lam" "look" "nl" "paste" "rev" "split" "tail" "tr" "unexpand" "uniq" "wc" ]
-              ++ lib.optionals (!isDarwin) [ "puredarwingop_drv" "puredarwininput_drv" ];
+              ++ [ "puredarwingop_drv" "puredarwininput_drv" ];
             enableProjects = false;
             enableKernel = false;
             enableLibraries = false;
@@ -236,7 +236,7 @@
             installUserland = true;
             installKernel = false;
             prebuiltLibSystem = libSystemBuild;
-            xorgDriverIncludes = if isDarwin then null else [
+            xorgDriverIncludes = [
               "${xorgBuild}/usr/include/xorg"
               "${xorgBuild}/usr/include"
               "${lib.getDev pkgs.xorgproto}/include"
@@ -305,21 +305,16 @@
               # libc++ 21 keeps basic_string, to_string and operator new in the dylib
               "-DPUREDARWIN_SELFHOST_LIBCXX_DIR=${libcxxDylibBuild}/usr/lib"
               "-DPUREDARWIN_SELFHOST_LIBCXXABI_DIR=${libcxxabiDylibBuild}/usr/lib"
-            ] ++ lib.optionals isDarwin [
-              # CMake picks CMAKE_OSX_SYSROOT itself on an Apple host by running
-              # xcrun, which cannot see an SDK inside the nix sandbox and leaves
-              # its own error text as the sysroot.
-              "-DPUREDARWIN_MACOSX_SDK=${pkgs.apple-sdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
             ];
           };
           xvfbPixmanBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xvfb-pixman.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xvfb-pixman.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               inherit (pkgs) pixman;
             };
           xvfbLibXauBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xvfb-stub-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xvfb-stub-lib.nix {
               inherit darwinCrossToolchain;
               name = "Xau";
               version = pkgs.libxau.version or "1.0.12";
@@ -333,7 +328,7 @@
               '';
             };
           xvfbLibXdmcpBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain;
               nativeLd = nativeLd;
               libSystem = libSystemBuild;
@@ -343,7 +338,7 @@
               deps = [ pkgs.xorgproto ];
             };
           xvfbZlibBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xvfb-zlib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xvfb-zlib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               inherit (pkgs) zlib;
@@ -351,14 +346,14 @@
           # Always shared: fontconfig is a dylib and records a dependency on
           # /lib/libfreetype.6.N.dylib, so a static freetype cannot satisfy it.
           freetype2Build =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xvfb-freetype.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xvfb-freetype.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               nativeMesonTools = nativeMesonToolsDir;
               inherit (pkgs) zlib freetype;
             };
           libfontencBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libfontenc";
@@ -367,7 +362,7 @@
               deps = [ pkgs.xorgproto xvfbZlibBuild ];
             };
           xvfbLibXfont2Build =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libXfont2";
@@ -385,7 +380,7 @@
               ];
             };
           xlibBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libX11";
@@ -404,7 +399,7 @@
               ];
             };
           xcbBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libxcb";
@@ -427,7 +422,7 @@
               '';
             };
           xcbUtilBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libxcb-util";
@@ -436,7 +431,7 @@
               deps = [ pkgs.xorgproto xcbBuild ];
             };
           xcbKeysymsBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libxcb-keysyms";
@@ -445,7 +440,7 @@
               deps = [ pkgs.xorgproto xcbBuild xcbUtilBuild ];
             };
           xcbWmBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libxcb-wm";
@@ -455,7 +450,7 @@
               nativeDeps = [ pkgs.m4 ];
             };
           xcbRenderUtilBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libxcb-render-util";
@@ -464,7 +459,7 @@
               deps = [ pkgs.xorgproto xcbBuild xcbUtilBuild ];
             };
           xcbImageBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libxcb-image";
@@ -476,7 +471,7 @@
               '';
             };
           xcbCursorBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libxcb-cursor";
@@ -493,7 +488,7 @@
               nativeDeps = [ pkgs.m4 ];
             };
           xcbXrmBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-xcb-util-xrm";
@@ -506,7 +501,7 @@
               ];
             };
           libevBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libev";
@@ -519,7 +514,7 @@
               '';
             };
           pcre2Build =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-pcre2";
@@ -535,13 +530,13 @@
               ];
             };
           yajlBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/yajl.nix {
+            pkgs.callPackage ./nix/pkgs/base/yajl.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               inherit (pkgs) yajl;
             };
           startupNotificationBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-startup-notification";
@@ -560,7 +555,7 @@
               '';
             };
           cairoBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/gtk/cairo.nix {
+            pkgs.callPackage ./nix/pkgs/gtk/cairo.nix {
               nativeMesonTools = nativeMesonToolsDir;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
@@ -579,7 +574,7 @@
               libpng = libpngBuild;
             };
           libffiBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libffi";
@@ -591,7 +586,7 @@
               ];
             };
           glibBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/gtk/glib.nix {
+            pkgs.callPackage ./nix/pkgs/gtk/glib.nix {
               nativeMesonTools = nativeMesonToolsDir;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
@@ -602,7 +597,7 @@
               libiconv = libiconvBuild;
             };
           expatBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-expat";
@@ -615,7 +610,7 @@
               ];
             };
           fontconfigBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/fontconfig.nix {
+            pkgs.callPackage ./nix/pkgs/x11/fontconfig.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               inherit (pkgs) fontconfig;
@@ -624,13 +619,13 @@
               expat = expatBuild;
             };
           fribidiBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/gtk/fribidi.nix {
+            pkgs.callPackage ./nix/pkgs/gtk/fribidi.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               inherit (pkgs) fribidi;
             };
           harfbuzzBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/gtk/harfbuzz.nix {
+            pkgs.callPackage ./nix/pkgs/gtk/harfbuzz.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               inherit (pkgs) harfbuzz;
@@ -648,7 +643,7 @@
               fontconfig = fontconfigBuild;
             };
           pangoBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/gtk/pango.nix {
+            pkgs.callPackage ./nix/pkgs/gtk/pango.nix {
               nativeMesonTools = nativeMesonToolsDir;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
@@ -673,7 +668,7 @@
               libpng = libpngBuild;
             };
           i3Build =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/i3.nix {
+            pkgs.callPackage ./nix/pkgs/x11/i3.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               inherit (pkgs) i3;
@@ -711,9 +706,9 @@
               libXrender = xvfbLibXrenderBuild;
             };
           i3statusShimBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/i3status-shim.nix { };
+            pkgs.callPackage ./nix/pkgs/x11/i3status-shim.nix { };
           xvfbLibICEBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libICE";
@@ -725,7 +720,7 @@
               '';
             };
           xvfbLibSMBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libSM";
@@ -737,7 +732,7 @@
               ];
             };
           xvfbLibXtBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libXt";
@@ -751,7 +746,7 @@
               ];
             };
           xvfbLibXextBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libXext";
@@ -760,7 +755,7 @@
               deps = [ pkgs.xorgproto xlibBuild xvfbLibXauBuild ];
             };
           xvfbLibXmuBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libXmu";
@@ -776,7 +771,7 @@
               ];
             };
           xvfbLibXpmBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libXpm";
@@ -785,7 +780,7 @@
               deps = [ pkgs.xorgproto xlibBuild ];
             };
           xvfbLibXawBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libXaw";
@@ -809,7 +804,7 @@
               '';
             };
           xvfbLibXkbfileBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libxkbfile";
@@ -818,7 +813,7 @@
               deps = [ pkgs.xorgproto xlibBuild ];
             };
           xkbcompBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xvfb-xkbcomp.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xvfb-xkbcomp.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               inherit (pkgs) xkbcomp xorgproto;
@@ -829,9 +824,9 @@
               libxcb = xcbBuild;
             };
           xvfbFontsBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xvfb-fonts.nix { };
+            pkgs.callPackage ./nix/pkgs/x11/xvfb-fonts.nix { };
           xkeyboardConfigBuild =
-            if isDarwin then null else pkgs.runCommand "puredarwin-xkeyboard-config" { } ''
+            pkgs.runCommand "puredarwin-xkeyboard-config" { } ''
               mkdir -p "$out/usr/share"
               cp -a ${pkgs.xkeyboard_config}/share/X11 "$out/usr/share/X11"
               chmod -R u+w "$out/usr/share/X11"
@@ -844,19 +839,19 @@
               fi
             '';
           xlibLocaleBuild =
-            if isDarwin then null else pkgs.runCommand "puredarwin-libx11-locale" { } ''
+            pkgs.runCommand "puredarwin-libx11-locale" { } ''
               mkdir -p "$out/usr/share/X11"
               cp -a ${pkgs.libX11}/share/X11/locale "$out/usr/share/X11/locale"
               chmod -R u+w "$out/usr/share/X11/locale"
             '';
           libzDylibBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/libz-dylib.nix {
+            pkgs.callPackage ./nix/pkgs/base/libz-dylib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               inherit (pkgs) zlib;
             };
           libcurlDylibBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/libcurl-dylib.nix {
+            pkgs.callPackage ./nix/pkgs/base/libcurl-dylib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               corefoundation = coreFoundationBuild;
@@ -866,7 +861,7 @@
               inherit (pkgs) curl;
             };
           dbusBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/gtk/dbus.nix {
+            pkgs.callPackage ./nix/pkgs/gtk/dbus.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               expat = expatBuild;
@@ -877,13 +872,13 @@
               inherit (pkgs) dbus meson ninja python3 xorgproto;
             };
           libxml2Build =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/libxml2.nix {
+            pkgs.callPackage ./nix/pkgs/base/libxml2.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               inherit (pkgs) libxml2 meson ninja python3 git;
             };
           atspi2CoreBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/gtk/at-spi2-core.nix {
+            pkgs.callPackage ./nix/pkgs/gtk/at-spi2-core.nix {
               nativeMesonTools = nativeMesonToolsDir;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
@@ -897,44 +892,44 @@
               inherit (pkgs) at-spi2-core meson ninja python3;
             };
           libwapcapletBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/libwapcaplet.nix {
+            pkgs.callPackage ./nix/pkgs/apps/libwapcaplet.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               inherit (pkgs) libwapcaplet;
             };
           libparserutilsBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/libparserutils.nix {
+            pkgs.callPackage ./nix/pkgs/apps/libparserutils.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libiconv = libiconvBuild;
               inherit (pkgs) libparserutils perl;
             };
           libnsutilsBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/libnsutils.nix {
+            pkgs.callPackage ./nix/pkgs/apps/libnsutils.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               inherit (pkgs) libnsutils;
             };
           libnsgifBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/libnsgif.nix {
+            pkgs.callPackage ./nix/pkgs/apps/libnsgif.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               inherit (pkgs) libnsgif;
             };
           libnsbmpBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/libnsbmp.nix {
+            pkgs.callPackage ./nix/pkgs/apps/libnsbmp.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               inherit (pkgs) libnsbmp;
             };
           libutf8procBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/libutf8proc.nix {
+            pkgs.callPackage ./nix/pkgs/base/libutf8proc.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               inherit (pkgs) libutf8proc;
             };
           libhubbubBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/libhubbub.nix {
+            pkgs.callPackage ./nix/pkgs/apps/libhubbub.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libwapcaplet = libwapcapletBuild;
@@ -942,7 +937,7 @@
               inherit (pkgs) libhubbub perl gperf gnused;
             };
           libcssBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/libcss.nix {
+            pkgs.callPackage ./nix/pkgs/apps/libcss.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libwapcaplet = libwapcapletBuild;
@@ -950,7 +945,7 @@
               inherit (pkgs) libcss perl python3;
             };
           libdomBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/libdom.nix {
+            pkgs.callPackage ./nix/pkgs/apps/libdom.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libwapcaplet = libwapcapletBuild;
@@ -960,7 +955,7 @@
               inherit (pkgs) libdom;
             };
           netsurfBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/netsurf.nix {
+            pkgs.callPackage ./nix/pkgs/apps/netsurf.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               hostOtool = hostOtoolBuild;
@@ -1011,7 +1006,7 @@
               inherit (pkgs) perl pkg-config nsgenbind;
             };
           libepoxyBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/gtk/libepoxy.nix {
+            pkgs.callPackage ./nix/pkgs/gtk/libepoxy.nix {
               nativeMesonTools = nativeMesonToolsDir;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
@@ -1020,7 +1015,7 @@
               inherit (pkgs) libepoxy xorgproto meson ninja python3;
             };
           pdVirglShimBuild =
-            if isDarwin then null else (mkPureDarwinBuild {
+            (mkPureDarwinBuild {
               pname = "puredarwin-pd-virgl-shim";
               src = userlandSource;
               buildTargets = [ "pd_virgl_shim" ];
@@ -1050,7 +1045,7 @@
               '';
             });
           mesaBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/mesa/mesa.nix {
+            pkgs.callPackage ./nix/pkgs/mesa/mesa.nix {
               nativeMesonTools = nativeMesonToolsDir;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
@@ -1075,7 +1070,7 @@
               inherit (pkgs) meson ninja pkg-config python3 bison flex xorgproto xtrans;
             };
           gluBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/mesa/glu.nix {
+            pkgs.callPackage ./nix/pkgs/mesa/glu.nix {
               nativeMesonTools = nativeMesonToolsDir;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
@@ -1085,9 +1080,9 @@
               inherit (pkgs) meson ninja pkg-config;
             };
           gluNoxBuild =
-            if isDarwin then null else gluBuild.override { mesa = mesaNoxBuild; };
+            gluBuild.override { mesa = mesaNoxBuild; };
           mesaDemosBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/mesa/mesa-demos.nix {
+            pkgs.callPackage ./nix/pkgs/mesa/mesa-demos.nix {
               nativeMesonTools = nativeMesonToolsDir;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
@@ -1107,13 +1102,13 @@
           # aarch64 Windows PE toolchain (llvm-mingw equivalent) for Wine's
           # new WoW64 on arm64. See the file for the two nixpkgs bugs it works around.
           fexWow64Build =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/fex-wow64.nix {
+            pkgs.callPackage ./nix/pkgs/apps/fex-wow64.nix {
               mingwAarch64Cc = mingwAarch64.cc;
               mingwAarch64Pthreads = mingwAarch64.pthreads;
             };
 
           mingwAarch64 =
-            if isDarwin then null else import ./nix/pkgs/toolchain/mingw-aarch64.nix {
+            import ./nix/pkgs/toolchain/mingw-aarch64.nix {
               inherit pkgs system;
               # 21 hits the AArch64 SEH unwind backend bug on Wine's concrt140.
               llvmVersion = "22";
@@ -1130,7 +1125,7 @@
               llvmVersion = pkgs.llvmPackages_21.llvm.version;
             };
           llvmCrossBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/llvm-cross.nix {
+            pkgs.callPackage ./nix/pkgs/toolchain/llvm-cross.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libcxxDylib = libcxxDylibBuild;
@@ -1145,7 +1140,7 @@
           # Independently useful: sqlite3, libjpeg and libsoup have no other
           # provider in this tree.
           libgpgErrorBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libgpg-error";
@@ -1170,7 +1165,7 @@
               ];
             };
           libtasn1Build =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libtasn1";
@@ -1178,7 +1173,7 @@
               configureFlags = [ "--disable-doc" "--disable-gtk-doc" ];
             };
           sqliteBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-sqlite";
@@ -1194,7 +1189,7 @@
               deps = [ xvfbZlibBuild ];
             };
           webkitgtkBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/webkitgtk.nix {
+            pkgs.callPackage ./nix/pkgs/apps/webkitgtk.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libcxxDylib = libcxxDylibBuild;
@@ -1224,7 +1219,7 @@
               ];
             };
           libsoupBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/libsoup.nix {
+            pkgs.callPackage ./nix/pkgs/base/libsoup.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               nativeMesonTools = nativeMesonToolsDir;
@@ -1242,7 +1237,7 @@
               libxml2 = libxml2Build;
             };
           nghttp2Build =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-nghttp2";
@@ -1252,7 +1247,7 @@
               configureFlags = [ "--enable-lib-only" "--disable-python-bindings" ];
             };
           libpslBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libpsl";
@@ -1270,19 +1265,19 @@
               configureFlags = [ "--disable-runtime" "--disable-builtin" "--disable-man" ];
             };
           libwebpBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/libwebp.nix {
+            pkgs.callPackage ./nix/pkgs/base/libwebp.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               inherit (pkgs) libwebp cmake ninja;
             };
           libjpegBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/libjpeg-turbo.nix {
+            pkgs.callPackage ./nix/pkgs/base/libjpeg-turbo.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               inherit (pkgs) libjpeg_turbo cmake ninja;
             };
           libgcryptBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libgcrypt";
@@ -1296,14 +1291,14 @@
               ];
             };
           kcToolsGuestBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/kc-tools-guest.nix {
+            pkgs.callPackage ./nix/pkgs/toolchain/kc-tools-guest.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               kcToolsSrc = kc-tools;
               inherit (pkgs) cmake ninja;
             };
           clangCrossBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/clang-cross.nix {
+            pkgs.callPackage ./nix/pkgs/toolchain/clang-cross.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libcxxDylib = libcxxDylibBuild;
@@ -1324,14 +1319,14 @@
               ln -s ${toolsdir}/bin/install_name_tool $out/bin/install_name_tool
             '');
           libpngBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/gtk/libpng.nix {
+            pkgs.callPackage ./nix/pkgs/gtk/libpng.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               zlib = xvfbZlibBuild;
               inherit (pkgs) libpng;
             };
           libcrocoBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               nativeMesonTools = nativeMesonToolsDir;
@@ -1351,7 +1346,7 @@
           # gettext-tools half is a build-host toolchain (msgfmt/xgettext) that
           # nothing on the guest needs.
           gettextBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               nativeMesonTools = nativeMesonToolsDir;
@@ -1376,7 +1371,7 @@
             };
 
           librsvgBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               nativeMesonTools = nativeMesonToolsDir;
@@ -1424,7 +1419,7 @@
             };
 
           cairoGobjectBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/gtk/cairo-gobject.nix {
+            pkgs.callPackage ./nix/pkgs/gtk/cairo-gobject.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               cairo = cairoBuild;
@@ -1432,7 +1427,7 @@
               glib = glibBuild;
             };
           gdkPixbufBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/gtk/gdk-pixbuf.nix {
+            pkgs.callPackage ./nix/pkgs/gtk/gdk-pixbuf.nix {
               nativeMesonTools = nativeMesonToolsDir;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
@@ -1445,7 +1440,7 @@
               inherit (pkgs) gdk-pixbuf meson ninja python3;
             };
           gtk3Build =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/gtk/gtk3.nix {
+            pkgs.callPackage ./nix/pkgs/gtk/gtk3.nix {
               nativeMesonTools = nativeMesonToolsDir;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
@@ -1487,7 +1482,7 @@
               inherit (pkgs) gtk3 xorgproto;
             };
           onyx2dBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/onyx2d.nix {
+            pkgs.callPackage ./nix/pkgs/apple/onyx2d.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libobjc = libobjcBuild;
@@ -1501,7 +1496,7 @@
               src = ./src/Frameworks/Onyx2D;
             };
           coregraphicsBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/coregraphics.nix {
+            pkgs.callPackage ./nix/pkgs/apple/coregraphics.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libobjc = libobjcBuild;
@@ -1515,7 +1510,7 @@
               src = ./src/Frameworks/CoreGraphics;
             };
           coretextBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/coretext.nix {
+            pkgs.callPackage ./nix/pkgs/apple/coretext.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libobjc = libobjcBuild;
@@ -1526,7 +1521,7 @@
               src = ./src/Frameworks/CoreText;
             };
           coredataBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/coredata.nix {
+            pkgs.callPackage ./nix/pkgs/apple/coredata.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libobjc = libobjcBuild;
@@ -1535,7 +1530,7 @@
               src = ./src/Frameworks/CoreData;
             };
           cgScreenDemoBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/cg-screen-demo.nix {
+            pkgs.callPackage ./nix/pkgs/apps/cg-screen-demo.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libobjc = libobjcBuild;
@@ -1591,25 +1586,25 @@
           # Wayland-only image: cairo/dbus/mesa each bake an libX11 path into
           # their output unless their X11 backends are configured out.
           cairoNoxBuild =
-            if isDarwin then null else cairoBuild.override {
+            cairoBuild.override {
               withX11 = false;
               xorgproto = null; libX11 = null; libXext = null;
               libXrender = null; libxcb = null; libXau = null; libXdmcp = null;
             };
           dbusNoxBuild =
-            if isDarwin then null else dbusBuild.override {
+            dbusBuild.override {
               withX11 = false;
               libX11 = null; libxcb = null; libXau = null; libXdmcp = null;
               xorgproto = null;
             };
           mesaNoxBuild =
-            if isDarwin then null else mesaBuild.override {
+            mesaBuild.override {
               withX11 = false;
               libX11 = null; libXext = null; libxcb = null; libXau = null;
               libXdmcp = null; libXxf86vm = null; xorgproto = null; xtrans = null;
             };
           openglFrameworkNoxBuild =
-            if isDarwin then null else openglFrameworkBuild.override {
+            openglFrameworkBuild.override {
               withX11 = false;
               mesa = mesaNoxBuild;
               glu = gluNoxBuild;
@@ -1617,7 +1612,7 @@
               libxcb = null; libXau = null; libXdmcp = null;
             };
           mesaDemosNoxBuild =
-            if isDarwin then null else mesaDemosBuild.override {
+            mesaDemosBuild.override {
               withX11 = false;
               mesa = mesaNoxBuild;
               wayland = waylandBuild;
@@ -1630,7 +1625,7 @@
           # librsvg takes an explicit deps list rather than a cairo argument, so
           # the nox cairo has to be substituted into it by hand.
           librsvgNoxBuild =
-            if isDarwin then null else librsvgBuild.override {
+            librsvgBuild.override {
               deps = [
                 glibBuild gdkPixbufBuild cairoNoxBuild cairoGobjectNoxBuild pangoNoxBuild
                 libxml2Build libcrocoBuild libpngBuild freetype2Build fontconfigBuild
@@ -1639,7 +1634,7 @@
               ];
             };
           netsurfNoxBuild =
-            if isDarwin then null else netsurfBuild.override {
+            netsurfBuild.override {
               withX11 = false;
               gtk3 = gtk3NoxBuild;
               cairo = cairoNoxBuild;
@@ -1654,13 +1649,13 @@
               libXfixes = null; libXcursor = null; xorgproto = null;
             };
           libepoxyNoxBuild =
-            if isDarwin then null else libepoxyBuild.override {
+            libepoxyBuild.override {
               withX11 = false;
               mesa = mesaNoxBuild;
               libX11 = null; xorgproto = null;
             };
           fastfetchNoxBuild =
-            if isDarwin then null else fastfetchBuild.override {
+            fastfetchBuild.override {
               withX11 = false;
               mesa = mesaNoxBuild;
               glu = gluNoxBuild;
@@ -1669,18 +1664,18 @@
               libXau = null; libXdmcp = null;
             };
           harfbuzzNoxBuild =
-            if isDarwin then null else harfbuzzBuild.override { cairo = cairoNoxBuild; };
+            harfbuzzBuild.override { cairo = cairoNoxBuild; };
           atspi2CoreNoxBuild =
-            if isDarwin then null else atspi2CoreBuild.override { dbus = dbusNoxBuild; };
+            atspi2CoreBuild.override { dbus = dbusNoxBuild; };
           cairoGobjectNoxBuild =
-            if isDarwin then null else cairoGobjectBuild.override { cairo = cairoNoxBuild; };
+            cairoGobjectBuild.override { cairo = cairoNoxBuild; };
           xkbcommonNoxBuild =
-            if isDarwin then null else xkbcommonBuild.override {
+            xkbcommonBuild.override {
               withX11 = false;
               libxcb = null; libXau = null; libXdmcp = null;
             };
           pangoNoxBuild =
-            if isDarwin then null else pangoBuild.override {
+            pangoBuild.override {
               withX11 = false;
               cairo = cairoNoxBuild;
               harfbuzz = harfbuzzNoxBuild;
@@ -1688,7 +1683,7 @@
               xorgproto = null;
             };
           gtk3NoxBuild =
-            if isDarwin then null else gtk3Build.override {
+            gtk3Build.override {
               withX11 = false;
               cairo = cairoNoxBuild;
               cairoGobject = cairoGobjectNoxBuild;
@@ -1712,7 +1707,7 @@
               xorgproto = null;
             };
           gtkLayerShellNoxBuild =
-            if isDarwin then null else gtkLayerShellBuild.override {
+            gtkLayerShellBuild.override {
               gtk3 = gtk3NoxBuild;
               withX11 = false;
               atspi2Core = atspi2CoreNoxBuild;
@@ -1729,7 +1724,7 @@
               libXfixes = null; libXcursor = null; xorgproto = null;
             };
           libwnckBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/xfce/libwnck.nix {
+            pkgs.callPackage ./nix/pkgs/xfce/libwnck.nix {
               nativeMesonTools = nativeMesonToolsDir;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
@@ -1769,7 +1764,7 @@
               inherit (pkgs) libwnck xorgproto;
             };
           gtkLayerShellBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/gtk-layer-shell.nix {
+            pkgs.callPackage ./nix/pkgs/wayland/gtk-layer-shell.nix {
               nativeMesonTools = nativeMesonToolsDir;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
@@ -1812,7 +1807,7 @@
               inherit (pkgs) gtk-layer-shell xorgproto;
             };
           xvfbBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xvfb.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xvfb.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               xorg-server = pkgs.xorg-server;
@@ -1828,13 +1823,13 @@
               libXdmcp = pkgs.libxdmcp;
             };
           xvfbLibxcvtBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xvfb-libxcvt.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xvfb-libxcvt.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               inherit (pkgs) libxcvt;
             };
           xorgBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               xorg-server = pkgs.xorg-server;
@@ -1858,20 +1853,20 @@
               libXfixes = xvfbLibXfixesBuild;
             };
           pdsurfaceBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/pdsurface.nix {
+            pkgs.callPackage ./nix/pkgs/x11/pdsurface.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               corefoundation = coreFoundationBuild;
               iokit = iokitBuild;
             };
           libgbmBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/libgbm.nix {
+            pkgs.callPackage ./nix/pkgs/x11/libgbm.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pdsurface = pdsurfaceBuild;
             };
           libdrmBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/libdrm.nix {
+            pkgs.callPackage ./nix/pkgs/x11/libdrm.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               corefoundation = coreFoundationBuild;
@@ -1881,14 +1876,14 @@
               inherit (pkgs) meson ninja pkg-config python3;
             };
           jsoncBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/json-c.nix {
+            pkgs.callPackage ./nix/pkgs/apps/json-c.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               src = pkgs.json_c.src;
               inherit (pkgs) cmake ninja pkg-config;
             };
           xwaylandBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xwayland.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xwayland.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               xwayland = pkgs.xwayland;
@@ -1927,7 +1922,7 @@
               libdrm = libdrmBuild;
             };
           xvfbLibXrenderBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libXrender";
@@ -1938,7 +1933,7 @@
           # libGL's direct-rendering path calls into XF86VidMode for refresh
           # rate reporting, so glx-direct=true needs this.
           xvfbLibXxf86vmBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libXxf86vm";
@@ -1947,7 +1942,7 @@
               deps = [ pkgs.xorgproto xlibBuild xvfbLibXextBuild ];
             };
           xvfbLibXfixesBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libXfixes";
@@ -1956,7 +1951,7 @@
               deps = [ pkgs.xorgproto xlibBuild ];
             };
           xvfbLibXcursorBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libXcursor";
@@ -1988,7 +1983,7 @@
               '';
             };
           xvfbLibXrandrBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libXrandr";
@@ -2164,25 +2159,25 @@
             thunarBuild
             ;
           cursorThemeBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/cursor-theme.nix {
+            pkgs.callPackage ./nix/pkgs/x11/cursor-theme.nix {
               inherit (pkgs) vanilla-dmz;
             };
           iconThemesBuild =
-            if isDarwin then null else pkgs.runCommand "puredarwin-icon-themes" { } ''
+            pkgs.runCommand "puredarwin-icon-themes" { } ''
               mkdir -p "$out/share/icons"
               cp -a ${pkgs.hicolor-icon-theme}/share/icons/hicolor "$out/share/icons/"
               cp -a ${pkgs.adwaita-icon-theme}/share/icons/Adwaita "$out/share/icons/"
               chmod -R u+w "$out/share/icons"
             '';
           libdisplayInfoBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/mesa/libdisplay-info.nix {
+            pkgs.callPackage ./nix/pkgs/mesa/libdisplay-info.nix {
               nativeMesonTools = nativeMesonToolsDir;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               inherit (pkgs) libdisplay-info hwdata;
             };
           glibNetworkingBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/gtk/glib-networking.nix {
+            pkgs.callPackage ./nix/pkgs/gtk/glib-networking.nix {
               nativeMesonTools = nativeMesonToolsDir;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
@@ -2192,7 +2187,7 @@
             };
 
           vteBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/gtk/vte.nix {
+            pkgs.callPackage ./nix/pkgs/gtk/vte.nix {
               nativeMesonTools = nativeMesonToolsDir;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
@@ -2235,7 +2230,7 @@
               inherit (pkgs) xorgproto;
             };
           xrandrBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-xrandr";
@@ -2259,7 +2254,7 @@
               '';
             };
           xrdbBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-xrdb";
@@ -2289,7 +2284,7 @@
               ];
             };
           xinitBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               guestPrefix = true;
@@ -2320,7 +2315,7 @@
               '';
             };
           iceauthBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-iceauth";
@@ -2332,7 +2327,7 @@
               deps = [ pkgs.xorgproto xlibBuild xvfbLibICEBuild ];
             };
           xvfbLibXineramaBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libXinerama";
@@ -2341,7 +2336,7 @@
               deps = [ pkgs.xorgproto xlibBuild xvfbLibXextBuild ];
             };
           xvfbLibXresBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libXres";
@@ -2350,7 +2345,7 @@
               deps = [ pkgs.xorgproto xlibBuild xvfbLibXextBuild ];
             };
           xvfbLibXcompositeBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libXcomposite";
@@ -2359,7 +2354,7 @@
               deps = [ pkgs.xorgproto xlibBuild xvfbLibXfixesBuild ];
             };
           xvfbLibXdamageBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libXdamage";
@@ -2368,7 +2363,7 @@
               deps = [ pkgs.xorgproto xlibBuild xvfbLibXfixesBuild ];
             };
           xvfbLibXpresentBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libXpresent";
@@ -2384,7 +2379,7 @@
               ];
             };
           libXftBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libXft";
@@ -2401,7 +2396,7 @@
               nativeDeps = [ pkgs.util-macros ];
             };
           dmenuBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/dmenu.nix {
+            pkgs.callPackage ./nix/pkgs/x11/dmenu.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               inherit (pkgs) dmenu;
@@ -2417,7 +2412,7 @@
               expat = expatBuild;
             };
           xvfbLibXiBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pname = "puredarwin-libXi";
@@ -2434,7 +2429,7 @@
               ];
             };
           xeyesBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xeyes.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xeyes.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               xeyes = pkgs.xeyes;
@@ -2453,7 +2448,7 @@
               inherit (pkgs) xorgproto;
             };
           xclockBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xclock.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xclock.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               xclock = pkgs.xclock;
@@ -2476,7 +2471,7 @@
               inherit (pkgs) xorgproto;
             };
           xcalcBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xcalc.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xcalc.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               xcalc = pkgs.xcalc;
@@ -2493,7 +2488,7 @@
               inherit (pkgs) xorgproto;
             };
           xmessageBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xmessage.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xmessage.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               xmessage = pkgs.xmessage;
@@ -2510,7 +2505,7 @@
               inherit (pkgs) xorgproto;
             };
           fltkBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/fltk.nix {
+            pkgs.callPackage ./nix/pkgs/apps/fltk.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libcxxDylib = libcxxDylibBuild;
@@ -2540,17 +2535,17 @@
             shared = true;
           } // args);
 
-          libXauSharedBuild = if isDarwin then null else mkSharedXorgLib {
+          libXauSharedBuild = mkSharedXorgLib {
             pname = "puredarwin-libXau";
             inherit (pkgs.libXau) version src;
             deps = [ pkgs.xorgproto ];
           };
-          libXdmcpSharedBuild = if isDarwin then null else mkSharedXorgLib {
+          libXdmcpSharedBuild = mkSharedXorgLib {
             pname = "puredarwin-libXdmcp";
             inherit (pkgs.libXdmcp) version src;
             deps = [ pkgs.xorgproto ];
           };
-          libxcbSharedBuild = if isDarwin then null else mkSharedXorgLib {
+          libxcbSharedBuild = mkSharedXorgLib {
             pname = "puredarwin-libxcb";
             inherit (pkgs.libxcb) version src;
             deps = [ pkgs.xorgproto libXauSharedBuild libXdmcpSharedBuild ];
@@ -2560,38 +2555,38 @@
               export PYTHONPATH="${pkgs.xcb-proto}/${pkgs.python3.sitePackages}:$PYTHONPATH"
             '';
           };
-          libX11SharedBuild = if isDarwin then null else mkSharedXorgLib {
+          libX11SharedBuild = mkSharedXorgLib {
             pname = "puredarwin-libX11";
             inherit (pkgs.libX11) version src;
             deps = [ pkgs.xorgproto pkgs.xtrans libxcbSharedBuild libXauSharedBuild libXdmcpSharedBuild ];
             configureFlags = [ "--disable-specs" "--enable-xlocaledir" ];
           };
-          libXextSharedBuild = if isDarwin then null else mkSharedXorgLib {
+          libXextSharedBuild = mkSharedXorgLib {
             pname = "puredarwin-libXext";
             inherit (pkgs.libXext) version src;
             deps = [ pkgs.xorgproto libX11SharedBuild libXauSharedBuild ];
           };
-          libXrenderSharedBuild = if isDarwin then null else mkSharedXorgLib {
+          libXrenderSharedBuild = mkSharedXorgLib {
             pname = "puredarwin-libXrender";
             inherit (pkgs.libXrender) version src;
             deps = [ pkgs.xorgproto libX11SharedBuild ];
           };
-          libXfixesSharedBuild = if isDarwin then null else mkSharedXorgLib {
+          libXfixesSharedBuild = mkSharedXorgLib {
             pname = "puredarwin-libXfixes";
             inherit (pkgs.libXfixes) version src;
             deps = [ pkgs.xorgproto libX11SharedBuild libXextSharedBuild ];
           };
-          libXiSharedBuild = if isDarwin then null else mkSharedXorgLib {
+          libXiSharedBuild = mkSharedXorgLib {
             pname = "puredarwin-libXi";
             inherit (pkgs.libXi) version src;
             deps = [ pkgs.xorgproto libX11SharedBuild libXextSharedBuild libXfixesSharedBuild ];
           };
-          libXrandrSharedBuild = if isDarwin then null else mkSharedXorgLib {
+          libXrandrSharedBuild = mkSharedXorgLib {
             pname = "puredarwin-libXrandr";
             inherit (pkgs.libXrandr) version src;
             deps = [ pkgs.xorgproto libX11SharedBuild libXextSharedBuild libXrenderSharedBuild ];
           };
-          libXcursorSharedBuild = if isDarwin then null else mkSharedXorgLib {
+          libXcursorSharedBuild = mkSharedXorgLib {
             pname = "puredarwin-libXcursor";
             inherit (pkgs.libXcursor) version src;
             deps = [ pkgs.xorgproto libX11SharedBuild libXrenderSharedBuild libXfixesSharedBuild ];
@@ -2599,7 +2594,7 @@
 
           # Wine's schannel/bcrypt TLS backend is GnuTLS-only
           vulkanToolsBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/mesa/vulkan-tools.nix {
+            pkgs.callPackage ./nix/pkgs/mesa/vulkan-tools.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libcxxDylib = libcxxDylibBuild;
@@ -2617,7 +2612,7 @@
               inherit (pkgs) xorgproto;
             };
           vulkanLoaderBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/mesa/vulkan-loader.nix {
+            pkgs.callPackage ./nix/pkgs/mesa/vulkan-loader.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               nativeMesonTools = nativeMesonToolsDir;
@@ -2632,13 +2627,13 @@
               libXrender = libXrenderSharedBuild;
               inherit (pkgs) xorgproto;
             };
-          libxshmfenceSharedBuild = if isDarwin then null else mkSharedXorgLib {
+          libxshmfenceSharedBuild = mkSharedXorgLib {
             pname = "puredarwin-libxshmfence";
             inherit (pkgs.libxshmfence) version src;
             deps = [ pkgs.xorgproto ];
             configureFlags = [ "--with-shared-memory-dir=/tmp" ];
           };
-          nettleSharedBuild = if isDarwin then null else mkSharedXorgLib {
+          nettleSharedBuild = mkSharedXorgLib {
             pname = "puredarwin-nettle";
             inherit (pkgs.nettle) version src;
             configureFlags = [
@@ -2648,7 +2643,7 @@
               "--disable-openssl"
             ];
           };
-          gnutlsSharedBuild = if isDarwin then null else mkSharedXorgLib {
+          gnutlsSharedBuild = mkSharedXorgLib {
             pname = "puredarwin-gnutls";
             inherit (pkgs.gnutls) version src;
             deps = [ nettleSharedBuild ];
@@ -2685,7 +2680,7 @@
           };
 
           wineToolsBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/wine-tools.nix {
+            pkgs.callPackage ./nix/pkgs/apps/wine-tools.nix {
               # Only version and src are taken from it. nixpkgs' top-level `wine`
               # is winePackages.full, which pulls in pkgsi686Linux and so cannot
               # be evaluated on a non-x86 host; wine64 has the same version and
@@ -2698,7 +2693,7 @@
             };
 
           wineBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/wine.nix {
+            pkgs.callPackage ./nix/pkgs/apps/wine.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               coreservices = coreServicesBuild;
@@ -2741,7 +2736,7 @@
             };
 
           dilloBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/dillo.nix {
+            pkgs.callPackage ./nix/pkgs/apps/dillo.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libcxxDylib = libcxxDylibBuild;
@@ -2767,81 +2762,81 @@
               inherit (pkgs) xorgproto;
             };
           ncursesBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/ncurses.nix {
+            pkgs.callPackage ./nix/pkgs/base/ncurses.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               ncurses = pkgs.ncurses;
             };
           libiconvBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/libiconv.nix {
+            pkgs.callPackage ./nix/pkgs/base/libiconv.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libiconvReal = pkgs.libiconvReal;
             };
           toyboxBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/toybox.nix {
+            pkgs.callPackage ./nix/pkgs/base/toybox.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               toybox = pkgs.toybox;
               zlib = xvfbZlibBuild;
             };
           nanoBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/nano.nix {
+            pkgs.callPackage ./nix/pkgs/base/nano.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               nano = pkgs.nano;
               ncurses = ncursesBuild;
             };
           xxdBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/xxd.nix {
+            pkgs.callPackage ./nix/pkgs/toolchain/xxd.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               tinyxxd = pkgs.tinyxxd;
             };
           xzBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/xz.nix {
+            pkgs.callPackage ./nix/pkgs/base/xz.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               xz = pkgs.xz;
             };
           bzip2Build =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/bzip2.nix {
+            pkgs.callPackage ./nix/pkgs/base/bzip2.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               bzip2 = pkgs.bzip2;
             };
           unzipBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/unzip.nix {
+            pkgs.callPackage ./nix/pkgs/base/unzip.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               unzip = pkgs.unzip;
               bzip2 = bzip2Build;
             };
           bmakeBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/bmake.nix {
+            pkgs.callPackage ./nix/pkgs/base/bmake.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               bmake = pkgs.bmake;
             };
           gnumakeBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/gnumake.nix {
+            pkgs.callPackage ./nix/pkgs/base/gnumake.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               gnumake = pkgs.gnumake;
             };
           pkgconfBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/pkgconf.nix {
+            pkgs.callPackage ./nix/pkgs/base/pkgconf.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               pkgconf = pkgs.pkgconf-unwrapped;
             };
           mesonBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/meson.nix {
+            pkgs.callPackage ./nix/pkgs/base/meson.nix {
               python = pythonBuild;
               inherit (pkgs) meson;
             };
           cmakeBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/cmake.nix {
+            pkgs.callPackage ./nix/pkgs/base/cmake.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libcxxDylib = libcxxDylibBuild;
@@ -2852,7 +2847,7 @@
             };
           # Nix and its static dependencies (see nix/pkgs/nix).
           nixPortPackages =
-            if isDarwin then { } else import ./nix/pkgs/nix {
+            import ./nix/pkgs/nix {
               inherit lib pkgs darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libcxxDylib = libcxxDylibBuild;
@@ -2865,7 +2860,7 @@
               systemConfiguration = systemConfigurationBuild;
             };
           ninjaBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/ninja.nix {
+            pkgs.callPackage ./nix/pkgs/base/ninja.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libcxxDylib = libcxxDylibBuild;
@@ -2873,36 +2868,36 @@
               inherit (pkgs) ninja;
             };
           gnum4Build =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/gnum4.nix {
+            pkgs.callPackage ./nix/pkgs/base/gnum4.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               gnum4 = pkgs.gnum4;
             };
           autoconfBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/autoconf.nix {
+            pkgs.callPackage ./nix/pkgs/base/autoconf.nix {
               autoconf = pkgs.autoconf;
             };
           automakeBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/automake.nix {
+            pkgs.callPackage ./nix/pkgs/base/automake.nix {
               automake = pkgs.automake;
               # Host autoconf, not autoconfBuild: this only drives
               # automake's own build/test-generation on the Linux builder
               autoconf = pkgs.autoconf;
             };
           bisonBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/bison.nix {
+            pkgs.callPackage ./nix/pkgs/base/bison.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               bison = pkgs.bison;
             };
           flexBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/flex.nix {
+            pkgs.callPackage ./nix/pkgs/base/flex.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               flex = pkgs.flex;
             };
           pythonBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/python.nix {
+            pkgs.callPackage ./nix/pkgs/base/python.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               python3 = pkgs.python3;
@@ -2911,14 +2906,14 @@
               libffi = libffiBuild;
             };
           perlBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/perl.nix {
+            pkgs.callPackage ./nix/pkgs/base/perl.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               perl = pkgs.perl;
               zlib = xvfbZlibBuild;
             };
           zshBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/zsh.nix {
+            pkgs.callPackage ./nix/pkgs/base/zsh.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libiconv = libiconvBuild;
@@ -2926,27 +2921,27 @@
               ncurses = ncursesBuild;
             };
           bashBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/bash.nix {
+            pkgs.callPackage ./nix/pkgs/base/bash.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               bash = pkgs.bash;
               ncurses = ncursesBuild;
             };
           fileBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/file.nix {
+            pkgs.callPackage ./nix/pkgs/base/file.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               file = pkgs.file;
               zlib = xvfbZlibBuild;
             };
           opensslBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/openssl.nix {
+            pkgs.callPackage ./nix/pkgs/base/openssl.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               openssl = pkgs.openssl;
             };
           curlBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/curl.nix {
+            pkgs.callPackage ./nix/pkgs/base/curl.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               corefoundation = coreFoundationBuild;
@@ -2956,7 +2951,7 @@
               zlib = xvfbZlibBuild;
             };
           opensshBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/openssh.nix {
+            pkgs.callPackage ./nix/pkgs/base/openssh.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               openssh = pkgs.openssh;
@@ -2964,7 +2959,7 @@
               zlib = xvfbZlibBuild;
             };
           gitBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/git.nix {
+            pkgs.callPackage ./nix/pkgs/base/git.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               git = pkgs.git;
@@ -2973,19 +2968,19 @@
               openssl = opensslBuild;
             };
           migcomDarwinBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/migcom-darwin.nix {
+            pkgs.callPackage ./nix/pkgs/toolchain/migcom-darwin.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
             };
           ioregBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/ioreg.nix {
+            pkgs.callPackage ./nix/pkgs/apple/ioreg.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               corefoundation = coreFoundationBuild;
               iokit = iokitBuild;
             };
           xkbcommonBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xkbcommon.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xkbcommon.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libxcb = xcbBuild;
@@ -2995,16 +2990,16 @@
               xkeyboard-config = xkeyboardConfigBuild;
             };
           waylandScannerBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/wayland-scanner.nix {
+            pkgs.callPackage ./nix/pkgs/wayland/wayland-scanner.nix {
               src = ./src/ThirdParty/wayland;
               inherit (pkgs) expat libxml2;
             };
           waylandProtocolsBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/wayland-protocols.nix {
+            pkgs.callPackage ./nix/pkgs/wayland/wayland-protocols.nix {
               src = ./src/ThirdParty/wayland-protocols;
             };
           neuwldBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/neuwld.nix {
+            pkgs.callPackage ./nix/pkgs/wayland/neuwld.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               fontconfig = fontconfigBuild;
@@ -3013,7 +3008,7 @@
               src = ./src/ThirdParty/neuwld;
             };
           neuswcBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/neuswc.nix {
+            pkgs.callPackage ./nix/pkgs/wayland/neuswc.nix {
               pdwmSource = ./src/Userspace/pdwm/pdwm.c;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
@@ -3032,7 +3027,7 @@
               src = ./src/ThirdParty/neuswc;
             };
           wlrootsBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/wlroots.nix {
+            pkgs.callPackage ./nix/pkgs/wayland/wlroots.nix {
               inherit darwinCrossToolchain nativeLd;
               nativeMesonTools = nativeMesonToolsDir;
               libSystem = libSystemBuild;
@@ -3053,7 +3048,7 @@
               src = ./src/ThirdParty/wlroots;
             };
           swayBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/sway.nix {
+            pkgs.callPackage ./nix/pkgs/wayland/sway.nix {
               inherit darwinCrossToolchain nativeLd;
               nativeMesonTools = nativeMesonToolsDir;
               libSystem = libSystemBuild;
@@ -3079,7 +3074,7 @@
           # Wayland-only image: wlroots/sway rebuilt without the Xwayland
           # backend so nothing on the image links libxcb.
           wlrootsNoxBuild =
-            if isDarwin then null else wlrootsBuild.override {
+            wlrootsBuild.override {
               withXwayland = false;
               xcb = null;
               xcbWm = null;
@@ -3087,7 +3082,7 @@
               xkbcommon = xkbcommonNoxBuild;
             };
           swayNoxBuild =
-            if isDarwin then null else swayBuild.override {
+            swayBuild.override {
               withXwayland = false;
               wlroots = wlrootsNoxBuild;
               cairo = cairoNoxBuild;
@@ -3098,9 +3093,9 @@
               xcbWm = null;
             };
           tllistBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/tllist.nix { };
+            pkgs.callPackage ./nix/pkgs/wayland/tllist.nix { };
           fcftBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/fcft.nix {
+            pkgs.callPackage ./nix/pkgs/wayland/fcft.nix {
               inherit darwinCrossToolchain nativeLd;
               nativeMesonTools = nativeMesonToolsDir;
               libSystem = libSystemBuild;
@@ -3119,7 +3114,7 @@
               libffi = libffiBuild;
             };
           footBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/foot.nix {
+            pkgs.callPackage ./nix/pkgs/wayland/foot.nix {
               inherit darwinCrossToolchain nativeLd;
               nativeMesonTools = nativeMesonToolsDir;
               libSystem = libSystemBuild;
@@ -3145,13 +3140,13 @@
               ncurses = ncursesBuild;
             };
           pdEpollShimBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/pd-epoll-shim.nix {
+            pkgs.callPackage ./nix/pkgs/wayland/pd-epoll-shim.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               src = ./src/Libraries/pd-epoll-shim;
             };
           waylandBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/wayland.nix {
+            pkgs.callPackage ./nix/pkgs/wayland/wayland.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libffi = libffiBuild;
@@ -3159,7 +3154,7 @@
               src = ./src/ThirdParty/wayland;
             };
           fastfetchBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/fastfetch.nix {
+            pkgs.callPackage ./nix/pkgs/apps/fastfetch.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               fastfetch = pkgs.fastfetch;
@@ -3177,7 +3172,7 @@
               mesa = mesaBuild;
             };
           xtermBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xterm.nix {
+            pkgs.callPackage ./nix/pkgs/x11/xterm.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               ncurses = ncursesBuild;
@@ -3228,7 +3223,7 @@
               src = libcxxDylibSource;
             };
           libcxxTestBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/libcxx-test.nix {
+            pkgs.callPackage ./nix/pkgs/apple/libcxx-test.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libcxxabiDylib = libcxxabiDylibBuild;
@@ -3243,20 +3238,20 @@
               src = objcSource;
             };
           asmjitTestBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/asmjit-test.nix {
+            pkgs.callPackage ./nix/pkgs/apple/asmjit-test.nix {
               inherit darwinCrossToolchain nativeLd asmjitSrc;
               libSystem = libSystemBuild;
               libcxxDylib = libcxxDylibBuild;
               libcxxabiDylib = libcxxabiDylibBuild;
             };
           objcTestBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/objc-test.nix {
+            pkgs.callPackage ./nix/pkgs/apple/objc-test.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libobjc = libobjcBuild;
             };
           foundationBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/foundation.nix {
+            pkgs.callPackage ./nix/pkgs/apple/foundation.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libobjc = libobjcBuild;
@@ -3271,7 +3266,7 @@
               src = "${foundationSource}/src/Frameworks/Foundation";
             };
           protocolBufferBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/protocolbuffer.nix {
+            pkgs.callPackage ./nix/pkgs/apple/protocolbuffer.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libobjc = libobjcBuild;
@@ -3280,7 +3275,7 @@
               src = "${protocolBufferSource}/src/Libraries/ProtocolBuffer";
             };
           wirelessDiagnosticsBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/wirelessdiagnostics.nix {
+            pkgs.callPackage ./nix/pkgs/apple/wirelessdiagnostics.nix {
               src = "${wirelessDiagnosticsSource}/src/Libraries/WirelessDiagnostics";
             };
           iokitBuild =
@@ -3293,14 +3288,14 @@
               foundation = foundationBuild;
             };
           coreServicesBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/coreservices.nix {
+            pkgs.callPackage ./nix/pkgs/apple/coreservices.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               corefoundation = coreFoundationBuild;
               src = coreServicesSource;
             };
           openglFrameworkBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/opengl-framework.nix {
+            pkgs.callPackage ./nix/pkgs/apple/opengl-framework.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               mesa = mesaBuild;
@@ -3314,7 +3309,7 @@
               src = ./src/Frameworks/OpenGL;
             };
           appkitBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/appkit.nix {
+            pkgs.callPackage ./nix/pkgs/apple/appkit.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libobjc = libobjcBuild;
@@ -3335,7 +3330,7 @@
               src = ./src/Frameworks/AppKit;
             };
           windowserverBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/windowserver.nix {
+            pkgs.callPackage ./nix/pkgs/apple/windowserver.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               coregraphics = coregraphicsBuild;
@@ -3347,11 +3342,11 @@
               src = ./src/Frameworks/WindowServer;
             };
           applicationservicesBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/applicationservices.nix {
+            pkgs.callPackage ./nix/pkgs/apple/applicationservices.nix {
               src = ./src/Frameworks/ApplicationServices;
             };
           corevideoBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/corevideo.nix {
+            pkgs.callPackage ./nix/pkgs/apple/corevideo.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libobjc = libobjcBuild;
@@ -3363,7 +3358,7 @@
               src = ./src/Frameworks/CoreVideo;
             };
           quartzcoreBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/quartzcore.nix {
+            pkgs.callPackage ./nix/pkgs/apple/quartzcore.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libobjc = libobjcBuild;
@@ -3419,8 +3414,8 @@
             inherit asmjitSrc;
             inherit wineToolsBuild;
             inherit fexWow64Build;
-            mingwAarch64Cc = if isDarwin then null else mingwAarch64.cc;
-            mingwArm64ecCc = if isDarwin then null else mingwAarch64.arm64ecCc;
+            mingwAarch64Cc = mingwAarch64.cc;
+            mingwArm64ecCc = mingwAarch64.arm64ecCc;
             inherit waylandScannerBuild;
             inherit waylandProtocolsBuild;
             inherit diskArbitrationSource;
@@ -3657,7 +3652,7 @@
             garconArm64 exoArm64 xfwm4Arm64 xfdesktopArm64 thunarArm64
           ];
           securityBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/security.nix {
+            pkgs.callPackage ./nix/pkgs/apple/security.nix {
               inherit mkPureDarwinBuild;
               corefoundation = coreFoundationBuild;
               libobjc = libobjcBuild;
@@ -3666,7 +3661,7 @@
               src = securitySource;
             };
           mkSystemConfigurationBuild = { corefoundation, libobjc, security, iokit, symptomReporter }:
-            if isDarwin then null else (mkPureDarwinBuild {
+            (mkPureDarwinBuild {
               pname = "puredarwin-systemconfiguration";
               src = systemConfigurationSource;
               buildTargets = [ "SystemConfiguration" "configd" "bootplib_static" "ipconfiguration_static" "ipconfig" ];
@@ -3776,7 +3771,7 @@
           # Diagnostic: replays diskarbitrationd's DADiskCreateFromIOMedia checks
           # against one IOMedia and names the failing one.
           iomediacheckBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/iomediacheck.nix {
+            pkgs.callPackage ./nix/pkgs/apple/iomediacheck.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               corefoundation = coreFoundationBuild;
@@ -3787,7 +3782,7 @@
           # no SDK header; this is PureDarwin's own, recording symptoms through
           # os_log. bootp's IPConfiguration plugin is the consumer.
           symptomReporterBuild =
-            if isDarwin then null else (mkPureDarwinBuild {
+            (mkPureDarwinBuild {
               pname = "puredarwin-symptomreporter";
               src = symptomReporterSource;
               buildTargets = [ "SymptomReporter" ];
@@ -3817,7 +3812,7 @@
               '';
             });
           diskArbitrationBuild =
-            if isDarwin then null else (mkPureDarwinBuild {
+            (mkPureDarwinBuild {
               pname = "puredarwin-diskarbitration";
               src = diskArbitrationSource;
               buildTargets = [ "DiskArbitration" "diskarbitrationd" ];
@@ -3867,7 +3862,7 @@
               symptomReporter = symptomReporterBuild;
             };
           systemStarterBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/systemstarter.nix {
+            pkgs.callPackage ./nix/pkgs/apple/systemstarter.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               corefoundation = coreFoundationBuild;
@@ -3971,7 +3966,7 @@
             enableIOGraphicsFamily = true;
           };
           # riscv64 kernel, kexts and kernel collection (see nix/riscv64.nix)
-          riscv64 = if isDarwin then { } else import ./nix/riscv64.nix {
+          riscv64 = import ./nix/riscv64.nix {
             inherit lib pkgs mkPureDarwinBuild kernelSource kextsSource;
             inherit riscv64CrossToolchain compilerRtRiscv64Kernel compilerRtRiscv64Build libSystemBuild;
             inherit icuCoreBuild libcxxabiDylibBuild libcxxDylibBuild libobjcBuild;
@@ -4037,7 +4032,7 @@
             linuxApps
             ;
           # Investigative builds, not image contents.
-          probePackages = lib.optionalAttrs (!isDarwin) {
+          probePackages = {
             # Cross toolchain, exposed so out-of-tree flakes (e.g. checkm8-tools'
             # PongoOS build) can link Mach-O with the real cctools ld64.
             arm64-cross-toolchain = arm64CrossToolchain;
@@ -4110,10 +4105,10 @@
             vulkan-tools = vulkanToolsBuild;
             llvm-cross = llvmCrossBuild;
             compiler-rt = compilerRtBuild;
-            mingw-aarch64-cc = if isDarwin then null else mingwAarch64.cc;
-            mingw-arm64ec-cc = if isDarwin then null else mingwAarch64.arm64ecCc;
+            mingw-aarch64-cc = mingwAarch64.cc;
+            mingw-arm64ec-cc = mingwAarch64.arm64ecCc;
             fex-wow64 = fexWow64Build;
-            mingw-aarch64-crt = if isDarwin then null else mingwAarch64.mingw;
+            mingw-aarch64-crt = mingwAarch64.mingw;
             asmjit-test = asmjitTestBuild;
             clang = clangCrossBuild;
             kc-tools-guest = kcToolsGuestBuild;
@@ -4138,7 +4133,7 @@
             windowserver = windowserverBuild;
             appkit = appkitBuild;
           };
-          arm64Packages = lib.optionalAttrs (!isDarwin) {
+          arm64Packages = {
             libSystem-armv6 = arm64.libSystemArmv6Build;
             libsystem-arm64 = arm64.libSystemArm64Build;
             userland-arm32-bcm2835 = arm64.userlandArm32Bcm2835Build;
@@ -4366,13 +4361,13 @@
               pkgs.gnused
               pkgs.clang
               pkgs.ruby
-            ] ++ lib.optionals (!isDarwin) [
+            ] ++ [
               darwinCrossToolchain
               nativeMigcom
               nativeUnifdef
               pkgs.libuuid
             ];
-          } // lib.optionalAttrs (!isDarwin) {
+          } // {
             NIX_DARWIN_TOOLCHAIN_DIR = "${darwinCrossToolchain}/bin";
             NIX_NATIVE_LD_PATH = "${nativeLd}/bin/ld";
             NIX_HOST_CC_PATH = "${pkgs.clang}/bin/clang";
@@ -4382,10 +4377,6 @@
             shellHook = ''
               export CMAKE_TOOLCHAIN_FILE="$PWD/cmake/nix-toolchain.cmake"
               echo "PureDarwin Nix kernel shell: cmake/nix-toolchain.cmake and cached native ld/migcom/unifdef are active."
-            '';
-          } // lib.optionalAttrs isDarwin {
-            shellHook = ''
-              echo "PureDarwin Darwin shell: using the native Apple host toolchain path."
             '';
           });
         in {

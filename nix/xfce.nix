@@ -86,7 +86,7 @@ let
   '';
 
   xfconfBuild =
-    if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
+    pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
       inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       shared = true;
@@ -115,7 +115,7 @@ let
       ];
     };
   libxfce4utilBuild =
-    if isDarwin then null else pkgs.callPackage ./pkgs/xfce/libxfce4util.nix {
+    pkgs.callPackage ./pkgs/xfce/libxfce4util.nix {
       nativeMesonTools = nativeMesonToolsDir;
       inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
@@ -127,7 +127,7 @@ let
       libiconv = libiconvBuild;
     };
   libxfce4uiBuild =
-    if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
+    pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
       inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       shared = true;
@@ -168,7 +168,7 @@ let
       ];
     };
   xfwm4Build =
-    if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
+    pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
       inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       guestPrefix = true;
@@ -211,7 +211,7 @@ let
       ];
     };
   libxfce4windowingBuild =
-    if isDarwin then null else pkgs.callPackage ./pkgs/xfce/libxfce4windowing.nix {
+    pkgs.callPackage ./pkgs/xfce/libxfce4windowing.nix {
       nativeMesonTools = nativeMesonToolsDir;
       inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
@@ -265,7 +265,7 @@ let
       inherit (pkgs) xorgproto;
     };
   garconBuild =
-    if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
+    pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
       inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       # shared for the same reason as xfconf: xfce4-panel dlopens plugin
@@ -299,7 +299,7 @@ let
       ];
     };
   exoBuild =
-    if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
+    pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
       inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       shared = true;
@@ -331,7 +331,7 @@ let
       ];
     };
   xfce4SessionBuild =
-    if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
+    pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
       inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       guestPrefix = true;
@@ -390,7 +390,7 @@ let
       ];
     };
   xfce4PanelBuild =
-    if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
+    pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
       inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       guestPrefix = true;
@@ -443,7 +443,7 @@ let
       ];
     };
   xfdesktopBuild =
-    if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
+    pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
       inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       guestPrefix = true;
@@ -487,7 +487,7 @@ let
       ];
     };
   xfce4TerminalBuild =
-    if isDarwin then null else pkgs.callPackage ./pkgs/xfce/xfce4-terminal.nix {
+    pkgs.callPackage ./pkgs/xfce/xfce4-terminal.nix {
       nativeMesonTools = nativeMesonToolsDir;
       inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
@@ -532,7 +532,7 @@ let
       inherit (pkgs) xorgproto;
     };
   xfce4SettingsBuild =
-    if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
+    pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
       inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       guestPrefix = true;
@@ -575,7 +575,7 @@ let
       ];
     };
   xfce4AppfinderBuild =
-    if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
+    pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
       inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       guestPrefix = true;
@@ -611,7 +611,7 @@ let
       ];
     };
   thunarBuild =
-    if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
+    pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
       inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       guestPrefix = true;

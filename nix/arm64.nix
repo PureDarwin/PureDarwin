@@ -974,7 +974,7 @@ let
     iokit = iokitArm64Build;
   };
   diskArbitrationArm64Build =
-    if isDarwin then null else (mkPureDarwinBuild {
+    (mkPureDarwinBuild {
       pname = "puredarwin-diskarbitration-arm64";
       src = diskArbitrationSource;
       buildTargets = [ "DiskArbitration" "diskarbitrationd" ];
@@ -1033,7 +1033,7 @@ let
     src = securitySource;
   };
   symptomReporterArm64Build =
-    if isDarwin || symptomReporterBuild == null then null
+    if symptomReporterBuild == null then null
     else symptomReporterBuild.override {
       puredarwinArch = "arm64";
       inherit arm64CrossToolchain;
@@ -1473,7 +1473,7 @@ let
     inherit (pkgs) pixman;
   };
   pdVirglShimArm64Build =
-  if isDarwin then null else (mkPureDarwinBuild {
+  (mkPureDarwinBuild {
       pname = "puredarwin-pd-virgl-shim-arm64";
       src = userlandSource;
       buildTargets = [ "pd_virgl_shim" ];
@@ -1659,7 +1659,6 @@ let
     iokit = iokitArm64Build;
   };
   mkArm64Build = file: deps:
-  if isDarwin then null else
   let
   f = import file;
   common = {
@@ -2670,7 +2669,7 @@ let
   # builds, so the two architectures ship the same userland.
   # The same package set as imageExtraPackageSet, resolved to the arm64
   # builds, so the two architectures ship the same userland.
-  imageExtraPackageSetArm64 = lib.optionalAttrs (!isDarwin) {
+  imageExtraPackageSetArm64 = {
     wine = wineArm64Build;
     sqlite = sqliteArm64Build;
     libjpeg = libjpegArm64Build;

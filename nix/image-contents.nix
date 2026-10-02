@@ -308,11 +308,11 @@ let
     cp -a ${tccBuild}/. "$out/"
     chmod -R u+w "$out"
     cp -a ${cctoolsBuild}/. "$out/"
-  '' + lib.optionalString (!isDarwin && launchdBuild != null) ''
+  '' + lib.optionalString (launchdBuild != null) ''
     chmod -R u+w "$out"
     cp -a ${launchdBuild}/. "$out/"
     chmod -R u+w "$out"
-  '' + lib.optionalString (!isDarwin && launchctlBuild != null) ''
+  '' + lib.optionalString (launchctlBuild != null) ''
     cp -a ${launchctlBuild}/. "$out/"
     chmod -R u+w "$out"
     if [ -e "$out/pd-sbin/launchd" ]; then
@@ -321,7 +321,7 @@ let
       rm -rf "$out/pd-sbin"
     fi
   ''
-  + lib.optionalString (!isDarwin) ''
+  + ''
     chmod -R u+w "$out"
     cp -a ${bmakeBuild}/. "$out/"
     chmod -R u+w "$out"
@@ -351,11 +351,11 @@ let
     cp -a ${tccBuild}/. "$out/"
     chmod -R u+w "$out"
     cp -a ${cctoolsBuild}/. "$out/"
-  '' + lib.optionalString (!isDarwin && launchdBuild != null) ''
+  '' + lib.optionalString (launchdBuild != null) ''
     chmod -R u+w "$out"
     cp -a ${launchdBuild}/. "$out/"
     chmod -R u+w "$out"
-  '' + lib.optionalString (!isDarwin && launchctlBuild != null) ''
+  '' + lib.optionalString (launchctlBuild != null) ''
     cp -a ${launchctlBuild}/. "$out/"
     chmod -R u+w "$out"
     if [ -e "$out/pd-sbin/launchd" ]; then
@@ -363,7 +363,7 @@ let
       cp "$out/pd-sbin/launchd" "$out/sbin/launchd"
       rm -rf "$out/pd-sbin"
     fi
-  '' + lib.optionalString (!isDarwin) ''
+  '' + ''
     chmod -R u+w "$out"
     cp -a ${bmakeBuild}/. "$out/"
     chmod -R u+w "$out"
@@ -381,11 +381,11 @@ let
     cp -a ${kextsBuild}/. "$out/"
     chmod -R u+w "$out"
     cp -a ${libSystemBuild}/. "$out/"
-  '' + lib.optionalString (!isDarwin && launchdBuild != null) ''
+  '' + lib.optionalString (launchdBuild != null) ''
     chmod -R u+w "$out"
     cp -a ${launchdBuild}/. "$out/"
     chmod -R u+w "$out"
-  '' + lib.optionalString (!isDarwin && launchctlBuild != null) ''
+  '' + lib.optionalString (launchctlBuild != null) ''
     cp -a ${launchctlBuild}/. "$out/"
     chmod -R u+w "$out"
     if [ -e "$out/pd-sbin/launchd" ]; then
@@ -401,11 +401,11 @@ let
     cp -a ${kextsBuild}/. "$out/"
     chmod -R u+w "$out"
     cp -a ${libSystemBuild}/. "$out/"
-  '' + lib.optionalString (!isDarwin && launchdBuild != null) ''
+  '' + lib.optionalString (launchdBuild != null) ''
     chmod -R u+w "$out"
     cp -a ${launchdBuild}/. "$out/"
     chmod -R u+w "$out"
-  '' + lib.optionalString (!isDarwin && launchctlBuild != null) ''
+  '' + lib.optionalString (launchctlBuild != null) ''
     cp -a ${launchctlBuild}/. "$out/"
     chmod -R u+w "$out"
     if [ -e "$out/pd-sbin/launchd" ]; then
@@ -436,7 +436,7 @@ let
     cp -a ${userlandBuild}/. "$out/"
   '';
 
-  imageExtraPackageSet = lib.optionalAttrs (!isDarwin) {
+  imageExtraPackageSet = {
     # Multi-user Nix; image.nix adds its build users when this is present.
     nix = nixPortPackages.nix;
     wine = wineBuild;
@@ -687,7 +687,7 @@ let
     # fails to evaluate for everyone who has not opted in.
   } // lib.optionalAttrs (fbdoomExternalSrc != null) {
     fbdoom = fbdoomBuild;
-  } // imageExtraPackageSet // lib.optionalAttrs (!isDarwin) {
+  } // imageExtraPackageSet // {
     # The Wayland stack is built only on Linux hosts; on Darwin these
     # evaluate to something that is not a derivation.
     wayland = waylandBuild;
@@ -1195,7 +1195,7 @@ let
           libcxxDylibBuild
           libobjcBuild
         ]
-        ++ lib.optionals (!isDarwin) [
+        ++ [
           zshBuild
           toyboxBuild
           libiconvBuild
