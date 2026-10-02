@@ -41,11 +41,34 @@ let
     cpu=(${lib.escapeShellArgs baselineCpu})
     platdef=(${lib.escapeShellArgs platformDefine})
     prev=
+    args=()
+    drop_sysroot=
     for a in "$@"; do
+      # With DARWIN_SDK_ROOT set, the SDK below is the only sysroot. A later
+      # -isysroot would win, and on a Mac CMake adds one by itself: it takes
+      # CMAKE_OSX_SYSROOT from the stdenv's SDKROOT, i.e. Apple's SDK headers.
+      if [ -n "$drop_sysroot" ]; then
+        drop_sysroot=
+        prev="$a"
+        continue
+      fi
+      if [ -n "''${DARWIN_SDK_ROOT:-}" ]; then
+        case "$a" in
+          -isysroot) drop_sysroot=1; continue ;;
+          -isysroot?*) continue ;;
+        esac
+      fi
       case "$a" in
         -fuse-ld=*) fuseld=() ;;
         -c|-E|-S|-fsyntax-only) fuseld=() ;;
       esac
+      # -target already pins the deployment version and overrides these. A
+      # Darwin stdenv's MACOSX_DEPLOYMENT_TARGET makes CMake add one anyway,
+      # and the resulting -Woverriding-option breaks -Werror projects.
+      case "$a" in
+        -mmacosx-version-min=*|-mmacos-version-min=*) prev="$a"; continue ;;
+      esac
+      args+=("$a")
       # An explicit -arch overrides the arch in -target, and -mcpu is rejected
       # outright for a target it does not apply to. mig preprocesses its .defs
       # with -arch x86_64 whatever the real target is, so this is not
@@ -61,7 +84,7 @@ let
       "''${platdef[@]}" \
       -isysroot "$SDK" \
       "''${fuseld[@]}" \
-      "$@"
+      "''${args[@]}"
   '';
 
   simpleWrapper = name: realBin: writeShellScriptBin "${target}-${name}" ''
