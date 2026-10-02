@@ -6,6 +6,7 @@
 , bison
 , wine
 , freetype
+, peCc ? null
 }:
 
 stdenv.mkDerivation {
@@ -15,7 +16,7 @@ stdenv.mkDerivation {
 
   patches = [ ./patches/wine-arm64ec-import-lib.patch ];
 
-  nativeBuildInputs = [ pkg-config gnumake flex bison ];
+  nativeBuildInputs = [ pkg-config gnumake flex bison ] ++ lib.optional (peCc != null) peCc;
   # sfnt2fon converts the bundled TTFs to .fon bitmaps and needs real freetype;
   # this is the build host's, since these tools only ever run here.
   buildInputs = [ freetype ];
@@ -27,7 +28,7 @@ stdenv.mkDerivation {
       --prefix="$out" \
       --enable-win64 \
       --without-x \
-      --without-mingw \
+      ${if peCc != null then "--enable-archs=aarch64" else "--without-mingw"} \
       --without-alsa \
       --without-capi \
       --without-cups \

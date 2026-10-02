@@ -60,6 +60,8 @@ assert targetArch == "arm64" -> fexWow64 != null;
 
 let
   isArm64 = targetArch == "arm64";
+  # wine-tools.nix configures for the build machine's own PE arch.
+  toolsPeArch = if stdenv.buildPlatform.isAarch64 then "aarch64" else "x86_64";
   peArchs = if isArm64 then "aarch64,x86_64" else "i386,x86_64";
 
   # The PE compilers. Both run on the build host and emit Windows binaries, so
@@ -167,10 +169,12 @@ stdenv.mkDerivation {
     cp tools/winebuild/import.c "$wine_tools_build/tools/winebuild/import.c"
     ${gnumake}/bin/make -C "$wine_tools_build" -j"$NIX_BUILD_CORES" tools/winebuild/winebuild
     ''}
+    # The tools tree names the rule after the build machine's PE arch. The
+    # typelib only records pointer size, so either 64-bit one serves both.
     ${gnumake}/bin/make -C "$wine_tools_build" -j"$NIX_BUILD_CORES" \
-      dlls/stdole2.tlb/x86_64-windows/stdole2.tlb
+      dlls/stdole2.tlb/${toolsPeArch}-windows/stdole2.tlb
     mkdir -p dlls/stdole2.tlb/x86_64-windows
-    cp "$wine_tools_build/dlls/stdole2.tlb/x86_64-windows/stdole2.tlb" \
+    cp "$wine_tools_build/dlls/stdole2.tlb/${toolsPeArch}-windows/stdole2.tlb" \
       dlls/stdole2.tlb/x86_64-windows/stdole2.tlb
     # widl normalizes ARM64EC's architecture directory to aarch64-windows.
     mkdir -p dlls/stdole2.tlb/aarch64-windows

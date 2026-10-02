@@ -2692,6 +2692,9 @@
               # the same src derivation and evaluates everywhere.
               wine = pkgs.wine64;
               inherit (pkgs) flex bison freetype;
+              # configure refuses an arm/aarch64 build machine without a PE
+              # compiler, even for the tools alone.
+              peCc = if pkgs.stdenv.buildPlatform.isAarch then mingwAarch64.cc else null;
             };
 
           wineBuild =
