@@ -263,6 +263,12 @@
 #define MMU_I_CLINE 6
 #define MMU_CLINE   6
 
+#elif defined (SC8280XP)
+
+/* Qualcomm Snapdragon 8cx Gen 3: 64-byte I- and D-cache lines */
+#define MMU_I_CLINE 6
+#define MMU_CLINE   6
+
 #else
 #error processor not supported
 #endif
