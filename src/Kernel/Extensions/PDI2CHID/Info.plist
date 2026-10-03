@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>PDI2CHID</string>
+	<key>CFBundleIdentifier</key>
+	<string>org.puredarwin.kext.PDI2CHID</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>PDI2CHID</string>
+	<key>CFBundlePackageType</key>
+	<string>KEXT</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>1.0.0</string>
+	<key>IOKitPersonalities</key>
+	<dict>
+		<key>HID over I2C</key>
+		<dict>
+			<key>CFBundleIdentifier</key>
+			<string>org.puredarwin.kext.PDI2CHID</string>
+			<key>IOClass</key>
+			<string>PDI2CHIDDevice</string>
+			<key>IONameMatch</key>
+			<string>hid-over-i2c</string>
+			<key>IOProbeScore</key>
+			<integer>5000</integer>
+			<key>IOProviderClass</key>
+			<string>PDI2CDevice</string>
+		</dict>
+	</dict>
+	<key>OSBundleCompatibleVersion</key>
+	<string>1.0.0</string>
+	<key>OSBundleLibraries</key>
+	<dict>
+		<key>com.apple.iokit.IOHIDFamily</key>
+		<string>1.5.2</string>
+		<key>org.puredarwin.iokit.PDI2CFamily</key>
+		<string>1.0.0</string>
+		<key>com.apple.kpi.bsd</key>
+		<string>8.0.0</string>
+		<key>com.apple.kpi.iokit</key>
+		<string>8.0.0</string>
+		<key>com.apple.kpi.libkern</key>
+		<string>8.0.0</string>
+		<key>com.apple.kpi.mach</key>
+		<string>8.0.0</string>
+	</dict>
+	<key>OSBundleRequired</key>
+	<string>Root</string>
+</dict>
+</plist>
