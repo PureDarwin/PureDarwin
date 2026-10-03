@@ -72,6 +72,7 @@ stdenv.mkDerivation {
       -kext "$KEXTS/IOUSBHIDDriver.kext" \
       -kext "$KEXTS/PDI2CFamily.kext" \
       -kext "$KEXTS/PDQcomTLMM.kext" \
+      -kext "$KEXTS/PDQcomGeniI2C.kext" \
       -kext "$KEXTS/AppleUSBEHCI.kext" \
       -kext "$KEXTS/AppleUSBOHCI.kext" \
       -kext "$KEXTS/RavynXHCIPort.kext" \
