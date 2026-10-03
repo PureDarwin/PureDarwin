@@ -338,6 +338,14 @@
 
 #endif  /* ARM64_BOARD_CONFIG_VMAPPLE */
 
+#ifdef ARM64_BOARD_CONFIG_SC8280XP
+#include <pexpert/arm64/SC8280XP.h>
+
+#define MAX_L2_CLINE        6
+#define MAX_CPUS            8
+#define MAX_CPU_CLUSTERS    1
+#define CORE_NCTRS          8
+#endif
 
 
 #ifndef HAS_UNCORE_CTRS
