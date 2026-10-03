@@ -924,9 +924,13 @@ pd_psci_halt(boolean_t reboot)
 
 	register uint64_t x0 __asm__("x0") = reboot ? 0x84000009ULL : 0x84000008ULL;
 	if (strncmp(prop, "smc", 3) == 0) {
-		__asm__ volatile ("smc #0" : "+r"(x0) : : "memory");
+		__asm__ volatile ("smc #0" : "+r"(x0) : : 
+		    "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9",
+		    "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "memory");
 	} else if (strncmp(prop, "hvc", 3) == 0) {
-		__asm__ volatile ("hvc #0" : "+r"(x0) : : "memory");
+		__asm__ volatile ("hvc #0" : "+r"(x0) : :
+		    "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9",
+		    "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "memory");
 	}
 }
 

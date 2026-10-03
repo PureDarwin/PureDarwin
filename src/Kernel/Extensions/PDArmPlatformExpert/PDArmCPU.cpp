@@ -11,8 +11,7 @@
 
 #define PD_LOG(...) do { if (ml_get_interrupts_enabled()) { IOLog(__VA_ARGS__); } } while (0)
 
-// PSCI 0.2+ (QEMU virt): CPU_ON takes the target MPIDR, a physical entry point and a context id.
-// The conduit is HVC unless EL3 firmware claims SMC
+// PSCI 0.2+: CPU_ON takes the target MPIDR, a physical entry point and a context id.
 #define PSCI_FN_VERSION		0x84000000u
 #define PSCI_FN64_CPU_ON	0xc4000003u
 #define PSCI_FN_SYSTEM_OFF	0x84000008u
@@ -20,6 +19,7 @@
 
 static bool pd_psci_use_smc;
 static bool pd_psci_probed;
+static bool pd_psci_ok;
 
 static IOCPUInterruptController *gPDCpuIC;
 static unsigned int gPDCpuCount = 1;
@@ -54,7 +54,7 @@ pd_cpu_ic(IOService *owner)
 
 extern "C" void flush_dcache64(addr64_t addr, unsigned count, int phys);
 
-// secondary entry, copied to an uncached page and run with the mmu off
+// secondary entry, copied to a page cleaned to PoC and run with the mmu off
 // tf-a wakes the core at el2 on boards with u-boot at el2, so drop to el1 the way the loader does
 extern "C" const uint8_t pd_smp_tramp_start[], pd_smp_tramp_lits[], pd_smp_tramp_end[];
 __asm__(
@@ -62,6 +62,8 @@ __asm__(
 	"	.p2align 3\n"
 	"	.globl _pd_smp_tramp_start\n"
 	"_pd_smp_tramp_start:\n"
+	"	msr	DAIFSet, #0xf\n"
+	"	msr	OSLAR_EL1, xzr\n"
 	"	mrs	x0, CurrentEL\n"
 	"	cmp	x0, #(2 << 2)\n"
 	"	b.ne	1f\n"
@@ -106,6 +108,11 @@ __asm__(
 extern "C" volatile uint32_t pd_smp_marker;
 extern "C" volatile uint64_t pd_smp_diag[8];
 
+// SMCC: x0-x3 carry the arguments and come back as results. x4-x17 are not preserved
+#define PD_SMCC_CLOBBERS \
+        "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", \
+        "x12", "x13", "x14", "x15", "x16", "x17", "memory"
+
 static int64_t
 pd_psci_call(uint64_t fn, uint64_t a1, uint64_t a2, uint64_t a3, bool smc)
 {
@@ -115,9 +122,9 @@ pd_psci_call(uint64_t fn, uint64_t a1, uint64_t a2, uint64_t a3, bool smc)
 	register uint64_t x3 __asm__ ("x3") = a3;
 
 	if (smc) {
-		__asm__ volatile ("smc #0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x3) : "memory");
+		__asm__ volatile ("smc #0" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3) : : PD_SMCC_CLOBBERS);
 	} else {
-		__asm__ volatile ("hvc #0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x3) : "memory");
+		__asm__ volatile ("hvc #0" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3) : : PD_SMCC_CLOBBERS);
 	}
 	return (int64_t)x0;
 }
@@ -147,27 +154,33 @@ pd_psci_available(void)
 	if (!pd_psci_probed) {
 		int64_t v;
 		int dt = pd_psci_dt_method();
+		const char *from;
 
 		if (dt >= 0) {
 			pd_psci_use_smc = dt == 1;
 			v = pd_psci_call(PSCI_FN_VERSION, 0, 0, 0, pd_psci_use_smc);
+			from = "/psci";
 		} else if (PDSun50i_isPlatform()) {
 			// tf-a owns psci on sun50i, an hvc would land in u-boot's stale el2 vectors
 			pd_psci_use_smc = true;
 			v = pd_psci_call(PSCI_FN_VERSION, 0, 0, 0, true);
+			from = "sun50i";
 		} else {
 			v = pd_psci_call(PSCI_FN_VERSION, 0, 0, 0, false);
+			if (v < 0) {
+			    v = pd_psci_call(PSCI_FN_VERSION, 0, 0, 0, true);
+			    pd_psci_use_smc = (v >= 0);
+			}
+			from = "probe";
 		}
 
-		if (v < 0 && !pd_psci_use_smc) {
-			v = pd_psci_call(PSCI_FN_VERSION, 0, 0, 0, true);
-			pd_psci_use_smc = (v >= 0);
-		}
+		pd_psci_ok = (v >= 0);
 		pd_psci_probed = true;
-		PD_LOG("PD-CPU: PSCI version 0x%llx via %s\n", (unsigned long long)v,
-		    pd_psci_use_smc ? "smc" : "hvc");
+		PD_LOG("PD-CPU: PSCI version 0x%llx (%u.%u) via %s, from %s\n", (unsigned long long)v,
+		    (unsigned)(((uint64_t)v >> 16) & 0x7fff), (unsigned)((uint64_t)v & 0xffff),
+		    pd_psci_use_smc ? "smc" : "hvc", from);
 	}
-	return true;
+	return pd_psci_ok;
 }
 
 // reboot(2) and shutdown end here, psci only returns when the firmware lacks the call
@@ -268,13 +281,17 @@ PDArmCPU::startCPU(vm_offset_t start_paddr, vm_offset_t arg_paddr)
 	uint8_t *page;
 	int64_t ret;
 
-	if (start_paddr == 0 || arg_paddr == 0 || !pd_psci_available()) {
+	if (start_paddr == 0 || arg_paddr == 0) {
 		PD_LOG("PD-CPU: cpu %u start without entry/args\n", pdCpuNumber);
+		return KERN_FAILURE;
+	}
+	if (!pd_psci_available()) {
+		PD_LOG("PD-CPU: cpu %u not started, PSCI_VERSION failed\n", pdCpuNumber);
 		return KERN_FAILURE;
 	}
 
 	buf = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
-	    kIOMemoryPhysicallyContiguous | kIOMapInhibitCache | kIODirectionInOut,
+	    kIOMemoryPhysicallyContiguous | kIODirectionInOut,
 	    0x1000, 0xfffffffffffff000ULL);
 	if (buf == NULL) {
 		return KERN_RESOURCE_SHORTAGE;
@@ -295,7 +312,8 @@ PDArmCPU::startCPU(vm_offset_t start_paddr, vm_offset_t arg_paddr)
 	lit[3] = tramp_pa + PD_TRAMP_MARKER_OFF;
 	*(volatile uint32_t *)(page + PD_TRAMP_MARKER_OFF) = 0;
 
-	flush_dcache64((addr64_t)tramp_pa, PD_TRAMP_MARKER_OFF + 0x40, 1);
+	// by VA: a phys-mode flush panics for any PA outside the kernel's single physical window
+	flush_dcache64((addr64_t)(uintptr_t)page, PD_TRAMP_MARKER_OFF + 0x40, 0);
 
 	pd_smp_marker = 0;
 	flush_dcache64((addr64_t)ml_static_vtop((vm_offset_t)&pd_smp_marker),
@@ -314,7 +332,9 @@ PDArmCPU::startCPU(vm_offset_t start_paddr, vm_offset_t arg_paddr)
 	if (ret == 0) {
 		unsigned int i;
 
+		// the page is cacheable now and the secondary stores with the mmu off, drop our line before each read
 		for (i = 0; i < 100; i++) {
+			flush_dcache64((addr64_t)(uintptr_t)(page + PD_TRAMP_MARKER_OFF), sizeof(uint32_t), 0);
 			if (*(volatile uint32_t *)(page + PD_TRAMP_MARKER_OFF) == 0xd1) {
 				break;
 			}

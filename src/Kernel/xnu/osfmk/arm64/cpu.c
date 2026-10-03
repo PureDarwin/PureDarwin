@@ -55,6 +55,8 @@
 #include <vm/vm_map.h>
 #include <pexpert/arm/protos.h>
 #include <pexpert/device_tree.h>
+#include <pexpert/pexpert.h>
+#include <pexpert/arm64/boot.h>
 #include <sys/kdebug.h>
 #include <arm/machine_routines.h>
 #include <machine/atomic.h>
@@ -976,6 +978,12 @@ cpu_start(int cpu)
 		    cpu, cpu_data_ptr,
 		    (unsigned long long)ml_vtophys((vm_offset_t)cpu_data_ptr),
 		    (unsigned long long)cpu_data_ptr->intstack_top);
+
+		// start_cpu also reads these with its MMU off, so from DRAM rather than this CPU's
+		// caches: cpu_ttep becomes its TTBR1. cpu_data and CpuDataEntries are cleaned above
+		// (QEMU's TCG has no caches and never needed this)
+		flush_dcache((vm_offset_t)&cpu_ttep, sizeof(cpu_ttep), FALSE);
+		flush_dcache((vm_offset_t)PE_state.bootArgs, sizeof(boot_args), FALSE);
 
 		// Platforms without a hardware reset vector (QEMU virt starts secondaries
 		// through PSCI) need the entry point and this CPU's data, both physical
