@@ -2514,6 +2514,7 @@ let
       "IONVMEFamily.kext"
       "RavynHDAudio.kext" "PDE1000.kext" "PDRealtek8111.kext"
       "PDBcm2835SD.kext" "PDSun50iMMC.kext" "PDSg2002SD.kext" "PDSg2002Eth.kext"
+      "PDI2CFamily.kext"
     ];
     enableUserspace = false;
     installUserland = false;
@@ -2521,6 +2522,7 @@ let
     installKexts = true;
     installKextNames = [
       "PDBcm2835SD.kext" "PDSun50iMMC.kext" "PDSg2002SD.kext" "PDSg2002Eth.kext"
+      "PDI2CFamily.kext"
       "IOPCIFamily.kext" "IOStorageFamily.kext" "IOCDStorageFamily.kext"
       "IODVDStorageFamily.kext" "IOBDStorageFamily.kext" "IOVirtIOFamily.kext"
       "IOVirtIONet.kext" "IONetworkingFamily.kext" "IOHIDFamily.kext"
