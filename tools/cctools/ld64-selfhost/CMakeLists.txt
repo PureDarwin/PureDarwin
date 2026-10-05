@@ -197,11 +197,16 @@ endforeach()
 set(_ld_bin "${CMAKE_CURRENT_BINARY_DIR}/ld")
 set(_ld_link_targets libSystem_B_stub dyld libstuff_static)
 set(_ld_extra_archives $<TARGET_FILE:libstuff_static>)
-if(TARGET libcxxabi_static)
+# libc++ 21 keeps basic_string, to_string and operator new in libc++.dylib: link the dylibs, which
+# bring libc++abi along, in place of the static runtime archives
+if(PUREDARWIN_SELFHOST_LIBCXX_DIR AND PUREDARWIN_SELFHOST_LIBCXXABI_DIR)
+    list(APPEND _ld_extra_archives -Wl,-L,${PUREDARWIN_SELFHOST_LIBCXX_DIR}
+        -Wl,-L,${PUREDARWIN_SELFHOST_LIBCXXABI_DIR} -lc++ -lc++abi)
+elseif(TARGET libcxxabi_static)
     list(APPEND _ld_link_targets libcxxabi_static libcxxabi_static_build)
     list(APPEND _ld_extra_archives $<TARGET_FILE:libcxxabi_static>)
 endif()
-if(TARGET libunwind_static)
+if(TARGET libunwind_static AND NOT PUREDARWIN_SELFHOST_LIBCXX_DIR)
     list(APPEND _ld_link_targets libunwind_static libunwind_static_build)
     list(APPEND _ld_extra_archives $<TARGET_FILE:libunwind_static>)
 endif()

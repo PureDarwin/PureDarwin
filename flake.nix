@@ -302,6 +302,9 @@
             extraCmakeFlags = [
               "-DPUREDARWIN_ENABLE_SELFHOST_CCTOOLS=ON"
               "-DPUREDARWIN_IIG_SOURCE=${iig-tools}"
+              # libc++ 21 keeps basic_string, to_string and operator new in the dylib
+              "-DPUREDARWIN_SELFHOST_LIBCXX_DIR=${libcxxDylibBuild}/usr/lib"
+              "-DPUREDARWIN_SELFHOST_LIBCXXABI_DIR=${libcxxabiDylibBuild}/usr/lib"
             ] ++ lib.optionals isDarwin [
               # CMake picks CMAKE_OSX_SYSROOT itself on an Apple host by running
               # xcrun, which cannot see an SDK inside the nix sandbox and leaves

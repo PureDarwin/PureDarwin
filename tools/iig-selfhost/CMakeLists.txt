@@ -93,6 +93,14 @@ foreach(s ${_iig_srcs})
     list(APPEND _iig_objs "${_obj}")
 endforeach()
 
+# libc++ 21 keeps basic_string, to_string and operator new in libc++.dylib, so link it like
+# any other PD C++ binary when the build hands over where it lives
+set(_iig_cxx_libs)
+if(PUREDARWIN_SELFHOST_LIBCXX_DIR AND PUREDARWIN_SELFHOST_LIBCXXABI_DIR)
+    set(_iig_cxx_libs -Wl,-L,${PUREDARWIN_SELFHOST_LIBCXX_DIR} -Wl,-L,${PUREDARWIN_SELFHOST_LIBCXXABI_DIR}
+        -lc++ -lc++abi)
+endif()
+
 set(_iig_bin "${CMAKE_CURRENT_BINARY_DIR}/iig")
 add_custom_command(
     OUTPUT "${_iig_bin}"
@@ -103,8 +111,9 @@ add_custom_command(
             -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:$<TARGET_FILE:libdyld>
             -Wl,-dylinker_install_name,/usr/lib/dyld
             -Wl,-platform_version,macos,26.5,26.5
+            ${_iig_objs} ${_iig_cxx_libs}
             -lSystem
-            ${_iig_objs} -o "${_iig_bin}"
+            -o "${_iig_bin}"
     DEPENDS ${_iig_objs} libSystem_B_stub dyld
     COMMENT "Linking iig (self-host)"
     VERBATIM
