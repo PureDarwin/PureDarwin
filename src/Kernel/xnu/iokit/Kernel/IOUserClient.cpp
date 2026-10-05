@@ -2729,6 +2729,21 @@ is_io_service_match_property_table_bin(
 	return internal_io_service_match_property_table(service, matching, matchingCnt, matches);
 }
 
+#if DEBUG
+// what a lookup for the keystore asks for: libaks fails a lookup that PDKeyStore's service should answer
+static void
+pd_log_keystore_matching(const char *what, const char *matching, mach_msg_type_number_t size, bool found)
+{
+	char name[32] = "?";
+
+	if (matching == NULL || size == 0 || strnstr(matching, "KeyStore", size) == NULL) {
+		return;
+	}
+	proc_name(proc_selfpid(), name, sizeof(name));
+	IOLog("PD-aks: %s %s -> %s: %.*s\n", name, what, found ? "found" : "none", (int)MIN(size, 600u), matching);
+}
+#endif
+
 static kern_return_t
 internal_io_service_get_matching_services(
 	mach_port_t main_port,
@@ -2751,6 +2766,9 @@ internal_io_service_get_matching_services(
 		IOTaskRegistryCompatibilityMatching(current_task(), dict);
 		*existing = IOUserIterator::withIterator(IOService::getMatchingServices( dict ));
 		kr = kIOReturnSuccess;
+#if DEBUG
+		pd_log_keystore_matching("get_matching_services", matching, matching_size, *existing != NULL);
+#endif
 	} else {
 		kr = kIOReturnBadArgument;
 	}
@@ -2835,6 +2853,9 @@ internal_io_service_get_matching_service(
 		IOTaskRegistryCompatibilityMatching(current_task(), dict);
 		*service = IOService::copyMatchingService( dict );
 		kr = *service ? kIOReturnSuccess : kIOReturnNotFound;
+#if DEBUG
+		pd_log_keystore_matching("get_matching_service", matching, matching_size, *service != NULL);
+#endif
 	} else {
 		kr = kIOReturnBadArgument;
 	}

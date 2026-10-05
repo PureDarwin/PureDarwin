@@ -51,6 +51,7 @@
  * (int32_t, dev_t, clock_t) this osfmk file already has from elsewhere. */
 extern int proc_pid(struct proc *);
 #include <kern/thread.h>
+#include <kern/processor.h>
 #include <kern/zalloc_internal.h>
 #include <mach/exception.h>
 #include <mach/arm/traps.h>
@@ -72,6 +73,7 @@ extern int proc_pid(struct proc *);
 #include <vm/vm_fault.h>
 #include <vm/vm_kern.h>
 #include <vm/vm_map_xnu.h>
+#include <vm/vm_kern_xnu.h>
 
 #include <sys/errno.h>
 #include <sys/kdebug.h>
@@ -1925,6 +1927,266 @@ find_user_brk_descriptor_by_comment(uint16_t comment)
 	return NULL;
 }
 
+// pdbrklog=NAME: a user brk in a process whose name starts with NAME dumps its registers and
+// any string they point at (directly or once removed), where libxpc and Swift leave their reason
+extern void IOLog(const char *, ...) __printflike(1, 2);
+
+static int
+pd_brk_str(user_addr_t a, char *out, size_t len)
+{
+	size_t got = 0;
+	size_t i;
+
+	if (a < 0x1000 || copyinstr(a, out, len, &got) != 0 || got < 5)
+		return 0;
+	for (i = 0; i + 1 < got; i++) {
+		if (out[i] < 0x20 || out[i] > 0x7e)
+			return 0;
+	}
+	return 1;
+}
+
+static void
+pd_brk_dump(arm_saved_state_t *state)
+{
+	static char want[32];
+	static int parsed;
+	const char *name = proc_best_name(current_proc());
+	char str[160];
+	int i;
+
+	if (!parsed) {
+		parsed = PE_parse_boot_argn("pdbrklog", want, sizeof(want)) ? 1 : 2;
+	}
+	if (parsed != 1 || name == NULL || strncmp(name, want, strlen(want)) != 0) {
+		return;
+	}
+	IOLog("PD-brk: %s[%d] pc 0x%llx lr 0x%llx fp 0x%llx sp 0x%llx\n", name, proc_pid(current_proc()),
+	    (unsigned long long)get_saved_state_pc(state), (unsigned long long)get_saved_state_lr(state),
+	    (unsigned long long)get_saved_state_fp(state), (unsigned long long)get_saved_state_sp(state));
+	for (i = 0; i < 29; i++) {
+		uint64_t r = saved_state64(state)->x[i];
+		uint64_t p = 0;
+
+		if (pd_brk_str((user_addr_t)r, str, sizeof(str))) {
+			IOLog("PD-brk:   x%d 0x%llx \"%s\"\n", i, r, str);
+		} else if (r >= 0x1000 && copyin((user_addr_t)r, &p, sizeof(p)) == 0 && pd_brk_str((user_addr_t)p, str, sizeof(str))) {
+			IOLog("PD-brk:   x%d 0x%llx -> 0x%llx \"%s\"\n", i, r, p, str);
+		} else {
+			IOLog("PD-brk:   x%d 0x%llx\n", i, r);
+		}
+	}
+}
+
+// pdfaultlog=NAME: an unresolved user fault in a process whose name starts with NAME logs the
+// fault, its registers (with any strings they point at) and a frame-pointer backtrace
+static void
+pd_fault_dump(arm_saved_state_t *state, uint64_t esr, vm_offset_t fault_addr, kern_return_t code)
+{
+	static char want[32];
+	static int parsed;
+	const char *name = proc_best_name(current_proc());
+	uint64_t fp, frame[2];
+	char str[160];
+	int i;
+
+	if (!parsed) {
+		parsed = PE_parse_boot_argn("pdfaultlog", want, sizeof(want)) ? 1 : 2;
+	}
+	if (parsed != 1 || name == NULL || strncmp(name, want, strlen(want)) != 0) {
+		return;
+	}
+	IOLog("PD-fault: %s[%d] addr 0x%llx esr 0x%llx kr %d pc 0x%llx lr 0x%llx sp 0x%llx slide 0x%x\n", name,
+	    proc_pid(current_proc()), (unsigned long long)fault_addr, (unsigned long long)esr, code,
+	    (unsigned long long)get_saved_state_pc(state), (unsigned long long)get_saved_state_lr(state),
+	    (unsigned long long)get_saved_state_sp(state), current_task()->task_shared_region_slide);
+	// the instructions at pc, for finding the image in the shared cache by content
+	{
+		uint32_t insn[4] = {};
+
+		if (copyin((user_addr_t)get_saved_state_pc(state), insn, sizeof(insn)) == 0)
+			IOLog("PD-fault:   insn %08x %08x %08x %08x\n", insn[0], insn[1], insn[2], insn[3]);
+	}
+	// what x0 points at: for an objc_msgSend fault, the receiver's isa word
+	{
+		uint64_t x0 = saved_state64(state)->x[0], words[2] = {};
+
+		if (x0 >= 0x1000 && copyin((user_addr_t)x0, words, sizeof(words)) == 0)
+			IOLog("PD-fault:   [x0] 0x%llx 0x%llx\n", words[0], words[1]);
+	}
+	for (i = 0; i < 29; i++) {
+		uint64_t r = saved_state64(state)->x[i];
+
+		if (pd_brk_str((user_addr_t)r, str, sizeof(str))) {
+			IOLog("PD-fault:   x%d 0x%llx \"%s\"\n", i, r, str);
+		} else {
+			IOLog("PD-fault:   x%d 0x%llx\n", i, r);
+		}
+	}
+	fp = get_saved_state_fp(state);
+	for (i = 0; i < 24 && fp >= 0x1000 && (fp & 7) == 0 && copyin((user_addr_t)fp, frame, sizeof(frame)) == 0; i++) {
+		IOLog("PD-fault:   frame %d ret 0x%llx\n", i, (unsigned long long)(frame[1] & 0x00007fffffffffffULL));
+		if (frame[0] <= fp) break;
+		fp = frame[0];
+	}
+}
+
+// pdstack=NAME (pdstackint=SECS, 60): every SECS the user threads of processes whose name starts
+// with NAME log a frame-pointer backtrace, a spindump for a stall that logs nothing itself
+#define PD_STACK_TASKS          8
+#define PD_STACK_THREADS        64
+#define PD_STACK_FRAMES         32
+#define PD_STACK_VA_MASK        0x00007fffffffffffULL
+
+static int pd_stack_regs;
+static void pd_stack_dump_regs(vm_map_t map, arm_saved_state_t *st);
+
+static void
+pd_stack_thread(task_t task, thread_t thread)
+{
+	arm_saved_state_t *st = find_user_regs(thread);
+	vm_map_t map = get_task_map(task);
+	uint64_t fp, frame[2], pcs[PD_STACK_FRAMES];
+	char line[8 * 20 + 1];
+	int n = 0;
+
+	if (st == NULL || !is_saved_state64(st)) return;
+	pcs[n++] = get_saved_state_pc(st) & PD_STACK_VA_MASK;
+	pcs[n++] = get_saved_state_lr(st) & PD_STACK_VA_MASK;
+	fp = get_saved_state_fp(st);
+	while (n < PD_STACK_FRAMES && fp >= 0x1000 && (fp & 7) == 0 &&
+	    copyinmap(map, (vm_map_offset_t)fp, frame, sizeof(frame)) == KERN_SUCCESS) {
+		pcs[n++] = frame[1] & PD_STACK_VA_MASK;
+		if (frame[0] <= fp) break;
+		fp = frame[0];
+	}
+	IOLog("PD-stack:  tid 0x%llx state 0x%x frames %d\n", (unsigned long long)thread_tid(thread), thread->state, n);
+	for (int i = 0; i < n; i += 8) {
+		int len = 0;
+
+		line[0] = 0;
+		for (int j = i; j < n && j < i + 8; j++)
+			len += snprintf(line + len, sizeof(line) - len, " 0x%llx", (unsigned long long)pcs[j]);
+		IOLog("PD-stack:   %s\n", line);
+	}
+	if (pd_stack_regs)
+		pd_stack_dump_regs(map, st);
+}
+
+// pdstackregs: a waiting thread's saved registers, what pointer-like ones point at, and the words
+// below each frame pointer, where the frames keep their locals
+static void
+pd_stack_dump_regs(vm_map_t map, arm_saved_state_t *st)
+{
+	uint64_t fp = get_saved_state_fp(st), w[8];
+
+	for (int r = 0; r < 29; r++) {
+		uint64_t v = get_saved_state_reg(st, r);
+
+		if (v >= 0x100000000ULL && v < 0x0000800000000000ULL && (v & 7) == 0 &&
+		    copyinmap(map, (vm_map_offset_t)v, w, 4 * sizeof(uint64_t)) == KERN_SUCCESS)
+			IOLog("PD-stack:    x%d 0x%llx -> 0x%llx 0x%llx 0x%llx 0x%llx\n", r, (unsigned long long)v,
+			    (unsigned long long)w[0], (unsigned long long)w[1], (unsigned long long)w[2], (unsigned long long)w[3]);
+		else
+			IOLog("PD-stack:    x%d 0x%llx\n", r, (unsigned long long)v);
+	}
+	for (int k = 0; k < 8 && fp >= 0x1000 && (fp & 7) == 0; k++) {
+		uint64_t frame[2];
+
+		if (copyinmap(map, (vm_map_offset_t)(fp - sizeof(w)), w, sizeof(w)) == KERN_SUCCESS)
+			IOLog("PD-stack:    fp%d 0x%llx: %llx %llx %llx %llx %llx %llx %llx %llx\n", k, (unsigned long long)fp,
+			    w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]);
+		if (copyinmap(map, (vm_map_offset_t)fp, frame, sizeof(frame)) != KERN_SUCCESS || frame[0] <= fp)
+			break;
+		fp = frame[0];
+	}
+}
+
+static void
+pd_stack_task(task_t task)
+{
+	thread_t threads[PD_STACK_THREADS];
+	thread_t thread;
+	int n = 0, total;
+
+	task_lock(task);
+	total = task->thread_count;
+	queue_iterate(&task->threads, thread, thread_t, task_threads) {
+		if (n == PD_STACK_THREADS) break;
+		thread_reference(thread);
+		threads[n++] = thread;
+	}
+	task_unlock(task);
+
+	IOLog("PD-stack: %s[%d] %d threads, shared cache slide 0x%x\n", proc_best_name(get_bsdtask_info(task)),
+	    task_pid(task), total, task->task_shared_region_slide);
+	for (int i = 0; i < n; i++) {
+		pd_stack_thread(task, threads[i]);
+		thread_deallocate(threads[i]);
+	}
+}
+
+void pd_stack_check(void);
+
+// want is a comma-separated list of name prefixes
+static bool
+pd_stack_name_wanted(const char *name, const char *want)
+{
+	while (*want) {
+		size_t len = 0;
+
+		while (want[len] && want[len] != ',') len++;
+		if (len > 0 && strncmp(name, want, len) == 0) return true;
+		want += len;
+		if (*want == ',') want++;
+	}
+	return false;
+}
+
+void
+pd_stack_check(void)
+{
+	static int state;	// 0 unparsed, 1 armed, 2 off, 3 sampling
+	static uint64_t deadline, period;
+	static char want[96];
+	task_t found[PD_STACK_TASKS];
+	task_t task;
+	int secs = 60, n = 0;
+
+	if (state == 2) return;
+	if (state == 0) {
+		state = 2;
+		if (PE_parse_boot_argn("pdstack", want, sizeof(want)) && want[0] != 0) {
+			(void)PE_parse_boot_argn("pdstackint", &secs, sizeof(secs));
+			(void)PE_parse_boot_argn("pdstackregs", &pd_stack_regs, sizeof(pd_stack_regs));
+			nanoseconds_to_absolutetime((uint64_t)(secs > 0 ? secs : 60) * NSEC_PER_SEC, &period);
+			deadline = mach_absolute_time() + period;
+			state = 1;
+		}
+		return;
+	}
+	if (state != 1 || mach_absolute_time() < deadline || !OSCompareAndSwap(1, 3, (volatile UInt32 *)&state))
+		return;
+
+	lck_mtx_lock(&tasks_threads_lock);
+	queue_iterate(&tasks, task, task_t, tasks) {
+		void *bsd = get_bsdtask_info(task);
+
+		if (n == PD_STACK_TASKS) break;
+		if (bsd == NULL || !pd_stack_name_wanted(proc_best_name(bsd), want)) continue;
+		task_reference(task);
+		found[n++] = task;
+	}
+	lck_mtx_unlock(&tasks_threads_lock);
+
+	for (int i = 0; i < n; i++) {
+		pd_stack_task(found[i]);
+		task_deallocate(found[i]);
+	}
+	deadline = mach_absolute_time() + period;
+	state = 1;
+}
+
 static void
 handle_user_breakpoint(arm_saved_state_t *state, uint64_t esr __unused)
 {
@@ -1942,6 +2204,7 @@ handle_user_breakpoint(arm_saved_state_t *state, uint64_t esr __unused)
 		printf("User BRK pid %d pc=0x%llx label=0x%x%s\n",
 		    proc_pid(current_proc()), get_saved_state_pc(state), brk_label,
 		    (descriptor && descriptor->base == PTRAUTH_TRAP_START) ? " (PAC trap)" : "");
+		pd_brk_dump(state);
 		/*
 		 * Note it's no problem if we don't recognize the label.
 		 * In this case we'll just go through normal exception delivery.
@@ -2495,6 +2758,7 @@ handle_user_abort(arm_saved_state_t *state, uint64_t esr, vm_offset_t fault_addr
 #endif
 
 	codes[1] = fault_addr;
+	pd_fault_dump(state, esr, fault_addr, (kern_return_t)codes[0]);
 #if __has_feature(ptrauth_calls)
 	bool is_data_abort = (ESR_EC(esr) == ESR_EC_DABORT_EL0);
 	if (user_fault_matches_pac_error_code(fault_addr, get_saved_state_pc(state), is_data_abort)) {

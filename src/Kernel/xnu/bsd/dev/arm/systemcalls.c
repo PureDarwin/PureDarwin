@@ -14,8 +14,10 @@
 #include <machine/machine_routines.h>
 #include <arm/thread.h>
 #include <arm64/proc_reg.h>
+#include <arm/cpu_capabilities.h>
 #include <pexpert/pexpert.h>
 
+#include <sys/csr.h>
 #include <sys/kernel.h>
 #include <sys/kern_debug.h>
 #include <sys/vm.h>
@@ -25,6 +27,8 @@
 #include <sys/user.h>
 #include <sys/errno.h>
 #include <sys/kdebug.h>
+#include <sys/signalvar.h>
+#include <libkern/OSAtomic.h>
 #include <sys/sysent.h>
 #include <sys/sysproto.h>
 #include <sys/kauth.h>
@@ -79,6 +83,108 @@ __XNU_PRIVATE_EXTERN    int             syscalls_log[SYS_MAXSYSCALL];
 extern int mach_trap_count;
 #endif
 
+// pdflushlog=SECS: SIGTERM logd every SECS so it writes its buffers out (launchd restarts it).
+// A VM that is quit rather than shut down otherwise loses the minutes before
+extern void IOLog(const char *, ...) __printflike(1, 2);
+
+static int
+pd_flush_logd_cb(proc_t p, __unused void *arg)
+{
+	if (strcmp(proc_best_name(p), "logd") == 0) {
+		IOLog("PD-flushlog: SIGTERM logd[%d]\n", proc_pid(p));
+		psignal(p, SIGTERM);
+	}
+	return PROC_RETURNED;
+}
+
+static void
+pd_flush_logd_check(void)
+{
+	static int state;	// 0 unparsed, 1 armed, 2 off, 3 flushing
+	static uint64_t deadline, period;
+	int secs = 0;
+
+	if (state == 2)
+		return;
+	if (state == 0) {
+		state = 2;
+		if (PE_parse_boot_argn("pdflushlog", &secs, sizeof(secs)) && secs > 0) {
+			nanoseconds_to_absolutetime((uint64_t)secs * NSEC_PER_SEC, &period);
+			deadline = mach_absolute_time() + period;
+			state = 1;
+		}
+		return;
+	}
+	if (state != 1 || mach_absolute_time() < deadline || !OSCompareAndSwap(1, 3, (volatile UInt32 *)&state))
+		return;
+	proc_iterate(PROC_ALLPROCLIST, pd_flush_logd_cb, NULL, NULL, NULL);
+	deadline = mach_absolute_time() + period;
+	state = 1;
+}
+
+// pdstack=NAME: backtraces of a process's threads, sampled from here (osfmk/arm64/sleh.c)
+extern void pd_stack_check(void);
+
+// pdsysctl=NAME logs every sysctl a process named NAME makes and what came back, to diff
+// what two machines report: name lookups as name -> oid, reads as oid, length and first bytes
+static char pd_sysctl_name[MAXCOMLEN + 1];
+static int pd_sysctl_state, pd_sysctl_commpage;
+
+static void
+pd_sysctl_log(struct proc *proc, unsigned short code, const uint64_t *args)
+{
+	int mib[6] = { -1, -1, -1, -1, -1, -1 };
+	size_t oldlen = 0, len = 0;
+	uint64_t val = 0;
+	char name[96] = "";
+
+	if (pd_sysctl_state == 0)
+		pd_sysctl_state = PE_parse_boot_argn("pdsysctl", pd_sysctl_name, sizeof(pd_sysctl_name)) ? 2 : 1;
+	if (pd_sysctl_state != 2 || (code != SYS_sysctl && code != SYS_sysctlbyname))
+		return;
+	if (strncmp(proc->p_comm, pd_sysctl_name, strlen(pd_sysctl_name)) != 0)
+		return;
+	// the commpage once per boot, as the process sees it: cpu counts, clusters and caps live there
+	if (!pd_sysctl_commpage) {
+		uint64_t words[4];
+
+		pd_sysctl_commpage = 1;
+		for (unsigned off = 0; off < 0x200; off += sizeof(words)) {
+			if (copyin((user_addr_t)(_COMM_PAGE64_BASE_ADDRESS + off), words, sizeof(words)) != 0)
+				break;
+			IOLog("PD-sysctl: commpage +%03x %016llx %016llx %016llx %016llx\n", off, words[0], words[1], words[2],
+			    words[3]);
+		}
+	}
+	if (code == SYS_sysctlbyname) {
+		if (args[3] != 0)
+			(void)copyin((user_addr_t)args[3], &oldlen, sizeof(oldlen));
+		if (args[2] != 0 && oldlen != 0)
+			(void)copyin((user_addr_t)args[2], &val, oldlen < sizeof(val) ? oldlen : sizeof(val));
+		(void)copyinstr((user_addr_t)args[0], name, sizeof(name), &len);
+		IOLog("PD-sysctl: %s[%d] %s len %lu 0x%llx\n", proc->p_comm, proc_getpid(proc), name, (unsigned long)oldlen,
+		    (unsigned long long)val);
+		return;
+	}
+	(void)copyin((user_addr_t)args[0], mib, sizeof(mib));
+	if (args[3] != 0)
+		(void)copyin((user_addr_t)args[3], &oldlen, sizeof(oldlen));
+	if (args[2] != 0 && oldlen != 0)
+		(void)copyin((user_addr_t)args[2], &val, oldlen < sizeof(val) ? oldlen : sizeof(val));
+	if (mib[0] == 0 && mib[1] == 3) {
+		int oid[4] = { -1, -1, -1, -1 };
+
+		(void)copyinstr((user_addr_t)args[4], name, sizeof(name), &len);
+		if (args[2] != 0)
+			(void)copyin((user_addr_t)args[2], oid, sizeof(oid));
+		IOLog("PD-sysctl: %s[%d] %s -> %d.%d.%d.%d\n", proc->p_comm, proc_getpid(proc), name, oid[0], oid[1],
+		    oid[2], oid[3]);
+		return;
+	}
+	IOLog("PD-sysctl: %s[%d] %d.%d.%d.%d len %lu 0x%llx\n", proc->p_comm, proc_getpid(proc), mib[0], mib[1],
+	    mib[2], mib[3], (unsigned long)oldlen, (unsigned long long)val);
+}
+
 // pdsyserr=NAME logs every failing syscall of processes named NAME to the console
 static char pd_syserr_name[MAXCOMLEN + 1];
 static int pd_syserr_state;
@@ -92,7 +198,8 @@ pd_syserr_log(struct proc *proc, unsigned short code, int error, const uint64_t 
 		pd_syserr_state = PE_parse_boot_argn("pdsyserr", pd_syserr_name, sizeof(pd_syserr_name)) ? 2 : 1;
 	if (pd_syserr_state != 2 || error == EJUSTRETURN || error == ERESTART)
 		return;
-	if (strncmp(proc->p_comm, pd_syserr_name, sizeof(pd_syserr_name)) != 0)
+	// a prefix: p_comm keeps 16 characters (com.apple.fskit.msdos is "com.apple.fskit.")
+	if (strncmp(proc->p_comm, pd_syserr_name, strlen(pd_syserr_name)) != 0)
 		return;
 	// name the path or sysctl mib when the first argument is one
 	if (code == SYS_sysctl) {
@@ -103,8 +210,29 @@ pd_syserr_log(struct proc *proc, unsigned short code, int error, const uint64_t 
 		// 0.3 is name-to-oid, the name being looked up is the new value
 		if (mib[0] == 0 && mib[1] == 3)
 			(void)copyinstr((user_addr_t)args[4], name, sizeof(name), &len);
-		printf("PD-syserr: %s[%d] sys %u err %d mib %d.%d.%d.%d %s\n", proc->p_comm, proc_getpid(proc), code, error,
+		IOLog("PD-syserr: %s[%d] sys %u err %d mib %d.%d.%d.%d %s\n", proc->p_comm, proc_getpid(proc), code, error,
 		    mib[0], mib[1], mib[2], mib[3], name);
+		return;
+	}
+	// __mac_syscall: the policy and call number, Sandbox's being what app sandboxing goes through
+	if (code == SYS___mac_syscall) {
+		char policy[32] = "";
+		size_t len = 0;
+
+		(void)copyinstr((user_addr_t)arg0, policy, sizeof(policy), &len);
+		IOLog("PD-syserr: %s[%d] sys %u err %d mac_syscall %s call %llu arg 0x%llx\n", proc->p_comm,
+		    proc_getpid(proc), code, error, policy, args[1], args[2]);
+		return;
+	}
+	// csrctl: the SIP mask asked about and what the kernel runs with
+	if (code == SYS_csrctl) {
+		uint32_t mask = 0;
+		csr_config_t active = 0;
+
+		(void)copyin((user_addr_t)args[1], &mask, sizeof(mask));
+		(void)csr_get_active_config(&active);
+		IOLog("PD-syserr: %s[%d] sys %u err %d csr op %llu mask 0x%x active 0x%x\n", proc->p_comm,
+		    proc_getpid(proc), code, error, arg0, mask, active);
 		return;
 	}
 	if (code == SYS_open || code == SYS_open_nocancel || code == SYS_stat64 || code == SYS_lstat64 ||
@@ -113,11 +241,11 @@ pd_syserr_log(struct proc *proc, unsigned short code, int error, const uint64_t 
 		char path[128];
 		size_t len = 0;
 		if (copyinstr((user_addr_t)arg0, path, sizeof(path), &len) == 0) {
-			printf("PD-syserr: %s[%d] sys %u err %d path %s\n", proc->p_comm, proc_getpid(proc), code, error, path);
+			IOLog("PD-syserr: %s[%d] sys %u err %d path %s\n", proc->p_comm, proc_getpid(proc), code, error, path);
 			return;
 		}
 	}
-	printf("PD-syserr: %s[%d] sys %u err %d arg0 0x%llx\n", proc->p_comm, proc_getpid(proc), code, error, arg0);
+	IOLog("PD-syserr: %s[%d] sys %u err %d arg0 0x%llx\n", proc->p_comm, proc_getpid(proc), code, error, arg0);
 }
 
 /*
@@ -140,6 +268,8 @@ unix_syscall(
 	struct uthread *uthread = get_bsdthread_info(thread_act);
 
 	uthread_reset_proc_refcount(uthread);
+	pd_flush_logd_check();
+	pd_stack_check();
 
 	code = arm_get_syscall_number(state);
 
@@ -223,6 +353,8 @@ unix_syscall(
 	AUDIT_SYSCALL_EXIT(code, proc, uthread, error);
 	if (__improbable(error != 0))
 		pd_syserr_log(proc, code, error, (const uint64_t *)&uthread->uu_arg[0]);
+	else if (__improbable(code == SYS_sysctl || code == SYS_sysctlbyname))
+		pd_sysctl_log(proc, code, (const uint64_t *)&uthread->uu_arg[0]);
 
 #if CONFIG_MACF
 skip_syscall:
