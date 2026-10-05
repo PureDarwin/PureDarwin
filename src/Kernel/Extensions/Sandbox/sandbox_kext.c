@@ -62,6 +62,11 @@ static char sb_marker_storage;
 
 #define SB_REGEX_BUDGET 4096
 
+// stands in for an Apple compiled profile: the process counts as sandboxed for sandbox_check(),
+// nothing is enforced; the reference it starts with is never dropped, so it is never freed
+static struct sb_kprofile sb_apple_profile = { .refs = 1, .default_action = SB_ACTION_ALLOW };
+static SInt32 sb_check_logged;
+
 static void
 sb_profile_retain(struct sb_kprofile *kp)
 {
@@ -86,6 +91,15 @@ sb_cred_profile(kauth_cred_t cred)
 	}
 	label = mac_cred_label(cred);
 	return label ? (struct sb_kprofile *)mac_label_get(label, sb_slot) : NULL;
+}
+
+// only PD's own profiles have rules to apply
+static bool
+sb_cred_enforced(kauth_cred_t cred)
+{
+	struct sb_kprofile *kp = sb_cred_profile(cred);
+
+	return kp != NULL && kp != &sb_apple_profile;
 }
 
 static int
@@ -399,7 +413,7 @@ sb_check_vnode(kauth_cred_t cred, struct vnode *vp, uint32_t ops)
 	char path[MAXPATHLEN];
 	int length = sizeof(path);
 
-	if (sb_cred_profile(cred) == NULL) {
+	if (!sb_cred_enforced(cred)) {
 		return 0;
 	}
 	if (vp == NULL || vn_getpath(vp, path, &length) != 0 || length < 1) {
@@ -416,7 +430,7 @@ sb_check_name(kauth_cred_t cred, struct vnode *dvp, struct componentname *cnp, u
 	int length = sizeof(path);
 	size_t used;
 
-	if (sb_cred_profile(cred) == NULL) {
+	if (!sb_cred_enforced(cred)) {
 		return 0;
 	}
 	if (dvp == NULL || vn_getpath(dvp, path, &length) != 0 || length < 1) {
@@ -443,7 +457,7 @@ sb_check_name(kauth_cred_t cred, struct vnode *dvp, struct componentname *cnp, u
 static int
 sb_check_sockaddr(kauth_cred_t cred, struct sockaddr *sa, uint32_t op)
 {
-	if (sa == NULL || sb_cred_profile(cred) == NULL) {
+	if (sa == NULL || !sb_cred_enforced(cred)) {
 		return 0;
 	}
 	switch (sa->sa_family) {
@@ -546,6 +560,76 @@ sb_extension_issue(user_addr_t arg)
 	return copyout(tok, w[4], (size_t)n + 1);
 }
 
+// libsystem_secinit consumes the container token at launch and traps unless a handle comes back;
+// tokens grant nothing here, so any token gets the next handle (Apple's are small and start at 1)
+static int
+sb_extension_consume(struct proc *p, user_addr_t arg)
+{
+	static SInt32 sb_next_handle;
+	char name[MAXCOMLEN + 1] = "";
+	char tail[64] = "";
+	uint64_t w[3];
+	int64_t handle;
+	int error;
+
+	if (copyin(arg, w, sizeof(w)) != 0 || w[0] == 0 || w[2] == 0)
+		return EINVAL;
+
+	// the token ends in the path it grants, which is what the log needs
+	if (w[1] > 1 && w[1] < 4096) {
+		uint64_t n = w[1] - 1 < sizeof(tail) - 1 ? w[1] - 1 : sizeof(tail) - 1;
+
+		(void)copyin(w[0] + w[1] - 1 - n, tail, n);
+	}
+	handle = OSIncrementAtomic(&sb_next_handle) + 1;
+	error = copyout(&handle, w[2], sizeof(handle));
+	proc_name(proc_pid(p), name, sizeof(name));
+	IOLog("Sandbox: %s[%d] extension consume len %llu token ...%s -> handle %lld at 0x%llx (%d)\n", name,
+	    proc_pid(p), (unsigned long long)w[1], tail, (long long)handle, (unsigned long long)w[2], error);
+	return error;
+}
+
+// sandbox_check(): args { int64 *result, pid, operation or 0, filter type, filter arg, u32 flags },
+// the answer goes to *result (1 = sandboxed / denied); 0x40000000 no-report, 0x80000000 by reference
+static int
+sb_apple_check(struct proc *p, user_addr_t arg)
+{
+	uint64_t w[6];
+	uint64_t answer = 0;
+	uint32_t flags;
+	char name[MAXCOMLEN + 1] = "";
+	char op[64] = "";
+	size_t len = 0;
+	kauth_cred_t cred;
+	proc_t target;
+	int pid;
+
+	if (copyin(arg, w, sizeof(w)) != 0 || w[0] == 0)
+		return EINVAL;
+
+	flags = (uint32_t)w[5];
+	pid = (int)w[1];
+	if (w[2] != 0)
+		(void)copyinstr(w[2], op, sizeof(op), &len);
+	// only "is this process sandboxed" is answered from state; every operation is allowed
+	if (w[2] == 0 && !(flags & 0x80000000u)) {
+		target = pid == 0 || pid == proc_pid(p) ? p : proc_find(pid);
+		if (target != NULL) {
+			cred = kauth_cred_proc_ref(target);
+			answer = sb_cred_profile(cred) != NULL;
+			kauth_cred_unref(&cred);
+			if (target != p)
+				proc_rele(target);
+		}
+	}
+	if (answer != 0 && OSIncrementAtomic(&sb_check_logged) < 200) {
+		proc_name(proc_pid(p), name, sizeof(name));
+		IOLog("Sandbox: %s[%d] check pid %d op %s flags 0x%x -> %llu\n", name, proc_pid(p), pid,
+		    w[2] != 0 ? op : "(sandboxed?)", flags, (unsigned long long)answer);
+	}
+	return copyout(&answer, w[0], sizeof(answer));
+}
+
 static int
 sb_policy_syscall(struct proc *p, int call, user_addr_t arg)
 {
@@ -555,36 +639,56 @@ sb_policy_syscall(struct proc *p, int call, user_addr_t arg)
 	bool sandboxed;
 	int error;
 
-	if (call == SB_CALL_APPLE_CHECK) {
-		uint64_t allowed = 0;
-
-		return copyout(&allowed, arg, sizeof(allowed));
-	}
+	if (call == SB_CALL_APPLE_CHECK)
+		return sb_apple_check(p, arg);
 	if (call == SB_CALL_EXTENSION_ISSUE) {
 		return sb_extension_issue(arg);
 	}
+	if (call == SB_CALL_EXTENSION_CONSUME)
+		return sb_extension_consume(p, arg);
+	// success with an untouched buffer reads as an empty container path
+	if (call == SB_CALL_CONTAINER)
+		return ENOENT;
 	if (call != SB_CALL_SET_PROFILE) {
-		// the other calls have nothing to enforce here
+		// the other calls have nothing to enforce here. Logged with their argument block:
+		// a caller that expects data back gets success and an untouched buffer
+		uint64_t w[8] = { 0 };
+		char name[MAXCOMLEN + 1] = "";
+
+		proc_name(proc_pid(p), name, sizeof(name));
+		if (arg != 0)
+			(void)copyin(arg, w, sizeof(w));
+		IOLog("Sandbox: %s[%d] call %d arg 0x%llx [%llx %llx %llx %llx %llx %llx %llx %llx]\n", name, proc_pid(p),
+		    call, (unsigned long long)arg, w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]);
 		return 0;
 	}
 	error = copyin(arg, &args, sizeof(args));
 	if (error != 0) {
 		return error;
 	}
-	// profiles in another format (Apple's compiled ones) are accepted and ignored
+	cred = kauth_cred_proc_ref(p);
+	sandboxed = sb_cred_profile(cred) != NULL;
+	kauth_cred_unref(&cred);
+
+	// profiles in another format (Apple's compiled ones) are not enforced, the process is only
+	// marked sandboxed so sandbox_check() answers the way libxpc and friends expect
 	{
 		uint32_t magic = 0;
 
 		if (copyin((user_addr_t)args.profile, &magic, sizeof(magic)) == 0 &&
 		    magic != SB_PROFILE_MAGIC) {
+			if (sandboxed)
+				return 0;
+			lck_mtx_lock(sb_apply_lock);
+			sb_pending = &sb_apple_profile;
+			kauth_proc_label_update(p, SB_MARKER);
+			sb_pending = NULL;
+			lck_mtx_unlock(sb_apply_lock);
 			return 0;
 		}
 	}
 
 	/* A profile can only ever be narrowed by not being replaced. */
-	cred = kauth_cred_proc_ref(p);
-	sandboxed = sb_cred_profile(cred) != NULL;
-	kauth_cred_unref(&cred);
 	if (sandboxed) {
 		return EPERM;
 	}

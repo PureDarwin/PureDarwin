@@ -16,8 +16,12 @@
 #define SB_CALL_SET_PROFILE   0
 /* Apple libsandbox: extension issue, args { class, 0, path, flags, token buffer, pid, pid version } */
 #define SB_CALL_EXTENSION_ISSUE 5
-// Apple's libsystem_sandbox sandbox_check(). Answered permissively
+// extension consume: args { token, token length incl. NUL, int64 *handle }, handle written back
+#define SB_CALL_EXTENSION_CONSUME 6
+// Apple's libsystem_sandbox sandbox_check(): result written through the first word, see sb_apple_check
 #define SB_CALL_APPLE_CHECK   2
+// container path for a pid: args { pid, 0, char *buffer, size, ... }, no process here has one
+#define SB_CALL_CONTAINER     4
 
 #define SB_PROFILE_MAGIC      0x42535044 /* "PDSB" */
 #define SB_PROFILE_VERSION    1
