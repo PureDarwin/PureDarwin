@@ -936,6 +936,9 @@ cpu_start(int cpu)
 
 		flush_dcache((vm_offset_t)&CpuDataEntries[cpu], sizeof(cpu_data_entry_t), FALSE);
 		flush_dcache((vm_offset_t)cpu_data_ptr, sizeof(cpu_data_t), FALSE);
+		// start.s loads cpu_ttep with the mmu off, straight from dram: a dirty line left the
+		// a733's secondaries a stale ttbr1 and they faulted on the jump into the kernel map
+		flush_dcache((vm_offset_t)&cpu_ttep, sizeof(cpu_ttep), FALSE);
 #if CONFIG_SPTM
 		/**
 		 * On SPTM devices, CTRR is configured entirely by the SPTM. Due to this, this logic

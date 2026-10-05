@@ -3696,6 +3696,13 @@ pmap_enter_object_options_check(
 	if (obj->internal) {
 		extra_options |= PMAP_OPTIONS_INTERNAL;
 	}
+#if defined(__arm64__)
+	// a device pager over ram keeps its cache mode, as a contiguous one does through pmap_map_block;
+	// otherwise the pmap falls back to the page's default and the mapping comes out cacheable
+	if (obj->private && !HAS_DEFAULT_CACHEABILITY(obj->wimg_bits & VM_WIMG_MASK)) {
+		flags |= obj->wimg_bits & VM_WIMG_MASK;
+	}
+#endif
 	pmap_paddr_t physical_address = (pmap_paddr_t)ptoa(pn) + fault_phys_offset;
 
 #if HAS_MTE
