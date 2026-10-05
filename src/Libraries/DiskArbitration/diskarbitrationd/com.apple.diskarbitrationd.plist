@@ -6,6 +6,8 @@
 	<true/>
 	<key>KeepAlive</key>
 	<true/>
+	<key>ExitTimeOut</key>
+	<integer>2</integer>
 	<key>Label</key>
 	<string>com.apple.diskarbitrationd</string>
 	<key>MachServices</key>

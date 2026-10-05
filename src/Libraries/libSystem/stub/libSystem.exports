@@ -1711,6 +1711,7 @@ _OBJC_METACLASS_$_OS_xpc_object
 _OBJC_METACLASS_$_OS_xpc_connection
 _OBJC_METACLASS_$_OS_xpc_pipe
 __vprocmgr_detach_from_console
+_reboot2
 _vproc_swap_integer
 _vproc_transaction_begin
 _vproc_transaction_end

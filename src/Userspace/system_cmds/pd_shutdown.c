@@ -1,8 +1,13 @@
 #include <errno.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/reboot.h>
 #include <unistd.h>
+
+// launchd's reboot2 mig routine; xnu no longer lets root signal pid 1
+extern void *reboot2(uint64_t flags);
 
 static const char *
 base_name(const char *path)
@@ -53,6 +58,10 @@ main(int argc, char **argv)
 
 	sync();
 
+	if (reboot2(sig == SIGINT ? RB_AUTOBOOT : RB_HALT) == NULL)
+		return 0;
+
+	// older launchd without reboot2: the signal still works on old kernels
 	if (kill(1, sig) < 0) {
 		perror("kill");
 		return 1;
