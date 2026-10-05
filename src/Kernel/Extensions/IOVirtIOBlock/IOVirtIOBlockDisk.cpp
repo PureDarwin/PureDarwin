@@ -2,6 +2,7 @@
 
 #include <IOKit/IOLib.h>
 #include <IOKit/storage/IOStorage.h>
+#include <IOKit/storage/IOStorageProtocolCharacteristics.h>
 
 #define super IOBlockStorageDevice
 OSDefineMetaClassAndStructors(IOVirtIOBlockDisk, IOBlockStorageDevice);
@@ -11,6 +12,17 @@ IOVirtIOBlockDisk::initWithController(IOVirtIOBlock *controller)
 {
     if (!controller) return false;
     if (!init(NULL)) return false;
+
+    // libodaccesstoken walks the storage parents looking for this dictionary
+    // before creating a password verifier. Match the reference VirtIO disk.
+    OSDictionary *protocol = OSDictionary::withCapacity(1);
+    OSString *location = OSString::withCString(kIOPropertyInternalKey);
+    bool configured = protocol != NULL && location != NULL &&
+        protocol->setObject(kIOPropertyPhysicalInterconnectLocationKey, location) &&
+        setProperty(kIOPropertyProtocolCharacteristicsKey, protocol);
+    OSSafeReleaseNULL(location);
+    OSSafeReleaseNULL(protocol);
+    if (!configured) return false;
 
     fController = controller;
     setProperty(kIOBlockStorageDeviceTypeKey, kIOBlockStorageDeviceTypeGeneric);

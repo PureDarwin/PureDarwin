@@ -11,6 +11,9 @@
 #include <libkern/crypto/rand.h>
 #include <sys/kauth.h>
 #include <sys/proc.h>
+#include <pexpert/pexpert.h>
+#include <sys/systm.h>
+#include "PDKeyStoreFV.h"
 
 // handles clients pass for "my session" and for the device bag
 #define AKS_HANDLE_SESSION      (-3)
@@ -21,6 +24,11 @@
 #define AKS_ERR_NOT_FOUND       ((IOReturn)0xe00002f0)
 #define AKS_ERR_NOT_PERMITTED   ((IOReturn)0xe00002bc)
 #define AKS_ERR_SEP_POLICY      ((IOReturn)0xe007c01e)
+#define AKS_ERR_BAD_PASSWORD    ((IOReturn)0xe00002ce)
+
+// sel 84 is the FileVault command: scalars { op, 0, DER params address, DER length }
+#define AKS_FV_OWNERS_EXIST     0x11
+#define AKS_FV_SIDP_STATUS      0x1a
 
 #define AKS_STATE_DEVICE        0x4
 #define AKS_STATE_SESSION       0x6000004
@@ -59,6 +67,10 @@ static int64_t  sLastSessionUid = -1;
 static uint8_t  sSecret[32];
 static bool     sSecretReady;
 
+// fv op 0x11 answers an empty owner list; boot-arg pdaksowners=<IOReturn> returns that code instead
+// (0xe00002c7 only makes opendirectoryd log "Unable to determine ownership state", it still adds a verifier)
+static IOReturn sOwnersReply = kIOReturnSuccess;
+
 // the wrapping secret comes from the platform UUID, computed once so it can't change under a bag
 static void
 loadSecret()
@@ -78,6 +90,7 @@ loadSecret()
     if (uuid != NULL)
         SHA256_Update(&c, uuid->getCStringNoCopy(), uuid->getLength());
     SHA256_Final(sSecret, &c);
+    fvSetSecret(sSecret);
     sSecretReady = true;
 }
 
@@ -325,6 +338,161 @@ createBag(int64_t *handle)
     return kIOReturnNoResources;
 }
 
+// SIDP is not supported (kIOReturnUnsupportedMode, as in a macOS 26 VM); owners per sOwnersReply
+static IOReturn
+fvCommand(IOExternalMethodArguments *args)
+{
+    static const uint8_t noOwners[] = { 0x30, 0x03, 0x04, 0x01, 0x00 };
+
+    if (args->scalarInputCount < 1)
+        return kIOReturnBadArgument;
+    switch (args->scalarInput[0]) {
+    case AKS_FV_OWNERS_EXIST:
+        if (sOwnersReply != kIOReturnSuccess)
+            return sOwnersReply;
+        return output(args, noOwners, sizeof(noOwners));
+    case AKS_FV_SIDP_STATUS:
+        return kIOReturnUnsupportedMode;
+    }
+    return kIOReturnUnsupported;
+}
+
+// FileVault verifier requests pass their DER by address; one buffer, used under sLock
+static uint8_t sFVIn[1024];
+
+// item lengths only, never contents: the requests carry passwords
+static void
+fvLogShape(uint32_t selector, const FVBytes *it, uint32_t n)
+{
+    IOLog("PDKeyStore: fv sel %u request %u items: %u %u %u %u %u %u\n", selector, n, n > 0 ? it[0].len : 0,
+        n > 1 ? it[1].len : 0, n > 2 ? it[2].len : 0, n > 3 ? it[3].len : 0, n > 4 ? it[4].len : 0, n > 5 ? it[5].len : 0);
+}
+
+static bool
+fvRequest(uint32_t selector, uint64_t addr, uint64_t len, FVBytes *items, uint32_t want)
+{
+    FVBytes all[8];
+    uint32_t n;
+
+    if (len == 0 || len > sizeof(sFVIn) || copyin((user_addr_t)addr, sFVIn, (size_t)len) != 0)
+        return false;
+    n = fvSequence(sFVIn, (uint32_t)len, all, 8);
+    fvLogShape(selector, all, n);
+    if (n < want)
+        return false;
+    memcpy(items, all, want * sizeof(*items));
+    return true;
+}
+
+static IOReturn
+fvVerifierOut(IOExternalMethodArguments *args, const uint8_t kid[16], const FVBytes *pw)
+{
+    uint8_t salt[16], blob[FV_BLOB_MAX], out[FV_BLOB_MAX + 8];
+    FVBytes v;
+    uint32_t n;
+
+    if (pw->len == 0)
+        return kIOReturnBadArgument;
+    random_buf(salt, sizeof(salt));
+    v.p = blob;
+    v.len = fvBuild(FV_KIND_USER, kid, pw->p, pw->len, salt, blob);
+    n = fvWrapSequence(&v, 1, out, sizeof(out));
+    return n == 0 ? kIOReturnNoSpace : output(args, out, n);
+}
+
+// sel 76, first verifier: scalars { flags, address, length } of { domain, password, uuid }
+static IOReturn
+fvNewVerifier(IOExternalMethodArguments *args)
+{
+    FVBytes it[3];
+
+    if (args->scalarInputCount < 3 || !fvRequest(76, args->scalarInput[1], args->scalarInput[2], it, 3) || it[2].len != 16)
+        return kIOReturnBadArgument;
+    return fvVerifierOut(args, it[2].p, &it[1]);
+}
+
+// sel 77, verifier for another user: { domain, password, verifier, new uuid, new password }
+static IOReturn
+fvRewrap(IOExternalMethodArguments *args)
+{
+    FVBytes it[5];
+    FVBlob b;
+    uint8_t key[32];
+
+    if (args->scalarInputCount < 2 || !fvRequest(77, args->scalarInput[0], args->scalarInput[1], it, 5) || it[3].len != 16)
+        return kIOReturnBadArgument;
+    if (!fvParse(it[2].p, it[2].len, &b) || b.kind != FV_KIND_USER)
+        return kIOReturnBadArgument;
+    if (!fvOpen(&b, it[1].p, it[1].len, key))
+        return AKS_ERR_BAD_PASSWORD;
+    return fvVerifierOut(args, it[3].p, &it[4]);
+}
+
+// sel 75, unwrap with a password: { domain, password, verifier, access token, empty } -> { key, status }
+static IOReturn
+fvUnwrapVolumeKey(IOExternalMethodArguments *args)
+{
+    static const uint8_t status[4] = { 0 };
+    FVBytes it[5], o[2];
+    FVBlob b;
+    uint8_t key[32], out[64];
+    uint32_t n;
+
+    if (args->scalarInputCount < 2 || !fvRequest(75, args->scalarInput[0], args->scalarInput[1], it, 3))
+        return kIOReturnBadArgument;
+    if (!fvParse(it[2].p, it[2].len, &b) || b.kind != FV_KIND_USER)
+        return kIOReturnBadArgument;
+    if (!fvOpen(&b, it[1].p, it[1].len, key))
+        return AKS_ERR_BAD_PASSWORD;
+    o[0].p = key;
+    o[0].len = sizeof(key);
+    o[1].p = status;
+    o[1].len = sizeof(status);
+    n = fvWrapSequence(o, 2, out, sizeof(out));
+    return output(args, out, n);
+}
+
+// sel 74, new access token: scalars { address, length } of { 24 zero bytes, 7 bytes, verifier, uuid };
+// the reply has the sel 76 shape around a 139-byte token
+static IOReturn
+fvNewAccessToken(IOExternalMethodArguments *args)
+{
+    FVBytes it[8], v;
+    uint8_t kid[16], salt[16], blob[FV_BLOB_MAX], out[FV_BLOB_MAX + 8];
+    uint32_t n;
+
+    if (args->scalarInputCount < 2 || args->scalarInput[1] == 0 || args->scalarInput[1] > sizeof(sFVIn) ||
+        copyin((user_addr_t)args->scalarInput[0], sFVIn, (size_t)args->scalarInput[1]) != 0)
+        return kIOReturnBadArgument;
+    n = fvSequence(sFVIn, (uint32_t)args->scalarInput[1], it, 8);
+    fvLogShape(74, it, n);
+    // only opendirectoryd's request carries a verifier; applekeystored's boot request stays unsupported
+    if (n < 3 || it[2].len != FV_VERIFIER_LEN)
+        return kIOReturnUnsupported;
+    random_buf(kid, sizeof(kid));
+    random_buf(salt, sizeof(salt));
+    v.p = blob;
+    v.len = fvBuild(FV_KIND_TOKEN, kid, NULL, 0, salt, blob);
+    n = fvWrapSequence(&v, 1, out, sizeof(out));
+    return n == 0 ? kIOReturnNoSpace : output(args, out, n);
+}
+
+// sel 85, describe a blob: struct { 24 zero bytes, blob }
+static IOReturn
+fvDescribe(IOExternalMethodArguments *args)
+{
+    FVBytes it[2];
+    FVBlob b;
+    uint8_t out[FV_INFO_LEN];
+
+    if (args->structureInput == NULL ||
+        fvSequence((const uint8_t *)args->structureInput, args->structureInputSize, it, 2) != 2)
+        return kIOReturnBadArgument;
+    if (!fvParse(it[1].p, it[1].len, &b))
+        return kIOReturnBadArgument;
+    return output(args, out, fvInfo(&b, out));
+}
+
 static IOReturn
 dispatch(uint32_t selector, IOExternalMethodArguments *args)
 {
@@ -432,6 +600,35 @@ dispatch(uint32_t selector, IOExternalMethodArguments *args)
         return AKS_ERR_NOT_FOUND;
     case 42:
         return AKS_ERR_NOT_PERMITTED;
+    case 78:
+        // Size queries observed from the entitled opendirectoryd client in
+        // the macOS 26 reference VM. These are scalar replies, not keybags.
+        if (n != 1 || args->scalarOutputCount != 1)
+            return kIOReturnBadArgument;
+        if (in[0] == 1)
+            args->scalarOutput[0] = 438; // access token
+        else if (in[0] == 2)
+            args->scalarOutput[0] = 179; // verifier
+        else
+            return kIOReturnUnsupported;
+        return kIOReturnSuccess;
+    case 84:
+        return fvCommand(args);
+    case 74:
+        loadSecret();
+        return fvNewAccessToken(args);
+    case 75:
+        loadSecret();
+        return fvUnwrapVolumeKey(args);
+    case 76:
+        loadSecret();
+        return fvNewVerifier(args);
+    case 77:
+        loadSecret();
+        return fvRewrap(args);
+    case 85:
+        loadSecret();
+        return fvDescribe(args);
     }
     return kIOReturnUnsupported;
 }
@@ -446,6 +643,7 @@ AppleKeyStore::start(IOService *provider)
     if (!super::start(provider))
         return false;
     sLock = IOLockAlloc();
+    PE_parse_boot_argn("pdaksowners", &sOwnersReply, sizeof(sOwnersReply));
     registerService();
     IOLog("PDKeyStore: AppleKeyStore published\n");
     return true;
@@ -475,6 +673,25 @@ AppleKeyStoreUserClient::externalMethod(uint32_t selector, IOExternalMethodArgum
     ret = dispatch(selector, args);
     IOLockUnlock(sLock);
 
+    // every FileVault command with its reply, it decides Setup Assistant's security check
+    if (selector == 84) {
+        const uint8_t *o = (const uint8_t *)args->structureOutput;
+        uint32_t olen = ret == kIOReturnSuccess && o != NULL ? args->structureOutputSize : 0;
+
+        proc_name(proc_selfpid(), name, sizeof(name));
+        IOLog("PDKeyStore: %s fv op 0x%llx der %llu -> 0x%x out %u [%02x %02x %02x %02x %02x]\n", name,
+            args->scalarInputCount > 0 ? args->scalarInput[0] : 0,
+            args->scalarInputCount > 3 ? args->scalarInput[3] : 0, ret, olen,
+            olen > 0 ? o[0] : 0, olen > 1 ? o[1] : 0, olen > 2 ? o[2] : 0, olen > 3 ? o[3] : 0, olen > 4 ? o[4] : 0);
+        return ret;
+    }
+    // FileVault verifier calls with their result, never their contents
+    if (selector >= 74 && selector <= 77) {
+        proc_name(proc_selfpid(), name, sizeof(name));
+        IOLog("PDKeyStore: %s fv sel %u -> 0x%x out %u\n", name, selector, ret,
+            ret == kIOReturnSuccess ? args->structureOutputSize : 0);
+        return ret;
+    }
     // failures only, and the frequent state queries stay quiet even then
     if (ret != kIOReturnSuccess && selector != 17 && selector != 35) {
         proc_name(proc_selfpid(), name, sizeof(name));

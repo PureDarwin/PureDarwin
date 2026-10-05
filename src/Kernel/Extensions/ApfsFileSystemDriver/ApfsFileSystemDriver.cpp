@@ -1,6 +1,7 @@
 /* Copyright (c) 2026 PureDarwin contributors. SPDX-License-Identifier: MIT */
 #include <IOKit/IOBSD.h>
 #include <sys/errno.h>
+#include <sys/systm.h>
 #include "ApfsFileSystemDriver.h"
 
 extern "C" {
@@ -810,7 +811,125 @@ AppleAPFSContainerCopySpaceInfo(AppleAPFSContainer *container)
 #define kAPFSUCVolumeCrypto 18
 #define kAPFSUCContainerStats 29
 #define kAPFSUCVolumeStats 30
-#define kAPFSUCVolumeFlag55 55
+
+// unlock records for opendirectoryd's SecureToken code, shapes from a macOS 26 VM; in memory for now.
+// 13 get, 0xc002 when missing; 14 list; 16 add (records by address in the caller); 55 count
+#define kAPFSUCUnlockGet 13
+#define kAPFSUCUnlockList 14
+#define kAPFSUCUnlockAdd 16
+#define kAPFSUCUnlockCount 55
+#define kAPFSUCUnlockMissing ((IOReturn)0xc002)
+#define kAPFSUnlockRecordType 3
+#define kAPFSUnlockMax 16
+#define kAPFSUnlockDataMax 512
+
+struct APFSUnlockRecord {
+    const void *container;
+    uint32_t    vol;
+    uint8_t     uuid[16];
+    uint32_t    len;
+    uint8_t     data[kAPFSUnlockDataMax];
+};
+
+static APFSUnlockRecord sUnlock[kAPFSUnlockMax];
+static IOLock *sUnlockLock;
+
+static APFSUnlockRecord *
+unlockFind(const void *c, uint32_t vol, const uint8_t uuid[16])
+{
+    for (int i = 0; i < kAPFSUnlockMax; i++) {
+        if (sUnlock[i].container == c && sUnlock[i].vol == vol && memcmp(sUnlock[i].uuid, uuid, 16) == 0)
+            return &sUnlock[i];
+    }
+    return NULL;
+}
+
+static IOReturn
+unlockRecords(const void *c, uint32_t selector, IOExternalMethodArguments *args)
+{
+    const uint8_t *in = (const uint8_t *)args->structureInput;
+    uint8_t *out = (uint8_t *)args->structureOutput;
+    uint32_t vol, n = 0;
+    APFSUnlockRecord *r;
+
+    if (in == NULL || args->structureInputSize < 4)
+        return kIOReturnBadArgument;
+    memcpy(&vol, in, 4);
+    if (selector == kAPFSUCUnlockCount) {
+        uint64_t count = 0;
+
+        if (out == NULL || args->structureOutputSize < sizeof(count))
+            return kIOReturnBadArgument;
+        for (int i = 0; i < kAPFSUnlockMax; i++)
+            count += sUnlock[i].container == c && sUnlock[i].vol == vol;
+        memcpy(out, &count, sizeof(count));
+        args->structureOutputSize = sizeof(count);
+        return kIOReturnSuccess;
+    }
+    if (selector == kAPFSUCUnlockList) {
+        uint32_t max;
+        uint64_t count = 0;
+
+        if (args->structureInputSize < 8 || out == NULL || args->structureOutputSize < 8)
+            return kIOReturnBadArgument;
+        memcpy(&max, in + 4, 4);
+        for (int i = 0; i < kAPFSUnlockMax; i++) {
+            if (sUnlock[i].container != c || sUnlock[i].vol != vol)
+                continue;
+            if (count < max && 8 + 16 * (count + 1) <= args->structureOutputSize)
+                memcpy(out + 8 + 16 * count, sUnlock[i].uuid, 16);
+            count++;
+        }
+        if (count > max)
+            count = max;
+        memcpy(out, &count, sizeof(count));
+        args->structureOutputSize = (uint32_t)(8 + 16 * count);
+        return kIOReturnSuccess;
+    }
+    if (selector == kAPFSUCUnlockGet) {
+        uint64_t len;
+
+        if (args->structureInputSize < 24 || out == NULL || args->structureOutputSize < 8 + kAPFSUnlockDataMax)
+            return kIOReturnBadArgument;
+        r = unlockFind(c, vol, in + 4);
+        if (r == NULL)
+            return kAPFSUCUnlockMissing;
+        len = r->len;
+        memset(out, 0, 8 + kAPFSUnlockDataMax);
+        memcpy(out, &len, sizeof(len));
+        memcpy(out + 8, r->data, r->len);
+        args->structureOutputSize = 8 + kAPFSUnlockDataMax;
+        return kIOReturnSuccess;
+    }
+
+    // add: each entry carries the record by address in the caller
+    memcpy(&n, in + 4, 4);
+    if (args->structureInputSize < 8 + 64 * (uint64_t)n)
+        return kIOReturnBadArgument;
+    for (uint32_t k = 0; k < n; k++) {
+        const uint8_t *e = in + 8 + 64 * k;
+        uint64_t addr, len;
+        uint8_t data[kAPFSUnlockDataMax];
+
+        memcpy(&addr, e + 16, 8);
+        memcpy(&len, e + 24, 8);
+        if (len == 0 || len > kAPFSUnlockDataMax || copyin((user_addr_t)addr, data, (size_t)len) != 0)
+            return kIOReturnBadArgument;
+        r = unlockFind(c, vol, e);
+        for (int i = 0; r == NULL && i < kAPFSUnlockMax; i++) {
+            if (sUnlock[i].container == NULL)
+                r = &sUnlock[i];
+        }
+        if (r == NULL)
+            return kIOReturnNoSpace;
+        r->container = c;
+        r->vol = vol;
+        memcpy(r->uuid, e, 16);
+        r->len = (uint32_t)len;
+        memcpy(r->data, data, (size_t)len);
+    }
+    return kIOReturnSuccess;
+}
 
 IOReturn
 AppleAPFSUserClient::externalMethod(uint32_t selector,
@@ -884,15 +1003,27 @@ AppleAPFSUserClient::externalMethod(uint32_t selector,
         args->structureOutputSize = sizeof(role);
         return kIOReturnSuccess;
     }
-    if (selector == kAPFSUCVolumeCrypto || selector == kAPFSUCVolumeStats ||
-        selector == kAPFSUCVolumeFlag55) {
+    if (selector == kAPFSUCUnlockGet || selector == kAPFSUCUnlockList ||
+        selector == kAPFSUCUnlockAdd || selector == kAPFSUCUnlockCount) {
+        IOReturn ret;
+
+        if (sUnlockLock == NULL) {
+            IOLock *l = IOLockAlloc();
+
+            if (!OSCompareAndSwapPtr(NULL, l, &sUnlockLock))
+                IOLockFree(l);
+        }
+        IOLockLock(sUnlockLock);
+        ret = unlockRecords(_container, selector, args);
+        IOLockUnlock(sUnlockLock);
+        AFD_STEP("unlock records selector %u -> 0x%x", selector, ret);
+        return ret;
+    }
+    if (selector == kAPFSUCVolumeCrypto || selector == kAPFSUCVolumeStats) {
         static const uint64_t crypto[4] = { 0, 100, 0, 1 };
         static const uint64_t stats[8] = { 1, 0, 0, 0, 1, 1, 1, 0 };
-        static const uint64_t flag = 0;
-        const void *src = selector == kAPFSUCVolumeCrypto ? (const void *)crypto :
-            selector == kAPFSUCVolumeStats ? (const void *)stats : (const void *)&flag;
-        uint32_t n = selector == kAPFSUCVolumeCrypto ? sizeof(crypto) :
-            selector == kAPFSUCVolumeStats ? sizeof(stats) : sizeof(flag);
+        const void *src = selector == kAPFSUCVolumeCrypto ? (const void *)crypto : (const void *)stats;
+        uint32_t n = selector == kAPFSUCVolumeCrypto ? sizeof(crypto) : sizeof(stats);
         uint32_t index0;
         uint16_t role;
 

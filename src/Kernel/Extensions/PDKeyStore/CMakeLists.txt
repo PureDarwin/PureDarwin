@@ -5,6 +5,7 @@ set_property(TARGET PDKeyStore.kext PROPERTY OUTPUT_NAME PDKeyStore)
 
 target_sources(PDKeyStore.kext PRIVATE
     PDKeyStore.cpp
+    PDKeyStoreFV.cpp
 )
 
 target_link_libraries(PDKeyStore.kext PRIVATE xnu_kernel_private_headers)
