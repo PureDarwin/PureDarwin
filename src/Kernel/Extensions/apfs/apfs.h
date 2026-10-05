@@ -391,10 +391,29 @@ struct apfs_container {
 	uint8_t c_uuid[16];
 	vnode_t c_devvp;
 	int c_refs;
-	// lck_rw_t*: reads shared, writes, commits and view reloads exclusive
+	// lck_rw_t*: reads shared. A write op runs shared and publishes exclusive; commits and
+	// view reloads take it exclusive, but let readers back in while a commit waits on the device
 	void *c_lock;
 	// the exclusive holder, which may re-enter (shared or exclusive) by bumping c_lock_depth
 	void *c_lock_owner;
+	// lck_mtx_t*: one writer at a time, taken before c_lock. Every exclusive holder has it,
+	// so nobody can take c_lock exclusive behind a holder that let go of it for a while
+	void *c_wlock;
+	void *c_wlock_owner;
+	int c_wlock_depth;
+	// the thread in a write op: c_wlock held, c_lock shared. Its own read locks nest by count
+	void *c_wop;
+	int c_wop_nest;
+	void *c_wop_site;
+	uint64_t c_wop_abs;
+	int c_x_from_wop;		// the exclusive hold returns to c_wop's shared hold on exit
+	int c_committing;		// in apfsrw_batch_end: its device waits run shared
+	uint64_t c_lock_seg_abs;	// exclusive time before the current stretch of this hold
+	// what the open batch allocated, as of its last op: readers ask it without libapfsrw
+	uint64_t *c_owned;
+	uint32_t c_owned_n, c_owned_cap;
+	// free blocks as of the last commit, for statfs. 0 until known
+	uint64_t c_free_blocks;
 	uint64_t c_generation;
 	struct apfs_mount *c_last_writer;	// Whose commit bumped c_generation last
 	struct apfsrw_kern_dev c_rw_dev;
@@ -412,7 +431,10 @@ struct apfs_container {
 	uint64_t c_st_shared, c_st_xwait_abs, c_st_commit_abs, c_st_reloads, c_st_reload_abs;
 	// who wrote since the last stat line, the busiest shown on it
 	struct { int pid; uint32_t ops; char name[17]; } c_st_writers[8];
-	struct { void *site; uint64_t abs, n; } c_st_sites[12];
+	struct apfs_site_stat { void *site; uint64_t abs, n; } c_st_sites[12], c_st_opsites[8];
+	// time spent waiting for a shared hold and for the writer lock, write ops run shared,
+	// commit device waits run shared
+	uint64_t c_st_swait_abs, c_st_wwait_abs, c_st_op_abs, c_st_cshared_abs, c_st_pubwait_abs;
 	void *c_lock_site;
 };
 
@@ -530,10 +552,14 @@ int apfs_list_xattrs(struct apfs_mount *amp, uint64_t fileid, char *buf,
 void apfs_rw_lock(struct apfs_mount *amp);
 // exclusive, for libapfsrw calls that read through its own caches. Re-entrant for the owner
 void apfs_rw_lock_excl(struct apfs_mount *amp);
+// the same, charged to site in the lock stats
+void apfs_rw_lock_excl_at(struct apfs_mount *amp, void *site);
 void apfs_rw_unlock(struct apfs_mount *amp);
-// the lock for a mutation: the container's open transaction moves to this mount's handle
+// the lock for a mutation: the container's open transaction moves to this mount's handle.
+// Readers keep going on the view before it until apfs_write_done
 void apfs_rw_lock_write(struct apfs_mount *amp);
-// after a mutation succeeded: reads see it at once, a commit follows on the batch limits
+// after a mutation succeeded: takes the lock exclusive, so reads see it at once, and a commit
+// follows on the batch limits
 int apfs_write_done(struct apfs_mount *amp);
 // commit the container's open transaction. Container lock held
 int apfs_batch_commit(struct apfs_container *c);

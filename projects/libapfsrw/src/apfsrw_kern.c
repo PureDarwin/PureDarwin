@@ -6,6 +6,8 @@
 
 #include "apfsrw/apfsrw.h"
 #include <kern/clock.h>
+#include <sys/disk.h>
+#include <sys/fcntl.h>
 
 uint64_t
 apfsrw_now_ns(void)
@@ -78,11 +80,12 @@ apfsrw_kern_realloc(void *ptr, size_t size)
 }
 
 // block reads that missed the buffer cache path, delayed writes, and sync barriers
-static uint64_t apfsrw_st_reads, apfsrw_st_read_abs, apfsrw_st_writes;
+static uint64_t apfsrw_st_reads, apfsrw_st_read_abs, apfsrw_st_writes, apfsrw_st_write_abs;
 static uint64_t apfsrw_st_syncs, apfsrw_st_sync_abs;
+static uint64_t apfsrw_st_superseded;
 
 void
-apfsrw_kern_iostat(uint64_t st[5])
+apfsrw_kern_iostat(uint64_t st[7])
 {
 	uint64_t ns;
 
@@ -93,6 +96,9 @@ apfsrw_kern_iostat(uint64_t st[5])
 	st[3] = apfsrw_st_syncs;
 	absolutetime_to_nanoseconds(apfsrw_st_sync_abs, &ns);
 	st[4] = ns / 1000000ull;
+	absolutetime_to_nanoseconds(apfsrw_st_write_abs, &ns);
+	st[5] = ns / 1000000ull;
+	st[6] = apfsrw_st_superseded;
 }
 
 static int
@@ -124,12 +130,15 @@ apfsrw_kern_io(struct apfsrw *fs, void *buf, size_t n, off_t off, int is_write)
 		int error;
 
 		if (is_write) {
+			uint64_t w0 = mach_absolute_time();
+
 			bp = buf_getblk(devvp, blkno, (int)bs, 0, 0, BLK_META);
 			if (bp == NULL)
 				return -1;
 			memcpy((void *)buf_dataptr(bp), p, bs);
 			// Delayed write. apfsrw_sync() flushes at commit barriers
 			buf_bdwrite(bp);
+			apfsrw_st_write_abs += mach_absolute_time() - w0;
 			apfsrw_st_writes++;
 			continue;
 		}
@@ -161,6 +170,55 @@ apfsrw_pwrite(struct apfsrw *fs, const void *buf, size_t n, off_t off)
 	    ? -1 : (ssize_t)n;
 }
 
+void
+apfsrw_discard_superseded(struct apfsrw *fs, const uint64_t *alloced,
+    uint32_t nalloced, const uint64_t *deferred, uint32_t ndeferred)
+{
+	struct apfsrw_kern_dev *dev = apfsrw_io_context(fs);
+	uint64_t *owned;
+	uint32_t cap = 1, i;
+
+	// Direct IOMedia writes have already been submitted. This only cancels our
+	// buffer-cache writes, never the device barrier or frees of committed blocks.
+	if (dev == NULL || dev->io != NULL || dev->devvp == NULL ||
+	    dev->dev_bsize == 0 || dev->block_size < dev->dev_bsize ||
+	    dev->block_size % dev->dev_bsize != 0 || nalloced == 0 || ndeferred == 0)
+		return;
+	// Optional optimization: overflow or allocation failure leaves normal flushing intact.
+	if (nalloced > (1U << 30))
+		return;
+	while (cap < nalloced * 2U)
+		cap <<= 1;
+	owned = calloc(cap, sizeof(*owned));
+	if (owned == NULL)
+		return;
+	for (i = 0; i < nalloced; i++) {
+		uint32_t slot = (uint32_t)(alloced[i] * 0x9e3779b97f4a7c15ULL) & (cap - 1);
+
+		// Block zero is not transaction-allocated; it is the container superblock.
+		if (alloced[i] == 0)
+			continue;
+		while (owned[slot] != 0 && owned[slot] != alloced[i])
+			slot = (slot + 1) & (cap - 1);
+		owned[slot] = alloced[i];
+	}
+	for (i = 0; i < ndeferred; i++) {
+		uint32_t slot = (uint32_t)(deferred[i] * 0x9e3779b97f4a7c15ULL) & (cap - 1);
+
+		if (deferred[i] == 0)
+			continue;
+		while (owned[slot] != 0 && owned[slot] != deferred[i])
+			slot = (slot + 1) & (cap - 1);
+		if (owned[slot] != 0) {
+			daddr64_t blkno = (daddr64_t)(deferred[i] * (dev->block_size / dev->dev_bsize));
+
+			if (buf_invalblkno((vnode_t)dev->devvp, blkno, BUF_WAIT) == 0)
+				apfsrw_st_superseded++;
+		}
+	}
+	free(owned);
+}
+
 int
 apfsrw_sync(struct apfsrw *fs)
 {
@@ -171,8 +229,18 @@ apfsrw_sync(struct apfsrw *fs)
 	if (dev == NULL || dev->devvp == NULL)
 		return -1;
 	uint64_t t0 = mach_absolute_time();
+	dk_synchronize_t ds;
+
+	if (dev->sync_wait != NULL)
+		dev->sync_wait(dev->wait_ref, 0);
 	buf_flushdirtyblks((vnode_t)dev->devvp, 1, 0, "apfsrw");
+	// the blocks have left the buffer cache, the device may still hold them in a write cache:
+	// a barrier that stops here lets a checkpoint reach the media before what it points to
+	bzero(&ds, sizeof(ds));
+	(void)VNOP_IOCTL((vnode_t)dev->devvp, DKIOCSYNCHRONIZE, (caddr_t)&ds, FWRITE, vfs_context_kernel());
 	apfsrw_st_sync_abs += mach_absolute_time() - t0;
+	if (dev->sync_wait != NULL)
+		dev->sync_wait(dev->wait_ref, 1);
 	apfsrw_st_syncs++;
 	return 0;
 }

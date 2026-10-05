@@ -58,6 +58,7 @@ static void apfs_lock_enter_at(struct apfs_container *c, void *site);
 // the site is who took the lock: the stat line charges each exclusive hold to it
 #define apfs_lock_enter(c) apfs_lock_enter_at((c), __builtin_return_address(0))
 static void apfs_lock_exit(struct apfs_container *c);
+static void apfs_commit_sync_wait(void *ref, int done);
 static void apfs_batch_timer_fire(thread_call_param_t p0, thread_call_param_t p1);
 
 // batch limits: whichever comes first commits the container's open transaction
@@ -99,6 +100,30 @@ apfs_mount(struct mount *mp, vnode_t devvp, user_addr_t data,
 	if (error)
 		return error;
 	return apfs_mount_dev(mp, devvp, 1, ctx);
+}
+
+// bdevvp panics when the device does not open ("bdevvp failed: open"): open the /dev node first,
+// so a device nothing answers for fails the mount with an error instead
+static int
+apfs_bdevvp(const char *path, dev_t dev, vnode_t *vpp, vfs_context_t ctx)
+{
+	vnode_t dvp = NULLVP;
+	int error;
+
+	if (path != NULL && vnode_lookup(path, 0, &dvp, ctx) == 0) {
+		error = VNOP_OPEN(dvp, FREAD, ctx);
+		if (error == 0)
+			(void)VNOP_CLOSE(dvp, FREAD, ctx);
+		vnode_put(dvp);
+		if (error != 0) {
+			char who[MAXCOMLEN + 1] = "";
+
+			proc_selfname(who, sizeof(who));
+			APFSLOG("device %s does not open: %d (mount by %s[%d])", path, error, who, proc_selfpid());
+			return error;
+		}
+	}
+	return bdevvp(dev, vpp);
 }
 
 // own_devvp_ref: devvp came from bdevvp here, so its usecount is ours to drop on failure
@@ -292,10 +317,13 @@ apfs_container_attach(struct apfs_mount *amp)
 			return ENOMEM;
 		}
 		c->c_lock = lck_rw_alloc_init(apfs_lck_grp, LCK_ATTR_NULL);
+		c->c_wlock = lck_mtx_alloc_init(apfs_lck_grp, LCK_ATTR_NULL);
 		c->c_batch_timer = thread_call_allocate(apfs_batch_timer_fire, c);
-		if (c->c_lock == NULL || c->c_batch_timer == NULL) {
+		if (c->c_lock == NULL || c->c_wlock == NULL || c->c_batch_timer == NULL) {
 			if (c->c_lock != NULL)
 				lck_rw_free((lck_rw_t *)c->c_lock, apfs_lck_grp);
+			if (c->c_wlock != NULL)
+				lck_mtx_free((lck_mtx_t *)c->c_wlock, apfs_lck_grp);
 			if (c->c_batch_timer != NULL)
 				thread_call_free((thread_call_t)c->c_batch_timer);
 			_FREE(c, M_TEMP);
@@ -309,6 +337,8 @@ apfs_container_attach(struct apfs_mount *amp)
 		c->c_rw_dev.devvp = c->c_devvp;
 		c->c_rw_dev.dev_bsize = amp->dev_bsize;
 		c->c_rw_dev.block_size = amp->block_size;
+		c->c_rw_dev.sync_wait = apfs_commit_sync_wait;
+		c->c_rw_dev.wait_ref = c;
 		c->c_block_count = amp->block_count;
 		LIST_INSERT_HEAD(&apfs_containers, c, c_link);
 	}
@@ -337,6 +367,9 @@ apfs_container_rele(struct apfs_container *c)
 		buf_flushdirtyblks(c->c_devvp, 1, 0, "apfs_container");
 		vnode_rele(c->c_devvp);
 		lck_rw_free((lck_rw_t *)c->c_lock, apfs_lck_grp);
+		lck_mtx_free((lck_mtx_t *)c->c_wlock, apfs_lck_grp);
+		if (c->c_owned != NULL)
+			_FREE(c->c_owned, M_TEMP);
 		_FREE(c, M_TEMP);
 	}
 }
@@ -353,71 +386,144 @@ apfs_container_detach(struct apfs_mount *amp)
 	apfs_container_rele(c);
 }
 
-// exclusive. The owner re-enters by depth alone, lck_rw_t itself is not recursive
+// the writer lock, re-entered by its owner
 static void
-apfs_lock_enter_at(struct apfs_container *c, void *site)
+apfs_wlock_enter(struct apfs_container *c)
 {
 	uint64_t t0;
 
-	if (c->c_lock_owner == (void *)current_thread()) {
-		c->c_lock_depth++;
+	if (c->c_wlock_owner == (void *)current_thread()) {
+		c->c_wlock_depth++;
 		return;
 	}
 	t0 = mach_absolute_time();
+	lck_mtx_lock((lck_mtx_t *)c->c_wlock);
+	c->c_st_wwait_abs += mach_absolute_time() - t0;
+	c->c_wlock_owner = (void *)current_thread();
+	c->c_wlock_depth = 1;
+}
+
+static void
+apfs_wlock_exit(struct apfs_container *c)
+{
+	if (--c->c_wlock_depth > 0)
+		return;
+	c->c_wlock_owner = NULL;
+	lck_mtx_unlock((lck_mtx_t *)c->c_wlock);
+}
+
+// c_lock exclusive for a thread that has the writer lock
+static void
+apfs_x_acquire(struct apfs_container *c, void *site)
+{
+	uint64_t t0 = mach_absolute_time();
+
 	lck_rw_lock_exclusive((lck_rw_t *)c->c_lock);
 	c->c_lock_owner = (void *)current_thread();
 	c->c_lock_depth = 1;
 	c->c_lock_abs = mach_absolute_time();
+	c->c_lock_seg_abs = 0;
 	c->c_lock_site = site;
 	c->c_st_xwait_abs += c->c_lock_abs - t0;
 }
 
+// exclusive, behind the writer lock. The owner re-enters by depth alone, lck_rw_t itself is
+// not recursive. A write op's thread trades its shared hold for this one until the exit
 static void
-apfs_note_site(struct apfs_container *c, void *site, uint64_t abs)
+apfs_lock_enter_at(struct apfs_container *c, void *site)
+{
+	if (c->c_lock_owner == (void *)current_thread()) {
+		c->c_lock_depth++;
+		return;
+	}
+	apfs_wlock_enter(c);
+	if (c->c_wop == (void *)current_thread()) {
+		lck_rw_unlock_shared((lck_rw_t *)c->c_lock);
+		c->c_x_from_wop = 1;
+	}
+	apfs_x_acquire(c, site);
+}
+
+static void
+apfs_note_site(struct apfs_site_stat *t, int n, void *site, uint64_t abs)
 {
 	int slot = 0;
 
-	for (int i = 0; i < 12; i++) {
-		if (c->c_st_sites[i].site == site) {
+	for (int i = 0; i < n; i++) {
+		if (t[i].site == site) {
 			slot = i;
 			goto found;
 		}
-		if (c->c_st_sites[i].abs < c->c_st_sites[slot].abs)
+		if (t[i].abs < t[slot].abs)
 			slot = i;
 	}
-	c->c_st_sites[slot].site = site;
-	c->c_st_sites[slot].abs = 0;
-	c->c_st_sites[slot].n = 0;
+	t[slot].site = site;
+	t[slot].abs = 0;
+	t[slot].n = 0;
 found:
-	c->c_st_sites[slot].abs += abs;
-	c->c_st_sites[slot].n++;
+	t[slot].abs += abs;
+	t[slot].n++;
+}
+
+// the outermost exclusive hold ends: its time goes to the stats
+static void
+apfs_x_account(struct apfs_container *c)
+{
+	uint64_t held = c->c_lock_seg_abs + mach_absolute_time() - c->c_lock_abs;
+
+	c->c_st_hold_abs += held;
+	apfs_note_site(c->c_st_sites, 12, c->c_lock_site, held);
+	c->c_lock_depth = 0;
+	c->c_lock_owner = NULL;
 }
 
 static void
 apfs_lock_exit(struct apfs_container *c)
 {
-	uint64_t held;
-
 	if (--c->c_lock_depth > 0)
 		return;
-	held = mach_absolute_time() - c->c_lock_abs;
-	c->c_st_hold_abs += held;
-	apfs_note_site(c, c->c_lock_site, held);
-	c->c_lock_owner = NULL;
-	lck_rw_unlock_exclusive((lck_rw_t *)c->c_lock);
+	apfs_x_account(c);
+	if (c->c_x_from_wop) {
+		c->c_x_from_wop = 0;
+		lck_rw_lock_exclusive_to_shared((lck_rw_t *)c->c_lock);
+	} else {
+		lck_rw_unlock_exclusive((lck_rw_t *)c->c_lock);
+	}
+	apfs_wlock_exit(c);
 }
 
 // an outermost exclusive hold becomes shared, no writer gets in between
 static void
 apfs_lock_downgrade(struct apfs_container *c)
 {
-	uint64_t held = mach_absolute_time() - c->c_lock_abs;
-
-	c->c_st_hold_abs += held;
-	apfs_note_site(c, c->c_lock_site, held);
-	c->c_lock_depth = 0;
-	c->c_lock_owner = NULL;
+	apfs_x_account(c);
 	lck_rw_lock_exclusive_to_shared((lck_rw_t *)c->c_lock);
+	apfs_wlock_exit(c);
+}
+
+// apfsrw_sync around its device wait. A batch commit's outermost hold goes shared for the wait:
+// readers see the batch's view, which the commit leaves alone, and the writer lock keeps
+// everyone else from taking c_lock exclusive before this thread has it back
+static void
+apfs_commit_sync_wait(void *ref, int done)
+{
+	struct apfs_container *c = (struct apfs_container *)ref;
+	uint64_t now;
+
+	if (c->c_committing != 1 || c->c_lock_owner != (void *)current_thread() || c->c_lock_depth != 1)
+		return;
+	now = mach_absolute_time();
+	if (!done) {
+		c->c_lock_seg_abs += now - c->c_lock_abs;
+		c->c_lock_abs = now;
+		lck_rw_lock_exclusive_to_shared((lck_rw_t *)c->c_lock);
+		return;
+	}
+	lck_rw_unlock_shared((lck_rw_t *)c->c_lock);
+	lck_rw_lock_exclusive((lck_rw_t *)c->c_lock);
+	c->c_st_cshared_abs += now - c->c_lock_abs;
+	c->c_lock_abs = mach_absolute_time();
+	c->c_st_xwait_abs += c->c_lock_abs - now;
 }
 
 static uint64_t
@@ -427,6 +533,12 @@ apfs_abs_ms(uint64_t abs)
 
 	absolutetime_to_nanoseconds(abs, &ns);
 	return ns / 1000000ull;
+}
+
+static long long
+apfs_site_off(void *site)
+{
+	return (long long)((intptr_t)site - (intptr_t)(void *)apfs_rw_lock);
 }
 
 static void
@@ -446,17 +558,25 @@ apfs_batch_stat(struct apfs_container *c, const char *why)
 	    (unsigned long long)c->c_st_shared,
 	    (unsigned long long)apfs_abs_ms(c->c_st_xwait_abs), why);
 	{
-		uint64_t io[5];
+		uint64_t io[7];
 
 		apfsrw_kern_iostat(io);
-		APFSLOG("batch: io %llu reads %llu ms, %llu writes, %llu syncs %llu ms, commit %llu ms, "
-		    "%llu reloads %llu ms",
+		APFSLOG("batch: io %llu reads %llu ms, %llu writes %llu ms, %llu syncs %llu ms, commit %llu ms, "
+		    "%llu reloads %llu ms, %llu superseded blocks invalidated",
 		    (unsigned long long)io[0], (unsigned long long)io[1], (unsigned long long)io[2],
-		    (unsigned long long)io[3], (unsigned long long)io[4],
+		    (unsigned long long)io[5], (unsigned long long)io[3], (unsigned long long)io[4],
 		    (unsigned long long)apfs_abs_ms(c->c_st_commit_abs),
 		    (unsigned long long)c->c_st_reloads,
-		    (unsigned long long)apfs_abs_ms(c->c_st_reload_abs));
+		    (unsigned long long)apfs_abs_ms(c->c_st_reload_abs),
+		    (unsigned long long)io[6]);
 	}
+	APFSLOG("batch: shared wait %llu ms, writer wait %llu ms, ops ran shared %llu ms, "
+	    "publish wait %llu ms, commit waits shared %llu ms",
+	    (unsigned long long)apfs_abs_ms(c->c_st_swait_abs),
+	    (unsigned long long)apfs_abs_ms(c->c_st_wwait_abs),
+	    (unsigned long long)apfs_abs_ms(c->c_st_op_abs),
+	    (unsigned long long)apfs_abs_ms(c->c_st_pubwait_abs),
+	    (unsigned long long)apfs_abs_ms(c->c_st_cshared_abs));
 	for (int n = 0; n < 4; n++) {
 		int best = -1;
 
@@ -480,12 +600,28 @@ apfs_batch_stat(struct apfs_container *c, const char *why)
 		}
 		if (best < 0)
 			break;
-		APFSLOG("batch: site %p %llu holds %llu ms", c->c_st_sites[best].site,
+		// printf hides pointers: the site goes out as its distance from apfs_rw_lock in this kext
+		APFSLOG("batch: site apfs_rw_lock%+lld %llu holds %llu ms", apfs_site_off(c->c_st_sites[best].site),
 		    (unsigned long long)c->c_st_sites[best].n,
 		    (unsigned long long)apfs_abs_ms(c->c_st_sites[best].abs));
 		c->c_st_sites[best].n = 0;
 	}
 	bzero(c->c_st_sites, sizeof(c->c_st_sites));
+	for (int n = 0; n < 4; n++) {
+		int best = -1;
+
+		for (int i = 0; i < 8; i++) {
+			if (c->c_st_opsites[i].n > 0 && (best < 0 || c->c_st_opsites[i].abs > c->c_st_opsites[best].abs))
+				best = i;
+		}
+		if (best < 0)
+			break;
+		APFSLOG("batch: op site apfs_rw_lock%+lld %llu ops %llu ms", apfs_site_off(c->c_st_opsites[best].site),
+		    (unsigned long long)c->c_st_opsites[best].n,
+		    (unsigned long long)apfs_abs_ms(c->c_st_opsites[best].abs));
+		c->c_st_opsites[best].n = 0;
+	}
+	bzero(c->c_st_opsites, sizeof(c->c_st_opsites));
 }
 
 // counts the caller against its slot, or takes the quietest one
@@ -518,13 +654,22 @@ apfs_batch_commit(struct apfs_container *c)
 	uint64_t t0 = mach_absolute_time();
 
 	dirty = apfsrw_batch_dirty(amp->rw);
+	c->c_committing++;
 	err = apfsrw_batch_end(amp->rw);
+	c->c_committing--;
 	c->c_st_commit_abs += mach_absolute_time() - t0;
 	c->c_batch_amp = NULL;
 	c->c_batch_ops = 0;
 	c->c_batch_abs = 0;
+	c->c_owned_n = 0;
 	if (!dirty)
 		return 0;
+	if (err == APFSRW_OK) {
+		struct apfsrw_space_info si;
+
+		if (apfsrw_get_space_info(amp->rw, &si) == APFSRW_OK)
+			c->c_free_blocks = si.free_count;
+	}
 	if (err != APFSRW_OK)
 		APFSLOG("slot %u: batch commit failed: %s, back at the last checkpoint",
 		    amp->vol_slot, apfsrw_strerror(err));
@@ -675,35 +820,92 @@ void
 apfs_rw_lock(struct apfs_mount *amp)
 {
 	struct apfs_container *c = amp->cont;
+	uint64_t t0;
 
 	// the exclusive owner reads under what it holds
 	if (c->c_lock_owner == (void *)current_thread()) {
-		apfs_rw_lock_excl(amp);
+		apfs_rw_lock_excl_at(amp, __builtin_return_address(0));
 		return;
 	}
+	// a write op reads its own pre-op view under the shared hold it has
+	if (c->c_wop == (void *)current_thread()) {
+		if (apfs_view_stale(amp))
+			apfs_rw_lock_excl_at(amp, __builtin_return_address(0));
+		else
+			c->c_wop_nest++;
+		return;
+	}
+	t0 = mach_absolute_time();
 	lck_rw_lock_shared((lck_rw_t *)c->c_lock);
+	__atomic_fetch_add(&c->c_st_swait_abs, mach_absolute_time() - t0, __ATOMIC_RELAXED);
 	__atomic_fetch_add(&c->c_st_shared, 1, __ATOMIC_RELAXED);
 	if (!apfs_view_stale(amp))
 		return;
 	// no upgrade: drop, sync under exclusive, then downgrade so the synced view stays put
 	lck_rw_unlock_shared((lck_rw_t *)c->c_lock);
-	apfs_lock_enter(c);
+	apfs_lock_enter_at(c, __builtin_return_address(0));
 	apfs_view_sync(amp, 0);
 	apfs_lock_downgrade(c);
 }
 
 void
-apfs_rw_lock_excl(struct apfs_mount *amp)
+apfs_rw_lock_excl_at(struct apfs_mount *amp, void *site)
 {
-	apfs_lock_enter(amp->cont);
+	apfs_lock_enter_at(amp->cont, site);
 	apfs_view_sync(amp, 0);
 }
 
 void
+apfs_rw_lock_excl(struct apfs_mount *amp)
+{
+	apfs_rw_lock_excl_at(amp, __builtin_return_address(0));
+}
+
+// a write op holds the writer lock and c_lock shared: readers keep going on the view before it,
+// which the op does not touch (a batch's ops copy what they change, frees wait for the commit).
+// apfs_write_done takes c_lock exclusive to publish the new view
+void
 apfs_rw_lock_write(struct apfs_mount *amp)
 {
-	apfs_lock_enter(amp->cont);
-	apfs_view_sync(amp, 1);
+	struct apfs_container *c = amp->cont;
+	void *site = __builtin_return_address(0);
+
+	if (c->c_lock_owner == (void *)current_thread() || c->c_wop == (void *)current_thread()) {
+		apfs_lock_enter_at(c, site);
+		apfs_view_sync(amp, 1);
+		return;
+	}
+	apfs_wlock_enter(c);
+	if (amp->seen_generation != c->c_generation ||
+	    (c->c_batch_amp != NULL && c->c_batch_amp != amp)) {
+		// a reload, or another mount's batch to commit, first
+		apfs_x_acquire(c, site);
+		apfs_view_sync(amp, 1);
+		apfs_x_account(c);
+		lck_rw_lock_exclusive_to_shared((lck_rw_t *)c->c_lock);
+	} else {
+		uint64_t t0 = mach_absolute_time();
+
+		lck_rw_lock_shared((lck_rw_t *)c->c_lock);
+		c->c_st_swait_abs += mach_absolute_time() - t0;
+		// at most opens the batch: the writer lock covers that
+		apfs_view_sync(amp, 1);
+	}
+	c->c_wop = (void *)current_thread();
+	c->c_wop_nest = 0;
+	c->c_wop_site = site;
+	c->c_wop_abs = mach_absolute_time();
+}
+
+// a write op ends: its shared hold, and the writer lock
+static void
+apfs_wop_end(struct apfs_container *c)
+{
+	uint64_t ran = mach_absolute_time() - c->c_wop_abs;
+
+	c->c_st_op_abs += ran;
+	apfs_note_site(c->c_st_opsites, 8, c->c_wop_site, ran);
+	c->c_wop = NULL;
 }
 
 void
@@ -712,6 +914,17 @@ apfs_rw_unlock(struct apfs_mount *amp)
 	struct apfs_container *c = amp->cont;
 
 	if (c->c_lock_owner != (void *)current_thread()) {
+		if (c->c_wop == (void *)current_thread()) {
+			if (c->c_wop_nest > 0) {
+				c->c_wop_nest--;
+				return;
+			}
+			// the op failed before it published anything
+			apfs_wop_end(c);
+			lck_rw_unlock_shared((lck_rw_t *)c->c_lock);
+			apfs_wlock_exit(c);
+			return;
+		}
 		lck_rw_unlock_shared((lck_rw_t *)c->c_lock);
 		return;
 	}
@@ -722,12 +935,54 @@ apfs_rw_unlock(struct apfs_mount *amp)
 	apfs_lock_exit(c);
 }
 
+// the batch's allocations so far, for apfs_batch_owns. Exclusive held: readers are out
+static void
+apfs_owned_update(struct apfs_container *c, struct apfs_mount *amp)
+{
+	uint32_t want = apfsrw_batch_blocks(amp->rw);
+
+	if (want > c->c_owned_cap) {
+		uint32_t cap = c->c_owned_cap ? c->c_owned_cap : 1024;
+		uint64_t *nb;
+
+		while (cap < want)
+			cap *= 2;
+		nb = (uint64_t *)_MALLOC((size_t)cap * sizeof(*nb), M_TEMP, M_WAITOK);
+		if (nb == NULL) {
+			// unknown is owned: reads go through the buffer cache
+			c->c_owned_n = UINT32_MAX;
+			return;
+		}
+		if (c->c_owned != NULL) {
+			if (c->c_owned_n != UINT32_MAX)
+				memcpy(nb, c->c_owned, (size_t)c->c_owned_n * sizeof(*nb));
+			_FREE(c->c_owned, M_TEMP);
+		}
+		c->c_owned = nb;
+		c->c_owned_cap = cap;
+	}
+	if (c->c_owned_n == UINT32_MAX || c->c_owned_n > want)
+		c->c_owned_n = 0;
+	c->c_owned_n += apfsrw_batch_alloced(amp->rw, c->c_owned_n, c->c_owned + c->c_owned_n,
+	    want - c->c_owned_n);
+}
+
 int
 apfs_write_done(struct apfs_mount *amp)
 {
 	struct apfs_container *c = amp->cont;
 	struct apfsrw_volume_info vi;
 
+	// publish under exclusive: the writer lock means nobody else is after it
+	if (c->c_wop == (void *)current_thread() && c->c_lock_owner != (void *)current_thread()) {
+		uint64_t t0 = mach_absolute_time();
+		void *site = c->c_wop_site;
+
+		apfs_wop_end(c);
+		lck_rw_unlock_shared((lck_rw_t *)c->c_lock);
+		apfs_x_acquire(c, site);
+		c->c_st_pubwait_abs += c->c_lock_abs - t0;
+	}
 	c->c_st_ops++;
 	apfs_note_writer(c);
 	if (c->c_batch_amp != amp) {
@@ -742,8 +997,12 @@ apfs_write_done(struct apfs_mount *amp)
 		amp->xid = vi.xid + 1;
 		amp->root_tree_paddr = (apfs_paddr_t)vi.root_tree_paddr;
 		amp->volume_omap_tree_paddr = (apfs_paddr_t)vi.volume_omap_tree_paddr;
+		// Do not let intermediate copies spill to the device while the batch is
+		// still open. This exclusive publish drained readers of the old view.
+		apfsrw_batch_discard_superseded(amp->rw);
 	}
 	amp->rgen++;
+	apfs_owned_update(c, amp);
 	if (c->c_batch_abs == 0) {
 		c->c_batch_abs = mach_absolute_time();
 		apfs_batch_arm(c);
@@ -761,17 +1020,27 @@ apfs_batch_sync(struct apfs_mount *amp)
 
 	if (amp == NULL || amp->cont == NULL)
 		return 0;
-	apfs_lock_enter(amp->cont);
+	apfs_lock_enter_at(amp->cont, __builtin_return_address(0));
 	error = apfs_batch_commit(amp->cont);
 	apfs_lock_exit(amp->cont);
 	return error;
 }
 
+// read without libapfsrw: a write op may be changing its state under the same shared hold
 int
 apfs_batch_owns(struct apfs_mount *amp, apfs_paddr_t paddr, uint64_t n)
 {
-	return amp->cont->c_batch_amp == amp &&
-	    apfsrw_batch_owns(amp->rw, (uint64_t)paddr, n);
+	struct apfs_container *c = amp->cont;
+
+	if (c->c_batch_amp != amp)
+		return 0;
+	if (c->c_owned_n == UINT32_MAX)
+		return 1;
+	for (uint32_t i = 0; i < c->c_owned_n; i++) {
+		if (c->c_owned[i] >= (uint64_t)paddr && c->c_owned[i] - (uint64_t)paddr < n)
+			return 1;
+	}
+	return 0;
 }
 
 static int
@@ -860,7 +1129,7 @@ apfs_open_fspec(user_addr_t data, vnode_t *devvpp, vfs_context_t ctx)
 			}
 			dev = vnode_specrdev(dvp);
 			vnode_put(dvp);
-			return bdevvp(dev, devvpp);
+			return apfs_bdevvp(fspec, dev, devvpp, ctx);
 		}
 	}
 
@@ -875,7 +1144,7 @@ apfs_open_fspec(user_addr_t data, vnode_t *devvpp, vfs_context_t ctx)
 	}
 
 	dev = makedev(major(rootdev), minor_id);
-	return bdevvp(dev, devvpp);
+	return apfs_bdevvp(fspec, dev, devvpp, ctx);
 }
 
 static uint64_t
@@ -1214,16 +1483,20 @@ apfs_getattr(__unused struct mount *mp, struct vfs_attr *fsap,
 	if (amp) {
 		struct apfsrw_space_info si;
 
-		// the spaceman walk goes through libapfsrw's own block cache
-		apfs_rw_lock_excl(amp);
-		if (amp->rw != NULL &&
-		    apfsrw_get_space_info(amp->rw, &si) == 0)
-			freeb = si.free_count;
+		// as of the last commit, which needs no lock. Before the first one the spaceman walk
+		// goes through libapfsrw's own block cache
+		freeb = amp->cont != NULL ? amp->cont->c_free_blocks : 0;
+		if (freeb == 0) {
+			apfs_rw_lock_excl(amp);
+			if (amp->rw != NULL &&
+			    apfsrw_get_space_info(amp->rw, &si) == 0)
+				freeb = amp->cont->c_free_blocks = si.free_count;
+			apfs_rw_unlock(amp);
+		}
 		files = OSSwapLittleToHostInt64(amp->apfs.apfs_num_files) +
 		    OSSwapLittleToHostInt64(amp->apfs.apfs_num_directories) +
 		    OSSwapLittleToHostInt64(amp->apfs.apfs_num_symlinks) +
 		    OSSwapLittleToHostInt64(amp->apfs.apfs_num_other_fsobjects);
-		apfs_rw_unlock(amp);
 		if (freeb > amp->block_count)
 			freeb = amp->block_count;
 		VFSATTR_RETURN(fsap, f_blocks, amp->block_count);
@@ -1278,7 +1551,12 @@ apfs_vfs_ioctl(struct mount *mp, u_long command, caddr_t data,
 		APFSLOG("mount by role 0x%x: no such volume in the container", frma->mount_role);
 		return ENOENT;
 	}
-	error = bdevvp(dev, &devvp);
+	{
+		char path[sizeof(bsd) + 5];
+
+		snprintf(path, sizeof(path), "/dev/%s", bsd);
+		error = apfs_bdevvp(path, dev, &devvp, ctx);
+	}
 	if (error) {
 		APFSLOG("mount by role 0x%x: bdevvp(%s) failed: %d", frma->mount_role, bsd, error);
 		return error;

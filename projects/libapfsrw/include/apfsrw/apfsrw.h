@@ -137,6 +137,9 @@ struct apfsrw_kern_dev {
     int (*io)(void *ref, void *buf, size_t n, uint64_t off, int is_write);
     int (*sync)(void *ref);
     void *io_ref;
+    // called around the wait in apfsrw_sync (done 0 before, 1 after): the owner may let readers in
+    void (*sync_wait)(void *wait_ref, int done);
+    void *wait_ref;
 };
 void *apfsrw_io_context(struct apfsrw *fs);
 int apfsrw_open_kernel(void *io_ctx, uint64_t image_blocks, int writable,
@@ -217,12 +220,17 @@ int apfsrw_create_file(struct apfsrw *fs, const char *path, const void *data,
 // one commit, one pair of fsyncs, instead of one per operation. Every mutator honours an open batch
 int apfsrw_batch_begin(struct apfsrw *fs);
 int apfsrw_batch_end(struct apfsrw *fs);
+// Kernel only. The caller must hold the container exclusive after publishing
+// the last successful mutation, so no reader can still hold its superseded view.
+void apfsrw_batch_discard_superseded(struct apfsrw *fs);
 uint32_t apfsrw_batch_pending(struct apfsrw *fs);
 int apfsrw_batch_dirty(struct apfsrw *fs);
 // blocks the open batch allocated, and whether any of [paddr, paddr+n) is one of them.
 // a failed op inside a batch undoes only itself
 uint32_t apfsrw_batch_blocks(struct apfsrw *fs);
 int apfsrw_batch_owns(struct apfsrw *fs, uint64_t paddr, uint64_t n);
+// copies up to max of the open batch's allocated blocks, starting at index from. Returns how many
+uint32_t apfsrw_batch_alloced(struct apfsrw *fs, uint32_t from, uint64_t *out, uint32_t max);
 int apfsrw_mkdir(struct apfsrw *fs, const char *path, uint16_t mode,
     uint32_t uid, uint32_t gid);
 // Nodes with no contents of their own: sockets, fifos and device nodes.
@@ -266,8 +274,8 @@ int apfsrw_setattr(struct apfsrw *fs, const char *path,
     const struct apfsrw_attr *attr);
 // Current time in the unit inode timestamps use: ns since the epoch
 uint64_t apfsrw_now_ns(void);
-// kernel only: reads, read ms, writes, syncs, sync ms
-void apfsrw_kern_iostat(uint64_t st[5]);
+// kernel only: reads, read ms, writes, syncs, sync ms, write ms, superseded blocks invalidated
+void apfsrw_kern_iostat(uint64_t st[7]);
 
 int apfsrw_symlink(struct apfsrw *fs, const char *path, const char *target,
     uint32_t uid, uint32_t gid);

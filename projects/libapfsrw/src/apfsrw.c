@@ -416,6 +416,7 @@ struct apfsrw {
     apfs_paddr_t newvol_paddr;
     int batch;
     int batch_dirty;            // a mutation is folded in but not committed
+    uint32_t batch_discarded;   // deferred entries already visited after an exclusive publish
     uint64_t batch_files;
     uint64_t batch_dirs;
     uint64_t batch_links;
@@ -1121,6 +1122,13 @@ static int load_volume(struct apfsrw *fs)
     if (fstat(fs->fd, &st) != 0)
         return APFSRW_EIO;
     fs->image_blocks = (uint64_t)st.st_size / APFSRW_BLOCK_SIZE;
+    // a block device reports no size: its end is where a seek to the end lands
+    if (S_ISBLK(st.st_mode)) {
+        off_t end = lseek(fs->fd, 0, SEEK_END);
+
+        if (end > 0)
+            fs->image_blocks = (uint64_t)end / APFSRW_BLOCK_SIZE;
+    }
 #else
     // apfsrw_open_kernel() already knows the device size
     if (fs->image_blocks == 0)
@@ -5480,6 +5488,13 @@ static int cow_commit(struct apfsrw *fs, apfs_paddr_t new_root,
     err = ac_flush(fs);
     if (err != APFSRW_OK)
         goto out;
+#ifdef APFSRW_KERNEL
+    // A batch keeps earlier ops' tree copies for rollback. Once committing, only
+    // the final trees need to reach disk. Drop obsolete copies before the barrier,
+    // while the container is still exclusive and no reader holds an older view.
+    apfsrw_discard_superseded(fs, fs->alloced, fs->alloced_count,
+        fs->deferred, fs->deferred_count);
+#endif
     if (apfsrw_sync(fs) != 0) {
         err = APFSRW_EIO;
         goto out;
@@ -6236,6 +6251,7 @@ int apfsrw_batch_begin(struct apfsrw *fs)
         return APFSRW_EINVAL;
     fs->batch = 1;
     fs->batch_dirty = 0;
+    fs->batch_discarded = 0;
     fs->batch_files = 0;
     fs->batch_dirs = 0;
     fs->batch_links = 0;
@@ -6250,6 +6266,25 @@ uint32_t apfsrw_batch_pending(struct apfsrw *fs)
 {
     return fs == NULL ? 0 : fs->deferred_count;
 }
+
+#ifdef APFSRW_KERNEL
+// Called only after the owner has published the finished op under its exclusive
+// container lock. Earlier readers are gone, and future rollback restores this
+// finished op, never its superseded copies. Keep live blocks and checkpoint blocks.
+void apfsrw_batch_discard_superseded(struct apfsrw *fs)
+{
+    if (fs == NULL || !fs->batch || !fs->batch_dirty)
+        return;
+    if (fs->batch_discarded > fs->deferred_count)
+        fs->batch_discarded = 0;
+    if (fs->batch_discarded == fs->deferred_count)
+        return;
+    apfsrw_discard_superseded(fs, fs->alloced, fs->alloced_count,
+        fs->deferred + fs->batch_discarded,
+        fs->deferred_count - fs->batch_discarded);
+    fs->batch_discarded = fs->deferred_count;
+}
+#endif
 
 // Whether an open batch holds mutations that are not on disk yet
 int apfsrw_batch_dirty(struct apfsrw *fs)
@@ -6272,6 +6307,19 @@ int apfsrw_batch_owns(struct apfsrw *fs, uint64_t paddr, uint64_t n)
         if (fs->alloced[i] >= paddr && fs->alloced[i] - paddr < n)
             return 1;
     return 0;
+}
+
+uint32_t apfsrw_batch_alloced(struct apfsrw *fs, uint32_t from, uint64_t *out, uint32_t max)
+{
+    uint32_t n;
+
+    if (fs == NULL || !fs->batch || from >= fs->alloced_count)
+        return 0;
+    n = fs->alloced_count - from;
+    if (n > max)
+        n = max;
+    memcpy(out, fs->alloced + from, n * sizeof(*out));
+    return n;
 }
 
 int apfsrw_batch_end(struct apfsrw *fs)

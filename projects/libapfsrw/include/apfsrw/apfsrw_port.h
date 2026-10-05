@@ -56,6 +56,10 @@ void microtime(struct timeval *tv);
 // the checkpoint must not land before the metadata it describes
 int apfsrw_sync(struct apfsrw *fs);
 int apfsrw_sync_nowait(struct apfsrw *fs);
+// At commit, cancel delayed writes to blocks allocated and superseded by this transaction.
+// Blocks from an earlier checkpoint must retain their contents for rollback.
+void apfsrw_discard_superseded(struct apfsrw *fs, const uint64_t *alloced,
+    uint32_t nalloced, const uint64_t *deferred, uint32_t ndeferred);
 uint64_t apfsrw_now_ns(void);
 
 // libkern exposes no strrchr
