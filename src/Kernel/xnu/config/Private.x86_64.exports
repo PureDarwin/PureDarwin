@@ -124,3 +124,5 @@ _hv_release*
 _hv_set*
 _thread_set_no_smt
 _vm_map_disable_hole_optimization
+__ZN17IONVRAMController*
+__ZTV17IONVRAMController

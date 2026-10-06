@@ -59,6 +59,9 @@ private:
 
 	static int handlePEHaltRestart(unsigned int type);
 
+	void publishRTC(void);
+	void setupNVRAM(void);
+
 public:
 	virtual const char *deleteList(void) APPLE_KEXT_OVERRIDE;
 	virtual const char *excludeList(void) APPLE_KEXT_OVERRIDE;
@@ -89,6 +92,7 @@ public:
 	virtual bool getMachineName(char *name, int maxLength) APPLE_KEXT_OVERRIDE;
 	virtual long getGMTTimeOfDay(void) APPLE_KEXT_OVERRIDE;
 	virtual void setGMTTimeOfDay(long secs) APPLE_KEXT_OVERRIDE;
+	virtual void registerNVRAMController(IONVRAMController *nvram) APPLE_KEXT_OVERRIDE;
 	virtual void free(void) APPLE_KEXT_OVERRIDE;
 
 protected:

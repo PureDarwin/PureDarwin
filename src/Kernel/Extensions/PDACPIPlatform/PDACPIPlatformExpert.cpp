@@ -39,6 +39,8 @@ extern "C" {
 
 #include "../AppleAPIC/PICShared.h"
 #include "PDACPIPlatformExpert.h"
+#include "PDEFINVRAM.h"
+#include <IOKit/IONVRAM.h>
 
 extern "C" {
 #include <uacpi/uacpi.h>
@@ -380,7 +382,64 @@ bool PDACPIPlatformExpert::start(IOService *provider) {
 
 	if (fCPUCount > 1) registerProcessors();
 
+	publishRTC();
+	setupNVRAM();
+
 	return true;
+}
+
+// the loader describes one CHRP bank in /chosen, and its contents live in firmware variables between boots
+void PDACPIPlatformExpert::setupNVRAM(void) {
+	IORegistryEntry *chosen = IORegistryEntry::fromPath("/chosen", gIODTPlane);
+	IORegistryEntry *options = IORegistryEntry::fromPath("/options", gIODTPlane);
+	OSData *size = 0;
+	OSData *proxy = 0;
+	PDEFINVRAM *nvram = 0;
+
+	if (chosen != 0) {
+		size = OSDynamicCast(OSData, chosen->getProperty("nvram-bank-size"));
+		proxy = OSDynamicCast(OSData, chosen->getProperty("nvram-proxy-data"));
+	}
+	if (options == 0 || size == 0 || size->getLength() != sizeof(uint32_t) || proxy == 0 ||
+	    proxy->getLength() != *(const uint32_t *)size->getBytesNoCopy()) {
+		IOLog("PDACPIPlatformExpert: no NVRAM bank from the loader\n");
+		goto exit;
+	}
+
+	nvram = PDEFINVRAM::withBank(proxy->getBytesNoCopy(), proxy->getLength());
+	if (nvram == 0) goto exit;
+
+	// IODTNVRAM unserializes the proxy data once, when it replaces /options below
+	if (nvram->load()) {
+		OSData *image = OSData::withBytes(nvram->image(), proxy->getLength());
+
+		if (image != 0) {
+			chosen->setProperty("nvram-proxy-data", image);
+			image->release();
+		}
+	}
+	publishNVRAM();
+
+	if (nvram->attach(this) && nvram->start(this)) {
+		nvram->registerService();
+	} else {
+		nvram->detach(this);
+	}
+
+exit:
+	OSSafeReleaseNULL(nvram);
+	OSSafeReleaseNULL(options);
+	OSSafeReleaseNULL(chosen);
+}
+
+// x86's IOPlatformExpert only publishes IONVRAM. IODTNVRAM needs the controller too, as on arm64
+void PDACPIPlatformExpert::registerNVRAMController(IONVRAMController *nvram) {
+	IORegistryEntry *options = IORegistryEntry::fromPath("/options", gIODTPlane);
+	IODTNVRAM *dtNVRAM = OSDynamicCast(IODTNVRAM, options);
+
+	if (dtNVRAM != 0) dtNVRAM->registerNVRAMController(nvram);
+	OSSafeReleaseNULL(options);
+	super::registerNVRAMController(nvram);
 }
 
 bool PDACPIPlatformExpert::configure(IOService *provider) {
@@ -786,22 +845,55 @@ daysFromEpoch(int year, int month, int day)
 	return days;
 }
 
+// IOKitInitializeTime waits up to 30 s for this before it sets the calendar from getGMTTimeOfDay
+void PDACPIPlatformExpert::publishRTC(void) {
+	if (fUACPIStarted) {
+		uacpi_table table;
+
+		if (uacpi_table_find_by_signature(ACPI_FADT_SIGNATURE, &table) == UACPI_STATUS_OK) {
+			struct acpi_fadt *fadt = (struct acpi_fadt *)table.ptr;
+			bool absent = table.hdr->length >= offsetof(struct acpi_fadt, iapc_boot_arch) + sizeof(fadt->iapc_boot_arch) &&
+			    (fadt->iapc_boot_arch & ACPI_IA_PC_NO_CMOS_RTC);
+
+			uacpi_table_unref(&table);
+			if (absent) {
+				IOLog("PDACPIPlatformExpert: FADT says there is no CMOS RTC\n");
+				return;
+			}
+		}
+	}
+
+	// a missing chip reads back as a floating bus
+	if (rtcRead(RTC_STATUS_B) == 0xFF && rtcRead(RTC_STATUS_A) == 0xFF) {
+		IOLog("PDACPIPlatformExpert: CMOS RTC not responding\n");
+		return;
+	}
+	publishResource("IORTC", this);
+}
+
 long
 PDACPIPlatformExpert::getGMTTimeOfDay(void)
 {
 	uint8_t sec, min, hour, day, month, year, statusB;
 
-	/* Skip an in-progress update rather than reading a torn value. */
-	while (rtcRead(RTC_STATUS_A) & RTC_STATUS_A_UPDATE_IN_PROGRESS) {
-		;
+	// an update holds UIP for under 2 ms, and a chip that never clears it must not hang the caller
+	for (int i = 0; i < 2000 && (rtcRead(RTC_STATUS_A) & RTC_STATUS_A_UPDATE_IN_PROGRESS); i++) {
+		IODelay(10);
 	}
 
-	sec = rtcRead(RTC_SECONDS);
-	min = rtcRead(RTC_MINUTES);
-	hour = rtcRead(RTC_HOURS);
-	day = rtcRead(RTC_DAY_OF_MONTH);
-	month = rtcRead(RTC_MONTH);
-	year = rtcRead(RTC_YEAR);
+	// a read can still straddle an update that starts mid-way: take two that agree
+	for (int tries = 0; tries < 8; tries++) {
+		sec = rtcRead(RTC_SECONDS);
+		min = rtcRead(RTC_MINUTES);
+		hour = rtcRead(RTC_HOURS);
+		day = rtcRead(RTC_DAY_OF_MONTH);
+		month = rtcRead(RTC_MONTH);
+		year = rtcRead(RTC_YEAR);
+		if (sec == rtcRead(RTC_SECONDS) && min == rtcRead(RTC_MINUTES) && hour == rtcRead(RTC_HOURS) &&
+		    day == rtcRead(RTC_DAY_OF_MONTH) && month == rtcRead(RTC_MONTH) && year == rtcRead(RTC_YEAR)) {
+			break;
+		}
+	}
 	statusB = rtcRead(RTC_STATUS_B);
 
 	if (!(statusB & RTC_STATUS_B_BINARY)) {
