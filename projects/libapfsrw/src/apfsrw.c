@@ -3142,6 +3142,125 @@ static void punch_freed(struct apfsrw *fs, uint64_t *b, uint32_t n)
 }
 #endif
 
+// a reset between the bitmap, chunk count and total writes leaves the counts behind. the bitmap is the safe
+// record, so the counts are rebuilt from it before anything allocates (*fixed chunks, *delta to the total)
+int apfsrw_spaceman_reconcile(struct apfsrw *fs, uint32_t *fixed, int64_t *delta)
+{
+    struct apfs_spaceman_phys *sm = NULL;
+    struct apfs_chunk_info_block *cib = NULL;
+    uint8_t *bitmap = NULL;
+    apfs_paddr_t sm_paddr = 0;
+    uint32_t cib_count, addr_offset, i, nfixed = 0;
+    int64_t total = 0;
+    int err;
+
+    if (fixed != NULL)
+        *fixed = 0;
+    if (delta != NULL)
+        *delta = 0;
+    if (fs == NULL)
+        return APFSRW_EINVAL;
+    if (!fs->writable || fs->batch)
+        return APFSRW_EPERM;
+    err = ac_flush(fs);
+    if (err != APFSRW_OK)
+        return err;
+    err = resolve_ephemeral(fs, rd64(&fs->nx.nx_spaceman_oid), &sm_paddr);
+    if (err != APFSRW_OK)
+        return err;
+    sm = calloc(1, fs->block_size);
+    cib = calloc(1, fs->block_size);
+    bitmap = calloc(1, fs->block_size);
+    if (sm == NULL || cib == NULL || bitmap == NULL) {
+        err = APFSRW_ENOMEM;
+        goto out;
+    }
+    err = read_object(fs, sm_paddr, sm);
+    if (err != APFSRW_OK)
+        goto out;
+    if (object_type(sm->sm_o.o_type) != APFS_OBJECT_TYPE_SPACEMAN ||
+        rd32(&sm->sm_dev[0].sm_cab_count) != 0) {
+        err = APFSRW_ENOTSUP;
+        goto out;
+    }
+    cib_count = rd32(&sm->sm_dev[0].sm_cib_count);
+    addr_offset = rd32(&sm->sm_dev[0].sm_addr_offset);
+    if ((uint64_t)addr_offset + (uint64_t)cib_count * sizeof(apfs_paddr_t) > fs->block_size) {
+        err = APFSRW_EINVAL;
+        goto out;
+    }
+    for (i = 0; i < cib_count; i++) {
+        apfs_paddr_t cib_paddr;
+        uint32_t chunks, c, dirty = 0;
+
+        memcpy(&cib_paddr, (const uint8_t *)sm + addr_offset + i * sizeof(cib_paddr), sizeof(cib_paddr));
+        cib_paddr = (apfs_paddr_t)rd64(&cib_paddr);
+        if (cib_paddr <= 0)
+            continue;
+        err = read_object(fs, cib_paddr, cib);
+        if (err != APFSRW_OK)
+            goto out;
+        if (object_type(cib->cib_o.o_type) != APFS_OBJECT_TYPE_SPACEMAN_CIB) {
+            err = APFSRW_EINVAL;
+            goto out;
+        }
+        chunks = rd32(&cib->cib_chunk_info_count);
+        if (chunks > (fs->block_size - sizeof(*cib)) / sizeof(struct apfs_chunk_info)) {
+            err = APFSRW_EINVAL;
+            goto out;
+        }
+        for (c = 0; c < chunks; c++) {
+            struct apfs_chunk_info *ci = &cib->cib_chunk_info[c];
+            uint32_t nblk = rd32(&ci->ci_block_count), used = 0, want, k;
+            apfs_paddr_t bm = (apfs_paddr_t)rd64(&ci->ci_bitmap_addr);
+
+            // no bitmap block: the chunk was never allocated from, all free
+            if (bm > 0) {
+                err = read_raw(fs, bm, bitmap);
+                if (err != APFSRW_OK)
+                    goto out;
+                for (k = 0; k < nblk && k < fs->block_size * 8U; k++) {
+                    if (bitmap[k >> 3] & (uint8_t)(1U << (k & 7)))
+                        used++;
+                }
+            }
+            want = nblk - used;
+            if (rd32(&ci->ci_free_count) == want)
+                continue;
+            total += (int64_t)want - (int64_t)rd32(&ci->ci_free_count);
+            wr32(&ci->ci_free_count, want);
+            nfixed++;
+            dirty = 1;
+        }
+        if (dirty) {
+            seal_object(fs, cib);
+            err = write_block(fs, cib_paddr, cib);
+            if (err != APFSRW_OK)
+                goto out;
+        }
+    }
+    // the total moves by what the chunks moved: a standing difference between it and their sum
+    // (blocks the space manager holds back) is not this function's to change
+    if (total != 0) {
+        wr64(&sm->sm_dev[0].sm_free_count, (uint64_t)((int64_t)rd64(&sm->sm_dev[0].sm_free_count) + total));
+        seal_object(fs, sm);
+        err = write_block(fs, sm_paddr, sm);
+        if (err != APFSRW_OK)
+            goto out;
+        if (apfsrw_sync(fs) != 0)
+            err = APFSRW_EIO;
+    }
+    if (fixed != NULL)
+        *fixed = nfixed;
+    if (delta != NULL)
+        *delta = total;
+out:
+    free(bitmap);
+    free(cib);
+    free(sm);
+    return err;
+}
+
 static void flush_deferred(struct apfsrw *fs)
 {
 #ifndef APFSRW_KERNEL

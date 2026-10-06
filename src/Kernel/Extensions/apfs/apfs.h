@@ -418,6 +418,7 @@ struct apfs_container {
 	struct apfs_mount *c_last_writer;	// Whose commit bumped c_generation last
 	struct apfsrw_kern_dev c_rw_dev;
 	uint64_t c_block_count;		// nx_block_count, for handles apfs.kext opens on it itself
+	int c_reconciled;		// space manager counts rebuilt from the bitmaps at first attach
 	// the container's one open transaction lives in this mount's handle, NULL when none is open
 	struct apfs_mount *c_batch_amp;
 	uint32_t c_batch_ops;
@@ -459,6 +460,8 @@ struct apfs_mount {
 	vnode_t root_vp;
 	dev_t dev;
 	int dev_opened;
+	// devvp came from bdevvp: its FREAD open is ours to close at unmount
+	int own_devvp;
 	uint32_t block_size;
 	uint32_t dev_bsize;		// Device sector size, for buf blkno units
 	uint64_t block_count;

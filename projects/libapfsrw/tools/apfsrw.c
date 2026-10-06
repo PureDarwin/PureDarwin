@@ -23,6 +23,7 @@ static void usage(const char *argv0)
         "  %s rsrc IMAGE PATH\n"
         "  %s cat-id IMAGE ID\n"
         "  %s space IMAGE\n"
+        "  %s reconcile IMAGE  (rebuild chunk free counts from the bitmaps)\n"
         "  %s write IMAGE PATH < data\n"
         "  %s mkdir IMAGE PATH\n"
         "  %s symlink IMAGE PATH TARGET\n"
@@ -43,7 +44,7 @@ static void usage(const char *argv0)
         "slot N.\n",
         argv0, argv0, argv0, argv0, argv0, argv0, argv0, argv0, argv0,
         argv0, argv0, argv0, argv0, argv0, argv0, argv0, argv0, argv0, argv0,
-        argv0, argv0, argv0, argv0);
+        argv0, argv0, argv0, argv0, argv0);
 }
 
 static int print_entry(const struct apfsrw_dirent *entry, void *ctx)
@@ -593,6 +594,23 @@ int main(int argc, char **argv)
             strlen(argv[5]), 0) : apfsrw_remove_xattr(fs, argv[3], argv[4]);
         fprintf(stderr, "apfsrw: %s: %s\n", argv[1],
             err == APFSRW_OK ? "ok" : apfsrw_strerror(err));
+        apfsrw_close(fs);
+        return err == APFSRW_OK ? 0 : 1;
+    }
+
+    if (strcmp(argv[1], "reconcile") == 0) {
+        uint32_t fixed = 0;
+        int64_t delta = 0;
+
+        if (argc != 3) {
+            usage(argv[0]);
+            return 2;
+        }
+        if (open_container(argv[2], 1, &fs) != APFSRW_OK)
+            return 1;
+        err = apfsrw_spaceman_reconcile(fs, &fixed, &delta);
+        fprintf(stderr, "apfsrw: reconcile: %s, %u chunks corrected, free count %+lld\n",
+            err == APFSRW_OK ? "ok" : apfsrw_strerror(err), fixed, (long long)delta);
         apfsrw_close(fs);
         return err == APFSRW_OK ? 0 : 1;
     }

@@ -185,6 +185,8 @@ const char *apfsrw_strerror(int error);
 int apfsrw_get_volume_info(struct apfsrw *fs,
     struct apfsrw_volume_info *info);
 int apfsrw_get_space_info(struct apfsrw *fs, struct apfsrw_space_info *out);
+// rebuild each chunk's free count from its bitmap after an unclean end (and the total by the same amount)
+int apfsrw_spaceman_reconcile(struct apfsrw *fs, uint32_t *fixed, int64_t *delta);
 int apfsrw_list_root(struct apfsrw *fs, apfsrw_dirent_cb cb, void *ctx);
 // path is '/'-separated. NULL or "/" lists the root. Symlinks are not followed
 int apfsrw_list_dir(struct apfsrw *fs, const char *path,

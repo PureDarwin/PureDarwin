@@ -126,9 +126,23 @@ apfs_bdevvp(const char *path, dev_t dev, vnode_t *vpp, vfs_context_t ctx)
 	return bdevvp(dev, vpp);
 }
 
-// own_devvp_ref: devvp came from bdevvp here, so its usecount is ours to drop on failure
+static int apfs_mount_dev_ref(struct mount *mp, vnode_t devvp, int own_devvp_ref, vfs_context_t ctx);
+
+// own_devvp_ref: devvp came from bdevvp, so its iocount goes once the mount is done (held, it pinned /dev
+// and reboot's unmount waited forever), while its usecount and FREAD open stay with the mount
 static int
 apfs_mount_dev(struct mount *mp, vnode_t devvp, int own_devvp_ref,
+    vfs_context_t ctx)
+{
+	int error = apfs_mount_dev_ref(mp, devvp, own_devvp_ref, ctx);
+
+	if (own_devvp_ref)
+		vnode_put(devvp);
+	return error;
+}
+
+static int
+apfs_mount_dev_ref(struct mount *mp, vnode_t devvp, int own_devvp_ref,
     vfs_context_t ctx)
 {
 	struct apfs_mount *amp;
@@ -137,8 +151,10 @@ apfs_mount_dev(struct mount *mp, vnode_t devvp, int own_devvp_ref,
 
 	amp = (struct apfs_mount *)_MALLOC(sizeof(*amp), M_TEMP, M_WAITOK | M_ZERO);
 	if (amp == NULL) {
-		if (own_devvp_ref)
+		if (own_devvp_ref) {
+			(void)VNOP_CLOSE(devvp, FREAD, ctx);
 			vnode_rele(devvp);
+		}
 		return ENOMEM;
 	}
 
@@ -151,8 +167,10 @@ apfs_mount_dev(struct mount *mp, vnode_t devvp, int own_devvp_ref,
 		if (amp->am_cache_lock != NULL)
 			IOLockFree(amp->am_cache_lock);
 		_FREE(amp, M_TEMP);
-		if (own_devvp_ref)
+		if (own_devvp_ref) {
+			(void)VNOP_CLOSE(devvp, FREAD, ctx);
 			vnode_rele(devvp);
+		}
 		return ENOMEM;
 	}
 	{
@@ -162,6 +180,7 @@ apfs_mount_dev(struct mount *mp, vnode_t devvp, int own_devvp_ref,
 			LIST_INIT(&amp->am_node_hash[i]);
 	}
 	amp->devvp = devvp;
+	amp->own_devvp = own_devvp_ref;
 	amp->io_devvp = devvp;
 	amp->dev = vnode_specrdev(devvp);
 	error = VNOP_OPEN(devvp, FREAD | FWRITE, ctx);
@@ -200,6 +219,17 @@ apfs_mount_dev(struct mount *mp, vnode_t devvp, int own_devvp_ref,
 	    amp->vol_slot, &amp->rw) != 0) {
 		APFSLOG("apfsrw_open_kernel failed");
 		amp->rw = NULL;
+	}
+	// an unclean end can leave chunk counts behind the bitmaps: rebuild them before anything allocates
+	if (error == 0 && amp->rw != NULL && !amp->cont->c_reconciled) {
+		uint32_t fixed = 0;
+		int64_t delta = 0;
+		int rerr = apfsrw_spaceman_reconcile(amp->rw, &fixed, &delta);
+
+		amp->cont->c_reconciled = 1;
+		if (rerr != APFSRW_OK || fixed != 0)
+			printf("apfs: space manager reconcile: %s, %u chunks corrected, free count %+lld\n",
+			    apfsrw_strerror(rerr), fixed, (long long)delta);
 	}
 	amp->seen_generation = amp->cont->c_generation;
 	apfs_lock_exit(amp->cont);
@@ -289,8 +319,10 @@ fail:
 	IOLockFree(amp->am_cache_lock);
 	apfs_caches_free(amp);
 	_FREE(amp, M_TEMP);
-	if (own_devvp_ref)
+	if (own_devvp_ref) {
+		(void)VNOP_CLOSE(devvp, FREAD, ctx);
 		vnode_rele(devvp);
+	}
 	return error;
 }
 
@@ -1402,6 +1434,23 @@ apfs_start(__unused struct mount *mp, __unused int flags,
 	return 0;
 }
 
+// pdhaltlog=1: each unmount step, and syncs once an unmount has begun, to find a shutdown stall
+static int apfs_halt_log_state = -1;
+static int apfs_halt_unmounting;
+
+static bool
+apfs_halt_log(void)
+{
+	int on = 0;
+
+	if (apfs_halt_log_state < 0)
+		apfs_halt_log_state = PE_parse_boot_argn("pdhaltlog", &on, sizeof(on)) && on;
+	return apfs_halt_log_state;
+}
+
+#define APFS_HALT_STEP(mp, step) do { if (apfs_halt_log()) printf("pdhaltlog: apfs unmount %s: %s\n", \
+	vfs_statfs(mp)->f_mntonname, step); } while (0)
+
 static int
 apfs_unmount(struct mount *mp, int mntflags, vfs_context_t ctx)
 {
@@ -1409,10 +1458,13 @@ apfs_unmount(struct mount *mp, int mntflags, vfs_context_t ctx)
 	int flags = 0;
 	int error;
 
+	apfs_halt_unmounting = 1;
+	APFS_HALT_STEP(mp, "enter");
 	if (mntflags & MNT_FORCE)
 		flags |= FORCECLOSE;
 
 	error = vflush(mp, NULLVP, flags);
+	APFS_HALT_STEP(mp, error ? "vflush failed" : "vflush done");
 	if (error)
 		return error;
 
@@ -1427,22 +1479,28 @@ apfs_unmount(struct mount *mp, int mntflags, vfs_context_t ctx)
 			if (amp->cont->c_last_writer == amp)
 				amp->cont->c_last_writer = NULL;
 			apfs_rw_unlock(amp);
+			APFS_HALT_STEP(mp, "batch committed");
 		}
 		if (amp->rw != NULL) {
 			apfsrw_close(amp->rw);
 			amp->rw = NULL;
+			APFS_HALT_STEP(mp, "apfsrw closed");
 		}
 		if (amp->io_devvp) {
 			// Land every delayed write before the device closes.
 			// spec_close may discard whatever is still dirty
 			buf_flushdirtyblks(amp->io_devvp, 1, 0, "apfs_unmount");
+			APFS_HALT_STEP(mp, "dirty blocks flushed");
 		}
 		apfs_container_detach(amp);
+		APFS_HALT_STEP(mp, "container detached");
 		if (amp->devvp) {
 			if (amp->dev_opened) {
 				(void)VNOP_CLOSE(amp->devvp, FREAD | FWRITE, ctx);
 				amp->dev_opened = 0;
 			}
+			if (amp->own_devvp)
+				(void)VNOP_CLOSE(amp->devvp, FREAD, ctx);
 			vnode_rele(amp->devvp);
 			amp->devvp = NULLVP;
 		}
@@ -1452,6 +1510,7 @@ apfs_unmount(struct mount *mp, int mntflags, vfs_context_t ctx)
 		apfs_caches_free(amp);
 		_FREE(amp, M_TEMP);
 	}
+	APFS_HALT_STEP(mp, "done");
 	return 0;
 }
 
@@ -1579,12 +1638,17 @@ static int
 apfs_sync(struct mount *mp, int waitfor, __unused vfs_context_t ctx)
 {
 	struct apfs_mount *amp = VFSTOAPFS(mp);
+	bool log = apfs_halt_unmounting && apfs_halt_log();
 
+	if (log)
+		printf("pdhaltlog: apfs sync %s enter\n", vfs_statfs(mp)->f_mntonname);
 	if (amp != NULL)
 		(void)apfs_batch_sync(amp);
 	if (amp && amp->io_devvp)
 		buf_flushdirtyblks(amp->io_devvp, waitfor == MNT_WAIT, 0,
 		    "apfs_sync");
+	if (log)
+		printf("pdhaltlog: apfs sync %s done\n", vfs_statfs(mp)->f_mntonname);
 	return 0;
 }
 
