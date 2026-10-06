@@ -392,10 +392,9 @@ PDHVDisk::doAsyncReadWrite(IOMemoryDescriptor *buffer, UInt64 block, UInt64 nblk
     IOStorageAttributes *attributes, IOStorageCompletion *completion)
 {
 	(void)attributes;
-	if (buffer == NULL || block + nblks > fBlocks) {
-		IOStorage::complete(completion, kIOReturnBadArgument, 0);
+	// an error return means not started: IOBlockStorageDriver completes the request itself
+	if (buffer == NULL || block + nblks > fBlocks)
 		return kIOReturnBadArgument;
-	}
 	bool write = (buffer->getDirection() & kIODirectionOut) != 0;
 	IOReturn ret = fController->readWrite(fLun, write, block, nblks, fBlockSize, buffer);
 	IOStorage::complete(completion, ret, ret == kIOReturnSuccess ? nblks * fBlockSize : 0);

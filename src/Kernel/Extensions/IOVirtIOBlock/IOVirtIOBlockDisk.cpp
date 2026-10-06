@@ -55,23 +55,22 @@ IOVirtIOBlockDisk::doAsyncReadWrite(IOMemoryDescriptor *buffer,
                                     IOStorageCompletion *completion)
 {
     (void)attributes;
-    if (!fController || !buffer) {
-        IOStorage::complete(completion, kIOReturnBadArgument, 0);
+    // an error return means not started and IOBlockStorageDriver completes the request itself:
+    // completing here as well ran its completion twice, the second time on a freed context
+    if (!fController || !buffer)
         return kIOReturnBadArgument;
-    }
 
     bool write = (buffer->getDirection() & kIODirectionOut) != 0;
     IOReturn prep = buffer->prepare();
-    if (prep != kIOReturnSuccess) {
-        IOStorage::complete(completion, prep, 0);
+    if (prep != kIOReturnSuccess)
         return prep;
-    }
 
+    // the request ran, so its outcome (a device timeout included) goes through the completion
     IOReturn ret = fController->readWrite(write, block, nblks, buffer);
     buffer->complete();
     IOStorage::complete(completion, ret,
         ret == kIOReturnSuccess ? nblks * fController->blockSize() : 0);
-    return ret;
+    return kIOReturnSuccess;
 }
 
 IOReturn

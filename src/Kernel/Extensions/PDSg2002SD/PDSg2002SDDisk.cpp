@@ -37,25 +37,23 @@ PDSg2002SDDisk::doAsyncReadWrite(IOMemoryDescriptor *buffer, UInt64 block,
 {
 	(void)attributes;
 
-	if (fController == NULL || buffer == NULL) {
-		IOStorage::complete(completion, kIOReturnBadArgument, 0);
+	// an error return means not started and IOBlockStorageDriver completes the request itself:
+	// completing here as well ran its completion twice, the second time on a freed context
+	if (fController == NULL || buffer == NULL)
 		return kIOReturnBadArgument;
-	}
 
 	bool write = (buffer->getDirection() & kIODirectionOut) != 0;
 
 	IOReturn prep = buffer->prepare();
-	if (prep != kIOReturnSuccess) {
-		IOStorage::complete(completion, prep, 0);
+	if (prep != kIOReturnSuccess)
 		return prep;
-	}
 
 	IOReturn ret = fController->readWrite(write, block, nblks, buffer);
 	buffer->complete();
 
 	IOStorage::complete(completion, ret,
 	    ret == kIOReturnSuccess ? nblks * fController->blockSize() : 0);
-	return ret;
+	return kIOReturnSuccess;
 }
 
 IOReturn
