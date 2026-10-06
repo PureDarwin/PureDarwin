@@ -332,8 +332,13 @@ cpuid_determine_vendor(i386_cpu_info_t *info_p)
 
 	if (!strncmp(CPUID_VID_INTEL, info_p->cpuid_vendor, strlen(CPUID_VID_INTEL))) {
 		info_p->cpuid_ven = CPUID_VEN_INTEL;
-	} else if (!strncmp(CPUID_VID_AMD, info_p->cpuid_vendor, strlen(CPUID_VID_AMD))) {
+	} else if (!strncmp(CPUID_VID_AMD, info_p->cpuid_vendor, strlen(CPUID_VID_AMD)) ||
+	    !strncmp(CPUID_VID_HYGON, info_p->cpuid_vendor, strlen(CPUID_VID_HYGON))) {
+		// hygon's dhyana is a zen licensee and uses amd's leaves
 		info_p->cpuid_ven = CPUID_VEN_AMD;
+	} else if (!strncmp(CPUID_VID_CENTAUR, info_p->cpuid_vendor, strlen(CPUID_VID_CENTAUR)) ||
+	    !strncmp(CPUID_VID_ZHAOXIN, info_p->cpuid_vendor, strlen(CPUID_VID_ZHAOXIN))) {
+		info_p->cpuid_ven = CPUID_VEN_ZHAOXIN;
 	} else {
 		info_p->cpuid_ven = CPUID_VEN_UNKNOWN;
 	}
@@ -399,7 +404,7 @@ cpuid_set_cache_info( i386_cpu_info_t * info_p )
 		uint32_t        colors;
 
 		/* AMD publishes the same cache descriptors under 0x8000001D. */
-		reg[eax] = info_p->cpuid_ven == CPUID_VEN_INTEL ? 4 : 0x8000001D;
+		reg[eax] = info_p->cpuid_ven == CPUID_VEN_AMD ? 0x8000001D : 4;
 		reg[ecx] = index;       /* index starting at 0 */
 		cpuid(reg);
 		DBG("cpuid(4) index=%d eax=0x%x\n", index, reg[eax]);
@@ -529,6 +534,15 @@ cpuid_set_cache_info( i386_cpu_info_t * info_p )
 		info_p->cache_linesize = linesizes[L2U];
 	} else if (linesizes[L1D]) {
 		info_p->cache_linesize = linesizes[L1D];
+	} else if (info_p->cpuid_cache_linesize) {
+		// no cache descriptors at all (amd without topology extensions, e.g. bulldozer with it
+		// off): 0x80000006's l2, which every x86-64 part has
+		info_p->cache_linesize = info_p->cpuid_cache_linesize;
+		if (info_p->cache_size[L2U] == 0) {
+			info_p->cache_size[L2U] = info_p->cpuid_cache_size * 1024;
+			info_p->cache_sharing[L2U] = 1;
+			info_p->cache_partitions[L2U] = 1;
+		}
 	} else {
 		panic("no linesize");
 	}
@@ -719,16 +733,20 @@ cpuid_set_generic_info(i386_cpu_info_t *info_p)
 		}
 	}
 
-	if (info_p->cpuid_features & CPUID_FEATURE_HTT) {
+	if (info_p->cpuid_ven == CPUID_VEN_AMD &&
+	    (info_p->cpuid_family == 0x15 || info_p->cpuid_family == 0x16)) {
+		// bulldozer-era modules are two real integer cores sharing an fpu, with no smt: 0x80000008's
+		// count is cores, and leaf 1's htt count would otherwise read as threads on one core
+		cpuid_fn(0x80000008, reg);
+		info_p->cpuid_logical_per_package = bitfield32(reg[ecx], 7, 0) + 1;
+		info_p->cpuid_cores_per_package = info_p->cpuid_logical_per_package;
+	} else if (info_p->cpuid_features & CPUID_FEATURE_HTT) {
 		info_p->cpuid_logical_per_package =
 		    bitfield32(reg[ebx], 23, 16);
 	} else if (info_p->cpuid_ven == CPUID_VEN_AMD) {
 		/* ThreadCount/CoreCount live in leaf 0x80000008 on AMD. */
 		cpuid_fn(0x80000008, reg);
 		info_p->cpuid_logical_per_package = bitfield32(reg[ecx], 7, 0) + 1;
-		if (info_p->cpuid_family == 0x15 || info_p->cpuid_family == 0x16) {
-			info_p->cpuid_cores_per_package = info_p->cpuid_logical_per_package;
-		}
 	} else {
 		info_p->cpuid_logical_per_package = 1;
 	}
@@ -740,7 +758,8 @@ cpuid_set_generic_info(i386_cpu_info_t *info_p)
 	 * topology) supersedes leaf 0xB for parts with more level types than
 	 * SMT/Core, which is exactly what P-core + E-core + LP-E-core needs.
 	 */
-	if (info_p->cpuid_ven == CPUID_VEN_INTEL && info_p->cpuid_max_basic >= 0x0b) {
+	if ((info_p->cpuid_ven == CPUID_VEN_INTEL || info_p->cpuid_ven == CPUID_VEN_ZHAOXIN) &&
+	    info_p->cpuid_max_basic >= 0x0b) {
 		uint32_t topo[4];
 		uint32_t leaf = (info_p->cpuid_max_basic >= 0x1f) ? 0x1f : 0x0b;
 		uint32_t widest = 0;
@@ -958,6 +977,14 @@ cpuid_set_cpufamily(i386_cpu_info_t *info_p)
 {
 	uint32_t cpufamily = CPUFAMILY_UNKNOWN;
 
+	// zhaoxin (centaur/shanghai) shares intel's family numbers but not its models: nearest by isa,
+	// avx2-era family 7 (kx-5000 on) and the older family 6 zx parts
+	if (info_p->cpuid_ven == CPUID_VEN_ZHAOXIN) {
+		cpufamily = info_p->cpuid_family >= 7 ? CPUFAMILY_INTEL_HASWELL : CPUFAMILY_INTEL_WESTMERE;
+		info_p->cpuid_cpufamily = cpufamily;
+		return cpufamily;
+	}
+
 	switch (info_p->cpuid_family) {
 	case 6:
 		switch (info_p->cpuid_model) {
@@ -991,6 +1018,8 @@ cpuid_set_cpufamily(i386_cpu_info_t *info_p)
 			break;
 		case CPUID_MODEL_BROADWELL:
 		case CPUID_MODEL_BRYSTALWELL:
+		case CPUID_MODEL_BROADWELL_EP:
+		case CPUID_MODEL_BROADWELL_DE:
 			cpufamily = CPUFAMILY_INTEL_BROADWELL;
 			break;
 		case CPUID_MODEL_SKYLAKE:
@@ -1027,6 +1056,7 @@ cpuid_set_cpufamily(i386_cpu_info_t *info_p)
 			cpufamily = CPUFAMILY_INTEL_GOLDMONT;
 			break;
 		case CPUID_MODEL_GEMINILAKE:
+		case CPUID_MODEL_TREMONT_D:
 			cpufamily = CPUFAMILY_INTEL_GOLDMONTPLUS;
 			break;
 		case CPUID_MODEL_TIGERLAKE_U:
@@ -1046,12 +1076,17 @@ cpuid_set_cpufamily(i386_cpu_info_t *info_p)
 			break;
 		case CPUID_MODEL_METEORLAKE:
 		case CPUID_MODEL_METEORLAKE_L:
+		// e-core xeons, crestmont and darkmont: nearest family with those cores
+		case CPUID_MODEL_SIERRAFOREST:
+		case CPUID_MODEL_CLEARWATERFOREST:
 			cpufamily = CPUFAMILY_INTEL_METEORLAKE;
 			break;
 		case CPUID_MODEL_SAPPHIRERAPIDS:
 			cpufamily = CPUFAMILY_INTEL_SAPPHIRERAPIDS;
 			break;
 		case CPUID_MODEL_EMERALDRAPIDS:
+		case CPUID_MODEL_GRANITERAPIDS:
+		case CPUID_MODEL_GRANITERAPIDS_D:
 			cpufamily = CPUFAMILY_INTEL_EMERALDRAPIDS;
 			break;
 		}
@@ -1113,6 +1148,9 @@ cpuid_set_cpufamily(i386_cpu_info_t *info_p)
 			break;
 		}
 		break;
+	case 0x18:              // hygon dhyana, zen 1
+		cpufamily = CPUFAMILY_AMD_ZEN;
+		break;
 	case 0x19:
 		switch (info_p->cpuid_model) {
 		case CPUID_MODEL_AMD_CHAGALL:
@@ -1122,6 +1160,7 @@ cpuid_set_cpufamily(i386_cpu_info_t *info_p)
 		case CPUID_MODEL_AMD_CEZANNE:
 			cpufamily = CPUFAMILY_AMD_ZEN3;
 			break;
+		case CPUID_MODEL_AMD_GENOA:
 		case CPUID_MODEL_AMD_RAPHAEL:
 		case CPUID_MODEL_AMD_PHOENIX:
 		case CPUID_MODEL_AMD_HAWKPOINT:
@@ -1133,6 +1172,9 @@ cpuid_set_cpufamily(i386_cpu_info_t *info_p)
 	case 0x1A:
 		switch (info_p->cpuid_model) {
 		case CPUID_MODEL_AMD_GRANITE_RIDGE:
+		case CPUID_MODEL_AMD_TURIN:
+		case CPUID_MODEL_AMD_TURIN_2:
+		case CPUID_MODEL_AMD_TURIN_DENSE:
 			cpufamily = CPUFAMILY_AMD_ZEN5;
 			break;
 		}
@@ -1201,7 +1243,12 @@ cpuid_set_info(void)
     /*
 	 * Not all VMMs emulate MSR_CORE_THREAD_COUNT (0x35).
 	 */
-    if (0 != (info_p->cpuid_features & CPUID_FEATURE_VMM) &&
+    if (info_p->cpuid_ven == CPUID_VEN_ZHAOXIN) {
+        // msr 0x35 is intel's: take the counts from cpuid, as for penryn
+        cpuid_set_cache_info(info_p);
+        info_p->core_count   = info_p->cpuid_cores_per_package;
+        info_p->thread_count = info_p->cpuid_logical_per_package;
+    } else if (0 != (info_p->cpuid_features & CPUID_FEATURE_VMM) &&
         PE_parse_boot_argn("-nomsr35h", NULL, 0)) {
         info_p->core_count = 1;
         info_p->thread_count = 1;

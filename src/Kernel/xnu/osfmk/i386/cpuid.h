@@ -49,6 +49,9 @@
 
 #define CPUID_VID_INTEL         "GenuineIntel"
 #define CPUID_VID_AMD           "AuthenticAMD"
+#define CPUID_VID_HYGON         "HygonGenuine"
+#define CPUID_VID_CENTAUR       "CentaurHauls"
+#define CPUID_VID_ZHAOXIN       "  Shanghai  "
 
 #define CPUID_VMM_ID_VMWARE     "VMwareVMware"
 #define CPUID_VMM_ID_PARALLELS  "Parallels\0\0\0"
@@ -68,6 +71,7 @@
 #define CPUID_VEN_UNKNOWN       0
 #define CPUID_VEN_INTEL         1
 #define CPUID_VEN_AMD           2
+#define CPUID_VEN_ZHAOXIN       3       // intel-style leaves, none of intel's msrs
 
 /*
  * The CPUID_FEATURE_XXX values define 64-bit values
@@ -275,6 +279,8 @@
 #define CPUID_MODEL_BROADWELL_ULX       0x3D
 #define CPUID_MODEL_BROADWELL_ULT       0x3D
 #define CPUID_MODEL_BRYSTALWELL         0x47
+#define CPUID_MODEL_BROADWELL_EP        0x4F    // Xeon E5/E7 v4
+#define CPUID_MODEL_BROADWELL_DE        0x56    // Xeon D-1500
 #define CPUID_MODEL_BRASWELL            0x4C
 #define CPUID_MODEL_SKYLAKE             0x4E
 #define CPUID_MODEL_SKYLAKE_ULT         0x4E
@@ -308,6 +314,11 @@
 #define CPUID_MODEL_RAPTORLAKE_P        0xBA
 #define CPUID_MODEL_SAPPHIRERAPIDS      0x8F
 #define CPUID_MODEL_EMERALDRAPIDS       0xCF
+#define CPUID_MODEL_TREMONT_D           0x86    // Snowridge, Jacobsville, and QEMU's Icelake-Server
+#define CPUID_MODEL_GRANITERAPIDS       0xAD
+#define CPUID_MODEL_GRANITERAPIDS_D     0xAE
+#define CPUID_MODEL_SIERRAFOREST        0xAF
+#define CPUID_MODEL_CLEARWATERFOREST    0xDD
 /* Meteor Lake (Core Ultra, family 6). 0xAA is the -H/-U mobile die. */
 #define CPUID_MODEL_METEORLAKE          0xAA
 #define CPUID_MODEL_METEORLAKE_H        0xAA
@@ -364,7 +375,8 @@
 
 /* AMD 19h Family Model IDs */
 #define CPUID_MODEL_AMD_CHAGALL         0x08
-#define CPUID_MODEL_AMD_MILAN           0x11
+#define CPUID_MODEL_AMD_MILAN           0x01
+#define CPUID_MODEL_AMD_GENOA           0x11    // zen 4 server
 #define CPUID_MODEL_AMD_VERMEER         0x21
 #define CPUID_MODEL_AMD_REMBRANDT       0x44
 #define CPUID_MODEL_AMD_CEZANNE         0x50
@@ -379,6 +391,9 @@
 
 /* AMD 1Ah Family Model IDs */
 #define CPUID_MODEL_AMD_GRANITE_RIDGE   0x44
+#define CPUID_MODEL_AMD_TURIN           0x00    // zen 5 server, models 00h-0Fh
+#define CPUID_MODEL_AMD_TURIN_2         0x02
+#define CPUID_MODEL_AMD_TURIN_DENSE     0x11    // zen 5c server, models 10h-1Fh
 
 #define CPUID_VMM_FAMILY_NONE           0x0
 #define CPUID_VMM_FAMILY_UNKNOWN        0x1

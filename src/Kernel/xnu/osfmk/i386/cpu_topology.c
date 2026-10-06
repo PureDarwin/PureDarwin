@@ -30,6 +30,7 @@
 #include <mach/processor.h>
 #include <kern/kalloc.h>
 #include <kern/sched_common.h>
+#include <kern/sched_prim.h>
 #include <kern/smr.h>
 #include <i386/cpu_affinity.h>
 #include <i386/cpu_topology.h>
@@ -190,7 +191,9 @@ cpu_topology_sort(int ncpus)
 			x86_affinities = aset;
 			aset->num = x86_affinity_count++;
 			aset->cache = LLC_cachep;
-			if (i == boot_cpu_id) {
+			if (i == boot_cpu_id || !SCHED(multiple_psets_enabled)) {
+				// a scheduler with one pset (dualq) gets the boot pset back from pset_create_smp, and adding
+				// that to its node again would link it to itself
 				aset->pset = processor_pset(master_processor);
 			} else {
 				sched_num_psets++;

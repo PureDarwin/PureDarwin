@@ -33,7 +33,13 @@
 
 #include <kern/sched_common.h>
 
+#if defined(__x86_64__)
+// x86's cpu_topology_sort adds a pset per last-level cache after lockdown: multi-socket, bulldozer and
+// multi-ccx amd parts have more than one, which apple's single-llc intel macs never hit
+uint8_t sched_num_psets = UINT8_MAX;
+#else
 SECURITY_READ_ONLY_LATE(uint8_t) sched_num_psets = UINT8_MAX;
+#endif
 static_assert(MAX_PSETS < UINT8_MAX, "UINT8_MAX is used as a sentinel to indicate sched_num_psets is not initialized.");
 
 #if __AMP__

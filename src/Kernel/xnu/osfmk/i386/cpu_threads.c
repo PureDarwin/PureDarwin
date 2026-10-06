@@ -89,7 +89,7 @@ initTopoShifts(i386_cpu_info_t *cpuinfo)
 	topoSMTShift = ceil_log2_u32(topoParms.nPThreadsPerCore);
 	topoPackageShift = ceil_log2_u32(topoParms.nPThreadsPerPackage);
 
-	if (cpuinfo->cpuid_ven == CPUID_VEN_INTEL &&
+	if ((cpuinfo->cpuid_ven == CPUID_VEN_INTEL || cpuinfo->cpuid_ven == CPUID_VEN_ZHAOXIN) &&
 	    cpuinfo->cpuid_max_basic >= 0x0b) {
 		uint32_t regs[4];
 		uint32_t leaf = cpuinfo->cpuid_max_basic >= 0x1f ? 0x1f : 0x0b;
