@@ -9,6 +9,7 @@
 #include "PDArmGIC.h"
 #include "PDAppleAIC.h"
 #include "PDBcm2835IC.h"
+#include "PDArmGICController.h"
 #include "PDSun50iUSB.h"
 #include "PDSun50iWatchdog.h"
 #include "PDSg2002.h"
@@ -401,7 +402,9 @@ PDArmPlatformExpert::initPlatformInterruptsLate(void)
 			IOLog("PDArmPlatformExpert: BCM2835 interrupt controller unavailable; "
 			    "device interrupts will not be delivered\n");
 		}
+		return;
 	}
+	PDArmGICController_init();
 }
 
 const char *

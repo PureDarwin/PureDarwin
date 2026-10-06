@@ -26,3 +26,4 @@ _switch_to_video_console
 _vc_progress_set
 _pd_smp_marker
 _pd_smp_diag
+_pd_gic_current_spi

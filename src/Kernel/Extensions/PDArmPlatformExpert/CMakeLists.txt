@@ -5,6 +5,7 @@ target_sources(PDArmPlatformExpert PRIVATE
     PDArmPlatformExpert.cpp
     PDArmCPU.cpp
     PDArmGIC.cpp
+    PDArmGICController.cpp
     PDAppleAIC.cpp
     PDBcm2835IC.cpp
     PDSun50iUSB.cpp

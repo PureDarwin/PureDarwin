@@ -11,6 +11,8 @@ class PDArmPCI : public IOPCIBridge
     IOMemoryMap *ecamMap;
 
     volatile UInt8 *configAddress(IOPCIAddressSpace space, UInt8 offset) const;
+    bool routeINTx(UInt32 device, UInt32 pin, UInt32 *intid);
+    void setINTx(IOPCIDevice *nub);
 
 public:
     IOService *probe(IOService *provider, SInt32 *score) APPLE_KEXT_OVERRIDE;
@@ -18,6 +20,7 @@ public:
     bool configure(IOService *provider) APPLE_KEXT_OVERRIDE;
     void free(void) APPLE_KEXT_OVERRIDE;
     IODeviceMemory *ioDeviceMemory(void) APPLE_KEXT_OVERRIDE;
+    bool publishNub(IOPCIDevice *nub, UInt32 index) APPLE_KEXT_OVERRIDE;
 
     UInt8 firstBusNum(void) APPLE_KEXT_OVERRIDE;
     UInt8 lastBusNum(void) APPLE_KEXT_OVERRIDE;

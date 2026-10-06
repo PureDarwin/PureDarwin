@@ -393,6 +393,19 @@ PDArmGIC_init(void)
 #endif
 }
 
+volatile uint8_t *
+PDArmGIC_v3_distributor(void)
+{
+	return (gGicV2 || gSun50iSgi || gGicr == NULL) ? NULL : gGicd;
+}
+
+// the distributor of the GICv2 this kext configured (virt under KVM on a GICv2 host), else NULL
+volatile uint8_t *
+PDArmGIC_v2_distributor(void)
+{
+	return gGicV2 ? gGicd : NULL;
+}
+
 bool
 PDArmGIC_enable(void)
 {

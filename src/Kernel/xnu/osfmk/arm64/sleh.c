@@ -3758,16 +3758,31 @@ STARTUP(KMEM, STARTUP_RANK_LAST, pd_sun50i_gic_startup);
 #if HAS_GICV3_FIQ
 #include <pexpert/device_tree.h>
 static vm_offset_t pd_gicv2_cpuif;
+#define PD_GICV2_GICC_AIAR  0x020
+#define PD_GICV2_GICC_AEOIR 0x024
 // the gicv3 distributor, for masking spis nobody services
 static vm_offset_t pd_gicd;
 #define PD_GICD_TYPER       0x0004
 #define PD_GICD_ICENABLER   0x0180
 #endif
 
+// the spi each cpu's sleh_irq is servicing, for the gic interrupt controller in iokit (0: none)
+static uint32_t pd_gic_spi[MAX_CPUS];
+
+uint32_t pd_gic_current_spi(void);
+uint32_t
+pd_gic_current_spi(void)
+{
+	return pd_gic_spi[cpu_number()];
+}
+
 void
 sleh_irq(arm_saved_state_t *state)
 {
 	cpu_data_t * cdp __unused             = getCpuDatap();
+#if HAS_GICV3_FIQ
+	uint64_t spi_iar = 0;
+#endif
 #if MACH_ASSERT
 	int preemption_level = sleh_get_preemption_level();
 #endif
@@ -3801,9 +3816,24 @@ sleh_irq(arm_saved_state_t *state)
 		// a level spi with no handler would fire again on every eoi
 		if (intid >= 32 && intid < GIC_SPURIOUS_IRQ && pd_gicd && cdp->interrupt_handler == NULL)
 			*(volatile uint32_t *)(pd_gicd + PD_GICD_ICENABLER + (intid / 32) * 4) = 1u << (intid % 32);
-		if (intid != GIC_SPURIOUS_IRQ) {
+		// a serviced spi ends after its handler, once the device has dropped the line
+		if (intid >= 32 && intid < GIC_SPURIOUS_IRQ && cdp->interrupt_handler != NULL) {
+			spi_iar = iar;
+			pd_gic_spi[cdp->cpu_number] = (uint32_t)intid;
+		} else if (intid != GIC_SPURIOUS_IRQ) {
 			__builtin_arm_wsr64("ICC_EOIR1_EL1", iar);
 			__builtin_arm_isb(ISB_SY);
+		}
+	} else {
+		// GICv2: spis are Group 1 irqs, acknowledged and ended through the aliased registers
+		uint32_t iar = *(volatile uint32_t *)(pd_gicv2_cpuif + PD_GICV2_GICC_AIAR);
+		uint32_t intid = iar & 0x3ff;
+
+		if (intid >= 32 && intid < GIC_SPURIOUS_IRQ && cdp->interrupt_handler != NULL) {
+			spi_iar = iar;
+			pd_gic_spi[cdp->cpu_number] = intid;
+		} else if (intid < GIC_SPURIOUS_IRQ) {
+			*(volatile uint32_t *)(pd_gicv2_cpuif + PD_GICV2_GICC_AEOIR) = iar;
 		}
 	}
 #endif /* HAS_GICV3_FIQ */
@@ -3859,6 +3889,17 @@ sleh_irq(arm_saved_state_t *state)
 		    cdp->interrupt_nub,
 		    cdp->interrupt_source);
 	}
+#if HAS_GICV3_FIQ
+	if (spi_iar != 0) {
+		pd_gic_spi[cdp->cpu_number] = 0;
+		if (pd_gicv2_cpuif) {
+			*(volatile uint32_t *)(pd_gicv2_cpuif + PD_GICV2_GICC_AEOIR) = (uint32_t)spi_iar;
+		} else {
+			__builtin_arm_wsr64("ICC_EOIR1_EL1", spi_iar);
+			__builtin_arm_isb(ISB_SY);
+		}
+	}
+#endif
 #endif
 
 	entropy_collect();
