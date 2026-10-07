@@ -20,6 +20,8 @@ enum {
     kGeniRxFifo             = 0x780,    // one 32bit word per read
     kGeniRxFifoStatus       = 0x804,    // words waiting and the last words byte count
     kGeniTxWatermark        = 0x80c,    // TX refill threshold
+    kGeniRxWatermark        = 0x810,    // RX fill level, in words, that raises kGeniEventRxWatermark
+    kGeniEngineIrqEnable    = 0xe1c,    // which event groups reach the engine's interrupt line
     kGeniHardwareParams0    = 0xe24,    // FIFO depth and width (TX)
     kGeniHardwareParams1    = 0xe28,    // FIFO depth and width (RX)
 };
@@ -67,9 +69,21 @@ enum {
     kGeniEventI2CNack           = 1u << 10,
     kGeniEventI2CBusError       = 1u << 12,
     kGeniEventI2CArbitration    = 1u << 13,
+    kGeniEventRxWatermark       = 1u << 26,
+    kGeniEventRxLast            = 1u << 27,
     kGeniEventFinished          = kGeniEventDone | kGeniEventOverrun | kGeniEventIllegal | kGeniEventFailed | kGeniEventCancelled | kGeniEventAborted,
     kGeniEventI2CErrors         = kGeniEventI2CNack | kGeniEventI2CBusError | kGeniEventI2CArbitration,
 };
+
+// kGeniEngineIrqEnable
+enum { kGeniEngineIrqMain = 1u << 2 };
+
+// kGeniHardwareParams1
+static inline UInt32
+geniRxFifoDepth(UInt32 params)
+{
+    return (params >> 16) & 0x3f;
+}
 
 enum { kGeniRxLastWord = 1u << 31 };
 
