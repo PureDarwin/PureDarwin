@@ -241,11 +241,22 @@ IOVirtIOBlock::waitForCompletion()
 {
     // a completion the interrupt never reported within this long means the line is dead
     static const unsigned kLostInterruptMs = 2000;
+    static const unsigned kSpinUs = 50;
+    static const uint16_t VRING_AVAIL_F_NO_INTERRUPT = 1;
     volatile VRingUsedHdr *uh = (volatile VRingUsedHdr *)fQueue.used;
     uint64_t deadline, now;
 
     if (!fUseInterrupts)
         return fTransport.pollForCompletion(&fQueue, kIOTimeoutMs);
+
+    // a fast completion lands within microseconds, cheaper to catch than an interrupt's two wakeups,
+    // so the device is asked not to raise one meanwhile. re-armed before the idx check below sleeps
+    volatile VRingAvailHdr *ah = (volatile VRingAvailHdr *)fQueue.avail;
+    ah->flags = VRING_AVAIL_F_NO_INTERRUPT;
+    for (unsigned spin = 0; spin < kSpinUs && uh->idx == fQueue.lastUsedIdx; spin++)
+        IODelay(1);
+    ah->flags = 0;
+    __sync_synchronize();
 
     clock_interval_to_deadline(kIOTimeoutMs, kMillisecondScale, &deadline);
     while (uh->idx == fQueue.lastUsedIdx) {
@@ -271,10 +282,26 @@ IOVirtIOBlock::waitForCompletion()
     return fTransport.pollForCompletion(&fQueue, 0);
 }
 
+// the interrupt wait drops fLock while it sleeps. one request at a time keeps other callers off the shared
+// header and status byte until this one has read its result, caller holds fLock
+IOReturn
+IOVirtIOBlock::submit(uint32_t type, uint64_t sector,
+                      IOMemoryDescriptor *buffer, UInt64 offset, UInt64 length,
+                      bool deviceWrites)
+{
+    while (fInFlight)
+        IOLockSleep(fLock, &fInFlight, THREAD_UNINT);
+    fInFlight = true;
+    IOReturn ret = submitOne(type, sector, buffer, offset, length, deviceWrites);
+    fInFlight = false;
+    IOLockWakeup(fLock, &fInFlight, false);
+    return ret;
+}
+
 // Build and run one request chain covering [offset, offset+length) of `buffer`.
 // Caller holds fLock.
 IOReturn
-IOVirtIOBlock::submit(uint32_t type, uint64_t sector,
+IOVirtIOBlock::submitOne(uint32_t type, uint64_t sector,
                       IOMemoryDescriptor *buffer, UInt64 offset, UInt64 length,
                       bool deviceWrites)
 {

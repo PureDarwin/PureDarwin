@@ -104,6 +104,10 @@ bool IOVirtIONet::start(IOService *provider)
         return false;
     }
 
+    // completions are polled, and an unacknowledged intx would hold a shared level line high
+    fPCIDevice->configWrite16(kIOPCIConfigCommand,
+        fPCIDevice->configRead16(kIOPCIConfigCommand) | kIOPCICommandInterruptDisable);
+
     if (!fTransport.attach(fPCIDevice)) {
         IOLog("IOVirtIONet: failed to find/map virtio-pci capabilities\n");
         return false;

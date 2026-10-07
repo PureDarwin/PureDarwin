@@ -52,6 +52,10 @@ public:
 	bool prepareSecondary(UInt32 cpuNumber);
 };
 
+// IOPCIBridge's messaged interrupt controller owns vectors from here up
+enum { kPDMessagedInterruptBase = 0x70 };
+extern IOInterruptController *gPDMessagedInterruptController;
+
 class AppleI386CPUInterruptController : public IOCPUInterruptController {
 	OSDeclareDefaultStructors(AppleI386CPUInterruptController);
 

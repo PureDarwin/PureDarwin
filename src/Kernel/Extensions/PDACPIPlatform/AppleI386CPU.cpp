@@ -104,10 +104,22 @@ const OSSymbol *AppleI386CPU::getCPUName() {
 
 OSDefineMetaClassAndStructors(AppleI386CPUInterruptController, IOCPUInterruptController);
 
+IOInterruptController *gPDMessagedInterruptController = NULL;
+
+extern "C" void lapic_end_of_interrupt(void);
+
 IOReturn AppleI386CPUInterruptController::handleInterrupt(void *refCon, IOService *nub, int source) {
 	// Override the implementation in IOCPUInterruptController to
 	// dispatch interrupts the old way. The source argument is ignored;
 	// the first IOCPUInterruptController in the vector array is always used.
+
+	// msi vectors sit above the io-apic range, which would drop them
+	IOInterruptController *msi = gPDMessagedInterruptController;
+	if ((source & 0xff) >= kPDMessagedInterruptBase && msi) {
+		msi->handleInterrupt(refCon, nub, source);
+		lapic_end_of_interrupt();
+		return kIOReturnSuccess;
+	}
 
 	IOInterruptVector *vector = &vectors[0];
 	if (!vector->interruptRegistered) return kIOReturnInvalid;

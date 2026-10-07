@@ -31,6 +31,10 @@
 #include <libkern/c++/OSContainers.h>
 #include <libkern/c++/OSUnserialize.h>
 #include <pexpert/i386/boot.h>
+#include "AppleI386CPU.h"
+
+// interrupt specifier flags AppleAPIC reads (PICShared.h), active high as qemu's pci links are
+enum { kPDInterruptTriggerLevel = 0x01, kPDInterruptShareable = 0x04 };
 
 extern "C" {
 #include <i386/cpuid.h>
@@ -647,7 +651,7 @@ int PDACPIPlatformExpert::handlePEHaltRestart(unsigned int type) {
 	return ret;
 }
 
-bool PDACPIPlatformExpert::setNubInterruptVectors(IOService *nub, const UInt32 *vectors, UInt32 vectorCount) {
+bool PDACPIPlatformExpert::setNubInterruptVectors(IOService *nub, const UInt32 *vectors, UInt32 vectorCount, UInt32 flags) {
 	OSArray *controller = 0;
 	OSArray *specifier = 0;
 	bool success = false;
@@ -672,7 +676,7 @@ bool PDACPIPlatformExpert::setNubInterruptVectors(IOService *nub, const UInt32 *
 		// edge-triggered, active-high, non-shareable -> flags = 0.
 		UInt32 spec[2];
 		spec[0] = vectors[i];
-		spec[1] = 0;  // kInterruptTriggerModeEdge | kInterruptPolarityHigh | kInterruptNotShareable
+		spec[1] = flags;  // 0 = kInterruptTriggerModeEdge | kInterruptPolarityHigh | kInterruptNotShareable
 		OSData *data = OSData::withBytes(spec, sizeof(spec));
 		specifier->setObject(data);
 		controller->setObject(_interruptControllerName);
@@ -689,8 +693,8 @@ done:
 	return success;
 }
 
-bool PDACPIPlatformExpert::setNubInterruptVector(IOService *nub, UInt32 vector) {
-	return setNubInterruptVectors(nub, &vector, 1);
+bool PDACPIPlatformExpert::setNubInterruptVector(IOService *nub, UInt32 vector, UInt32 flags) {
+	return setNubInterruptVectors(nub, &vector, 1, flags);
 }
 
 IOReturn PDACPIPlatformExpert::callPlatformFunction(const OSSymbol *functionName, bool waitForFunction, void *param1, void *param2, void *param3, void *param4) {
@@ -707,7 +711,12 @@ IOReturn PDACPIPlatformExpert::callPlatformFunction(const OSSymbol *functionName
 		ok = reserveSystemInterrupt(nub, vectors[0], exclusive);
 		if (ok == false) return kIOReturnNoResources;
 
-		ok = setNubInterruptVector(nub, vectors[0]);
+		// pci intx is a shared level line: as an edge, an assertion while it is already high or
+		// masked is never seen and the line stays dead. isa irqs (ide 14/15) stay edge
+		UInt32 flags = 0;
+		if (nub->metaCast("IOPCIDevice"))
+			flags = kPDInterruptTriggerLevel | kPDInterruptShareable;
+		ok = setNubInterruptVector(nub, vectors[0], flags);
 		if (ok == false) releaseSystemInterrupt(nub, vectors[0], exclusive);
 
 		return ok ? kIOReturnSuccess : kIOReturnNoMemory;
@@ -720,6 +729,13 @@ IOReturn PDACPIPlatformExpert::callPlatformFunction(const OSSymbol *functionName
 		uint32_t   vector  = (uint32_t)((UInt64)param3);
 		uint32_t * message = (uint32_t *)param4;
 		if (message == 0) return kIOReturnBadArgument;
+
+		// the controller asking registered itself in init, so this lookup does not wait
+		if (!gPDMessagedInterruptController) {
+			const OSSymbol *name = OSSymbol::withCStringNoCopy("IOPCIMessagedInterruptController");
+			gPDMessagedInterruptController = lookUpInterruptController((OSSymbol *)name);
+			name->release();
+		}
 
 		// Destination = boot CPU local APIC ID (0), matching the io-apic nub's
 		// "Destination APIC ID" personality. Physical destination mode, no

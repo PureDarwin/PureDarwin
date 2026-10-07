@@ -690,6 +690,13 @@ void CLASS::constructAddressingProperties(IOPCIConfigEntry * device, OSDictionar
                 assignedData.physHi.s.reloc = 1;
                 assignedData.physMid = (range->start >> 32ULL);
                 assignedData.physLo  = static_cast<UInt32>(range->start);
+                // PureDarwin: a bar kept where firmware put it is never allocated and its size stays 0.
+                // without the probed size every IODeviceMemory is empty and cannot be mapped
+                if (!range->size)
+                {
+                    assignedData.lengthHi = (range->proposedSize >> 32ULL);
+                    assignedData.lengthLo = static_cast<UInt32>(range->proposedSize);
+                }
                 assignedProp->appendBytes(&assignedData, sizeof(assignedData));
             }
 			// reg gets requested length

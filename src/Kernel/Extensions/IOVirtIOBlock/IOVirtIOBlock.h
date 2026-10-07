@@ -65,6 +65,9 @@ private:
     static const unsigned kQueueSize   = 128;
     static const unsigned kIOTimeoutMs = 30000;
 
+    IOReturn submitOne(uint32_t type, uint64_t sector,
+                       IOMemoryDescriptor *buffer, UInt64 offset, UInt64 length,
+                       bool deviceWrites);
     IOReturn submit(uint32_t type, uint64_t sector,
                     IOMemoryDescriptor *buffer, UInt64 offset, UInt64 length,
                     bool deviceWrites);
@@ -81,6 +84,7 @@ private:
     IOWorkLoop             *fWorkLoop;
     IOInterruptEventSource *fInterruptSource;
     bool                    fUseInterrupts;
+    bool                    fInFlight;      // a request owns the shared header and status byte
 
     // Header and status live in one small contiguous allocation so a request
     // costs no per-I/O allocation.
