@@ -41,6 +41,41 @@
 
 extern void cons_cinput(char ch);               /* The BSD routine that gets characters */
 
+// a host line that starts with SOH (0x01) is a command for a driver (PDSerialHID's pointer and
+// keys), not console input: it goes to the registered handler when its newline arrives
+void pd_serial_line_register(void (*handler)(void *ctx, const char *line), void *ctx);
+
+static void (*pd_serial_line_handler)(void *ctx, const char *line);
+static void *pd_serial_line_ctx;
+
+void
+pd_serial_line_register(void (*handler)(void *ctx, const char *line), void *ctx)
+{
+	pd_serial_line_ctx = ctx;
+	pd_serial_line_handler = handler;
+}
+
+static int
+pd_serial_line_filter(int chr)
+{
+	static char line[128];
+	static int len = -1;
+
+	if (len < 0) {
+		if (chr != 0x01) return 0;
+		len = 0;
+		return 1;
+	}
+	if (chr == '\r' || chr == '\n') {
+		line[len] = 0;
+		len = -1;
+		if (pd_serial_line_handler != NULL) pd_serial_line_handler(pd_serial_line_ctx, line);
+		return 1;
+	}
+	if (len < (int)sizeof(line) - 1) line[len++] = (char)chr;
+	return 1;
+}
+
 SECURITY_READ_ONLY_LATE(unsigned int) serialmode;                               /* Serial mode keyboard and console control */
 
 /*
@@ -85,6 +120,9 @@ serial_keyboard_poll(void)
 		chr = _serial_getc(false); /* Get a character if there is one */
 		if (chr < 0) { /* The serial buffer is empty */
 			break;
+		}
+		if (pd_serial_line_filter(chr)) {
+			continue;
 		}
 		cons_cinput((char)chr); /* Buffer up the character */
 	}
