@@ -2,6 +2,7 @@
 
 #include <IOKit/IOLib.h>
 #include <IOKit/storage/IOStorage.h>
+#include <IOKit/storage/IOStorageProtocolCharacteristics.h>
 
 #define super IOBlockStorageDevice
 OSDefineMetaClassAndStructors(PDSun50iMMCDisk, IOBlockStorageDevice);
@@ -15,6 +16,20 @@ PDSun50iMMCDisk::initWithController(PDSun50iMMC *controller)
 	if (!init(NULL)) {
 		return false;
 	}
+
+	// opendirectoryd walks the storage parents for this before creating a password verifier,
+	// a built-in card reader is an internal secure digital device
+	OSDictionary *protocol = OSDictionary::withCapacity(2);
+	OSString *type = OSString::withCString(kIOPropertyPhysicalInterconnectTypeSecureDigital);
+	OSString *location = OSString::withCString(kIOPropertyInternalKey);
+	bool configured = protocol != NULL && type != NULL && location != NULL &&
+	    protocol->setObject(kIOPropertyPhysicalInterconnectTypeKey, type) &&
+	    protocol->setObject(kIOPropertyPhysicalInterconnectLocationKey, location) &&
+	    setProperty(kIOPropertyProtocolCharacteristicsKey, protocol);
+	OSSafeReleaseNULL(type);
+	OSSafeReleaseNULL(location);
+	OSSafeReleaseNULL(protocol);
+	if (!configured) return false;
 
 	fController = controller;
 	setProperty(kIOBlockStorageDeviceTypeKey, kIOBlockStorageDeviceTypeGeneric);
@@ -37,25 +52,24 @@ PDSun50iMMCDisk::doAsyncReadWrite(IOMemoryDescriptor *buffer, UInt64 block,
 {
 	(void)attributes;
 
-	if (fController == NULL || buffer == NULL) {
-		IOStorage::complete(completion, kIOReturnBadArgument, 0);
+	// an error return means not started, and the caller completes the request itself: completing it
+	// here too ran IOBlockStorageDriver's completion twice, on a freed context
+	if (fController == NULL || buffer == NULL)
 		return kIOReturnBadArgument;
-	}
 
 	bool write = (buffer->getDirection() & kIODirectionOut) != 0;
 
 	IOReturn prep = buffer->prepare();
-	if (prep != kIOReturnSuccess) {
-		IOStorage::complete(completion, prep, 0);
+	if (prep != kIOReturnSuccess)
 		return prep;
-	}
 
-	IOReturn ret = fController->readWrite(write, block, nblks, buffer);
+	IOReturn ret = write ? fController->queueWrite(block, nblks, buffer) :
+	    fController->readWrite(false, block, nblks, buffer);
 	buffer->complete();
 
 	IOStorage::complete(completion, ret,
 	    ret == kIOReturnSuccess ? nblks * fController->blockSize() : 0);
-	return ret;
+	return kIOReturnSuccess;
 }
 
 IOReturn
@@ -65,8 +79,8 @@ PDSun50iMMCDisk::doSynchronize(UInt64 block, UInt64 nblks,
 	(void)block;
 	(void)nblks;
 	(void)options;
-	// every transfer completes synchronously against the card
-	return kIOReturnSuccess;
+	// writes complete once queued: a synchronize waits until they are on the card
+	return fController != NULL ? fController->flushWrites() : kIOReturnSuccess;
 }
 
 IOReturn PDSun50iMMCDisk::doEjectMedia(void) { return kIOReturnUnsupported; }

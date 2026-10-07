@@ -3,6 +3,11 @@
 
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
+#include <IOKit/IOMessage.h>
+#include <IOKit/pwr_mgt/RootDomain.h>
+#include <kern/clock.h>
+#include <pexpert/pexpert.h>
+#include <libkern/OSAtomic.h>
 
 #define super IOService
 OSDefineMetaClassAndStructors(PDSun50iMMC, IOService);
@@ -112,6 +117,7 @@ pd_is_a733(IOService *provider)
 #define kCMD_WRITE		(1u << 10)
 #define kCMD_AUTO_STOP		(1u << 12)
 #define kCMD_WAIT_PRE_OVER	(1u << 13)
+#define kCMD_STOP_ABORT		(1u << 14)
 #define kCMD_SEND_INIT_SEQ	(1u << 15)
 #define kCMD_UPCLK_ONLY		(1u << 21)
 #define kCMD_START		(1u << 31)
@@ -144,6 +150,7 @@ pd_is_a733(IOService *provider)
 #define kCMD_GO_IDLE		0
 #define kCMD_ALL_SEND_CID	2
 #define kCMD_SEND_REL_ADDR	3
+#define kCMD_SWITCH_FUNC	6
 #define kCMD_SELECT_CARD	7
 #define kCMD_SEND_IF_COND	8
 #define kCMD_SEND_CSD		9
@@ -158,7 +165,15 @@ pd_is_a733(IOService *provider)
 
 #define kIdentClockHz		400000
 #define kTransferClockHz	25000000
-#define kMaxBlocksPerCmd	128
+#define kHighSpeedClockHz	50000000
+#define kMaxBlocksPerCmd	1024
+#define kACMD_SET_WR_ERASE	23
+// the write queue: at most this much data, written early once past the kick or the window
+#define kWQMaxBytes		(32u << 20)
+#define kWQKickBytes		(4u << 20)
+#define kWQWindowMs		20
+// merged writes stop at this size: a read waits behind at most one of them
+#define kWQRunBlocks		256
 
 static volatile uint8_t *
 map_phys(IOPhysicalAddress phys, IOByteCount size, IOMemoryMap **outMap)
@@ -207,9 +222,16 @@ PDSun50iMMC::start(IOService *provider)
 	fRegs = (volatile uint8_t *)fRegMap->getVirtualAddress();
 
 	fLock = IOLockAlloc();
+	fWQLock = IOLockAlloc();
 	fBounce = (uint32_t *)IOMalloc(kMaxBlocksPerCmd * 512);
-	if (fLock == NULL || fBounce == NULL)
+	if (fLock == NULL || fWQLock == NULL || fBounce == NULL)
 		return false;
+	// pdmmcsync=1 keeps every write synchronous against the card
+	{
+		uint32_t sync = 0;
+
+		fWriteBack = !(PE_parse_boot_argn("pdmmcsync", &sync, sizeof(sync)) && sync != 0);
+	}
 
 	fReadOnly = false;
 
@@ -222,6 +244,15 @@ PDSun50iMMC::start(IOService *provider)
 	    fBlockCount, (fBlockCount * 512) / (1024 * 1024),
 	    fBlockAddressed ? "block" : "byte");
 
+	if (fWriteBack) {
+		thread_t th = NULL;
+
+		if (kernel_thread_start(&PDSun50iMMC::writeWorker, this, &th) == KERN_SUCCESS)
+			thread_deallocate(th);
+		else
+			fWriteBack = false;
+	}
+
 	fDisk = new PDSun50iMMCDisk;
 	if (fDisk == NULL || !fDisk->initWithController(this)) {
 		OSSafeReleaseNULL(fDisk);
@@ -233,13 +264,55 @@ PDSun50iMMC::start(IOService *provider)
 	}
 	fDisk->registerService();
 
+	// the controller moves data by pio, so a restart only needs the queued writes on the card
+	setProperty("pd-quiesce", true);
+	fRestartNotifier = registerPrioritySleepWakeInterest(&PDSun50iMMC::restartHandler, this, NULL);
+
 	registerService();
 	return true;
 }
 
 void
+PDSun50iMMC::quiesce(const char *why)
+{
+	if (fQuiesced || fWQLock == NULL)
+		return;
+	fQuiesced = true;
+	IOLog("PDSun50iMMC: quiesced for %s, write queue flushed (%d)\n", why, flushWrites());
+}
+
+IOReturn
+PDSun50iMMC::restartHandler(void *target, void *, UInt32 messageType, IOService *, void *, vm_size_t)
+{
+	if (messageType == kIOMessageSystemWillRestart || messageType == kIOMessageSystemWillPowerOff)
+		((PDSun50iMMC *)target)->quiesce(messageType == kIOMessageSystemWillRestart ? "restart" : "power off");
+	return kIOReturnSuccess;
+}
+
+IOReturn
+PDSun50iMMC::message(UInt32 type, IOService *provider, void *argument)
+{
+	if (type == kIOMessageSystemWillRestart || type == kIOMessageSystemWillPowerOff) {
+		quiesce("watchdog deadline");
+		return kIOReturnSuccess;
+	}
+	return super::message(type, provider, argument);
+}
+
+void
 PDSun50iMMC::stop(IOService *provider)
 {
+	if (fRestartNotifier != NULL) {
+		fRestartNotifier->remove();
+		fRestartNotifier = NULL;
+	}
+	if (fWQLock != NULL) {
+		flushWrites();
+		IOLockLock(fWQLock);
+		fWQStop = true;
+		IOLockWakeup(fWQLock, &fWQ, false);
+		IOLockUnlock(fWQLock);
+	}
 	if (fDisk != NULL) {
 		fDisk->detach(this);
 		OSSafeReleaseNULL(fDisk);
@@ -253,6 +326,10 @@ PDSun50iMMC::free(void)
 	if (fBounce != NULL) {
 		IOFree(fBounce, kMaxBlocksPerCmd * 512);
 		fBounce = NULL;
+	}
+	if (fWQLock != NULL) {
+		IOLockFree(fWQLock);
+		fWQLock = NULL;
 	}
 	if (fLock != NULL) {
 		IOLockFree(fLock);
@@ -383,10 +460,38 @@ PDSun50iMMC::waitRint(uint32_t done, uint32_t timeoutMs)
 }
 
 void
-PDSun50iMMC::recover(void)
+PDSun50iMMC::recover(bool abortData)
 {
+	// a data error can leave the card transferring after the automatic stop failed, abort it
+	// without WAIT_PRE_OVER, which would wait for the very transfer being ended
+	uint32_t gctrl = rd(kGCTRL) & ~kGCTRL_RESET;
+	uint32_t clkcr = rd(kCLKCR), width = rd(kWIDTH), timeout = rd(kTIMEOUT);
+	uint32_t thldc = rd(kTHLDC), ntsr = rd(kNTSR), sample = rd(kSAMP_DL);
+	if (abortData) {
+		wr(kRINT, 0xffffffff);
+		wr(kARG, 0);
+		wr(kCMD, kCMD_START | kCMD_STOP_ABORT | kCMD_RESP_EXPIRE | kCMD_CHECK_CRC | 12);
+		bool stopped = waitRint(kRINT_CMD_DONE, 1000);
+		for (unsigned ms = 0; stopped && (rd(kSTATUS) & kST_CARD_BUSY); ++ms) {
+			if (ms == 2000) { stopped = false; break; }
+			IOSleep(1);
+		}
+		if (!stopped)
+			IOLog("PDSun50iMMC: stop after data error failed, rint %08x status %08x\n",
+			    rd(kRINT), rd(kSTATUS));
+	}
 	wr(kGCTRL, kGCTRL_RESET);
 	IODelay(100);
+	// soft reset clears the host configuration but the card keeps its bus width and speed,
+	// so restore them before another data command
+	wr(kGCTRL, gctrl);
+	wr(kCLKCR, clkcr);
+	wr(kWIDTH, width);
+	wr(kTIMEOUT, timeout);
+	wr(kTHLDC, thldc);
+	wr(kNTSR, ntsr);
+	wr(kSAMP_DL, sample);
+	wr(kRINT, 0xffffffff);
 	updateClock();
 }
 
@@ -420,7 +525,7 @@ PDSun50iMMC::pio(bool write, uint32_t words)
 
 bool
 PDSun50iMMC::command(uint32_t idx, uint32_t arg, uint32_t flags, uint32_t *resp,
-    uint32_t nblks)
+    uint32_t nblks, uint32_t blksz)
 {
 	uint32_t cmd = kCMD_START | idx;
 	bool ok = true;
@@ -439,8 +544,8 @@ PDSun50iMMC::command(uint32_t idx, uint32_t arg, uint32_t flags, uint32_t *resp,
 			cmd |= kCMD_WRITE;
 		if (nblks > 1)
 			cmd |= kCMD_AUTO_STOP;
-		wr(kBLKSZ, 512);
-		wr(kBYTECNT, nblks * 512);
+		wr(kBLKSZ, blksz);
+		wr(kBYTECNT, nblks * blksz);
 	}
 
 	wr(kRINT, 0xffffffff);
@@ -448,15 +553,16 @@ PDSun50iMMC::command(uint32_t idx, uint32_t arg, uint32_t flags, uint32_t *resp,
 	wr(kCMD, cmd);
 
 	if (flags & kData)
-		ok = pio(flags & kDataWrite, nblks * 128);
+		ok = pio(flags & kDataWrite, nblks * blksz / 4);
 	if (ok)
 		ok = waitRint(kRINT_CMD_DONE, 1000);
 	if (ok && (flags & kData))
 		ok = waitRint(nblks > 1 ? kRINT_AUTO_CMD_DONE : kRINT_DATA_OVER, 2000);
 	if (ok && (flags & (kRspBusy | kDataWrite))) {
 		int ms = 0;
+		// sleep through the card's programming time, a spin here starves a single cpu
 		while ((rd(kSTATUS) & kST_CARD_BUSY) && ms++ < 2000)
-			IODelay(1000);
+			IOSleep(1);
 		ok = ms < 2000;
 	}
 
@@ -476,7 +582,7 @@ PDSun50iMMC::command(uint32_t idx, uint32_t arg, uint32_t flags, uint32_t *resp,
 		if (idx != kCMD_SEND_IF_COND)
 			IOLog("PDSun50iMMC: cmd%u arg %08x failed rint %08x status %08x\n",
 			    idx, arg, rd(kRINT), rd(kSTATUS));
-		recover();
+		recover((flags & kData) != 0);
 	}
 	wr(kRINT, 0xffffffff);
 	wr(kGCTRL, rd(kGCTRL) | kGCTRL_FIFO_RESET);
@@ -560,7 +666,43 @@ PDSun50iMMC::identifyCard(void)
 	if (!command(kCMD_SET_BLOCKLEN, 512, kR1, resp))
 		return false;
 
+	if (!setClock(kTransferClockHz))
+		return false;
+	if (fFastOK && switchHighSpeed())
+		return true;
 	return setClock(kTransferClockHz);
+}
+
+// cmd6 mode 1 selects function 1 (high speed) of group 1, byte 16 of the 64-byte status names
+// the function now in effect. 50 mhz is kept only if block 0 reads back as it did at 25 mhz
+bool
+PDSun50iMMC::switchHighSpeed(void)
+{
+	uint32_t resp[4], *ref;
+	uint8_t fn;
+	bool same;
+
+	if (!command(kCMD_SWITCH_FUNC, 0x80fffff1u, kR1 | kData, resp, 1, 64))
+		return false;
+	fn = ((uint8_t *)fBounce)[16] & 0xf;
+	if (fn != 1) {
+		IOLog("PDSun50iMMC: card stays at default speed (group 1 function %u)\n", fn);
+		return false;
+	}
+	ref = (uint32_t *)IOMalloc(512);
+	if (ref == NULL)
+		return false;
+	if (!command(kCMD_READ_SINGLE, 0, kR1 | kData, resp, 1)) {
+		IOFree(ref, 512);
+		return false;
+	}
+	memcpy(ref, fBounce, 512);
+	same = setClock(kHighSpeedClockHz) && command(kCMD_READ_SINGLE, 0, kR1 | kData, resp, 1) &&
+	    memcmp(ref, fBounce, 512) == 0;
+	IOFree(ref, 512);
+	IOLog("PDSun50iMMC: high speed %s\n", same ? "at 50 mhz" : "read back wrong, back to 25 mhz");
+	fHighSpeed = same;
+	return same;
 }
 
 IOReturn
@@ -570,10 +712,14 @@ PDSun50iMMC::transferBlocks(bool write, UInt64 block, UInt32 nblks,
 	uint32_t idx, arg, resp[4];
 	IOByteCount bytes = (IOByteCount)nblks * 512;
 
+	// a null buffer means fBounce already holds the data, or keeps what was read
 	if (write) {
 		idx = nblks > 1 ? kCMD_WRITE_MULTI : kCMD_WRITE_SINGLE;
-		if (buffer->readBytes(bufferOffset, fBounce, bytes) != bytes)
+		if (buffer != NULL && buffer->readBytes(bufferOffset, fBounce, bytes) != bytes)
 			return kIOReturnIOError;
+		// pre-erasing the blocks a multi-block write is about to fill speeds it up on most cards
+		if (nblks > 1)
+			(void)appCommand(kACMD_SET_WR_ERASE, nblks, kR1, resp);
 	} else {
 		idx = nblks > 1 ? kCMD_READ_MULTI : kCMD_READ_SINGLE;
 	}
@@ -582,9 +728,36 @@ PDSun50iMMC::transferBlocks(bool write, UInt64 block, UInt32 nblks,
 	if (!command(idx, arg, kR1 | kData | (write ? kDataWrite : 0), resp, nblks))
 		return kIOReturnIOError;
 
-	if (!write && buffer->writeBytes(bufferOffset, fBounce, bytes) != bytes)
+	if (!write && buffer != NULL && buffer->writeBytes(bufferOffset, fBounce, bytes) != bytes)
 		return kIOReturnIOError;
 	return kIOReturnSuccess;
+}
+
+// one transfer of at most kMaxBlocksPerCmd under fLock: one retry as is, then for good at 25 mhz
+// when high speed is what failed. counted for the minute's stats
+IOReturn
+PDSun50iMMC::transferRetry(bool write, UInt64 block, UInt32 nblks,
+    IOMemoryDescriptor *buffer, UInt64 bufferOffset)
+{
+	uint64_t t0 = mach_absolute_time(), ns;
+	IOReturn ret;
+
+	ret = transferBlocks(write, block, nblks, buffer, bufferOffset);
+	if (ret != kIOReturnSuccess)
+		ret = transferBlocks(write, block, nblks, buffer, bufferOffset);
+	if (ret != kIOReturnSuccess && fHighSpeed) {
+		fHighSpeed = false;
+		IOLog("PDSun50iMMC: %s errors at 50 mhz, back to 25 mhz\n", write ? "write" : "read");
+		if (setClock(kTransferClockHz))
+			ret = transferBlocks(write, block, nblks, buffer, bufferOffset);
+	}
+	if (ret != kIOReturnSuccess)
+		IOLog("PDSun50iMMC: %s failed at block %llu\n", write ? "write" : "read", block);
+	absolutetime_to_nanoseconds(mach_absolute_time() - t0, &ns);
+	fStatCmds[write]++;
+	fStatBlocks[write] += nblks;
+	fStatUs[write] += ns / 1000;
+	return ret;
 }
 
 IOReturn
@@ -601,18 +774,254 @@ PDSun50iMMC::readWrite(bool write, UInt64 block, UInt64 nblks,
 	if (block + nblks > fBlockCount)
 		return kIOReturnBadArgument;
 
+	if (!write)
+		OSIncrementAtomic(&fReadWaiters);
 	IOLockLock(fLock);
-	while (done < nblks) {
+	if (!write)
+		OSDecrementAtomic(&fReadWaiters);
+	while (done < nblks && ret == kIOReturnSuccess) {
 		UInt32 chunk = (UInt32)min(nblks - done, (UInt64)kMaxBlocksPerCmd);
 
-		ret = transferBlocks(write, block + done, chunk, buffer, done * 512);
-		if (ret != kIOReturnSuccess) {
-			IOLog("PDSun50iMMC: %s failed at block %llu\n",
-			    write ? "write" : "read", block + done);
-			break;
-		}
+		ret = transferRetry(write, block + done, chunk, buffer, done * 512);
 		done += chunk;
 	}
+	// queued writes are newer than the card: under fLock, so none can land in between
+	if (!write && ret == kIOReturnSuccess && fWriteBack)
+		overlayQueued(block, nblks, buffer);
 	IOLockUnlock(fLock);
+	logStats();
 	return ret;
+}
+
+// copy queued data over what a read got from the card: the batch in flight first, then the queue,
+// which is newer. queued writes that overlap hold the same data where they do
+void
+PDSun50iMMC::overlayQueued(UInt64 block, UInt64 nblks, IOMemoryDescriptor *buffer)
+{
+	IOLockLock(fWQLock);
+	for (int l = 0; l < 2; l++) {
+		for (PendingWrite *w = l ? fWQ : fWQFlight; w != NULL; w = w->next) {
+			uint64_t lo = max(block, w->block), hi = min(block + nblks, w->block + w->nblks);
+
+			if (w->done || lo >= hi)
+				continue;
+			buffer->writeBytes((lo - block) * 512, w->data + (lo - w->block) * 512, (hi - lo) * 512);
+		}
+	}
+	IOLockUnlock(fWQLock);
+}
+
+// a write completes once its data is copied. it also updates every queued write it overlaps, so
+// those agree with it and nothing waits, and the batch in flight is older and lands first anyway
+IOReturn
+PDSun50iMMC::queueWrite(UInt64 block, UInt64 nblks, IOMemoryDescriptor *buffer)
+{
+	uint32_t bytes = (uint32_t)nblks * 512;
+	PendingWrite *w;
+
+	if (!fWriteBack || nblks > kMaxBlocksPerCmd) {
+		if (fWriteBack)
+			flushWrites();
+		return readWrite(true, block, nblks, buffer);
+	}
+	if (fRegs == NULL || buffer == NULL)
+		return kIOReturnNoDevice;
+	if (fReadOnly)
+		return kIOReturnNotWritable;
+	if (block + nblks > fBlockCount)
+		return kIOReturnBadArgument;
+
+	w = (PendingWrite *)IOMallocZero(sizeof(*w));
+	if (w != NULL)
+		w->data = (uint8_t *)IOMalloc(bytes);
+	if (w == NULL || w->data == NULL || buffer->readBytes(0, w->data, bytes) != bytes) {
+		if (w != NULL && w->data != NULL)
+			IOFree(w->data, bytes);
+		if (w != NULL)
+			IOFree(w, sizeof(*w));
+		flushWrites();
+		return readWrite(true, block, nblks, buffer);
+	}
+	w->block = block;
+	w->nblks = (uint32_t)nblks;
+
+	IOLockLock(fWQLock);
+	bool covered = false;
+
+	for (PendingWrite *q = fWQ; q != NULL; q = q->next) {
+		uint64_t lo = max(block, q->block), hi = min(block + nblks, q->block + q->nblks);
+
+		if (lo >= hi)
+			continue;
+		memcpy(q->data + (lo - q->block) * 512, w->data + (lo - block) * 512, (hi - lo) * 512);
+		if (lo == block && hi == block + nblks)
+			covered = true;
+	}
+	if (covered) {
+		IOLockUnlock(fWQLock);
+		IOFree(w->data, bytes);
+		IOFree(w, sizeof(*w));
+		return kIOReturnSuccess;
+	}
+	while (fWQBytes + bytes > kWQMaxBytes) {
+		fWQFlush = true;
+		IOLockWakeup(fWQLock, &fWQ, false);
+		IOLockSleep(fWQLock, &fWQBytes, THREAD_UNINT);
+	}
+	if (fWQTail != NULL)
+		fWQTail->next = w;
+	else
+		fWQ = w;
+	fWQTail = w;
+	fWQBytes += bytes;
+	IOLockWakeup(fWQLock, &fWQ, false);
+	IOLockUnlock(fWQLock);
+	return kIOReturnSuccess;
+}
+
+// everything queued so far on the card, returns the error a queued write hit since the last one
+IOReturn
+PDSun50iMMC::flushWrites(void)
+{
+	uint64_t t0 = mach_absolute_time(), ns;
+	IOReturn ret;
+
+	if (!fWriteBack || fWQLock == NULL)
+		return kIOReturnSuccess;
+	IOLockLock(fWQLock);
+	while (fWQ != NULL || fWQBusy) {
+		fWQFlush = true;
+		IOLockWakeup(fWQLock, &fWQ, false);
+		IOLockSleep(fWQLock, &fWQBytes, THREAD_UNINT);
+	}
+	ret = fWQError;
+	fWQError = kIOReturnSuccess;
+	absolutetime_to_nanoseconds(mach_absolute_time() - t0, &ns);
+	fStatSyncs++;
+	fStatSyncUs += ns / 1000;
+	IOLockUnlock(fWQLock);
+	return ret;
+}
+
+void
+PDSun50iMMC::writeWorker(void *arg, wait_result_t wr)
+{
+	PDSun50iMMC *me = (PDSun50iMMC *)arg;
+
+	(void)wr;
+	IOLockLock(me->fWQLock);
+	while (!me->fWQStop) {
+		uint64_t deadline;
+
+		if (me->fWQ == NULL) {
+			IOLockSleep(me->fWQLock, &me->fWQ, THREAD_UNINT);
+			continue;
+		}
+		// gather for a moment unless someone waits or plenty is queued
+		clock_interval_to_deadline(kWQWindowMs, kMillisecondScale, &deadline);
+		while (!me->fWQFlush && !me->fWQStop && me->fWQBytes < kWQKickBytes &&
+		    mach_absolute_time() < deadline)
+			IOLockSleepDeadline(me->fWQLock, &me->fWQ, deadline, THREAD_UNINT);
+		me->writeBatch();
+	}
+	IOLockUnlock(me->fWQLock);
+	thread_terminate(current_thread());
+}
+
+// called and returns with fWQLock held, writes the queue sorted by block as contiguous runs, each
+// written and marked done under fLock so reads see it either queued or on the card
+void
+PDSun50iMMC::writeBatch(void)
+{
+	PendingWrite *list = fWQ, *sorted = NULL, *w, *next;
+	uint32_t freed = 0;
+
+	fWQ = fWQTail = NULL;
+	fWQBusy = true;
+	fWQFlush = false;
+	// insertion sort by block: batches are a few hundred writes, mostly already near order
+	for (w = list; w != NULL; w = next) {
+		PendingWrite **pp = &sorted;
+
+		next = w->next;
+		while (*pp != NULL && (*pp)->block < w->block)
+			pp = &(*pp)->next;
+		w->next = *pp;
+		*pp = w;
+	}
+	fWQFlight = sorted;
+	IOLockUnlock(fWQLock);
+
+	for (w = sorted; w != NULL;) {
+		PendingWrite *run = w, *end = w;
+		uint32_t n = w->nblks;
+		IOReturn ret;
+
+		while (end->next != NULL && end->next->block == end->block + end->nblks &&
+		    n + end->next->nblks <= kWQRunBlocks) {
+			end = end->next;
+			n += end->nblks;
+		}
+		// a waiting read goes first: apfs holds its own lock across it
+		for (int spins = 0; fReadWaiters > 0 && spins < 50; spins++)
+			IOSleep(1);
+		IOLockLock(fLock);
+		uint32_t off = 0;
+
+		for (PendingWrite *p = run;; p = p->next) {
+			memcpy((uint8_t *)fBounce + off, p->data, p->nblks * 512);
+			off += p->nblks * 512;
+			if (p == end)
+				break;
+		}
+		ret = transferRetry(true, run->block, n, NULL, 0);
+		IOLockLock(fWQLock);
+		for (PendingWrite *p = run;; p = p->next) {
+			p->done = true;
+			if (p == end)
+				break;
+		}
+		if (ret != kIOReturnSuccess)
+			fWQError = ret;
+		IOLockUnlock(fWQLock);
+		IOLockUnlock(fLock);
+		w = end->next;
+	}
+
+	IOLockLock(fWQLock);
+	fWQFlight = NULL;
+	for (w = sorted; w != NULL; w = next) {
+		next = w->next;
+		freed += w->nblks * 512;
+		IOFree(w->data, w->nblks * 512);
+		IOFree(w, sizeof(*w));
+	}
+	fWQBytes -= freed;
+	fWQBusy = false;
+	IOLockWakeup(fWQLock, &fWQBytes, false);
+	IOLockUnlock(fWQLock);
+	logStats();
+	IOLockLock(fWQLock);
+}
+
+// once a minute: commands, blocks per command and time on the card each way, and synchronizes
+void
+PDSun50iMMC::logStats(void)
+{
+	uint64_t now = mach_absolute_time(), ns;
+
+	uint64_t last = fStatLast;
+
+	absolutetime_to_nanoseconds(now - last, &ns);
+	if (last != 0 && ns < 60ULL * NSEC_PER_SEC)
+		return;
+	// the reader and the write worker both get here: one of them logs
+	if (!OSCompareAndSwap64(last, now, (volatile UInt64 *)&fStatLast))
+		return;
+	if (last != 0)
+		IOLog("PDSun50iMMC: minute: reads %llu cmds %llu blocks %llu ms, writes %llu cmds %llu blocks %llu ms, "
+		    "%llu syncs %llu ms\n", fStatCmds[0], fStatBlocks[0], fStatUs[0] / 1000, fStatCmds[1], fStatBlocks[1],
+		    fStatUs[1] / 1000, fStatSyncs, fStatSyncUs / 1000);
+	fStatCmds[0] = fStatCmds[1] = fStatBlocks[0] = fStatBlocks[1] = fStatUs[0] = fStatUs[1] = 0;
+	fStatSyncs = fStatSyncUs = 0;
 }
