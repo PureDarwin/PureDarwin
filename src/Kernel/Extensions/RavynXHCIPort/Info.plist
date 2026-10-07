@@ -24,6 +24,19 @@
     <string>1.0.0</string>
     <key>IOKitPersonalities</key>
     <dict>
+        <key>A733 DWC3</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>com.ravynos.driver.RavynXHCIPort</string>
+            <key>IOClass</key>
+            <string>RavynXHCIPort</string>
+            <key>IONameMatch</key>
+            <string>allwinner,sunxi-plat-dwc3</string>
+            <key>IOProbeScore</key>
+            <integer>4000</integer>
+            <key>IOProviderClass</key>
+            <string>IOPlatformDevice</string>
+        </dict>
         <key>Generic XHCI</key>
         <dict>
             <key>CFBundleIdentifier</key>

@@ -12,7 +12,6 @@ bool RavynXHCIUSBBus::initWithPort(RavynXHCIPort *port)
     if (!init(NULL)) return false;
     fPort = port;
     bzero(fBulkConfigured, sizeof(fBulkConfigured));
-    bzero(fIntrConfigured, sizeof(fIntrConfigured));
     return true;
 }
 
@@ -48,12 +47,9 @@ IOReturn RavynXHCIUSBBus::UIMOpenPipe(USBDeviceAddress address, UInt8 speed, End
         case kUSBInterrupt:
             if (endpoint->direction != kUSBIn)
                 return kIOReturnUnsupported; /* no interrupt-OUT support in the UIM */
-            if (fIntrConfigured[slotId])
-                return kIOReturnSuccess;
             if (!fPort->configureInterruptInEndpoint(slotId, endpoint->number,
                                                        endpoint->maxPacketSize, endpoint->interval))
                 return kIOReturnError;
-            fIntrConfigured[slotId] = true;
             return kIOReturnSuccess;
 
         default:
@@ -71,11 +67,15 @@ IOReturn RavynXHCIUSBBus::UIMClosePipe(USBDeviceAddress address, Endpoint *endpo
 
 IOReturn RavynXHCIUSBBus::UIMAbortPipe(USBDeviceAddress address, Endpoint *endpoint)
 {
+    if (endpoint && endpoint->transferType == kUSBInterrupt && endpoint->direction == kUSBIn)
+        return fPort->abortInterruptEndpoint(address, endpoint->number);
     return kIOReturnSuccess;
 }
 
 IOReturn RavynXHCIUSBBus::UIMClearPipeStall(USBDeviceAddress address, Endpoint *endpoint)
 {
+    if (endpoint && endpoint->transferType == kUSBInterrupt && endpoint->direction == kUSBIn)
+        return fPort->abortInterruptEndpoint(address, endpoint->number, true);
     return kIOReturnSuccess;
 }
 
@@ -92,8 +92,8 @@ IOReturn RavynXHCIUSBBus::UIMDeviceRequest(IOUSBDevRequest *request, USBDeviceAd
     setup.wLength        = request->wLength;
 
     bool in = (request->bmRequestType & 0x80) != 0;
-    bool ok = fPort->controlTransfer(slotId, setup, request->pData, request->wLength, in);
-    if (ok) request->wLenDone = request->wLength;
+    request->wLenDone = 0;
+    bool ok = fPort->controlTransfer(slotId, setup, request->pData, request->wLength, in, &request->wLenDone);
     return ok ? kIOReturnSuccess : kIOReturnError;
 }
 
@@ -128,4 +128,32 @@ IOReturn RavynXHCIUSBBus::UIMReadWrite(IOMemoryDescriptor *buffer, USBDeviceAddr
 
     bounce->release();
     return ok ? kIOReturnSuccess : kIOReturnError;
+}
+
+IOReturn RavynXHCIUSBBus::Read(IOMemoryDescriptor *buffer, USBDeviceAddress address,
+                              Endpoint *endpoint, IOUSBCompletion *completion)
+{
+    return Read(buffer, address, endpoint, completion, 0, 0, buffer ? buffer->getLength() : 0);
+}
+
+IOReturn RavynXHCIUSBBus::Read(IOMemoryDescriptor *buffer, USBDeviceAddress address,
+                              Endpoint *endpoint, IOUSBCompletion *completion,
+                              UInt32 noDataTimeout, UInt32 completionTimeout, IOByteCount reqCount)
+{
+    if (!endpoint || endpoint->transferType != kUSBInterrupt)
+        return super::Read(buffer, address, endpoint, completion, noDataTimeout, completionTimeout, reqCount);
+    UInt32 done = 0;
+    IOReturn ret = !buffer || reqCount > buffer->getLength() || reqCount > 0xffffffffULL
+        ? kIOReturnBadArgument
+        : fPort->interruptTransfer(address, endpoint->number, buffer, (UInt32)reqCount, 20, &done);
+    if (completion && completion->action == &IOUSBSyncCompletion) {
+        // the reconstructed base family's synchronous completion is a marker
+        // IOUSBPipe set this IOByteCount to reqCount, so report the real length
+        if (completion->parameter)
+            *(IOByteCount *)completion->parameter = done;
+    } else if (completion && completion->action) {
+        (*completion->action)(completion->target, completion->parameter, ret,
+            (UInt32)(reqCount - done));
+    }
+    return ret;
 }

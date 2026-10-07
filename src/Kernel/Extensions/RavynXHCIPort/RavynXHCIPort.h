@@ -40,6 +40,7 @@ extern void XHCI_Log(const char *fmt, ...);
 
 class RavynXHCIMassStorageDisk;
 class RavynXHCIUSBBus;
+class IOUSBDevice;
 
 class RavynXHCIPort : public IOService
 {
@@ -52,6 +53,7 @@ public:
     bool start(IOService *provider) override;
     void stop(IOService *provider) override;
     void free() override;
+    IOReturn message(UInt32 type, IOService *provider, void *argument = NULL) override;
 
     /* Called by RavynXHCIMassStorageDisk to move data via bulk-only transport. */
     IOReturn botTransfer(UInt32 slotId,
@@ -88,12 +90,24 @@ private:
         bool                       tdOutstanding; /* an interrupt-IN TD is armed */
         bool                       loggedPollArm;
         bool                       loggedFirstCompletion;
+        UInt32                     transactionErrors;
         IOBufferMemoryDescriptor * reportMem;
         volatile UInt8           * reportVirt;
         UInt64                     reportPhys;
+        IOLock                   * lock;
+        IOBufferMemoryDescriptor * ringMem;
+        volatile XHCITRB          * ring;
+        UInt32                     enqueue;
+        UInt8                      cycle;
     };
 
-    IOPCIDevice        * fProvider;
+    IOService          * fProvider;
+    IOPCIDevice        * fPCI;
+    // dma below this mask, the a733 dwc3 gets 32-bit buffers
+    UInt64                fDMAMask;
+    // set when the controller is a non-coherent soc block (dwc3 on the a733)
+    bool                  fNonCoherent;
+    IOMemoryMap         * fSoCMaps[6];
     IOMemoryDescriptor * fBARDesc;
     IOMemoryMap         * fBARMap;
     UInt64                fBARLength;
@@ -142,9 +156,16 @@ private:
      * physically removed tears down the controller-owned transfer state;
      * higher-level nubs are owned by IOUSBFamily or the mass-storage path. */
     bool                   fPortOccupied[64];
+    UInt8                  fResetTries[64];
+    uint64_t               fVbusOnAt;
     volatile bool          fHotplugRunning;
+    // set once the controller is halted for a restart or the watchdog deadline
+    volatile bool          fQuiesced;
+    IONotifier           * fRestartNotifier;
     static void hotplugThread(void *arg, wait_result_t);
     void hotplugLoop();
+    void pollHubPorts();
+    void disconnectUSBDevices(UInt32 rootPort, UInt32 route, UInt32 mask);
     void handleRootPortDisconnect(UInt32 port0based, UInt32 portsc);
 
     /* DCBAA: array of 64-bit device-context pointers, index by slot ID (0 unused). */
@@ -185,6 +206,8 @@ private:
         UInt64        param;
         UInt32        status;
         UInt32        control;
+        UInt32        shortResidual;
+        UInt64        shortTRB;
     };
     XferCompletion fXferDone[64][32]; /* [slotId][DCI] */
     /* Last command completion (commands are serialized under fCmdLock). */
@@ -212,6 +235,15 @@ private:
     };
     SlotResources fSlots[64]; /* index by slot ID, 0 unused */
     UInt8 fSlotRootPort[64];  /* 0-based root hub port for each slot */
+    IOUSBDevice *fUSBDeviceNubs[64];
+    UInt32 fSlotRoute[64];
+    struct HubDevice {
+        bool valid, superSpeed;
+        UInt8 rootPort, numPorts, depth;
+        UInt32 route, connected, attempted;
+        UInt8 retries[32];
+    };
+    HubDevice fHubs[64];
 
     MSCDevice fMSC[16];
     RavynXHCIMassStorageDisk * fDiskNubs[16];
@@ -284,6 +316,15 @@ private:
             *(volatile UInt32 *)(fDBRegs + slot * 4) = target;
         }
 
+    bool startA733(IOService *provider);
+    void quiesce(const char *why);
+    static IOReturn restartHandler(void *target, void *refCon, UInt32 messageType,
+                                   IOService *provider, void *messageArgument, vm_size_t argSize);
+    volatile UInt32 *mapSoC(UInt64 phys, UInt64 len, int idx);
+    // clean and invalidate cpu lines for memory the controller reads or writes
+    void dmaFlush(const volatile void *va, UInt64 len) const;
+    void dmaFlushContexts();
+
     bool resetController();
     void claimBIOSOwnership();
     void parseExtendedCapabilities();
@@ -303,7 +344,8 @@ private:
                    UInt8 *outCC, UInt32 *outSlotId, UInt64 timeoutMs = 500);
 
     /* Poll the event ring for a Transfer Event on the given slot/endpoint. */
-    bool waitTransferEvent(UInt32 slotId, UInt32 epDCI, UInt8 *outCC, UInt32 timeoutMs = 1000);
+    bool waitTransferEvent(UInt32 slotId, UInt32 epDCI, UInt8 *outCC, UInt32 timeoutMs = 1000,
+                           UInt32 *outResidual = NULL, UInt64 *outTRB = NULL);
 
     /* Sole consumer of the event ring: drain all currently-available events
      * under fEventLock, recording each into fXferDone[][]/fCmdDone* for the
@@ -313,14 +355,14 @@ private:
     void interruptOccurred(IOInterruptEventSource *sender, int count);
     static void interruptOccurredStatic(OSObject *owner, IOInterruptEventSource *sender, int count);
 
-    /* Configure a single interrupt IN endpoint, reusing the slot's bulk-IN
-     * ring fields for the current reconstructed IOUSBController path. */
+    // each interrupt endpoint owns a ring and a persistent dma report buffer
     bool configureInterruptInEndpoint(UInt32 slotId, UInt8 epNum, UInt16 maxPkt, UInt8 interval);
     IOReturn interruptTransfer(UInt32 slotId, UInt8 epNum, IOMemoryDescriptor *buffer,
-                               UInt32 len, UInt32 timeoutMs);
+                               UInt32 len, UInt32 timeoutMs, UInt32 *done = NULL);
+    IOReturn abortInterruptEndpoint(UInt32 slotId, UInt8 epNum, bool reset = false);
 
     bool enableSlot(UInt32 *outSlotId);
-    void disableSlot(UInt32 slotId);
+    bool disableSlot(UInt32 slotId);
     void freeSlotResources(UInt32 slotId);
     bool addressDevice(UInt32 slotId, UInt32 port0based, UInt32 routeString,
                        UInt32 speed, UInt16 &maxPacket0,
@@ -329,9 +371,12 @@ private:
                                   UInt32 speed, UInt16 maxPkt, bool bsr,
                                   UInt32 parentHubSlot, UInt32 parentPortNum);
     bool controlTransfer(UInt32 slotId, const USBSetupPacket &setup,
-                         void *buf, UInt16 len, bool in);
+                         void *buf, UInt16 len, bool in, UInt32 *done = NULL);
     bool configureBulkEndpoints(UInt32 slotId, UInt8 inEp, UInt16 inMaxPkt,
                                 UInt8 outEp, UInt16 outMaxPkt);
+    // after a stall: reset the endpoint, move its dequeue past the halted td, clear the device halt
+    void recoverHaltedEndpoint(UInt32 slotId, UInt8 epNum, bool in);
+    void resetHaltedRing(UInt32 slotId, UInt32 dci, UInt64 deq, UInt8 cycle, UInt8 *cc1, UInt8 *cc2);
     bool bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
                       IOBufferMemoryDescriptor *xferMem, UInt32 len, UInt32 timeoutMs);
 

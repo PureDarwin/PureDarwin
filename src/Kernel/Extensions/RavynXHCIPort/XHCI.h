@@ -169,6 +169,8 @@ enum {
     TRB_TYPE_CONFIGURE_EP     = 12,
     TRB_TYPE_EVALUATE_CONTEXT = 13,
     TRB_TYPE_RESET_EP         = 14,
+    TRB_TYPE_STOP_EP          = 15,
+    TRB_TYPE_SET_TR_DEQUEUE   = 16,
     TRB_TYPE_NOOP_CMD         = 23,
     TRB_TYPE_TRANSFER_EVENT   = 32,
     TRB_TYPE_CMD_COMPLETION   = 33,
@@ -178,6 +180,8 @@ enum {
 /* Completion codes (event TRB status[31:24]) */
 #define TRB_CC(status)       (((status) >> 24) & 0xFF)
 #define TRB_CC_SUCCESS        1
+#define TRB_CC_TRANSACTION    4
+#define TRB_CC_STALL          6
 #define TRB_CC_SHORT_PACKET   13
 
 /* Setup stage TRT (transfer type) field, control[17:16] */
@@ -357,6 +361,7 @@ typedef struct {
 #define USB_REQ_SET_HUB_DEPTH          12   /* SS-hub-only class request */
 
 #define USB_HUB_FEAT_PORT_CONNECTION   0
+#define USB_HUB_PORT_CONNECTION        (1U << 0)
 #define USB_HUB_FEAT_PORT_RESET        4
 #define USB_HUB_FEAT_PORT_POWER        8
 #define USB_HUB_FEAT_C_PORT_CONNECTION 16
@@ -400,5 +405,45 @@ typedef struct {
     UInt32 dCSWDataResidue;
     UInt8  bCSWStatus;         /* 0=pass 1=fail 2=phase error */
 } __attribute__((packed)) USBBOTCommandStatusWrapper;
+
+// xhci intervals are powers of two microframes, fs/ls descriptors count frames
+static inline uint8_t
+pdUSBInterruptInterval(uint32_t speed, uint8_t interval)
+{
+    if (speed >= 3) {
+        if (interval < 1) interval = 1;
+        if (interval > 16) interval = 16;
+        return interval - 1;
+    }
+    if (!interval) interval = 1;
+    uint8_t exponent = 3;
+    while (interval > 1) {
+        interval >>= 1;
+        ++exponent;
+    }
+    return exponent;
+}
+
+static inline uint32_t
+pdUSBTransferredLength(uint32_t requested, uint32_t residual)
+{
+    return residual <= requested ? requested - residual : 0;
+}
+
+
+// a route's next nibble selects a hub port, the mask identifies its subtree
+static inline bool
+pdUSBChildRoute(uint32_t parent, uint8_t port, uint32_t *route, uint32_t *mask)
+{
+    if (!port || port > 15 || !route || !mask) return false;
+    for (uint32_t depth = 0; depth < 5; ++depth) {
+        if (((parent >> (depth * 4)) & 15) == 0) {
+            *route = parent | ((uint32_t)port << (depth * 4));
+            *mask = (1U << ((depth + 1) * 4)) - 1;
+            return true;
+        }
+    }
+    return false;
+}
 
 #endif /* _XHCI_H */

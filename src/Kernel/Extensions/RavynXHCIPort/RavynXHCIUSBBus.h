@@ -10,8 +10,8 @@
  * Scope limit inherited from RavynXHCIPort: configureBulkEndpoints()
  * configures a single bulk-in/out ring pair per slot (not indexed by
  * endpoint number), and configureInterruptInEndpoint() a single
- * interrupt-in ring. So this bus supports at most one bulk IN + one bulk
- * OUT + one interrupt IN endpoint per device, not arbitrary multi-endpoint
+ * interrupt-in ring per endpoint. This bus supports one bulk IN + one bulk
+ * OUT pair and multiple interrupt IN endpoints per device, not arbitrary multi-endpoint
  * topologies. USBDeviceAddress == the device's xHCI slot ID directly (no
  * separate bus-address abstraction - we own both ends).
  */
@@ -37,13 +37,19 @@ public:
 
     virtual IOReturn UIMDeviceRequest(IOUSBDevRequest *request, USBDeviceAddress address) APPLE_KEXT_OVERRIDE;
 
+    virtual IOReturn Read(IOMemoryDescriptor *buffer, USBDeviceAddress address,
+                          Endpoint *endpoint, IOUSBCompletion *completion = 0) APPLE_KEXT_OVERRIDE;
+    virtual IOReturn Read(IOMemoryDescriptor *buffer, USBDeviceAddress address,
+                          Endpoint *endpoint, IOUSBCompletion *completion,
+                          UInt32 noDataTimeout, UInt32 completionTimeout,
+                          IOByteCount reqCount) APPLE_KEXT_OVERRIDE;
+
     virtual IOReturn UIMReadWrite(IOMemoryDescriptor *buffer, USBDeviceAddress address,
                                    Endpoint *endpoint, bool isWrite) APPLE_KEXT_OVERRIDE;
 
 private:
     RavynXHCIPort *fPort;
     bool fBulkConfigured[64];
-    bool fIntrConfigured[64];
 };
 
 #endif /* !_RAVYN_XHCI_USB_BUS_H */
