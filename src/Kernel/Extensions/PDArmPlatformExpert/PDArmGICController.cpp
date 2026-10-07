@@ -2,6 +2,7 @@
 #include "PDArmGIC.h"
 
 #include <IOKit/IOLib.h>
+#include <IOKit/IODeviceTreeSupport.h>
 #include <IOKit/IOInterruptController.h>
 #include <IOKit/IOPlatformExpert.h>
 #include <IOKit/IOService.h>
@@ -39,6 +40,8 @@ private:
 	uint64_t          fRoute;
 	// GICv2: spis are Group 1 (irq) and go to this cpu interface through ITARGETSR, not IROUTER
 	bool              fV2;
+	// /arm-io/gic's phandle name, the interrupt parent device tree nubs list, when the loader has one
+	const OSSymbol   *fDTName;
 
 	void dwrite(uint32_t off, uint32_t val) { *(volatile uint32_t *)(fGicd + off) = val; }
 	uint32_t dread(uint32_t off) { return *(volatile uint32_t *)(fGicd + off); }
@@ -80,6 +83,13 @@ PDArmGICController::initGIC(volatile uint8_t *gicd, bool v2)
 	}
 
 	getPlatform()->registerInterruptController((OSSymbol *)OSSymbol::withCStringNoCopy("PDArmGIC"), this);
+	IORegistryEntry *gic = IORegistryEntry::fromPath("/arm-io/gic", gIODTPlane);
+	if (gic != NULL) {
+		fDTName = IODTInterruptControllerName(gic);
+		if (fDTName != NULL)
+			getPlatform()->registerInterruptController((OSSymbol *)fDTName, this);
+		gic->release();
+	}
 
 	// registering with the cpu controller blocks until every cpu takes interrupts, which only
 	// happens after the platform expert's start returns
@@ -111,6 +121,9 @@ PDArmGICController::attachThread(void *arg, wait_result_t)
 		IOLog("PDArmGIC: could not register with the cpu interrupt controller\n");
 	} else {
 		cpuIC->enableInterrupt(self, 0);
+		// drivers of device tree nubs wait for this, with a deadline, before registering
+		if (self->fDTName != NULL)
+			self->publishResource(self->fDTName, self);
 		IOLog("PDArmGIC: spi controller up, %u lines, routed to 0x%llx\n", self->fLines, self->fRoute);
 	}
 	self->release();
