@@ -16,14 +16,18 @@ struct VirtQueue {
     uint16_t   queueSize;
     uint16_t   queueIndex;
     uint16_t   lastUsedIdx;
-    volatile uint8_t *notifyAddr; // resolved once in initQueue; see notify()
-    uint16_t   nextFreeDesc; // simple bump allocator; caller is responsible
+    volatile uint8_t *notifyAddr; // resolved once in initQueue, see notify()
+    uint16_t   nextFreeDesc; // simple bump allocator, caller is responsible
                              // for not exceeding queueSize descriptors
                              // in flight at once (fine for a polling,
                              // one-request-at-a-time driver)
     bool       stalled;      // a blocking poll gave up on a request the device
-                             // may still complete later; the next submit has
+                             // may still complete later, the next submit has
                              // to resync before it can trust the used ring
+    // opt-in free list (enableFreeList) for drivers whose requests complete out of order
+    bool       useFreeList;
+    uint16_t   freeHead;
+    uint16_t   numFree;
 };
 
 struct VRingDesc {
@@ -38,7 +42,7 @@ struct VRingAvailHdr { uint16_t flags; uint16_t idx; };
 struct VRingUsedHdr  { uint16_t flags; uint16_t idx; };
 struct VRingUsedElem { uint32_t id; uint32_t len; };
 
-// One descriptor's worth of a chain being submitted; addr/len describe a
+// One descriptor's worth of a chain being submitted, addr/len describe a
 // physically-contiguous buffer, write == device-writable (response-style)
 // vs device-readable (request-style).
 struct VirtIOChainEntry {
@@ -66,7 +70,7 @@ public:
     bool attach(IOPCIDevice *pci);
     void detach();
 
-    // Writes the low 32 driver-feature bits (features 0-31); virtio-gpu/
+    // Writes the low 32 driver-feature bits (features 0-31), virtio-gpu/
     // blk/net/input/snd all fit their needed feature bits in the low
     // word for our purposes, so a single 32-bit call is enough here.
     bool negotiateFeatures(uint32_t driverFeatureBitsLow);
@@ -93,8 +97,20 @@ public:
     // device just filled.
     bool pollForCompletion(VirtQueue *vq, unsigned timeoutMs, uint32_t *outLen = 0, uint16_t *outId = 0);
 
+    // free-list allocation: chains stay owned by the device until freeDescChain, so requests may
+    // complete in any order. addDescChainFree returns -1 when too few descriptors are free
+    void enableFreeList(VirtQueue *vq);
+    int  addDescChainFree(VirtQueue *vq, const VirtIOChainEntry *entries, unsigned count);
+    void freeDescChain(VirtQueue *vq, uint16_t head);
+
+    // a VIRTIO_PCI_CAP_SHARED_MEMORY_CFG region by shmid: guest physical address and length
+    bool sharedMemoryRegion(uint8_t shmid, uint64_t *outPhys, uint64_t *outLength);
+
     volatile uint8_t *deviceConfig() const { return fDeviceCfg; }
     uint8_t readIsr(); // clears the ISR status bits on read, per spec
+    // msi-x table entries for one queue and for config changes, kNoVector leaves one silent
+    enum { kNoVector = 0xffff };
+    bool setMsixVectors(VirtQueue *vq, uint16_t queueVector, uint16_t configVector);
 
 private:
     IOPCIDevice       *fPCIDevice;
@@ -107,4 +123,9 @@ private:
     volatile uint8_t  *fIsrCfg;
     volatile uint8_t  *fDeviceCfg;
     uint32_t           fNotifyOffMultiplier;
+
+    struct SharedMemoryCap { uint8_t id, bar; uint64_t offset, length; };
+    enum { kMaxSharedMemoryCaps = 4 };
+    SharedMemoryCap    fShm[kMaxSharedMemoryCaps];
+    unsigned           fShmCount;
 };

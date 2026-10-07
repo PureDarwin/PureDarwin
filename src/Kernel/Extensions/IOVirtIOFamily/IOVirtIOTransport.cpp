@@ -10,13 +10,17 @@ enum {
     VIRTIO_PCI_CAP_NOTIFY_CFG = 2,
     VIRTIO_PCI_CAP_ISR_CFG    = 3,
     VIRTIO_PCI_CAP_DEVICE_CFG = 4,
+    VIRTIO_PCI_CAP_SHARED_MEMORY_CFG = 8,
 
     kCapLen        = 2,
     kCapCfgType    = 3,
     kCapBar        = 4,
+    kCapId         = 5,  // shmid of a shared memory cap
     kCapOffset     = 8,
     kCapLength     = 12,
     kCapNotifyMult = 16, // only present on VIRTIO_PCI_CAP_NOTIFY_CFG
+    kCapOffsetHi   = 16, // struct virtio_pci_cap64, shared memory caps
+    kCapLengthHi   = 20,
 };
 
 // struct virtio_pci_common_cfg field offsets
@@ -25,9 +29,11 @@ enum {
     kCommonDeviceFeature       = 4,
     kCommonDriverFeatureSelect = 8,
     kCommonDriverFeature       = 12,
+    kCommonMsixConfig          = 16,
     kCommonDeviceStatus        = 20,
     kCommonQueueSelect         = 22,
     kCommonQueueSize           = 24,
+    kCommonQueueMsixVector     = 26,
     kCommonQueueEnable         = 28,
     kCommonQueueNotifyOff      = 30,
     kCommonQueueDesc           = 32,
@@ -115,7 +121,8 @@ static IOMemoryMap *mapBar(IOPCIDevice *pci, uint8_t bar)
 
 IOVirtIOTransport::IOVirtIOTransport()
     : fPCIDevice(0), fCommonCfgMap(0), fNotifyCfgMap(0), fIsrCfgMap(0), fDeviceCfgMap(0),
-      fCommonCfg(0), fNotifyCfg(0), fIsrCfg(0), fDeviceCfg(0), fNotifyOffMultiplier(0)
+      fCommonCfg(0), fNotifyCfg(0), fIsrCfg(0), fDeviceCfg(0), fNotifyOffMultiplier(0),
+      fShmCount(0)
 {
 }
 
@@ -135,7 +142,7 @@ IOVirtIOTransport::attach(IOPCIDevice *pci)
     unsigned nCaps = 0;
     while ((found = pci->extendedFindPCICapability(PCI_CAP_ID_VNDR, &capOffset)) != 0) {
         nCaps++;
-        // capOffset is the capability's own start (cap_vndr byte); field
+        // capOffset is the capability's own start (cap_vndr byte), field
         // offsets below are relative to it, per struct virtio_pci_cap.
         UInt8 base = (UInt8)capOffset;
         UInt8 cfgType = pci->configRead8((UInt8)(base + kCapCfgType));
@@ -143,6 +150,21 @@ IOVirtIOTransport::attach(IOPCIDevice *pci)
         UInt32 off    = pci->configRead32((UInt8)(base + kCapOffset));
         IOLog("IOVirtIOTransport: vendor cap #%u at off=0x%x type=%u bar=%u regoff=0x%x\n",
               nCaps, (unsigned)capOffset, cfgType, bar, off);
+
+        // shared memory windows can be gigabytes, only record them, the driver maps what it uses
+        if (cfgType == VIRTIO_PCI_CAP_SHARED_MEMORY_CFG) {
+            if (fShmCount < kMaxSharedMemoryCaps) {
+                SharedMemoryCap *s = &fShm[fShmCount++];
+                s->id = pci->configRead8((UInt8)(base + kCapId));
+                s->bar = bar;
+                s->offset = off | ((uint64_t)pci->configRead32((UInt8)(base + kCapOffsetHi)) << 32);
+                s->length = pci->configRead32((UInt8)(base + kCapLength)) |
+                    ((uint64_t)pci->configRead32((UInt8)(base + kCapLengthHi)) << 32);
+                IOLog("IOVirtIOTransport: shared memory id=%u bar=%u offset=0x%llx length=0x%llx\n",
+                      s->id, bar, s->offset, s->length);
+            }
+            continue;
+        }
 
         IOMemoryMap *map = mapBar(pci, bar);
         if (!map) {
@@ -241,6 +263,21 @@ uint8_t
 IOVirtIOTransport::readIsr()
 {
     return fIsrCfg ? r8(fIsrCfg) : 0;
+}
+
+// with msi-x enabled every interrupt source needs a table entry, else the device raises nothing for it.
+// the device reads back NO_VECTOR when it refuses one
+bool
+IOVirtIOTransport::setMsixVectors(VirtQueue *vq, uint16_t queueVector, uint16_t configVector)
+{
+    if (!fCommonCfg)
+        return false;
+    w16(fCommonCfg + kCommonMsixConfig, configVector);
+    if (r16(fCommonCfg + kCommonMsixConfig) != configVector)
+        return false;
+    w16(fCommonCfg + kCommonQueueSelect, vq->queueIndex);
+    w16(fCommonCfg + kCommonQueueMsixVector, queueVector);
+    return r16(fCommonCfg + kCommonQueueMsixVector) == queueVector;
 }
 
 bool
@@ -386,4 +423,90 @@ IOVirtIOTransport::pollForCompletion(VirtQueue *vq, unsigned timeoutMs, uint32_t
     }
     vq->lastUsedIdx = (uint16_t)(vq->lastUsedIdx + 1);
     return true;
+}
+
+void
+IOVirtIOTransport::enableFreeList(VirtQueue *vq)
+{
+    VRingDesc *desc = (VRingDesc *)vq->desc;
+
+    for (uint16_t i = 0; i < vq->queueSize; i++) {
+        desc[i].flags = 0;
+        desc[i].next = (uint16_t)(i + 1);
+    }
+    vq->freeHead = 0;
+    vq->numFree = vq->queueSize;
+    vq->useFreeList = true;
+}
+
+int
+IOVirtIOTransport::addDescChainFree(VirtQueue *vq, const VirtIOChainEntry *entries, unsigned count)
+{
+    VRingDesc *desc = (VRingDesc *)vq->desc;
+
+    if (!vq->useFreeList || count == 0 || count > vq->numFree)
+        return -1;
+
+    uint16_t head = vq->freeHead, d = head;
+    for (unsigned i = 0; i < count; i++) {
+        uint16_t next = desc[d].next;
+        desc[d].addr  = entries[i].addr;
+        desc[d].len   = entries[i].len;
+        desc[d].flags = entries[i].write ? VRING_DESC_F_WRITE : 0;
+        if (i + 1 < count)
+            desc[d].flags |= VRING_DESC_F_NEXT;
+        else
+            vq->freeHead = next;
+        d = next;
+    }
+    vq->numFree = (uint16_t)(vq->numFree - count);
+
+    VRingAvailHdr *ah = (VRingAvailHdr *)vq->avail;
+    uint16_t *ring = (uint16_t *)((uint8_t *)vq->avail + sizeof(VRingAvailHdr));
+    ring[ah->idx % vq->queueSize] = head;
+    OSSynchronizeIO();
+    ah->idx = (uint16_t)(ah->idx + 1);
+    OSSynchronizeIO();
+
+    return head;
+}
+
+void
+IOVirtIOTransport::freeDescChain(VirtQueue *vq, uint16_t head)
+{
+    VRingDesc *desc = (VRingDesc *)vq->desc;
+    uint16_t d = head, n = 1;
+
+    while (desc[d].flags & VRING_DESC_F_NEXT) {
+        d = desc[d].next;
+        n++;
+    }
+    desc[d].flags = 0;
+    desc[d].next = vq->freeHead;
+    vq->freeHead = head;
+    vq->numFree = (uint16_t)(vq->numFree + n);
+}
+
+bool
+IOVirtIOTransport::sharedMemoryRegion(uint8_t shmid, uint64_t *outPhys, uint64_t *outLength)
+{
+    for (unsigned i = 0; i < fShmCount; i++) {
+        if (fShm[i].id != shmid || !fPCIDevice)
+            continue;
+
+        UInt8 reg = (UInt8)(kIOPCIConfigBaseAddress0 + fShm[i].bar * 4);
+        uint32_t lo = fPCIDevice->configRead32(reg);
+        if (lo & 0x1)
+            return false;
+        uint64_t base = lo & ~0x0fULL;
+        if ((lo & 0x6) == 0x4)
+            base |= (uint64_t)fPCIDevice->configRead32((UInt8)(reg + 4)) << 32;
+        if (!base)
+            return false;
+
+        *outPhys = base + fShm[i].offset;
+        *outLength = fShm[i].length;
+        return true;
+    }
+    return false;
 }

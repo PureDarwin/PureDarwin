@@ -229,7 +229,7 @@ IOVirtIOGPUUserClient::mSubmitCmd(IOExternalMethodArguments *a)
         kernel_task, kIODirectionInOut | kIOMemoryPhysicallyContiguous, len, 0xFFFFFFFFULL);
     if (bounce) {
         memcpy(bounce->getBytesNoCopy(), src, len);
-        ret = fOwner->gpu3DSubmit(ctxId, bounce->getPhysicalAddress(), (uint32_t)len,
+        ret = fOwner->gpu3DSubmit(ctxId, bounce, (uint32_t)len,
                                   fenceId) ? kIOReturnSuccess : kIOReturnIOError;
         bounce->release();
     }
