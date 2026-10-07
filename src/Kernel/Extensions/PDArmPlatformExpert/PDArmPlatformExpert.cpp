@@ -13,6 +13,8 @@
 #include "PDSun50iUSB.h"
 #include "PDSun50iWatchdog.h"
 #include "PDSg2002.h"
+#include "PDPerfControl.h"
+#include "PDSun60iDVFS.h"
 
 class PDArmPlatformExpert : public IODTPlatformExpert
 {
@@ -25,6 +27,8 @@ private:
 	IOMemoryMap *fRTCMap;
 	volatile uint32_t *fRTC;
 	thread_call_t fRTCPublish;
+	// pdtime=SECONDS on boards without an rtc driver: the calendar at boot, counted on from uptime
+	long fBootSecs;
 
 public:
 	IOService *probe(IOService *provider, SInt32 *score) APPLE_KEXT_OVERRIDE;
@@ -49,6 +53,22 @@ protected:
 };
 
 static bool pd_platform_is_bcm283x(void);
+
+#if defined(__arm64__)
+// without a handler reboot(2) returned to a torn-down userland and the board sat there,
+// while panics keep the old behaviour so their output stays on the console
+static int
+pdArmHaltRestart(unsigned int type)
+{
+	uint32_t log = 0;
+
+	if (PE_parse_boot_argn("pdhaltlog", &log, sizeof(log)) && log != 0)
+		IOLog("pdhaltlog: psci handler, type %u\n", type);
+	if (type == kPERestartCPU) return PDArmCPU::systemReset(false);
+	if (type == kPEHaltCPU) return PDArmCPU::systemReset(true);
+	return -1;
+}
+#endif
 
 #define super IODTPlatformExpert
 OSDefineMetaClassAndStructors(PDArmPlatformExpert, IODTPlatformExpert);
@@ -101,6 +121,9 @@ PDArmPlatformExpert::start(IOService *provider)
 	startQemuRTC();
 
 #if defined(__arm64__)
+	pd_perfcontrol_start();
+	PDSun60iDVFS_start();
+	PE_halt_restart = pdArmHaltRestart;
 	if (PDSun50i_isPlatform()) {
 		PDSun50iWatchdog_start();
 		PDSun50iMMC_publish(this);
@@ -170,19 +193,22 @@ PDArmPlatformExpert::startQemuRTC(void)
 
 	if (type == NULL || strncmp((const char *)type->getBytesNoCopy(), "qemuvirt-io", type->getLength()) != 0) {
 		OSSafeReleaseNULL(armio);
-		return;
+		if (!PE_parse_boot_argn("pdtime", &fBootSecs, sizeof(fBootSecs)) || fBootSecs <= 0)
+			return;
+		IOLog("PDArmPlatformExpert: calendar from pdtime %ld\n", fBootSecs);
+	} else {
+		OSSafeReleaseNULL(armio);
+		md = IOMemoryDescriptor::withPhysicalAddress(PD_QEMU_PL031_PHYS, 0x1000, kIODirectionInOut);
+		if (md == NULL) {
+			return;
+		}
+		fRTCMap = md->map(kIOMapInhibitCache);
+		md->release();
+		if (fRTCMap == NULL) {
+			return;
+		}
+		fRTC = (volatile uint32_t *)fRTCMap->getVirtualAddress();
 	}
-	OSSafeReleaseNULL(armio);
-	md = IOMemoryDescriptor::withPhysicalAddress(PD_QEMU_PL031_PHYS, 0x1000, kIODirectionInOut);
-	if (md == NULL) {
-		return;
-	}
-	fRTCMap = md->map(kIOMapInhibitCache);
-	md->release();
-	if (fRTCMap == NULL) {
-		return;
-	}
-	fRTC = (volatile uint32_t *)fRTCMap->getVirtualAddress();
 	// Root mount relied on the 30 s IOKitInitializeTime spent waiting for this: APFS still holds the
 	// container a few seconds after IOKit goes quiet, so IORTC is published 10 s later
 	{
@@ -209,14 +235,26 @@ PDArmPlatformExpert::publishRTC(thread_call_param_t self, thread_call_param_t)
 long
 PDArmPlatformExpert::getGMTTimeOfDay(void)
 {
-	return fRTC != NULL ? (long)fRTC[PD_PL031_DR] : 0;
+	uint64_t ns;
+
+	if (fRTC != NULL)
+		return (long)fRTC[PD_PL031_DR];
+	if (fBootSecs == 0)
+		return 0;
+	absolutetime_to_nanoseconds(mach_absolute_time(), &ns);
+	return fBootSecs + (long)(ns / NSEC_PER_SEC);
 }
 
 void
 PDArmPlatformExpert::setGMTTimeOfDay(long secs)
 {
+	uint64_t ns;
+
 	if (fRTC != NULL) {
 		fRTC[PD_PL031_LR] = (uint32_t)secs;
+	} else if (fBootSecs != 0) {
+		absolutetime_to_nanoseconds(mach_absolute_time(), &ns);
+		fBootSecs = secs - (long)(ns / NSEC_PER_SEC);
 	}
 }
 

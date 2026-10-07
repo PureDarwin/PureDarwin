@@ -27,6 +27,8 @@ public:
 	static void setCPUCount(unsigned int count);
 	// Register this processor with xnu. The boot CPU also finishes its setup
 	bool startForCPU(unsigned int cpu, uint32_t phys_id, bool boot);
+	// psci system reset, or system off, returns only on failure
+	static int systemReset(bool off);
 };
 
 class PDArmCPUInterruptController : public IOCPUInterruptController {

@@ -8,6 +8,8 @@
 #include <IOKit/IORegistryEntry.h>
 #include <IOKit/IODeviceTreeSupport.h>
 #include <pexpert/pexpert.h>
+#include <IOKit/IOService.h>
+#include <IOKit/IOMessage.h>
 #include "PDSun50iWatchdog.h"
 
 #define SUN50I_WDT_PHYS		0x030090a0ULL
@@ -39,14 +41,41 @@ wdt_wr(uint32_t off, uint32_t val)
 	__asm__ volatile ("dsb sy" ::: "memory");
 }
 
+// a watchdog reset may not reach every bus master, so drivers marked pd-quiesce stop their dma
+// first, as for a restart. pdnoquiesce=1 skips it, to see what a reset leaves running
+static void
+wdt_quiesce_drivers(void)
+{
+	const OSSymbol *key = OSSymbol::withCString("pd-quiesce");
+	OSDictionary *match = key != NULL ? IOService::propertyMatching(key, kOSBooleanTrue) : NULL;
+	OSIterator *iter = match != NULL ? IOService::getMatchingServices(match) : NULL;
+	IOService *svc;
+	uint32_t skip = 0, n = 0;
+
+	if (PE_parse_boot_argn("pdnoquiesce", &skip, sizeof(skip)) && skip != 0) {
+		IOLog("PDSun50iWatchdog: deadline, quiesce skipped by pdnoquiesce\n");
+	} else {
+		while (iter != NULL && (svc = OSDynamicCast(IOService, iter->getNextObject())) != NULL) {
+			svc->message(kIOMessageSystemWillRestart, NULL, NULL);
+			n++;
+		}
+		IOLog("PDSun50iWatchdog: deadline, %u drivers quiesced, reset in 16 s\n", n);
+	}
+	OSSafeReleaseNULL(iter);
+	OSSafeReleaseNULL(match);
+	OSSafeReleaseNULL(key);
+}
+
 static void
 wdt_feed(thread_call_param_t, thread_call_param_t)
 {
 	uint64_t next;
 
 	// past the deadline the feeding stops and the watchdog resets the board 16s later
-	if (mach_absolute_time() >= gWdtDeadline)
+	if (mach_absolute_time() >= gWdtDeadline) {
+		wdt_quiesce_drivers();
 		return;
+	}
 	wdt_wr(gWdtLayout->ctrl, WDT_CTRL_RESTART);
 	clock_interval_to_deadline(WDT_FEED_MS, kMillisecondScale, &next);
 	thread_call_enter_delayed(gWdtCall, next);

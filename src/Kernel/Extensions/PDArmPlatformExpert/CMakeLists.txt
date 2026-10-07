@@ -11,6 +11,8 @@ target_sources(PDArmPlatformExpert PRIVATE
     PDSun50iUSB.cpp
     PDSun50iWatchdog.cpp
     PDSg2002.cpp
+    PDPerfControl.cpp
+    PDSun60iDVFS.cpp
 )
 
 install(TARGETS PDArmPlatformExpert DESTINATION System/Library/Extensions COMPONENT BaseSystem)

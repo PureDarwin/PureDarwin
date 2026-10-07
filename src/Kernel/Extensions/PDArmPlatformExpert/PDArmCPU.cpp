@@ -15,6 +15,8 @@
 // The conduit is HVC unless EL3 firmware claims SMC
 #define PSCI_FN_VERSION		0x84000000u
 #define PSCI_FN64_CPU_ON	0xc4000003u
+#define PSCI_FN_SYSTEM_OFF	0x84000008u
+#define PSCI_FN_SYSTEM_RESET	0x84000009u
 
 static bool pd_psci_use_smc;
 static bool pd_psci_probed;
@@ -166,6 +168,15 @@ pd_psci_available(void)
 		    pd_psci_use_smc ? "smc" : "hvc");
 	}
 	return true;
+}
+
+// reboot(2) and shutdown end here, psci only returns when the firmware lacks the call
+int
+PDArmCPU::systemReset(bool off)
+{
+	pd_psci_available();
+	pd_psci_call(off ? PSCI_FN_SYSTEM_OFF : PSCI_FN_SYSTEM_RESET, 0, 0, 0, pd_psci_use_smc);
+	return -1;
 }
 
 #undef super

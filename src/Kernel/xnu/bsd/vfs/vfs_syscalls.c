@@ -3599,8 +3599,18 @@ sync_internal(void)
 		thread_deallocate(thd);
 	}
 
-	return 0;
+	// EWOULDBLOCK when the wait timed out (pd_sync_bounded reports it), callers before ignored the result
+	return error;
 } /* end of sync_internal call */
+
+// a sync of every mount for a platform driver about to cut power (thermal emergency): bounded by
+// sync_timeout_seconds, so a stuck filesystem cannot hold the power-off back
+int pd_sync_bounded(void);
+int
+pd_sync_bounded(void)
+{
+	return sync_internal();
+}
 
 /*
  * Change filesystem quotas.
