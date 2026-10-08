@@ -38,6 +38,7 @@ public:
 	const char *excludeList(void) APPLE_KEXT_OVERRIDE;
 	bool getMachineName(char *name, int maxLength) APPLE_KEXT_OVERRIDE;
 	bool getModelName(char *name, int maxLength) APPLE_KEXT_OVERRIDE;
+	bool getTargetName(char *name, int maxLength) APPLE_KEXT_OVERRIDE;
 	long getGMTTimeOfDay(void) APPLE_KEXT_OVERRIDE;
 	void setGMTTimeOfDay(long secs) APPLE_KEXT_OVERRIDE;
 
@@ -327,6 +328,71 @@ fail:
 #endif
 
 static bool pd_platform_is_bcm283x(void);
+static bool sPDVirtualMac;
+
+// a VirtualMac2,1's identity as a 26.6.2 Virtualization.framework guest shows it (pd-ref ioreg).
+// pad 32 is a fixed 32 byte field, 0 a plain C string, word a 32-bit value
+struct PDIdentityProp {
+	const char *key, *str;
+	uint32_t pad, word;
+};
+
+static const PDIdentityProp kPDVirtualMacRoot[] = {
+	{ "target-sub-type", "VMA2MACOSAP", 0, 0 },
+	{ "platform-name", "vmapple2", 32, 0 },
+	{ "manufacturer", "Apple Inc.", 0, 0 },
+	{ "model-number", "VM0001", 32, 0 },
+	{ "region-info", "LL/A", 32, 0 },
+	{ "device_type", "bootrom", 0, 0 },
+};
+
+static const PDIdentityProp kPDVirtualMacProduct[] = {
+	{ "product-name", "Apple Virtual Machine 1", 0, 0 },
+	{ "product-description", "virtual machine for ARM-v8.4 with Apple Silicon extensions", 0, 0 },
+	{ "product-soc-name", "Apple M1 (Virtual)", 0, 0 },
+	{ "sub-product-type", "VirtualMac2,1", 0, 0 },
+	{ "fdr-product-type", "VirtualMac2,1", 0, 0 },
+	{ "unique-model", "VMA2MACOSAP", 0, 0 },
+	{ "compatible-app-variant", "MacFamily20,1", 0, 0 },
+	{ "compatible-device-fallback", "iPad8,6", 0, 0 },
+	{ "app-macho-architecture", "arm64", 0, 0 },
+	{ "partition-style", "macOS", 0, 0 },
+	{ "graphics-featureset-class", "APPLE7", 0, 0 },
+	{ "graphics-featureset-fallbacks", "APPLE6:APPLE5:APPLE4:APPLE3:APPLE3v1:APPLE2:APPLE1:GLES2,0", 0, 0 },
+	{ "allow-hactivation", NULL, 0, 1 },
+	{ "has-virtualization", NULL, 0, 1 },
+	{ "allow-32bit-apps", NULL, 0, 1 },
+};
+
+static void
+pd_set_identity(IORegistryEntry *e, const PDIdentityProp *props, size_t n)
+{
+	for (size_t i = 0; i < n; i++) {
+		char buf[64] = {};
+		OSData *d;
+
+		if (props[i].str == NULL) {
+			d = OSData::withBytes(&props[i].word, sizeof(props[i].word));
+		} else if (props[i].pad != 0) {
+			strlcpy(buf, props[i].str, sizeof(buf));
+			d = OSData::withBytes(buf, props[i].pad);
+		} else {
+			d = OSData::withBytes(props[i].str, (unsigned)strlen(props[i].str) + 1);
+		}
+		if (d == NULL) continue;
+		e->setProperty(props[i].key, d);
+		d->release();
+	}
+}
+
+// QEMU virt's root as the loader builds it: compatible and model both "ACPI"
+static bool
+pd_root_is_placeholder(IORegistryEntry *root)
+{
+	OSData *c = OSDynamicCast(OSData, root->getProperty("compatible"));
+
+	return c != NULL && c->getLength() >= 5 && memcmp(c->getBytesNoCopy(), "ACPI", 5) == 0;
+}
 
 void
 PDArmPlatformExpert::processTopLevel(IORegistryEntry *root)
@@ -341,6 +407,25 @@ PDArmPlatformExpert::processTopLevel(IORegistryEntry *root)
 			root->setProperty("target-type", tt);
 			tt->release();
 		}
+	}
+	// the loader's placeholder root ("ACPI") gets the rest of a VirtualMac2,1's identity:
+	// MobileGestalt's ProductType is nil without it and apsd throws on the nil
+	if (root != NULL && pd_root_is_placeholder(root)) {
+		static const char compat[] = "VMA2MACOSAP\0VirtualMac2,1\0AppleVirtualPlatformARM";
+		OSData *c = OSData::withBytes(compat, sizeof(compat));
+		OSData *m = OSData::withBytes("VirtualMac2,1", sizeof("VirtualMac2,1"));
+
+		if (c != NULL) root->setProperty("compatible", c);
+		if (m != NULL) root->setProperty("model", m);
+		OSSafeReleaseNULL(c);
+		OSSafeReleaseNULL(m);
+		pd_set_identity(root, kPDVirtualMacRoot, sizeof(kPDVirtualMacRoot) / sizeof(kPDVirtualMacRoot[0]));
+		IORegistryEntry *product = IORegistryEntry::fromPath("/product", gIODTPlane);
+		if (product != NULL) {
+			pd_set_identity(product, kPDVirtualMacProduct, sizeof(kPDVirtualMacProduct) / sizeof(kPDVirtualMacProduct[0]));
+			product->release();
+		}
+		sPDVirtualMac = true;
 	}
 }
 
@@ -361,6 +446,15 @@ PDArmPlatformExpert::getMachineName(char *name, int maxLength)
 {
 	if (name == 0 || maxLength <= 0) return false;
 	strlcpy(name, "arm64", (size_t)maxLength);
+	return true;
+}
+
+bool
+PDArmPlatformExpert::getTargetName(char *name, int maxLength)
+{
+	if (name == 0 || maxLength <= 0) return false;
+	if (!sPDVirtualMac) return getModelName(name, maxLength);
+	strlcpy(name, "VMA2MACOSAP", (size_t)maxLength);
 	return true;
 }
 
@@ -448,7 +542,7 @@ PDArmPlatformExpert::initPlatformInterruptsLate(void)
 const char *
 PDArmPlatformExpert::platformModelName(void)
 {
-	return "QEMU Virtual ARM64";
+	return sPDVirtualMac ? "VirtualMac2,1" : "QEMU Virtual ARM64";
 }
 
 /*
