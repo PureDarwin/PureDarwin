@@ -102,6 +102,9 @@ extern int pshm_cache_purge_uid(uid_t uid);
 extern void reset_osvariant_status(void);
 extern void reset_osreleasetype(void);
 
+int pd_halt_log_enabled(void);
+extern void IOLog(const char *format, ...) __printflike(1, 2);
+
 int
 reboot(struct proc *p, struct reboot_args *uap, __unused int32_t *retval)
 {
@@ -110,6 +113,8 @@ reboot(struct proc *p, struct reboot_args *uap, __unused int32_t *retval)
 	size_t dummy = 0;
 
 	AUDIT_ARG(cmd, uap->opt);
+	if (pd_halt_log_enabled())
+		IOLog("pdhaltlog: reboot(2) entered by %s opt 0x%x\n", proc_best_name(p), uap->opt);
 
 	if ((error = suser(kauth_cred_get(), &p->p_acflag))) {
 #if (DEVELOPMENT || DEBUG)
@@ -150,6 +155,8 @@ reboot(struct proc *p, struct reboot_args *uap, __unused int32_t *retval)
 skip_cred_check:
 #endif
 #endif
+	if (pd_halt_log_enabled())
+		printf("pdhaltlog: reboot(2) from %s opt 0x%x, mac check %d\n", proc_best_name(p), uap->opt, error);
 	if (!error) {
 		OSBitOrAtomic(P_REBOOT, &p->p_flag);  /* No more signals for this proc */
 		error = reboot_kernel(uap->opt, message);

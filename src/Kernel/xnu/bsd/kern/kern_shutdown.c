@@ -70,6 +70,7 @@
 #include <IOKit/IOMessage.h>
 
 #include <sys/kdebug.h>
+#include <pexpert/pexpert.h>
 
 uint32_t system_inshutdown = 0;
 uint32_t final_shutdown_stage = 0;
@@ -182,6 +183,21 @@ extern int vm_swapfile_create_thread_running;
 extern int vm_swapfile_gc_thread_running;
 extern uint32_t cl_sparse_push_error;
 
+// pdhaltlog=1 prints each step of a reboot or halt, to find where one stops
+int pd_halt_log_enabled(void);
+
+int
+pd_halt_log_enabled(void)
+{
+	static int state = -1;
+	int on = 0;
+
+	if (state < 0) state = PE_parse_boot_argn("pdhaltlog", &on, sizeof(on)) && on;
+	return state;
+}
+
+#define PD_HALT_STEP(...) do { if (pd_halt_log_enabled()) printf("pdhaltlog: " __VA_ARGS__); } while (0)
+
 int
 reboot_kernel(int howto, char *message)
 {
@@ -192,6 +208,7 @@ reboot_kernel(int howto, char *message)
 		panic_kernel(howto, message);
 	}
 
+	PD_HALT_STEP("reboot_kernel howto 0x%x\n", howto);
 	if (!OSCompareAndSwap(0, 1, &system_inshutdown)) {
 		if ((howto & RB_QUICK) == RB_QUICK) {
 			goto force_reboot;
@@ -216,11 +233,13 @@ reboot_kernel(int howto, char *message)
 	}
 
 	lck_mtx_unlock(&vm_swap_data_lock);
+	PD_HALT_STEP("swap work stopped\n");
 
 	/*
 	 * Notify the power management root domain that the system will shut down.
 	 */
 	IOSystemShutdownNotification(howto, kIOSystemShutdownNotificationStageProcessExit);
+	PD_HALT_STEP("process exit notification done\n");
 
 	if ((howto & RB_QUICK) == RB_QUICK) {
 		printf("Quick reboot...\n");
@@ -241,6 +260,7 @@ reboot_kernel(int howto, char *message)
 		startTime = mach_absolute_time();
 		proc_shutdown(TRUE);
 		halt_log_enter("proc_shutdown", 0, mach_absolute_time() - startTime);
+		PD_HALT_STEP("proc_shutdown done\n");
 
 #if CONFIG_AUDIT
 		startTime = mach_absolute_time();
@@ -256,6 +276,7 @@ reboot_kernel(int howto, char *message)
 
 		startTime = mach_absolute_time();
 		sync((proc_t)NULL, (void *)NULL, (int *)NULL);
+		PD_HALT_STEP("sync done\n");
 
 		if (kdebug_enable) {
 			startTime = mach_absolute_time();
@@ -264,6 +285,7 @@ reboot_kernel(int howto, char *message)
 		}
 
 		IOSystemShutdownNotification(howto, kIOSystemShutdownNotificationStageRootUnmount);
+		PD_HALT_STEP("root unmount notification done\n");
 
 		if (cl_sparse_push_error) {
 			panic("system_shutdown cluster_push_err failed with ENOSPC %d times\n", cl_sparse_push_error);
@@ -286,8 +308,10 @@ reboot_kernel(int howto, char *message)
 			vfs_unmountall(TRUE);
 			halt_log_enter("vfs_unmountall", 0, mach_absolute_time() - startTime);
 		}
+		PD_HALT_STEP("first unmount done\n");
 
 		IOSystemShutdownNotification(howto, kIOSystemShutdownNotificationTerminateDEXTs);
+		PD_HALT_STEP("dext termination done\n");
 
 		startTime = mach_absolute_time();
 		proc_shutdown(FALSE);
@@ -301,6 +325,7 @@ reboot_kernel(int howto, char *message)
 			vfs_unmountall(FALSE);
 			halt_log_enter("vfs_unmountall", 0, mach_absolute_time() - startTime);
 		}
+		PD_HALT_STEP("second unmount done\n");
 
 
 
@@ -331,6 +356,7 @@ reboot_kernel(int howto, char *message)
 	if_down_all();
 	halt_log_enter("if_down_all", 0, mach_absolute_time() - startTime);
 #endif /* NETWORKING */
+	PD_HALT_STEP("interfaces down\n");
 
 force_reboot:
 

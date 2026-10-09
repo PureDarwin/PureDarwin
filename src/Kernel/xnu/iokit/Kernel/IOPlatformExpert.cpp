@@ -994,6 +994,8 @@ PEInitiatePanic(void)
 #endif // defined(__arm64__)
 }
 
+extern "C" int pd_halt_log_enabled(void);
+
 int
 PEHaltRestartInternal(unsigned int type, uint32_t details)
 {
@@ -1053,7 +1055,11 @@ PEHaltRestartInternal(unsigned int type, uint32_t details)
 			thread_call_enter1_delayed( shutdown_hang, (thread_call_param_t)(uintptr_t)timeout, deadline );
 		}
 
+		if (pd_halt_log_enabled())
+			printf("pdhaltlog: platform halt/restart %u notifying drivers\n", type);
 		pmRootDomain->handlePlatformHaltRestart(type);
+		if (pd_halt_log_enabled())
+			printf("pdhaltlog: drivers notified\n");
 		/* This notification should have few clients who all do
 		 *  their work synchronously.
 		 *
@@ -1105,6 +1111,8 @@ PEHaltRestartInternal(unsigned int type, uint32_t details)
 	}
 
 skip_to_haltRestart:
+	if (gIOPlatform && pd_halt_log_enabled() && type != kPEPanicSync)
+		printf("pdhaltlog: platform haltRestart(%u)\n", type);
 	if (gIOPlatform) {
 		// note that this will not necessarily halt or restart the system...
 		// Implementors of this function will check the type and take action accordingly

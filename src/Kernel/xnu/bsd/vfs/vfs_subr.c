@@ -77,6 +77,8 @@
  * External virtual filesystem routines
  */
 
+#include <kern/backtrace.h>
+#include <pexpert/pexpert.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/proc_internal.h>
@@ -154,6 +156,22 @@
 #include <vfs/vfs_disk_conditioner.h>
 #include <libkern/section_keywords.h>
 
+// pdvntrace=NAME: every iocount change of the device vnode NAME (e.g. disk4s1), with the caller's
+// kernel frames, kept in a ring and printed when an unmount waits on that vnode (vnode_drain)
+#define PD_VN_RING 256
+#define PD_VN_FRAMES 10
+static struct pd_vn_rec {
+	int delta, iocount, pid;
+	char comm[12];
+	uintptr_t bt[PD_VN_FRAMES];
+} pd_vn_ring[PD_VN_RING];
+static unsigned pd_vn_next;
+static char pd_vn_want[32];
+static int pd_vn_state;	// 0 unparsed, 1 on, 2 off
+static void pd_vn_trace(vnode_t vp, int delta);
+static void pd_vn_dump(vnode_t vp);
+
+
 static LCK_GRP_DECLARE(vnode_lck_grp, "vnode");
 static LCK_ATTR_DECLARE(vnode_lck_attr, 0, 0);
 
@@ -226,6 +244,7 @@ errno_t rmdir_remove_orphaned_appleDouble(vnode_t, vfs_context_t, int *);
 
 #ifdef CONFIG_IOCOUNT_TRACE
 static void record_vp(vnode_t vp, int count);
+
 static TUNABLE(int, bootarg_vnode_iocount_trace, "vnode_iocount_trace", 0);
 static TUNABLE(int, bootarg_uthread_iocount_trace, "uthread_iocount_trace", 0);
 #endif /* CONFIG_IOCOUNT_TRACE */
@@ -2544,6 +2563,7 @@ again:
 #ifdef CONFIG_IOCOUNT_TRACE
 		record_vp(vp, 1);
 #endif
+		pd_vn_trace(vp, 1);
 		vnode_unlock(vp);
 		buf_invalidateblks(vp, BUF_INVALIDATE_LOCKED, 0, 0);
 		vnode_lock(vp);
@@ -2802,6 +2822,7 @@ vnode_rele_internal(vnode_t vp, int fmode, int dont_reenter, int locked)
 #ifdef CONFIG_IOCOUNT_TRACE
 	record_vp(vp, 1);
 #endif
+	pd_vn_trace(vp, 1);
 	vp->v_lflag &= ~VL_NEEDINACTIVE;
 
 	if (UBCINFOEXISTS(vp)) {
@@ -2860,6 +2881,9 @@ done:
  * system error). If MNT_FORCE is specified, detach any active vnodes
  * that are found.
  */
+
+int pd_halt_log_enabled(void);
+extern void IOLog(const char *format, ...) __printflike(1, 2);
 
 int
 vflush(struct mount *mp, struct vnode *skipvp, int flags)
@@ -2921,7 +2945,18 @@ loop:
 		// If vnode is already terminating, wait for it...
 		while (vp->v_id == vid && ISSET(vp->v_lflag, VL_TERMINATE)) {
 			vp->v_lflag |= VL_TERMWANT;
-			msleep(&vp->v_lflag, &vp->v_lock, PVFS, "vflush", NULL);
+			if (pd_halt_log_enabled()) {
+				// pdhaltlog: a reclaim that never ends blocks unmount, name the vnode every 10 s
+				struct timespec ts = { 10, 0 };
+
+				if (msleep(&vp->v_lflag, &vp->v_lock, PVFS, "vflush", &ts) == EWOULDBLOCK)
+					IOLog("pdhaltlog: vflush waits on vnode %s type %d tag %d mount %s iocount %d usecount %d "
+					    "kusecount %d numoutput %d lflag 0x%x flag 0x%x\n", vp->v_name ? vp->v_name : "(none)",
+					    vp->v_type, vp->v_tag, mp->mnt_vfsstat.f_mntonname, vp->v_iocount, vp->v_usecount,
+					    vp->v_kusecount, vp->v_numoutput, vp->v_lflag, vp->v_flag);
+			} else {
+				msleep(&vp->v_lflag, &vp->v_lock, PVFS, "vflush", NULL);
+			}
 		}
 
 		if ((vp->v_id != vid) || ISSET(vp->v_lflag, VL_DEAD)) {
@@ -2978,6 +3013,7 @@ loop:
 #ifdef CONFIG_IOCOUNT_TRACE
 			record_vp(vp, 1);
 #endif
+			pd_vn_trace(vp, 1);
 			vnode_reclaim_internal(vp, 1, 1, 0);
 			vnode_dropiocount(vp);
 			vnode_list_add(vp);
@@ -3001,6 +3037,7 @@ loop:
 #ifdef CONFIG_IOCOUNT_TRACE
 				record_vp(vp, 1);
 #endif
+				pd_vn_trace(vp, 1);
 				vnode_abort_advlocks(vp);
 				vnode_reclaim_internal(vp, 1, 1, 0);
 				vnode_dropiocount(vp);
@@ -5499,6 +5536,7 @@ process_vp(vnode_t vp, int want_vp, bool can_defer, int *deferred)
 #ifdef CONFIG_IOCOUNT_TRACE
 		record_vp(vp, 1);
 #endif
+		pd_vn_trace(vp, 1);
 		vnode_put_locked(vp);
 		vnode_drop_and_unlock(vp);
 
@@ -5894,6 +5932,7 @@ retry:
 #endif
 
 		vp->v_iocount = 1;
+		pd_vn_trace(vp, 0);
 
 		goto done;
 	}
@@ -6129,6 +6168,7 @@ steal_this_vp:
 #endif /* MAC */
 
 	vp->v_iocount = 1;
+	pd_vn_trace(vp, 0);
 	vp->v_lflag = 0;
 	vp->v_writecount = 0;
 	vp->v_references = 0;
@@ -6406,10 +6446,12 @@ vnode_get_locked(struct vnode *vp)
 	if (os_add_overflow(vp->v_iocount, 1, &vp->v_iocount)) {
 		panic("v_iocount overflow");
 	}
+	pd_vn_trace(vp, 1);
 
 #ifdef CONFIG_IOCOUNT_TRACE
 	record_vp(vp, 1);
 #endif
+	pd_vn_trace(vp, 1);
 	return 0;
 }
 
@@ -6729,6 +6771,17 @@ vnode_drain(vnode_t vp)
 				vp->v_iocount = 1;
 				break;
 			}
+		} else if (pd_halt_log_enabled()) {
+			// pdhaltlog: an iocount that never drops blocks unmount, name the vnode every 10 s
+			struct timespec ts = { 10, 0 };
+
+			if (msleep(&vp->v_iocount, &vp->v_lock, PVFS, "vnode_drain", &ts) == EWOULDBLOCK)
+				pd_vn_dump(vp);
+			if (vp->v_iocount > 1)
+				IOLog("pdhaltlog: vnode_drain waits on vnode %s type %d tag %d mount %s iocount %d usecount %d "
+				    "kusecount %d numoutput %d lflag 0x%x flag 0x%x\n", vp->v_name ? vp->v_name : "(none)",
+				    vp->v_type, vp->v_tag, vp->v_mount ? vp->v_mount->mnt_vfsstat.f_mntonname : "(none)",
+				    vp->v_iocount, vp->v_usecount, vp->v_kusecount, vp->v_numoutput, vp->v_lflag, vp->v_flag);
 		} else {
 			msleep(&vp->v_iocount, &vp->v_lock, PVFS, "vnode_drain", NULL);
 		}
@@ -6864,6 +6917,7 @@ vnode_getiocount(vnode_t vp, unsigned int vid, int vflags)
 #ifdef CONFIG_IOCOUNT_TRACE
 	record_vp(vp, 1);
 #endif
+	pd_vn_trace(vp, 1);
 	return 0;
 }
 
@@ -6878,6 +6932,7 @@ vnode_dropiocount(vnode_t vp)
 #ifdef CONFIG_IOCOUNT_TRACE
 	record_vp(vp, -1);
 #endif
+	pd_vn_trace(vp, -1);
 	if ((vp->v_lflag & (VL_DRAIN | VL_SUSPENDED)) && (vp->v_iocount <= 1)) {
 		wakeup(&vp->v_iocount);
 	}
@@ -7124,6 +7179,7 @@ vnode_create_internal(uint32_t flavor, uint32_t size, void *data, vnode_t *vpp,
 #ifdef CONFIG_IOCOUNT_TRACE
 			record_vp(vp, 1);
 #endif
+			pd_vn_trace(vp, 1);
 			vnode_hold(vp);
 			vnode_lock(vp);
 			vn_set_dead(vp);
@@ -7139,6 +7195,7 @@ vnode_create_internal(uint32_t flavor, uint32_t size, void *data, vnode_t *vpp,
 #ifdef CONFIG_IOCOUNT_TRACE
 	record_vp(vp, 1);
 #endif
+	pd_vn_trace(vp, 1);
 
 #if CONFIG_FIRMLINKS
 	vp->v_fmlink = NULLVP;
@@ -7158,6 +7215,7 @@ vnode_create_internal(uint32_t flavor, uint32_t size, void *data, vnode_t *vpp,
 #ifdef CONFIG_IOCOUNT_TRACE
 		record_vp(vp, -1);
 #endif
+		pd_vn_trace(vp, -1);
 		error = vnode_resolver_create(param->vnfs_mp, vp, tinfo, FALSE);
 		if (error) {
 			printf("vnode_create: vnode_resolver_create() err %d\n", error);
@@ -7167,6 +7225,7 @@ vnode_create_internal(uint32_t flavor, uint32_t size, void *data, vnode_t *vpp,
 #ifdef CONFIG_IOCOUNT_TRACE
 			record_vp(vp, 1);
 #endif
+			pd_vn_trace(vp, 1);
 			vnode_put_locked(vp);
 			vnode_drop_and_unlock(vp);
 			return error;
@@ -13557,4 +13616,46 @@ bool
 vnode_isappendonly(vnode_t vp)
 {
 	return os_atomic_load(&vp->v_ext_flag, relaxed) & VE_APPENDONLY;
+}
+
+static void
+pd_vn_trace(vnode_t vp, int delta)
+{
+	struct pd_vn_rec *r;
+	proc_t p;
+
+	if (pd_vn_state == 0)
+		pd_vn_state = PE_parse_boot_argn("pdvntrace", pd_vn_want, sizeof(pd_vn_want)) && pd_vn_want[0] ? 1 : 2;
+	if (pd_vn_state != 1 || vp->v_name == NULL || strcmp(vp->v_name, pd_vn_want) != 0)
+		return;
+	r = &pd_vn_ring[os_atomic_inc_orig(&pd_vn_next, relaxed) % PD_VN_RING];
+	r->delta = delta, r->iocount = vp->v_iocount;
+	p = current_proc();
+	r->pid = p ? proc_getpid(p) : -1;
+	strlcpy(r->comm, p ? proc_best_name(p) : "?", sizeof(r->comm));
+	memset(r->bt, 0, sizeof(r->bt));
+	backtrace(r->bt, PD_VN_FRAMES, NULL, NULL);
+}
+
+// the recorded changes, oldest first: frames unslid and in decimal, so the console does not redact them
+static void
+pd_vn_dump(vnode_t vp)
+{
+	static int dumped;
+	unsigned n = pd_vn_next, first = n > PD_VN_RING ? n - PD_VN_RING : 0;
+
+	if (pd_vn_state != 1 || dumped || vp->v_name == NULL || strcmp(vp->v_name, pd_vn_want) != 0)
+		return;
+	dumped = 1;
+	IOLog("pdvntrace: %u iocount changes on %s, last %u:\n", n, pd_vn_want, n - first);
+	for (unsigned i = first; i < n; i++) {
+		struct pd_vn_rec *r = &pd_vn_ring[i % PD_VN_RING];
+		char line[PD_VN_FRAMES * 21 + 1];
+		int len = 0;
+
+		line[0] = 0;
+		for (int j = 0; j < PD_VN_FRAMES && r->bt[j]; j++)
+			len += snprintf(line + len, sizeof(line) - len, " %llu", (unsigned long long)VM_KERNEL_UNSLIDE(r->bt[j]));
+		IOLog("pdvntrace: %+d -> %d %s[%d]%s\n", r->delta, r->iocount, r->comm, r->pid, line);
+	}
 }
