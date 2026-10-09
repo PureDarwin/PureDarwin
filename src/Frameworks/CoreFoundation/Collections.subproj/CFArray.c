@@ -12,6 +12,8 @@
 	    Samuel Zormeister (1/7/2026) - Add DEPLOYMENT_RUNTIME_SWIFT macro guard to __CFSwiftBridge invocation.
 */
 
+// non-CF instances of this type are messaged, see CFObjCDispatch.h
+#define CF_OBJC_DISPATCH_ENABLED 1
 #include <CoreFoundation/CFArray.h>
 #include <CoreFoundation/CFPriv.h>
 #include "CFInternal.h"
@@ -511,6 +513,7 @@ Boolean CFArrayContainsValue(CFArrayRef array, CFRange range, const void *value)
 
 const void *CFArrayGetValueAtIndex(CFArrayRef array, CFIndex idx) {
     CF_SWIFT_FUNCDISPATCHV(CFArrayGetTypeID(), const void *, (CFSwiftRef)array, NSArray.objectAtIndex, idx);
+    CF_OBJC_FUNCDISPATCHV(CFArrayGetTypeID(), const void *, (NSArray *)array, objectAtIndex:(NSUInteger)idx);
 
 
 #if !CF_ARRAY_ALWAYS_BRIDGE
@@ -972,7 +975,7 @@ void CFArraySortValues(CFMutableArrayRef array, CFRange range, CFComparatorFunct
     Boolean immutable = false;
     if (CF_IS_OBJC(CFArrayGetTypeID(), array)) {
         BOOL result;
-        result = CF_OBJC_CALLV((NSMutableArray *)array, isKindOfClass:[NSMutableArray class]);
+        result = CF_OBJC_CALLV((NSMutableArray *)array, isKindOfClass:objc_getClass("NSMutableArray"));
         immutable = !result;
     } else if (CF_IS_SWIFT(CFArrayGetTypeID(), array)) {
 #if DEPLOYMENT_RUNTIME_SWIFT

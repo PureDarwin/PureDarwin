@@ -17,6 +17,8 @@
 */
 
 #define ENABLE_ZOMBIES 1
+// CFGetTypeID, CFEqual, CFHash and friends message non-CF objects
+#define CF_OBJC_DISPATCH_ENABLED 1
 
 #include <CoreFoundation/CFBase.h>
 #include <CoreFoundation/CFRuntime.h>
@@ -333,17 +335,102 @@ CFTypeID _CFRuntimeRegisterClass(const CFRuntimeClass * const cls) {
 }
 
 #if DEPLOYMENT_RUNTIME_OBJC
+// every class CF has stamped on an instance, append-only so CF_IS_OBJC can read it without the lock
+#define __CFOwnedClassMax 128
+static _Atomic(uintptr_t) __CFOwnedClasses[__CFOwnedClassMax];
+static _Atomic(int) __CFOwnedClassCount = 0;
+
+// caller holds __CFBigRuntimeFunnel
+static void __CFAddCFOwnedClass(uintptr_t cls) {
+    int n = atomic_load(&__CFOwnedClassCount);
+
+    if (cls == 0)
+        return;
+    for (int i = 0; i < n; i++) {
+        if (atomic_load(&__CFOwnedClasses[i]) == cls)
+            return;
+    }
+    if (n == __CFOwnedClassMax)
+        HALT;
+    atomic_store(&__CFOwnedClasses[n], cls);
+    atomic_store(&__CFOwnedClassCount, n + 1);
+}
+
+CF_PRIVATE Boolean __CFIsCFOwnedClass(uintptr_t cls) {
+    int n = atomic_load(&__CFOwnedClassCount);
+
+    for (int i = 0; i < n; i++) {
+        if (atomic_load(&__CFOwnedClasses[i]) == cls)
+            return true;
+    }
+    return false;
+}
+
 void _CFRuntimeBridgeClasses(CFTypeID cf_typeID, const char *cls_name) {
     __CFLock(&__CFBigRuntimeFunnel);
     Class cls_ref = objc_getFutureClass(cls_name);
     __CFRuntimeObjCClassTable[cf_typeID] = (uintptr_t)cls_ref;
+    __CFAddCFOwnedClass((uintptr_t)cls_ref);
     __CFUnlock(&__CFBigRuntimeFunnel);
+}
+
+DECLARE_STATIC_CLASS_REF(__NSCFType);
+DECLARE_STATIC_CLASS_REF(__NSCFBoolean);
+DECLARE_STATIC_CLASS_REF(__NSCFNumber);
+DECLARE_STATIC_CLASS_REF(NSNull);
+
+static pthread_key_t __CFObjCDispatchKey;
+static pthread_once_t __CFObjCDispatchKeyOnce = PTHREAD_ONCE_INIT;
+static _Atomic(int) __CFObjCDispatchWarnings = 0;
+
+static void __CFObjCDispatchKeyInit(void) {
+    pthread_key_create(&__CFObjCDispatchKey, NULL);
+}
+
+static Boolean __CFObjCDispatchEnter(__CFObjCDispatchFrame *frame, const void *obj, const char *fn, Boolean warn) {
+    pthread_once(&__CFObjCDispatchKeyOnce, __CFObjCDispatchKeyInit);
+    __CFObjCDispatchFrame *top = (__CFObjCDispatchFrame *)pthread_getspecific(__CFObjCDispatchKey);
+
+    // frames below this one on the stack were left behind by an exception unwinding past CF
+    while (top != NULL && (uintptr_t)top <= (uintptr_t)frame)
+        top = top->prev;
+    for (__CFObjCDispatchFrame *f = top; f != NULL; f = f->prev) {
+        if (f->obj == obj && f->fn == fn) {
+            if (warn && atomic_fetch_add(&__CFObjCDispatchWarnings, 1) < 8)
+                CFLog(kCFLogLevelWarning, CFSTR("*** %s: -[%s] came back to CF for the same object, reading it as a CF object"), fn, object_getClassName((id)obj));
+            pthread_setspecific(__CFObjCDispatchKey, top);
+            return false;
+        }
+    }
+    frame->obj = obj;
+    frame->fn = fn;
+    frame->prev = top;
+    pthread_setspecific(__CFObjCDispatchKey, frame);
+    return true;
+}
+
+CF_PRIVATE Boolean _CFObjCDispatchEnter(__CFObjCDispatchFrame *frame, const void *obj, const char *fn) {
+    return __CFObjCDispatchEnter(frame, obj, fn, true);
+}
+
+// the bridged classes' own -retain, -hash and friends call back into CF: a subclass instance that is not a CF object then gets NSObject's behaviour
+#define __CFObjCGeneric(obj, message, fallback) ({ \
+    __attribute__((cleanup(_CFObjCDispatchLeave))) __CFObjCDispatchFrame __cfObjCFrame = { 0 }; \
+    __CFObjCDispatchEnter(&__cfObjCFrame, (const void *)(obj), __func__, false) ? (message) : (fallback); \
+})
+
+CF_PRIVATE void _CFObjCDispatchLeave(__CFObjCDispatchFrame *frame) {
+    if (frame->obj != NULL)
+        pthread_setspecific(__CFObjCDispatchKey, frame->prev);
 }
 #endif
 
 void _CFRuntimeBridgeTypeToClass(CFTypeID cf_typeID, const void *cls_ref) {
     __CFLock(&__CFBigRuntimeFunnel);
     __CFRuntimeObjCClassTable[cf_typeID] = (uintptr_t)cls_ref;
+#if DEPLOYMENT_RUNTIME_OBJC
+    __CFAddCFOwnedClass((uintptr_t)cls_ref);
+#endif
     __CFUnlock(&__CFBigRuntimeFunnel);
 }
 
@@ -744,13 +831,31 @@ CF_INLINE Boolean CFTYPE_IS_SWIFT(const void *obj) {
 
 #endif
 
-#if DEPLOYMENT_TARGET_OBJC
+#if DEPLOYMENT_RUNTIME_OBJC
 
-/* TODO: these */
+// any object CF did not create, read before the typeID so a tagged pointer is never dereferenced
+static inline Boolean CFTYPE_IS_OBJC(const void *obj) {
+#if OBJC_HAVE_TAGGED_POINTERS
+    if (_objc_isTaggedPointer(obj))
+        return true;
+#endif
+    return CF_IS_OBJC(__CFGenericTypeID_inline(obj), obj);
+}
 
-#define CFTYPE_IS_OBJC(obj) (false)
-#define CFTYPE_OBJC_FUNCDISPATCH0(rettype, obj, sel) do {} while (0)
-#define CFTYPE_OBJC_FUNCDISPATCH1(rettype, obj, sel, a1) do {} while (0)
+#define CFTYPE_OBJC_FUNCDISPATCH0(rettype, obj, sel) do { \
+    if (CFTYPE_IS_OBJC(obj)) { \
+        __attribute__((cleanup(_CFObjCDispatchLeave))) __CFObjCDispatchFrame __cfObjCFrame = { 0 }; \
+        if (_CFObjCDispatchEnter(&__cfObjCFrame, (const void *)(obj), __func__)) \
+            return (rettype)[(id<__CFObjCDispatchTargets>)(obj) sel]; \
+    } \
+} while (0)
+#define CFTYPE_OBJC_FUNCDISPATCH1(rettype, obj, sel, a1) do { \
+    if (CFTYPE_IS_OBJC(obj)) { \
+        __attribute__((cleanup(_CFObjCDispatchLeave))) __CFObjCDispatchFrame __cfObjCFrame = { 0 }; \
+        if (_CFObjCDispatchEnter(&__cfObjCFrame, (const void *)(obj), __func__)) \
+            return (rettype)[(id<__CFObjCDispatchTargets>)(obj) sel(id)(a1)]; \
+    } \
+} while (0)
 
 #else
 
@@ -765,7 +870,9 @@ CFTypeID CFGetTypeID(CFTypeRef cf) {
 #if defined(DEBUG)
     if (NULL == cf) { CRSetCrashLogMessage("*** CFGetTypeID() called with NULL ***"); HALT; }
 #endif
-    CFTYPE_OBJC_FUNCDISPATCH0(CFTypeID, cf, _cfTypeID);
+#if DEPLOYMENT_RUNTIME_OBJC
+    if (CFTYPE_IS_OBJC(cf)) return __CFObjCGeneric(cf, (CFTypeID)[(id<__CFObjCDispatchTargets>)cf _cfTypeID], (CFTypeID)_kCFRuntimeIDCFType);
+#endif
     CFTYPE_SWIFT_FUNCDISPATCH0(CFTypeID, cf, NSObject._cfTypeID);
 
     __CFGenericAssertIsCF(cf);
@@ -794,12 +901,18 @@ CF_INLINE Boolean __CFTypeRefIsObjC(const void *obj) {
 
 CFTypeRef CFRetain(CFTypeRef cf) {
     if (NULL == cf) { CRSetCrashLogMessage("*** CFRetain() called with NULL ***"); HALT; }
+#if DEPLOYMENT_RUNTIME_OBJC
+    if (CFTYPE_IS_OBJC(cf)) return (CFTypeRef)__CFObjCGeneric(cf, objc_retain((id)cf), _objc_rootRetain((id)cf));
+#endif
     if (cf) __CFGenericAssertIsCF(cf);
     return _CFRetain(cf, false);
 }
 
 CFTypeRef CFAutorelease(CFTypeRef __attribute__((cf_consumed)) cf) {
     if (NULL == cf) { CRSetCrashLogMessage("*** CFAutorelease() called with NULL ***"); HALT; }
+#if DEPLOYMENT_RUNTIME_OBJC
+    if (CFTYPE_IS_OBJC(cf)) return (CFTypeRef)__CFObjCGeneric(cf, objc_autorelease((id)cf), _objc_rootAutorelease((id)cf));
+#endif
     return cf;
 }
 
@@ -812,6 +925,17 @@ void _CFNonObjCRelease(CFTypeRef cf) {
 
 void CFRelease(CFTypeRef cf) {
     if (NULL == cf) { CRSetCrashLogMessage("*** CFRelease() called with NULL ***"); HALT; }
+#if DEPLOYMENT_RUNTIME_OBJC
+    if (CFTYPE_IS_OBJC(cf)) {
+        __attribute__((cleanup(_CFObjCDispatchLeave))) __CFObjCDispatchFrame frame = { 0 };
+
+        if (__CFObjCDispatchEnter(&frame, cf, __func__, false))
+            objc_release((id)cf);
+        else
+            _objc_rootRelease((id)cf);
+        return;
+    }
+#endif
     if (cf) __CFGenericAssertIsCF(cf);
     _CFRelease(cf);
 }
@@ -897,6 +1021,9 @@ CF_PRIVATE void __CFRuntimeSetRC(CFTypeRef cf, uint32_t rc) {
 
 CFIndex CFGetRetainCount(CFTypeRef cf) {
     if (NULL == cf) { CRSetCrashLogMessage("*** CFGetRetainCount() called with NULL ***"); HALT; }
+#if DEPLOYMENT_RUNTIME_OBJC
+    if (CFTYPE_IS_OBJC(cf)) return (CFIndex)__CFObjCGeneric(cf, [(id)cf retainCount], _objc_rootRetainCount((id)cf));
+#endif
     __CFInfoType info = atomic_load(&(((CFRuntimeBase *)cf)->_cfinfoa));
     if (info & RC_CUSTOM_RC_BIT) { // custom ref counting for object
         CFTypeID typeID = __CFTypeIDFromInfo(info);
@@ -936,7 +1063,9 @@ Boolean _CFNonObjCEqual(CFTypeRef cf1, CFTypeRef cf2) {
     //cf1 is guaranteed to be non-NULL and non-ObjC, cf2 is unknown
     if (cf1 == cf2) return true;
     if (NULL == cf2) { CRSetCrashLogMessage("*** CFEqual() called with NULL second argument ***"); HALT; }
-    CFTYPE_OBJC_FUNCDISPATCH1(Boolean, cf2, isEqual:, cf1);
+#if DEPLOYMENT_RUNTIME_OBJC
+    if (CFTYPE_IS_OBJC(cf2)) return __CFObjCGeneric(cf2, (Boolean)[(id)cf2 isEqual:(id)cf1], false);
+#endif
     CFTYPE_SWIFT_FUNCDISPATCH1(Boolean, cf2, NSObject.isEqual, (CFSwiftRef)cf1);
     __CFGenericAssertIsCF(cf1);
     __CFGenericAssertIsCF(cf2);
@@ -951,8 +1080,11 @@ Boolean CFEqual(CFTypeRef cf1, CFTypeRef cf2) {
     if (NULL == cf1) { CRSetCrashLogMessage("*** CFEqual() called with NULL first argument ***"); HALT; }
     if (cf1 == cf2) return true;
     if (NULL == cf2) { CRSetCrashLogMessage("*** CFEqual() called with NULL second argument ***"); HALT; }
-    CFTYPE_OBJC_FUNCDISPATCH1(Boolean, cf1, isEqual:, cf2);
-    CFTYPE_OBJC_FUNCDISPATCH1(Boolean, cf2, isEqual:, cf1);
+#if DEPLOYMENT_RUNTIME_OBJC
+    // identity was checked above, which is all NSObject's -isEqual: adds
+    if (CFTYPE_IS_OBJC(cf1)) return __CFObjCGeneric(cf1, (Boolean)[(id)cf1 isEqual:(id)cf2], false);
+    if (CFTYPE_IS_OBJC(cf2)) return __CFObjCGeneric(cf2, (Boolean)[(id)cf2 isEqual:(id)cf1], false);
+#endif
     CFTYPE_SWIFT_FUNCDISPATCH1(Boolean, cf1, NSObject.isEqual, (CFSwiftRef)cf2);
     CFTYPE_SWIFT_FUNCDISPATCH1(Boolean, cf2, NSObject.isEqual, (CFSwiftRef)cf1);
     __CFGenericAssertIsCF(cf1);
@@ -975,7 +1107,9 @@ CFHashCode _CFNonObjCHash(CFTypeRef cf) {
 
 CFHashCode CFHash(CFTypeRef cf) {
     if (NULL == cf) { CRSetCrashLogMessage("*** CFHash() called with NULL ***"); HALT; }
-    CFTYPE_OBJC_FUNCDISPATCH0(CFHashCode, cf, hash);
+#if DEPLOYMENT_RUNTIME_OBJC
+    if (CFTYPE_IS_OBJC(cf)) return __CFObjCGeneric(cf, (CFHashCode)[(id)cf hash], (CFHashCode)_objc_rootHash((id)cf));
+#endif
     CFTYPE_SWIFT_FUNCDISPATCH0(CFHashCode, cf, NSObject.hash);
     __CFGenericAssertIsCF(cf);
     CFHashCode (*hash)(CFTypeRef cf) = __CFRuntimeClassTable[__CFGenericTypeID_inline(cf)]->hash;
@@ -989,7 +1123,11 @@ CFHashCode CFHash(CFTypeRef cf) {
 // definition: produces a normally non-NULL debugging description of the object
 CFStringRef CFCopyDescription(CFTypeRef cf) {
     if (NULL == cf) return NULL;
-    // CFTYPE_OBJC_FUNCDISPATCH0(CFStringRef, cf, _copyDescription);  // XXX returns 0 refcounted item under GC
+#if DEPLOYMENT_RUNTIME_OBJC
+    if (CFTYPE_IS_OBJC(cf))
+        return __CFObjCGeneric(cf, (CFStringRef)[[(id)cf description] retain],
+                               CFStringCreateWithFormat(kCFAllocatorSystemDefault, NULL, CFSTR("<%s %p>"), object_getClassName((id)cf), cf));
+#endif
     __CFGenericAssertIsCF(cf);
     if (NULL != __CFRuntimeClassTable[__CFGenericTypeID_inline(cf)]->copyDebugDesc) {
 	CFStringRef result = __CFRuntimeClassTable[__CFGenericTypeID_inline(cf)]->copyDebugDesc(cf);
@@ -1012,6 +1150,9 @@ extern CFAllocatorRef __CFAllocatorGetAllocator(CFTypeRef);
 
 CFAllocatorRef CFGetAllocator(CFTypeRef cf) {
     if (NULL == cf) return kCFAllocatorSystemDefault;
+#if DEPLOYMENT_RUNTIME_OBJC
+    if (CFTYPE_IS_OBJC(cf)) return kCFAllocatorSystemDefault;
+#endif
     if (_kCFRuntimeIDCFAllocator == __CFGenericTypeID_inline(cf)) {
 	return __CFAllocatorGetAllocator(cf);
     }
@@ -1236,6 +1377,22 @@ void __CFInitialize(void) {
         // (Bridging.subproj/__NSCFType.m); specific types can still
         // override this with their own more precise bridge class via a
         // later _CFRuntimeBridgeClasses() call, same as NSCFString does.
+        // the classes of CF's statically initialized objects (allocators, booleans, numbers, null)
+        __CFLock(&__CFBigRuntimeFunnel);
+        __CFAddCFOwnedClass((uintptr_t)STATIC_CLASS_REF(__NSCFType));
+        __CFAddCFOwnedClass((uintptr_t)STATIC_CLASS_REF(__NSCFBoolean));
+        __CFAddCFOwnedClass((uintptr_t)STATIC_CLASS_REF(__NSCFNumber));
+        __CFAddCFOwnedClass((uintptr_t)STATIC_CLASS_REF(NSNull));
+        // constant strings point here, or at Foundation's NSCFString when weak binding picked it
+        __CFAddCFOwnedClass((uintptr_t)&__CFConstantStringClassReference);
+        Dl_info __cfInfo;
+        if (dladdr((const void *)&__CFInitialize, &__cfInfo) && __cfInfo.dli_fname != NULL) {
+            void *__cfImage = dlopen(__cfInfo.dli_fname, RTLD_NOLOAD | RTLD_LAZY);
+            // CF's own definition, which a binary's constant strings may bind to even when CF's references coalesced
+            if (__cfImage != NULL)
+                __CFAddCFOwnedClass((uintptr_t)dlsym(__cfImage, "__CFConstantStringClassReference"));
+        }
+        __CFUnlock(&__CFBigRuntimeFunnel);
         for (CFIndex idx = 1; idx < __CFRuntimeClassTableSize; idx++) {
             _CFRuntimeBridgeClasses(idx, "__NSCFType");
         }

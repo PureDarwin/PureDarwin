@@ -10,6 +10,8 @@
 !!! For performance reasons, it's important that all functions marked CF_INLINE in this file are inlined.
 */
 
+// non-CF instances of this type are messaged, see CFObjCDispatch.h
+#define CF_OBJC_DISPATCH_ENABLED 1
 #include <CoreFoundation/CFBase.h>
 #include <CoreFoundation/CFString.h>
 #include <CoreFoundation/CFDictionary.h>
@@ -1671,7 +1673,7 @@ CFStringRef  CFStringCreateWithFormat(CFAllocatorRef alloc, CFDictionaryRef form
 
 CFStringRef CFStringCreateWithSubstring(CFAllocatorRef alloc, CFStringRef str, CFRange range) {
     CF_SWIFT_FUNCDISPATCHV(_kCFRuntimeIDCFString, CFStringRef, (CFSwiftRef)str, NSString._createSubstringWithRange, range);
-//      CF_OBJC_FUNCDISPATCHV(_kCFRuntimeIDCFString, CFStringRef , (NSString *)str, _createSubstringWithRange:NSMakeRange(range.location, range.length));
+    CF_OBJC_FUNCDISPATCHV(_kCFRuntimeIDCFString, CFStringRef , (NSString *)str, _createSubstringWithRange:NSMakeRange(range.location, range.length));
 
     __CFAssertIsString(str);
     __CFAssertRangeIsInStringBounds(str, range.location, range.length);
@@ -1714,7 +1716,7 @@ CF_PRIVATE CFStringRef _CFStringCopyBundleUnloadingProtectedString(CFStringRef s
 
 CFStringRef CFStringCreateCopy(CFAllocatorRef alloc, CFStringRef str) {
     CF_SWIFT_FUNCDISPATCHV(_kCFRuntimeIDCFString, CFStringRef, (CFSwiftRef)str, NSString.copy);
-//  CF_OBJC_FUNCDISPATCHV(_kCFRuntimeIDCFString, CFStringRef, (NSString *)str, copy);
+    CF_OBJC_FUNCDISPATCHV(_kCFRuntimeIDCFString, CFStringRef, (NSString *)str, copy);
 
     __CFAssertIsString(str);
     if (!__CFStrIsMutable((CFStringRef)str) && 								// If the string is not mutable
@@ -1994,7 +1996,7 @@ CFMutableStringRef CFStringCreateMutable(CFAllocatorRef alloc, CFIndex maxLength
 CFMutableStringRef  CFStringCreateMutableCopy(CFAllocatorRef alloc, CFIndex maxLength, CFStringRef string) {
     CFMutableStringRef newString;
 
-    //  CF_OBJC_FUNCDISPATCHV(_kCFRuntimeIDCFString, CFMutableStringRef, (NSString *)string, mutableCopy);
+    CF_OBJC_FUNCDISPATCHV(_kCFRuntimeIDCFString, CFMutableStringRef, (NSString *)string, mutableCopy);
 
     __CFAssertIsString(string);
 

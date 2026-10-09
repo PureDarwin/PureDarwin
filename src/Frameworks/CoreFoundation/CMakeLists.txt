@@ -119,6 +119,7 @@ add_framework(CoreFoundation
                 # Base
                 Base.subproj/CFAsmMacros.h
                 Base.subproj/CFInternal.h
+                Base.subproj/CFObjCDispatch.h
                 Base.subproj/CFKnownLocations.h
                 Base.subproj/CFLogUtilities.h
                 Base.subproj/CFPriv.h
@@ -271,6 +272,7 @@ add_framework(CoreFoundation
                 # wired by nix/pkgs/corefoundation.nix)
                 Bridging.subproj/__NSCFType.m
                 Bridging.subproj/CFBridgingClasses.m
+                Bridging.subproj/NSBlock.m
                 Bridging.subproj/CFXPCBridge.c
                 # Base
                 Base.subproj/CFBase.c

@@ -7,6 +7,7 @@
  */
 
 #import <Foundation/NSArray.h>
+#import <Foundation/NSIndexSet.h>
 #import <Foundation/NSSortDescriptor.h>
 #import <Foundation/NSException.h>
 #import <Foundation/NSNull.h>
@@ -85,15 +86,37 @@ static void __NSArray0Init(void) {
                                      &kCFTypeArrayCallBacks);
 }
 
+extern Boolean _CFIsObjC(CFTypeID typeID, void *obj);
+
+// a subclass that is not a CFArray (Swift's bridged arrays, NSConstantArray): the abstract methods work through its primitives
+// the cluster's own classes are not: an +alloc'd NSMutableArray is a placeholder whose -init returns a CFArray
+static inline BOOL __NSArrayIsForeign(id array) {
+    Class cls = object_getClass(array);
+
+    if (cls == [NSArray class] || cls == [NSMutableArray class])
+        return NO;
+    return _CFIsObjC(CFArrayGetTypeID(), (void *)array) ? YES : NO;
+}
+
+static void __NSArrayAbstract(id self, SEL _cmd) {
+    [NSException raise:NSInvalidArgumentException
+                format:@"*** -[%s %s]: method only defined for abstract class", object_getClassName(self), sel_getName(_cmd)];
+}
+
 @implementation NSArray
 
 /* See the note in NSDictionary.m: bridged onto CF, so +new/-init must produce a
  * real CF object rather than NSObject's plain allocation. */
 + (instancetype)new {
+    // a subclass outside the cluster gets a real instance of itself
+    if (self != [NSArray class])
+        return [[self alloc] init];
     return [self array];
 }
 
 - (instancetype)init {
+    if (__NSArrayIsForeign(self))
+        return [super init];
     return [NSArray array];
 }
 
@@ -169,11 +192,35 @@ static void __NSArray0Init(void) {
 }
 
 - (NSUInteger)count {
+    if (__NSArrayIsForeign(self)) {
+        __NSArrayAbstract(self, _cmd);
+        return 0;
+    }
     return (NSUInteger)CFArrayGetCount((CFArrayRef)self);
 }
 
 - (id)objectAtIndex:(NSUInteger)index {
+    if (__NSArrayIsForeign(self)) {
+        __NSArrayAbstract(self, _cmd);
+        return nil;
+    }
     return (id)CFArrayGetValueAtIndex((CFArrayRef)self, (CFIndex)index);
+}
+
+// CFArrayGetValues sends this to arrays that are not CFArrays
+- (void)getObjects:(id __unsafe_unretained *)objects range:(NSRange)range {
+    if (!__NSArrayIsForeign(self)) {
+        CFArrayGetValues((CFArrayRef)self, CFRangeMake((CFIndex)range.location, (CFIndex)range.length),
+                         (const void **)objects);
+        return;
+    }
+    for (NSUInteger i = 0; i < range.length; i++) {
+        objects[i] = [self objectAtIndex:range.location + i];
+    }
+}
+
+- (CFTypeID)_cfTypeID {
+    return CFArrayGetTypeID();
 }
 
 - (id)objectAtIndexedSubscript:(NSUInteger)index {
@@ -184,15 +231,23 @@ static void __NSArray0Init(void) {
  * would free CF-allocated memory, and constant strings, which CF keeps
  * immortal, are not heap objects at all. Forward to CF. */
 - (id)retain {
+    if (__NSArrayIsForeign(self))
+        return [super retain];
     CFRetain((CFTypeRef)self);
     return self;
 }
 
 - (oneway void)release {
+    if (__NSArrayIsForeign(self)) {
+        [super release];
+        return;
+    }
     CFRelease((CFTypeRef)self);
 }
 
 - (NSUInteger)retainCount {
+    if (__NSArrayIsForeign(self))
+        return [super retainCount];
     return (NSUInteger)CFGetRetainCount((CFTypeRef)self);
 }
 
@@ -366,6 +421,19 @@ static void __NSArray0Init(void) {
     if (self == other) {
         return YES;
     }
+    if (__NSArrayIsForeign(self) || __NSArrayIsForeign(other)) {
+        NSUInteger count = [self count];
+
+        if ([other count] != count)
+            return NO;
+        for (NSUInteger i = 0; i < count; i++) {
+            id left = [self objectAtIndex:i], right = [other objectAtIndex:i];
+
+            if (left != right && ![left isEqual:right])
+                return NO;
+        }
+        return YES;
+    }
     return CFEqual((CFTypeRef)self, (CFTypeRef)other) ? YES : NO;
 }
 
@@ -447,12 +515,47 @@ static void __NSArray0Init(void) {
                            NSStringFromClass([self class])];
         return;
     }
+    if (__NSArrayIsForeign(self)) {
+        [self insertObject:object atIndex:[self count]];
+        return;
+    }
     CFArrayAppendValue((CFMutableArrayRef)self, (const void *)object);
 }
 
 - (void)insertObject:(id)object atIndex:(NSUInteger)index {
+    if (__NSArrayIsForeign(self)) {
+        __NSArrayAbstract(self, _cmd);
+        return;
+    }
     CFArrayInsertValueAtIndex((CFMutableArrayRef)self, (CFIndex)index,
                               (const void *)object);
+}
+
+// CFArraySetValueAtIndex sends this to arrays that are not CFArrays
+- (void)setObject:(id)object atIndex:(NSUInteger)index {
+    if (!__NSArrayIsForeign(self)) {
+        CFArraySetValueAtIndex((CFMutableArrayRef)self, (CFIndex)index, object);
+        return;
+    }
+    if (index == [self count])
+        [self insertObject:object atIndex:index];
+    else
+        [self replaceObjectAtIndex:index withObject:object];
+}
+
+// CFArrayReplaceValues and everything built on it send this to arrays that are not CFArrays
+- (void)replaceObjectsInRange:(NSRange)range withObjects:(const id *)objects count:(NSUInteger)count {
+    if (!__NSArrayIsForeign(self)) {
+        CFArrayReplaceValues((CFMutableArrayRef)self, CFRangeMake((CFIndex)range.location, (CFIndex)range.length),
+                             (const void **)objects, (CFIndex)count);
+        return;
+    }
+    for (NSUInteger i = range.length; i > 0; i--) {
+        [self removeObjectAtIndex:range.location + i - 1];
+    }
+    for (NSUInteger i = 0; i < count; i++) {
+        [self insertObject:objects[i] atIndex:range.location + i];
+    }
 }
 
 - (void)setArray:(NSArray *)array {
@@ -502,11 +605,21 @@ static void __NSArray0Init(void) {
 }
 
 - (void)removeObjectAtIndex:(NSUInteger)index {
+    if (__NSArrayIsForeign(self)) {
+        __NSArrayAbstract(self, _cmd);
+        return;
+    }
     CFArrayRemoveValueAtIndex((CFMutableArrayRef)self, (CFIndex)index);
 }
 
 - (void)removeLastObject {
     CFIndex count = CFArrayGetCount((CFArrayRef)self);
+
+    if (__NSArrayIsForeign(self)) {
+        if (count > 0)
+            [self removeObjectAtIndex:(NSUInteger)(count - 1)];
+        return;
+    }
     if (count > 0) {
         CFArrayRemoveValueAtIndex((CFMutableArrayRef)self, count - 1);
     }
@@ -549,10 +662,29 @@ static void __NSArray0Init(void) {
 }
 
 - (void)replaceObjectAtIndex:(NSUInteger)index withObject:(id)object {
+    if (__NSArrayIsForeign(self)) {
+        __NSArrayAbstract(self, _cmd);
+        return;
+    }
     CFArraySetValueAtIndex((CFMutableArrayRef)self, (CFIndex)index, object);
 }
 
+// array[i] = object: replaces, or appends when i is the count (CF-backed arrays get mutators here, as above)
+- (void)setObject:(id)object atIndexedSubscript:(NSUInteger)index {
+    if (index == [self count]) {
+        [self addObject:object];
+    } else {
+        [self replaceObjectAtIndex:index withObject:object];
+    }
+}
+
 - (void)removeAllObjects {
+    if (__NSArrayIsForeign(self)) {
+        for (NSUInteger count = [self count]; count > 0; count--) {
+            [self removeObjectAtIndex:count - 1];
+        }
+        return;
+    }
     CFArrayRemoveAllValues((CFMutableArrayRef)self);
 }
 
@@ -611,6 +743,9 @@ static CFComparisonResult ns_array_compare_block(const void *left,
  * NSObject versions apply and compare pointers, which makes any dictionary or
  * set keyed by value fail to find an equal-but-distinct object. */
 - (NSUInteger)hash {
+    // CF hashes an array by its count too
+    if (__NSArrayIsForeign(self))
+        return [self count];
     return (NSUInteger)CFHash((CFTypeRef)self);
 }
 
@@ -621,7 +756,7 @@ static CFComparisonResult ns_array_compare_block(const void *left,
     if (other == nil || ![other isKindOfClass:[NSArray class]]) {
         return NO;
     }
-    return CFEqual((CFTypeRef)self, (CFTypeRef)other) ? YES : NO;
+    return [self isEqualToArray:other];
 }
 
 
@@ -640,9 +775,86 @@ static CFComparisonResult ns_array_compare_block(const void *left,
 
 @end
 
+// the block enumerations, written over -count and -objectAtIndex: so every subclass gets them
+@implementation NSArray (NSArrayBlocks)
+
+- (void)enumerateObjectsWithOptions:(NSEnumerationOptions)options
+                         usingBlock:(void (^)(id object, NSUInteger index, BOOL *stop))block {
+    NSUInteger count = [self count];
+    BOOL stop = NO;
+
+    for (NSUInteger i = 0; i < count && !stop; i++) {
+        NSUInteger index = (options & NSEnumerationReverse) ? count - 1 - i : i;
+
+        block([self objectAtIndex:index], index, &stop);
+    }
+}
+
+- (void)enumerateObjectsUsingBlock:(void (^)(id object, NSUInteger index, BOOL *stop))block {
+    [self enumerateObjectsWithOptions:0 usingBlock:block];
+}
+
+- (NSUInteger)indexOfObjectWithOptions:(NSEnumerationOptions)options
+                           passingTest:(BOOL (^)(id object, NSUInteger index, BOOL *stop))predicate {
+    __block NSUInteger found = NSNotFound;
+
+    [self enumerateObjectsWithOptions:options usingBlock:^(id object, NSUInteger index, BOOL *stop) {
+        if (predicate(object, index, stop)) {
+            found = index;
+            *stop = YES;
+        }
+    }];
+    return found;
+}
+
+- (NSUInteger)indexOfObjectPassingTest:(BOOL (^)(id object, NSUInteger index, BOOL *stop))predicate {
+    return [self indexOfObjectWithOptions:0 passingTest:predicate];
+}
+
+// the older accessors AppKit still sends, also over -count and -objectAtIndex:
+- (void)getObjects:(id __unsafe_unretained *)objects {
+    NSUInteger count = [self count];
+
+    for (NSUInteger i = 0; i < count; i++)
+        objects[i] = [self objectAtIndex:i];
+}
+
+- (NSArray *)objectsAtIndexes:(NSIndexSet *)indexes {
+    NSMutableArray *result = [NSMutableArray arrayWithCapacity:[indexes count]];
+
+    for (NSUInteger i = [indexes firstIndex]; i != NSNotFound; i = [indexes indexGreaterThanIndex:i])
+        [result addObject:[self objectAtIndex:i]];
+    return result;
+}
+
+- (NSEnumerator *)reverseObjectEnumerator {
+    NSUInteger count = [self count];
+    NSMutableArray *reversed = [NSMutableArray arrayWithCapacity:count];
+
+    for (NSUInteger i = count; i > 0; i--)
+        [reversed addObject:[self objectAtIndex:i - 1]];
+    return [reversed objectEnumerator];
+}
+
+- (id)firstObjectCommonWithArray:(NSArray *)other {
+    NSUInteger count = [self count];
+
+    for (NSUInteger i = 0; i < count; i++) {
+        id object = [self objectAtIndex:i];
+
+        if ([other containsObject:object])
+            return object;
+    }
+    return nil;
+}
+
+@end
+
 @implementation NSMutableArray
 
 + (instancetype)new {
+    if (self != [NSMutableArray class])
+        return [[self alloc] init];
     return [self arrayWithCapacity:0];
 }
 
@@ -659,6 +871,8 @@ static CFComparisonResult ns_array_compare_block(const void *left,
 }
 
 - (instancetype)init {
+    if (__NSArrayIsForeign(self))
+        return [super init];
     // Must be +1: callers reach here through -alloc/-init and +new.
     return (id)CFArrayCreateMutable(kCFAllocatorDefault, 0, &ns_array_callbacks);
 }

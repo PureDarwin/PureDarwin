@@ -36,6 +36,7 @@
 
 /* The plist readers. -contentsOfURL: is what NSProcessInfo-free code uses to
  * read SystemVersion.plist and friends; both go through CFPropertyList. */
++ (nullable instancetype)dictionaryWithContentsOfURL:(NSURL *)url;
 + (nullable instancetype)dictionaryWithContentsOfURL:(NSURL *)url
                                                error:(NSError **)error;
 + (nullable instancetype)dictionaryWithContentsOfFile:(NSString *)path;
@@ -56,6 +57,7 @@
 - (NSEnumerator *)objectEnumerator;
 - (void)enumerateKeysAndObjectsUsingBlock:(void (^)(KeyType key, ObjectType obj, BOOL *stop))block;
 
+- (NSArray *)allKeysForObject:(id)object;
 @end
 
 @interface NSMutableDictionary<KeyType, ObjectType> : NSDictionary<KeyType, ObjectType>

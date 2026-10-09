@@ -30,6 +30,8 @@
 #include <CoreFoundation/CFBase.h>
 #import <Foundation/NSString.h>
 #import <Foundation/NSURL.h>
+#import <Foundation/NSException.h>
+#include <objc/runtime.h>
 #include <CoreFoundation/CFData.h>
 #include <CoreFoundation/ForFoundationOnly.h>
 #include <fcntl.h>
@@ -92,6 +94,18 @@ __NSDataCreateWithContentsOfFile(NSString *path)
 		(CFIndex)status.st_size);
 	free(bytes);
 	return result;
+}
+
+extern Boolean _CFIsObjC(CFTypeID typeID, void *obj);
+
+// a subclass that is not a CFData (Swift's bridged Data): the abstract methods work through its primitives
+// the cluster's own classes are not: an +alloc'd NSMutableData is a placeholder whose -init returns a CFData
+static inline BOOL __NSDataIsForeign(id data) {
+	Class cls = object_getClass(data);
+
+	if (cls == [NSData class] || cls == [NSMutableData class])
+		return NO;
+	return _CFIsObjC(CFDataGetTypeID(), (void *)data) ? YES : NO;
 }
 
 @implementation NSData
@@ -242,6 +256,11 @@ __NSDataCreateWithContentsOfFile(NSString *path)
 
 - (void)getBytes:(void *)buffer range:(NSRange)range
 {
+	// CFDataGetBytes sends this to a data object that is not a CFData
+	if (__NSDataIsForeign(self)) {
+		memcpy(buffer, (const uint8_t *)[self bytes] + range.location, range.length);
+		return;
+	}
 	CFDataGetBytes((CFDataRef)self,
 		       CFRangeMake((CFIndex)range.location,
 				   (CFIndex)range.length),
@@ -267,13 +286,30 @@ __NSDataCreateWithContentsOfFile(NSString *path)
 	if (self == other) {
 		return YES;
 	}
+	if (__NSDataIsForeign(self) || __NSDataIsForeign(other)) {
+		NSUInteger length = [self length];
+
+		return [other length] == length && (length == 0 || memcmp([self bytes], [other bytes], length) == 0);
+	}
 	return CFEqual((CFTypeRef)self, (CFTypeRef)other) ? YES : NO;
+}
+
+- (CFTypeID)_cfTypeID {
+	return CFDataGetTypeID();
 }
 
 /* Bridged to CFDataRef, so identity comes from the CF layer. Without these the
  * NSObject versions apply and compare pointers, which makes any dictionary or
  * set keyed by value fail to find an equal-but-distinct object. */
 - (NSUInteger)hash {
+    // hashed as the CFData with the same bytes, so equal data hash alike
+    if (__NSDataIsForeign(self)) {
+        CFDataRef copy = CFDataCreate(kCFAllocatorDefault, [self bytes], (CFIndex)[self length]);
+        NSUInteger hash = (NSUInteger)CFHash(copy);
+
+        CFRelease(copy);
+        return hash;
+    }
     return (NSUInteger)CFHash((CFTypeRef)self);
 }
 
@@ -284,7 +320,7 @@ __NSDataCreateWithContentsOfFile(NSString *path)
     if (other == nil || ![other isKindOfClass:[NSData class]]) {
         return NO;
     }
-    return CFEqual((CFTypeRef)self, (CFTypeRef)other) ? YES : NO;
+    return [self isEqualToData:other];
 }
 
 
@@ -506,11 +542,24 @@ __NSDataCreateWithContentsOfFile(NSString *path)
 
 - (void)setLength:(NSUInteger)length
 {
+	if (__NSDataIsForeign(self)) {
+		[NSException raise:NSInvalidArgumentException
+			    format:@"*** -[%s setLength:]: method only defined for abstract class", object_getClassName(self)];
+		return;
+	}
 	CFDataSetLength((CFMutableDataRef)self, (CFIndex)length);
 }
 
 - (void)appendBytes:(const void *)bytes length:(NSUInteger)length
 {
+	// a mutable data object that is not a CFData grows through its -setLength: and -mutableBytes
+	if (__NSDataIsForeign(self)) {
+		NSUInteger old = [self length];
+
+		[self setLength:old + length];
+		memcpy((uint8_t *)[self mutableBytes] + old, bytes, length);
+		return;
+	}
 	CFDataAppendBytes((CFMutableDataRef)self, (const UInt8 *)bytes,
 			  (CFIndex)length);
 }
@@ -527,16 +576,28 @@ __NSDataCreateWithContentsOfFile(NSString *path)
 
 - (void)replaceBytesInRange:(NSRange)range withBytes:(const void *)bytes
 {
-	CFDataReplaceBytes((CFMutableDataRef)self,
-			   CFRangeMake((CFIndex)range.location,
-				       (CFIndex)range.length),
-			   (const UInt8 *)bytes, (CFIndex)range.length);
+	[self replaceBytesInRange:range withBytes:bytes length:range.length];
 }
 
 - (void)replaceBytesInRange:(NSRange)range
                   withBytes:(const void *)bytes
                      length:(NSUInteger)length
 {
+	if (__NSDataIsForeign(self)) {
+		NSUInteger old = [self length];
+		NSUInteger tail = old - NSMaxRange(range);
+		uint8_t *base;
+
+		if (length > range.length)
+			[self setLength:old + length - range.length];
+		base = (uint8_t *)[self mutableBytes];
+		memmove(base + range.location + length, base + NSMaxRange(range), tail);
+		if (bytes != NULL)
+			memcpy(base + range.location, bytes, length);
+		if (length < range.length)
+			[self setLength:old + length - range.length];
+		return;
+	}
 	CFDataReplaceBytes((CFMutableDataRef)self,
 			   CFRangeMake((CFIndex)range.location,
 				       (CFIndex)range.length),

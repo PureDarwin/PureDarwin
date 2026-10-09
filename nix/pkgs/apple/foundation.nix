@@ -78,7 +78,6 @@ let
     "Runtime.subproj/NSDebug"
     "Runtime.subproj/NSBundle"
     "Runtime.subproj/NSProcessInfo"
-    "Runtime.subproj/NSBlock"
     "Runtime.subproj/NSThread"
     "Runtime.subproj/NSUserDefaults"
     "Collections.subproj/NSMapTable"
@@ -100,6 +99,7 @@ let
     "Notifications.subproj/NSDistributedNotificationCenter"
     "String.subproj/NSRegularExpression"
     "Coding.subproj/NSJSONSerialization"
+    "Collections.subproj/NSConstantCollections"
   ];
 in
 stdenv.mkDerivation {

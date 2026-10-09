@@ -1443,6 +1443,8 @@ _kCFAllocatorNull
 _kCFAllocatorSystemDefault
 _kCFAllocatorSystemDefaultGCRefZero
 _kCFAllocatorUseContext
+___kCFBooleanFalse
+___kCFBooleanTrue
 _kCFBooleanFalse
 _kCFBooleanTrue
 _kCFBundleDevelopmentRegionKey

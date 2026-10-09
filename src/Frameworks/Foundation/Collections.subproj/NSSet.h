@@ -32,12 +32,15 @@
 - (nullable ObjectType)member:(ObjectType)object;
 - (BOOL)containsObject:(ObjectType)object;
 - (NSArray<ObjectType> *)allObjects;
+- (void)makeObjectsPerformSelector:(SEL)selector;
+- (void)makeObjectsPerformSelector:(SEL)selector withObject:(nullable id)object;
 - (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state
                                   objects:(id __unsafe_unretained [])buffer
                                     count:(NSUInteger)length;
 - (BOOL)isEqualToSet:(NSSet *)other;
 - (NSEnumerator *)objectEnumerator;
 
+- (NSSet *)setByAddingObjectsFromArray:(NSArray *)other;
 @end
 
 @interface NSMutableSet<ObjectType> : NSSet<ObjectType>

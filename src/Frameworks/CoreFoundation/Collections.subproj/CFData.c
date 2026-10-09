@@ -8,6 +8,8 @@
 	Responsibility: Kevin Perry
 */
 
+// non-CF instances of this type are messaged, see CFObjCDispatch.h
+#define CF_OBJC_DISPATCH_ENABLED 1
 #include <CoreFoundation/CFBase.h>
 #include <CoreFoundation/CFData.h>
 #include <CoreFoundation/CFPriv.h>

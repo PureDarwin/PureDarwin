@@ -29,7 +29,18 @@ __asm__(".globl ___CFConstantStringClassReference\n\t"
         ".set ___CFConstantStringClassReference, _OBJC_CLASS_$_NSCFString");
 
 CF_EXPORT void *__CFConstantStringClassReferencePtr;
+extern Boolean _CFIsObjC(CFTypeID typeID, void *obj);
+extern CFMutableStringRef __NSStringCreateCFCopy(NSString *string);
 extern int __CFConstantStringClassReference[];
+
+// CFStringCompare dereferences its argument, so nil is caught here and raises, as Apple's does
+#define PD_REQUIRE_STRING(arg) \
+    do { \
+        if ((arg) == nil) \
+            [NSException raise:NSInvalidArgumentException \
+                        format:@"-[%@ %s]: nil argument", \
+                               NSStringFromClass([self class]), sel_getName(_cmd)]; \
+    } while (0)
 
 @implementation NSCFString
 
@@ -53,6 +64,129 @@ extern int __CFConstantStringClassReference[];
                                    (UniChar *)buffer);
 }
 
+- (NSString *)description {
+    return self;
+}
+
+- (instancetype)initWithData:(NSData *)data encoding:(NSStringEncoding)encoding {
+    [self release];
+    if (data == nil) {
+        return nil;
+    }
+    return (id)CFStringCreateWithBytes(kCFAllocatorDefault, [data bytes],
+                                       (CFIndex)[data length],
+                                       (CFStringEncoding)encoding, false);
+}
+
+- (NSComparisonResult)compare:(NSString *)other {
+    PD_REQUIRE_STRING(other);
+    return (NSComparisonResult)CFStringCompare((CFStringRef)self,
+                                               (CFStringRef)other, 0);
+}
+
+- (NSComparisonResult)caseInsensitiveCompare:(NSString *)other {
+    PD_REQUIRE_STRING(other);
+    return (NSComparisonResult)CFStringCompare((CFStringRef)self,
+                                               (CFStringRef)other,
+                                               kCFCompareCaseInsensitive);
+}
+
+- (NSArray *)componentsSeparatedByString:(NSString *)separator {
+    CFArrayRef result = CFStringCreateArrayBySeparatingStrings(kCFAllocatorDefault,
+        (CFStringRef)self, (CFStringRef)separator);
+
+    return (NSArray *)CFAutorelease(result);
+}
+
+// these are CF objects, not ObjC allocations: NSObject refcounting would free CF memory and constant
+// strings are not heap objects at all, so retain and release forward to CF
+- (id)retain {
+    CFRetain((CFTypeRef)self);
+    return self;
+}
+
+- (oneway void)release {
+    CFRelease((CFTypeRef)self);
+}
+
+- (NSUInteger)retainCount {
+    return (NSUInteger)CFGetRetainCount((CFTypeRef)self);
+}
+
+- (id)copyWithZone:(NSZone *)zone {
+    return (id)CFStringCreateCopy(kCFAllocatorDefault, (CFStringRef)self);
+}
+
+- (id)mutableCopyWithZone:(NSZone *)zone {
+    return (id)CFStringCreateMutableCopy(kCFAllocatorDefault, 0, (CFStringRef)self);
+}
+
+// mutable operations live here, not on NSMutableString: every CFString bridges to this one class,
+// so methods declared only on NSMutableString are never found at runtime
+- (void)appendString:(NSString *)string {
+    if (string == nil) {
+        return;
+    }
+    CFStringAppend((CFMutableStringRef)self, (CFStringRef)string);
+}
+
+- (void)appendFormat:(NSString *)format, ... {
+    va_list arguments;
+
+    va_start(arguments, format);
+    CFStringRef formatted = _CFStringCreateWithFormatAndArgumentsAux(
+        kCFAllocatorDefault, _NSCopyFormattingDescription, NULL,
+        (CFStringRef)format, arguments);
+    va_end(arguments);
+
+    if (formatted != NULL) {
+        CFStringAppend((CFMutableStringRef)self, formatted);
+        CFRelease(formatted);
+    }
+}
+
+- (void)setString:(NSString *)string {
+    CFStringReplaceAll((CFMutableStringRef)self,
+                       (CFStringRef)(string != nil ? string : @""));
+}
+
+- (void)insertString:(NSString *)string atIndex:(NSUInteger)index {
+    if (string == nil) {
+        return;
+    }
+    CFStringInsert((CFMutableStringRef)self, (CFIndex)index, (CFStringRef)string);
+}
+
+- (void)deleteCharactersInRange:(NSRange)range {
+    CFStringDelete((CFMutableStringRef)self,
+                   CFRangeMake((CFIndex)range.location, (CFIndex)range.length));
+}
+
+- (NSUInteger)replaceOccurrencesOfString:(NSString *)target
+                              withString:(NSString *)replacement
+                                 options:(NSStringCompareOptions)options
+                                   range:(NSRange)searchRange {
+    if (target == nil || replacement == nil) {
+        return 0;
+    }
+    return (NSUInteger)CFStringFindAndReplace((CFMutableStringRef)self,
+        (CFStringRef)target, (CFStringRef)replacement,
+        CFRangeMake((CFIndex)searchRange.location, (CFIndex)searchRange.length),
+        (CFStringCompareFlags)options);
+}
+
+- (void)replaceCharactersInRange:(NSRange)range withString:(NSString *)string {
+    __CFStringCheckAndReplace((CFMutableStringRef)self,
+                              CFRangeMake((CFIndex)range.location,
+                                          (CFIndex)range.length),
+                              (CFStringRef)string);
+}
+
+@end
+
+// the rest of the NSString API, valid for any subclass: CF reads a non-CF string through its primitives
+@implementation NSString (NSStringOverCF)
+
 - (const char *)UTF8String {
     const char *direct = CFStringGetCStringPtr((CFStringRef)self, kCFStringEncodingUTF8);
     if (direct) {
@@ -71,20 +205,6 @@ extern int __CFConstantStringClassReference[];
 
 - (const char *)fileSystemRepresentation {
     return [self UTF8String];
-}
-
-- (NSString *)description {
-    return self;
-}
-
-- (instancetype)initWithData:(NSData *)data encoding:(NSStringEncoding)encoding {
-    [self release];
-    if (data == nil) {
-        return nil;
-    }
-    return (id)CFStringCreateWithBytes(kCFAllocatorDefault, [data bytes],
-                                       (CFIndex)[data length],
-                                       (CFStringEncoding)encoding, false);
 }
 
 - (BOOL)hasPrefix:(NSString *)prefix {
@@ -153,15 +273,6 @@ extern int __CFConstantStringClassReference[];
     return [self substringWithRange:NSMakeRange(start, end - start)];
 }
 
-/* CFStringCompare dereferences its argument, so nil has to be caught here.
- * Apple raises for this rather than returning an order. */
-#define PD_REQUIRE_STRING(arg) \
-    do { \
-        if ((arg) == nil) \
-            [NSException raise:NSInvalidArgumentException \
-                        format:@"-[%@ %s]: nil argument", \
-                               NSStringFromClass([self class]), sel_getName(_cmd)]; \
-    } while (0)
 
 /* Numeric accessors. Their absence is quiet rather than loud: callers such as
  * -[NSUserDefaults integerForKey:] test respondsToSelector: first and simply
@@ -212,12 +323,6 @@ extern int __CFConstantStringClassReference[];
     return (strtol(utf8, NULL, 10) != 0) ? YES : NO;
 }
 
-- (NSComparisonResult)compare:(NSString *)other {
-    PD_REQUIRE_STRING(other);
-    return (NSComparisonResult)CFStringCompare((CFStringRef)self,
-                                               (CFStringRef)other, 0);
-}
-
 /* NSStringCompareOptions are laid out to match the CFStringCompareFlags. */
 - (NSComparisonResult)compare:(NSString *)other options:(NSStringCompareOptions)options {
     PD_REQUIRE_STRING(other);
@@ -246,13 +351,6 @@ extern int __CFConstantStringClassReference[];
                                                kCFCompareLocalized | kCFCompareCaseInsensitive);
 }
 
-- (NSComparisonResult)caseInsensitiveCompare:(NSString *)other {
-    PD_REQUIRE_STRING(other);
-    return (NSComparisonResult)CFStringCompare((CFStringRef)self,
-                                               (CFStringRef)other,
-                                               kCFCompareCaseInsensitive);
-}
-
 /* Expands range to whole lines, the way the text system expects: back to the
  * start of the line containing range.location, forward past the terminator
  * that ends the line containing its last character. */
@@ -263,10 +361,14 @@ extern int __CFConstantStringClassReference[];
          contentsEnd:(NSUInteger *)contentsEndPtr
             forRange:(NSRange)range {
     CFIndex start = 0, end = 0, contentsEnd = 0;
+    // CF sends this to a string that is not a CFString, so measure a CF copy of it
+    CFMutableStringRef copy = _CFIsObjC(CFStringGetTypeID(), (void *)self) ? __NSStringCreateCFCopy(self) : NULL;
 
-    CFStringGetLineBounds((CFStringRef)self,
+    CFStringGetLineBounds(copy != NULL ? (CFStringRef)copy : (CFStringRef)self,
         CFRangeMake((CFIndex)range.location, (CFIndex)range.length),
         &start, &end, &contentsEnd);
+    if (copy != NULL)
+        CFRelease(copy);
 
     if (startPtr != NULL) {
         *startPtr = (NSUInteger)start;
@@ -333,13 +435,6 @@ extern int __CFConstantStringClassReference[];
     return NSMakeRange((NSUInteger)found.location, (NSUInteger)found.length);
 }
 
-- (NSArray *)componentsSeparatedByString:(NSString *)separator {
-    CFArrayRef result = CFStringCreateArrayBySeparatingStrings(kCFAllocatorDefault,
-        (CFStringRef)self, (CFStringRef)separator);
-
-    return (NSArray *)CFAutorelease(result);
-}
-
 - (NSString *)substringWithRange:(NSRange)range {
     CFStringRef result = CFStringCreateWithSubstring(kCFAllocatorDefault,
         (CFStringRef)self, CFRangeMake((CFIndex)range.location, (CFIndex)range.length));
@@ -361,92 +456,6 @@ extern int __CFConstantStringClassReference[];
 
 - (NSString *)substringToIndex:(NSUInteger)index {
     return [self substringWithRange:NSMakeRange(0, index)];
-}
-
-/* These are CF objects, not ObjC allocations: the default NSObject refcounting
- * would free CF-allocated memory, and constant strings, which CF keeps
- * immortal, are not heap objects at all. Forward to CF. */
-- (id)retain {
-    CFRetain((CFTypeRef)self);
-    return self;
-}
-
-- (oneway void)release {
-    CFRelease((CFTypeRef)self);
-}
-
-- (NSUInteger)retainCount {
-    return (NSUInteger)CFGetRetainCount((CFTypeRef)self);
-}
-
-- (id)copyWithZone:(NSZone *)zone {
-    return (id)CFStringCreateCopy(kCFAllocatorDefault, (CFStringRef)self);
-}
-
-- (id)mutableCopyWithZone:(NSZone *)zone {
-    return (id)CFStringCreateMutableCopy(kCFAllocatorDefault, 0, (CFStringRef)self);
-}
-
-/* Mutable operations live here rather than on NSMutableString: a CFString is
- * bridged to this one class whether or not it is mutable, so methods declared
- * only on NSMutableString are never found at runtime. */
-- (void)appendString:(NSString *)string {
-    if (string == nil) {
-        return;
-    }
-    CFStringAppend((CFMutableStringRef)self, (CFStringRef)string);
-}
-
-- (void)appendFormat:(NSString *)format, ... {
-    va_list arguments;
-
-    va_start(arguments, format);
-    CFStringRef formatted = _CFStringCreateWithFormatAndArgumentsAux(
-        kCFAllocatorDefault, _NSCopyFormattingDescription, NULL,
-        (CFStringRef)format, arguments);
-    va_end(arguments);
-
-    if (formatted != NULL) {
-        CFStringAppend((CFMutableStringRef)self, formatted);
-        CFRelease(formatted);
-    }
-}
-
-- (void)setString:(NSString *)string {
-    CFStringReplaceAll((CFMutableStringRef)self,
-                       (CFStringRef)(string != nil ? string : @""));
-}
-
-- (void)insertString:(NSString *)string atIndex:(NSUInteger)index {
-    if (string == nil) {
-        return;
-    }
-    CFStringInsert((CFMutableStringRef)self, (CFIndex)index, (CFStringRef)string);
-}
-
-- (void)deleteCharactersInRange:(NSRange)range {
-    CFStringDelete((CFMutableStringRef)self,
-                   CFRangeMake((CFIndex)range.location, (CFIndex)range.length));
-}
-
-- (NSUInteger)replaceOccurrencesOfString:(NSString *)target
-                              withString:(NSString *)replacement
-                                 options:(NSStringCompareOptions)options
-                                   range:(NSRange)searchRange {
-    if (target == nil || replacement == nil) {
-        return 0;
-    }
-    return (NSUInteger)CFStringFindAndReplace((CFMutableStringRef)self,
-        (CFStringRef)target, (CFStringRef)replacement,
-        CFRangeMake((CFIndex)searchRange.location, (CFIndex)searchRange.length),
-        (CFStringCompareFlags)options);
-}
-
-- (void)replaceCharactersInRange:(NSRange)range withString:(NSString *)string {
-    __CFStringCheckAndReplace((CFMutableStringRef)self,
-                              CFRangeMake((CFIndex)range.location,
-                                          (CFIndex)range.length),
-                              (CFStringRef)string);
 }
 
 - (BOOL)getBytes:(void *)buffer

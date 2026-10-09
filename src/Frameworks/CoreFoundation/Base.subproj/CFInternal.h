@@ -768,6 +768,9 @@ CF_INLINE uintptr_t __CFISAForTypeID(CFTypeID typeID) {
 /* clang is not playing nicely so we need this. */
 extern const uintptr_t objc_debug_isa_class_mask;
 
+// true for the classes CF stamps on its own instances (bridged classes, __NSCFType, the static-object classes)
+CF_PRIVATE Boolean __CFIsCFOwnedClass(uintptr_t cls);
+
 /*
  * Objective-C is a weird ABI.
  */
@@ -782,7 +785,7 @@ CF_INLINE Boolean CF_IS_OBJC(CFTypeID typeId, const void *obj)
 #endif
     {
         uintptr_t objIsa = (((const CFRuntimeBase *)obj)->_cfisa);
-        
+
         if (objIsa && ((void *)objIsa) != __CFConstantStringClassReferencePtr) {
             uintptr_t tidIsa = __CFISAForTypeID(typeId);
             if (objIsa == tidIsa) {
@@ -798,20 +801,44 @@ CF_INLINE Boolean CF_IS_OBJC(CFTypeID typeId, const void *obj)
                  * class against the type's isa rather than merely testing that
                  * it is nonzero (which is always true for any real object). */
                 if (objIsa & 0x1) {
-                    return (objIsa & objc_debug_isa_class_mask) != tidIsa;
+                    objIsa &= objc_debug_isa_class_mask;
+                    if (objIsa == tidIsa) return false;
                 }
 #endif
+                // a CF instance can still carry another CF-owned class (__NSCFType before Foundation bridges its type)
+                return !__CFIsCFOwnedClass(objIsa);
             }
         } else {
             return false;
         }
     }
-    
-    return false;
 }
 
+#if defined(__OBJC__) && CF_OBJC_DISPATCH_ENABLED
+#include "CFObjCDispatch.h"
+
+// one frame per CF-to-ObjC dispatch in flight on this thread, so an abstract method that calls back into the same CF function falls back to CF instead of recursing
+typedef struct __CFObjCDispatchFrame {
+    const void *obj;
+    const char *fn;
+    struct __CFObjCDispatchFrame *prev;
+} __CFObjCDispatchFrame;
+
+CF_PRIVATE Boolean _CFObjCDispatchEnter(__CFObjCDispatchFrame *frame, const void *obj, const char *fn);
+CF_PRIVATE void _CFObjCDispatchLeave(__CFObjCDispatchFrame *frame);
+
+#define CF_OBJC_FUNCDISPATCHV(typeID, rettype, obj, ...) do { \
+    if (CF_IS_OBJC(typeID, obj)) { \
+        __attribute__((cleanup(_CFObjCDispatchLeave))) __CFObjCDispatchFrame __cfObjCFrame = { 0 }; \
+        if (_CFObjCDispatchEnter(&__cfObjCFrame, (const void *)(obj), __func__)) \
+            return (rettype)[(id<__CFObjCDispatchTargets>)(obj) __VA_ARGS__]; \
+    } \
+} while (0)
+#define CF_OBJC_CALLV(obj, ...) [(id<__CFObjCDispatchTargets>)(obj) __VA_ARGS__]
+#else
 #define CF_OBJC_FUNCDISPATCHV(typeID, obj, ...) do { } while (0)
 #define CF_OBJC_CALLV(obj, ...) (0)
+#endif
 #else
 #define CF_OBJC_FUNCDISPATCHV(typeID, obj, ...) do { } while (0)
 #define CF_OBJC_CALLV(obj, ...) (0)

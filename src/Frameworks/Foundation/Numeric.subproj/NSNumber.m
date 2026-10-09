@@ -230,10 +230,21 @@ __NSNUMBER_GETTER(integerValue, NSInteger, kCFNumberNSIntegerType)
     return (NSUInteger)[self integerValue];
 }
 
-/* CFCopyDescription of a CFNumber is the number itself, with no decoration. */
+// the value as text, like Foundation's ("3", "3.5", "1" for YES), since CFCopyDescription gives
+// the decorated "<CFNumber 0x... [...]>{value = ...}" form
 - (NSString *)stringValue {
-    CFStringRef result = CFCopyDescription((CFTypeRef)self);
-    return (NSString *)CFAutorelease(result);
+    if (CFGetTypeID((CFTypeRef)self) == CFBooleanGetTypeID()) {
+        return CFBooleanGetValue((CFBooleanRef)self) ? @"1" : @"0";
+    }
+    if (CFNumberIsFloatType((CFNumberRef)self)) {
+        return [NSString stringWithFormat:@"%0.16g", [self doubleValue]];
+    }
+    return [NSString stringWithFormat:@"%lld", [self longLongValue]];
+}
+
+// %@ of a number is its value, as on macOS (NSObject's would print the pointer)
+- (NSString *)description {
+    return [self stringValue];
 }
 
 - (BOOL)boolValue {
@@ -350,6 +361,188 @@ static double __NSNumberAsDouble(NSNumber *number) {
         default:
             return "q";
     }
+}
+
+@end
+
+// clang's constant number literals (@1, @1.5f, @1.5): {isa, value} objects in __DATA_CONST that are never written.
+// CF sends hash/isEqual:/compare: back here, so those go through a temporary CFNumber
+@interface NSConstantNumberBase : NSNumber
+- (CFNumberRef)_pdCopyCFNumber;
+@end
+
+@implementation NSConstantNumberBase
+
+- (CFNumberRef)_pdCopyCFNumber {
+    long long zero = 0;
+    return CFNumberCreate(NULL, kCFNumberLongLongType, &zero);
+}
+
+- (id)retain {
+    return self;
+}
+
+- (oneway void)release {
+}
+
+- (id)autorelease {
+    return self;
+}
+
+- (NSUInteger)retainCount {
+    return NSUIntegerMax;
+}
+
+- (id)copyWithZone:(NSZone *)zone {
+    return self;
+}
+
+- (CFTypeID)_cfTypeID {
+    return CFNumberGetTypeID();
+}
+
+- (CFNumberType)_cfNumberType {
+    CFNumberRef n = [self _pdCopyCFNumber];
+    CFNumberType type = CFNumberGetType(n);
+
+    CFRelease(n);
+    return type;
+}
+
+- (Boolean)_getValue:(void *)value forType:(CFNumberType)type {
+    CFNumberRef n = [self _pdCopyCFNumber];
+    Boolean ok = CFNumberGetValue(n, type, value);
+
+    CFRelease(n);
+    return ok;
+}
+
+- (NSUInteger)hash {
+    CFNumberRef n = [self _pdCopyCFNumber];
+    NSUInteger h = (NSUInteger)CFHash(n);
+
+    CFRelease(n);
+    return h;
+}
+
+- (NSComparisonResult)compare:(NSNumber *)other {
+    if (other == nil)
+        [NSException raise:NSInvalidArgumentException format:@"-[NSNumber compare:] nil argument"];
+    CFNumberRef n = [self _pdCopyCFNumber];
+    NSComparisonResult r;
+
+    if (CFGetTypeID((CFTypeRef)other) == CFBooleanGetTypeID()) {
+        double left = 0, right = CFBooleanGetValue((CFBooleanRef)other) ? 1.0 : 0.0;
+        CFNumberGetValue(n, kCFNumberDoubleType, &left);
+        r = left < right ? NSOrderedAscending : left > right ? NSOrderedDescending : NSOrderedSame;
+    } else {
+        r = (NSComparisonResult)CFNumberCompare(n, (CFNumberRef)other, NULL);
+    }
+    CFRelease(n);
+    return r;
+}
+
+- (CFComparisonResult)_reverseCompare:(NSNumber *)other {
+    return (CFComparisonResult)-(NSInteger)[self compare:other];
+}
+
+- (BOOL)isEqual:(id)other {
+    if (self == other)
+        return YES;
+    if (other == nil || ![other isKindOfClass:[NSNumber class]])
+        return NO;
+    return [self compare:other] == NSOrderedSame;
+}
+
+- (BOOL)boolValue {
+    return [self doubleValue] != 0;
+}
+
+@end
+
+@interface NSConstantIntegerNumber : NSConstantNumberBase {
+    const char *_encoding;
+    long long _value;
+}
+@end
+
+@implementation NSConstantIntegerNumber
+
+- (CFNumberRef)_pdCopyCFNumber {
+    // unsigned values above LLONG_MAX only fit a double here
+    if (_encoding && (_encoding[0] == 'Q' || _encoding[0] == 'L') && _value < 0) {
+        double d = (double)(unsigned long long)_value;
+        return CFNumberCreate(NULL, kCFNumberDoubleType, &d);
+    }
+    return CFNumberCreate(NULL, kCFNumberLongLongType, &_value);
+}
+
+- (const char *)objCType {
+    return _encoding ? _encoding : "q";
+}
+
+- (long long)longLongValue {
+    return _value;
+}
+
+- (unsigned long long)unsignedLongLongValue {
+    return (unsigned long long)_value;
+}
+
+- (BOOL)boolValue {
+    return _value != 0;
+}
+
+- (NSString *)stringValue {
+    if (_encoding && (_encoding[0] == 'Q' || _encoding[0] == 'L' || _encoding[0] == 'I' || _encoding[0] == 'S' || _encoding[0] == 'C'))
+        return [NSString stringWithFormat:@"%llu", (unsigned long long)_value];
+    return [NSString stringWithFormat:@"%lld", _value];
+}
+
+@end
+
+@interface NSConstantDoubleNumber : NSConstantNumberBase {
+    double _value;
+}
+@end
+
+@implementation NSConstantDoubleNumber
+
+- (CFNumberRef)_pdCopyCFNumber {
+    return CFNumberCreate(NULL, kCFNumberDoubleType, &_value);
+}
+
+- (const char *)objCType {
+    return "d";
+}
+
+- (double)doubleValue {
+    return _value;
+}
+
+@end
+
+@interface NSConstantFloatNumber : NSConstantNumberBase {
+    float _value;
+}
+@end
+
+@implementation NSConstantFloatNumber
+
+- (CFNumberRef)_pdCopyCFNumber {
+    return CFNumberCreate(NULL, kCFNumberFloatType, &_value);
+}
+
+- (const char *)objCType {
+    return "f";
+}
+
+- (float)floatValue {
+    return _value;
+}
+
+- (double)doubleValue {
+    return _value;
 }
 
 @end

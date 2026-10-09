@@ -13,7 +13,7 @@
 #include <stdarg.h>
 #import <Foundation/NSRange.h>
 
-@class NSData, NSArray, NSError;
+@class NSData, NSArray, NSError, NSURL;
 
 typedef unsigned short unichar;
 
@@ -64,11 +64,20 @@ typedef NS_OPTIONS(NSUInteger, NSStringCompareOptions) {
                                           encoding:(NSStringEncoding)encoding
                                              error:(NSError **)error;
 + (nullable instancetype)stringWithContentsOfFile:(NSString *)path;
++ (nullable instancetype)stringWithContentsOfURL:(NSURL *)url
+                                         encoding:(NSStringEncoding)encoding
+                                            error:(NSError **)error;
 
 - (instancetype)init;
 - (instancetype)initWithString:(NSString *)string;
 - (instancetype)initWithFormat:(NSString *)format, ...;
 - (instancetype)initWithFormat:(NSString *)format arguments:(va_list)arguments;
+- (instancetype)initWithCharactersNoCopy:(unichar *)characters length:(NSUInteger)length freeWhenDone:(BOOL)freeBuffer;
+- (NSString *)stringByRemovingPercentEncoding;
+- (NSString *)stringByReplacingPercentEscapesUsingEncoding:(NSStringEncoding)encoding;
+- (instancetype)initWithFormat:(NSString *)format locale:(id)locale, ...;
+- (instancetype)initWithFormat:(NSString *)format locale:(id)locale arguments:(va_list)arguments;
++ (instancetype)localizedStringWithFormat:(NSString *)format, ...;
 - (instancetype)initWithCharacters:(const unichar *)characters length:(NSUInteger)length;
 - (instancetype)initWithCString:(const char *)cString encoding:(NSStringEncoding)encoding;
 - (instancetype)initWithUTF8String:(const char *)utf8String;
@@ -79,6 +88,9 @@ typedef NS_OPTIONS(NSUInteger, NSStringCompareOptions) {
                                         encoding:(NSStringEncoding)encoding
                                            error:(NSError **)error;
 - (nullable instancetype)initWithContentsOfFile:(NSString *)path;
+- (nullable instancetype)initWithContentsOfURL:(NSURL *)url
+                                       encoding:(NSStringEncoding)encoding
+                                          error:(NSError **)error;
 
 - (BOOL)isEqualToString:(NSString *)other;
 - (void)getLineStart:(NSUInteger *)startPtr end:(NSUInteger *)endPtr
@@ -121,6 +133,7 @@ typedef NS_OPTIONS(NSUInteger, NSStringCompareOptions) {
 - (NSComparisonResult)localizedCompare:(NSString *)other;
 - (NSComparisonResult)localizedCaseInsensitiveCompare:(NSString *)other;
 - (NSData *)dataUsingEncoding:(NSStringEncoding)encoding;
+- (NSData *)dataUsingEncoding:(NSStringEncoding)encoding allowLossyConversion:(BOOL)lossy;
 - (instancetype)initWithData:(NSData *)data encoding:(NSStringEncoding)encoding;
 + (instancetype)stringWithCharacters:(const unichar *)characters length:(NSUInteger)length;
 

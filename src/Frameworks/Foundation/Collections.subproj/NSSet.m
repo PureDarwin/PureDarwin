@@ -13,6 +13,8 @@
 #include <CoreFoundation/CFSet.h>
 #include <CoreFoundation/ForFoundationOnly.h>
 #include <stdlib.h>
+#include <objc/runtime.h>
+#import <Foundation/NSException.h>
 
 extern int __CFConstantStringClassReference[];
 
@@ -58,14 +60,36 @@ static const CFSetCallBacks ns_set_callbacks = {
     ns_set_hash
 };
 
+extern Boolean _CFIsObjC(CFTypeID typeID, void *obj);
+
+// a subclass that is not a CFSet (Swift's bridged sets, NSCountedSet): the abstract methods work through its primitives
+// the cluster's own classes are not: an +alloc'd NSMutableSet is a placeholder whose -init returns a CFSet
+static inline BOOL __NSSetIsForeign(id set) {
+    Class cls = object_getClass(set);
+
+    if (cls == [NSSet class] || cls == [NSMutableSet class])
+        return NO;
+    return _CFIsObjC(CFSetGetTypeID(), (void *)set) ? YES : NO;
+}
+
+static void __NSSetAbstract(id self, SEL _cmd) {
+    [NSException raise:NSInvalidArgumentException
+                format:@"*** -[%s %s]: method only defined for abstract class", object_getClassName(self), sel_getName(_cmd)];
+}
+
 @implementation NSSet
 
 + (instancetype)new {
+    // a subclass outside the cluster gets a real instance of itself
+    if (self != [NSSet class])
+        return [[self alloc] init];
     // Must be +1, so this cannot go through the autoreleasing +set.
     return (id)CFSetCreate(kCFAllocatorDefault, NULL, 0, &ns_set_callbacks);
 }
 
 - (instancetype)init {
+    if (__NSSetIsForeign(self))
+        return [super init];
     return (id)CFSetCreate(kCFAllocatorDefault, NULL, 0, &ns_set_callbacks);
 }
 
@@ -139,15 +163,72 @@ static const CFSetCallBacks ns_set_callbacks = {
 }
 
 - (NSUInteger)count {
+    if (__NSSetIsForeign(self)) {
+        __NSSetAbstract(self, _cmd);
+        return 0;
+    }
     return (NSUInteger)CFSetGetCount((CFSetRef)self);
 }
 
 - (id)member:(id)object {
+    if (__NSSetIsForeign(self)) {
+        __NSSetAbstract(self, _cmd);
+        return nil;
+    }
     return (id)CFSetGetValue((CFSetRef)self, object);
 }
 
 - (BOOL)containsObject:(id)object {
+    if (__NSSetIsForeign(self))
+        return [self member:object] != nil;
     return CFSetContainsValue((CFSetRef)self, object);
+}
+
+- (CFTypeID)_cfTypeID {
+    return CFSetGetTypeID();
+}
+
+// what CFSet's functions send a set that is not a CFSet, built on the primitives
+- (void)getObjects:(id __unsafe_unretained *)objects {
+    NSUInteger i = 0;
+
+    if (!__NSSetIsForeign(self)) {
+        CFSetGetValues((CFSetRef)self, (const void **)objects);
+        return;
+    }
+    for (id object in [[self objectEnumerator] allObjects]) {
+        objects[i++] = object;
+    }
+}
+
+- (NSUInteger)countForObject:(id)object {
+    return [self member:object] != nil ? 1 : 0;
+}
+
+- (BOOL)__getValue:(id *)value forObj:(id)object {
+    id found = [self member:object];
+
+    if (found != nil && value != NULL)
+        *value = found;
+    return found != nil;
+}
+
+- (void)__applyValues:(void (*)(const void *, void *))applier context:(void *)context {
+    for (id object in [[self objectEnumerator] allObjects]) {
+        applier(object, context);
+    }
+}
+
+- (void)replaceObject:(id)object {
+    if ([self member:object] != nil) {
+        [self removeObject:object];
+        [self addObject:object];
+    }
+}
+
+- (void)setObject:(id)object {
+    [self removeObject:object];
+    [self addObject:object];
 }
 
 - (BOOL)isEqualToSet:(NSSet *)other {
@@ -157,7 +238,24 @@ static const CFSetCallBacks ns_set_callbacks = {
     if (self == other) {
         return YES;
     }
+    if (__NSSetIsForeign(self) || __NSSetIsForeign(other)) {
+        if ([other count] != [self count])
+            return NO;
+        for (id object in [[self objectEnumerator] allObjects]) {
+            if ([other member:object] == nil)
+                return NO;
+        }
+        return YES;
+    }
     return CFEqual((CFTypeRef)self, (CFTypeRef)other) ? YES : NO;
+}
+
+- (void)makeObjectsPerformSelector:(SEL)selector {
+    [[self allObjects] makeObjectsPerformSelector:selector];
+}
+
+- (void)makeObjectsPerformSelector:(SEL)selector withObject:(id)object {
+    [[self allObjects] makeObjectsPerformSelector:selector withObject:object];
 }
 
 - (NSArray *)allObjects {
@@ -201,10 +299,22 @@ static const CFSetCallBacks ns_set_callbacks = {
 }
 
 - (NSEnumerator *)objectEnumerator {
+    if (__NSSetIsForeign(self)) {
+        __NSSetAbstract(self, _cmd);
+        return nil;
+    }
     return [[self allObjects] objectEnumerator];
 }
 
 - (id)copyWithZone:(NSZone *)zone {
+    // CFSetCreateCopy sends -copyWithZone: back to a non-CF set, so copy its members instead
+    if (__NSSetIsForeign(self)) {
+        CFMutableSetRef members = CFSetCreateMutableCopy(kCFAllocatorDefault, 0, (CFSetRef)self);
+        CFSetRef copy = CFSetCreateCopy(kCFAllocatorDefault, members);
+
+        CFRelease(members);
+        return (id)copy;
+    }
     return (id)CFSetCreateCopy(kCFAllocatorDefault, (CFSetRef)self);
 }
 
@@ -215,18 +325,32 @@ static const CFSetCallBacks ns_set_callbacks = {
 
 /* CoreFoundation has one runtime class for immutable and mutable sets. */
 - (void)addObject:(id)object {
+    if (__NSSetIsForeign(self)) {
+        __NSSetAbstract(self, _cmd);
+        return;
+    }
     if (object) {
         CFSetAddValue((CFMutableSetRef)self, object);
     }
 }
 
 - (void)removeObject:(id)object {
+    if (__NSSetIsForeign(self)) {
+        __NSSetAbstract(self, _cmd);
+        return;
+    }
     if (object) {
         CFSetRemoveValue((CFMutableSetRef)self, object);
     }
 }
 
 - (void)removeAllObjects {
+    if (__NSSetIsForeign(self)) {
+        for (id object in [[self objectEnumerator] allObjects]) {
+            [self removeObject:object];
+        }
+        return;
+    }
     CFSetRemoveAllValues((CFMutableSetRef)self);
 }
 
@@ -264,6 +388,9 @@ static const CFSetCallBacks ns_set_callbacks = {
  * NSObject versions apply and compare pointers, which makes any dictionary or
  * set keyed by value fail to find an equal-but-distinct object. */
 - (NSUInteger)hash {
+    // CF hashes a set by its count too
+    if (__NSSetIsForeign(self))
+        return [self count];
     return (NSUInteger)CFHash((CFTypeRef)self);
 }
 
@@ -274,7 +401,15 @@ static const CFSetCallBacks ns_set_callbacks = {
     if (other == nil || ![other isKindOfClass:[NSSet class]]) {
         return NO;
     }
-    return CFEqual((CFTypeRef)self, (CFTypeRef)other) ? YES : NO;
+    return [self isEqualToSet:other];
+}
+
+
+- (NSSet *)setByAddingObjectsFromArray:(NSArray *)other {
+    NSMutableSet *result = [[[NSMutableSet alloc] initWithSet:self] autorelease];
+
+    [result addObjectsFromArray:other];
+    return result;
 }
 
 @end
@@ -282,6 +417,8 @@ static const CFSetCallBacks ns_set_callbacks = {
 @implementation NSMutableSet
 
 + (instancetype)new {
+    if (self != [NSMutableSet class])
+        return [[self alloc] init];
     return [self setWithCapacity:0];
 }
 
@@ -323,6 +460,8 @@ static const CFSetCallBacks ns_set_callbacks = {
 }
 
 - (instancetype)init {
+    if (__NSSetIsForeign(self))
+        return [super init];
     return (id)CFSetCreateMutable(kCFAllocatorDefault, 0,
                                   &ns_set_callbacks);
 }

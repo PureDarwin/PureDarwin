@@ -7,6 +7,7 @@
  */
 
 #import <Foundation/NSDictionary.h>
+#import <Foundation/NSEnumerator.h>
 #import <Foundation/NSException.h>
 #include <CoreFoundation/CFBase.h>
 #import <Foundation/NSURL.h>
@@ -158,16 +159,38 @@ static void __NSDictionary0Init(void) {
                                                &ns_dictionary_value_callbacks);
 }
 
+extern Boolean _CFIsObjC(CFTypeID typeID, void *obj);
+
+// a subclass that is not a CFDictionary (Swift's bridged dictionaries, NSConstantDictionary): the abstract methods work through its primitives
+// the cluster's own classes are not: an +alloc'd NSMutableDictionary is a placeholder whose -init returns a CFDictionary
+static inline BOOL __NSDictionaryIsForeign(id dictionary) {
+    Class cls = object_getClass(dictionary);
+
+    if (cls == [NSDictionary class] || cls == [NSMutableDictionary class])
+        return NO;
+    return _CFIsObjC(CFDictionaryGetTypeID(), (void *)dictionary) ? YES : NO;
+}
+
+static void __NSDictionaryAbstract(id self, SEL _cmd) {
+    [NSException raise:NSInvalidArgumentException
+                format:@"*** -[%s %s]: method only defined for abstract class", object_getClassName(self), sel_getName(_cmd)];
+}
+
 @implementation NSDictionary
 
 /* These classes are bridged onto CF, so an instance has to be a CF object.
  * NSObject's +new/-init would hand back a plain ObjC allocation, and the first
  * CFDictionaryGetValue() on it crashes. */
 + (instancetype)new {
+    // a subclass outside the cluster gets a real instance of itself
+    if (self != [NSDictionary class])
+        return [[self alloc] init];
     return [self dictionary];
 }
 
 - (instancetype)init {
+    if (__NSDictionaryIsForeign(self))
+        return [super init];
     return [NSDictionary dictionary];
 }
 
@@ -302,19 +325,35 @@ static void __NSDictionary0Init(void) {
  * would free CF-allocated memory, and constant strings, which CF keeps
  * immortal, are not heap objects at all. Forward to CF. */
 - (id)retain {
+    if (__NSDictionaryIsForeign(self))
+        return [super retain];
     CFRetain((CFTypeRef)self);
     return self;
 }
 
 - (oneway void)release {
+    if (__NSDictionaryIsForeign(self)) {
+        [super release];
+        return;
+    }
     CFRelease((CFTypeRef)self);
 }
 
 - (NSUInteger)retainCount {
+    if (__NSDictionaryIsForeign(self))
+        return [super retainCount];
     return (NSUInteger)CFGetRetainCount((CFTypeRef)self);
 }
 
 - (id)copyWithZone:(NSZone *)zone {
+    // CFDictionaryCreateCopy sends -copyWithZone: back to a non-CF dictionary, so copy its entries instead
+    if (__NSDictionaryIsForeign(self)) {
+        CFMutableDictionaryRef entries = CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0, (CFDictionaryRef)self);
+        CFDictionaryRef copy = CFDictionaryCreateCopy(kCFAllocatorDefault, entries);
+
+        CFRelease(entries);
+        return (id)copy;
+    }
     return (id)CFDictionaryCreateCopy(kCFAllocatorDefault, (CFDictionaryRef)self);
 }
 
@@ -336,6 +375,10 @@ static void __NSDictionary0Init(void) {
                            (object == nil) ? @"object" : @"key"];
         return;
     }
+    if (__NSDictionaryIsForeign(self)) {
+        __NSDictionaryAbstract(self, _cmd);
+        return;
+    }
     CFDictionarySetValue((CFMutableDictionaryRef)self, (const void *)key,
                          (const void *)object);
 }
@@ -345,7 +388,19 @@ static void __NSDictionary0Init(void) {
 }
 
 - (void)removeObjectForKey:(id)key {
+    if (__NSDictionaryIsForeign(self)) {
+        __NSDictionaryAbstract(self, _cmd);
+        return;
+    }
     CFDictionaryRemoveValue((CFMutableDictionaryRef)self, (const void *)key);
+}
+
+// NSMutableDictionary's KVC setter: a nil value removes the key, any other is stored under it
+- (void)setValue:(id)value forKey:(NSString *)key {
+    if (value == nil)
+        [self removeObjectForKey:key];
+    else
+        [self setObject:value forKey:key];
 }
 
 - (void)addEntriesFromDictionary:(NSDictionary *)dictionary {
@@ -357,6 +412,10 @@ static void __NSDictionary0Init(void) {
 }
 
 - (void)removeAllObjects {
+    if (__NSDictionaryIsForeign(self)) {
+        [self removeObjectsForKeys:[self allKeys]];
+        return;
+    }
     CFDictionaryRemoveAllValues((CFMutableDictionaryRef)self);
 }
 
@@ -390,6 +449,17 @@ static void __NSDictionary0Init(void) {
     }
     free(keys);
     free(values);
+}
+
++ (instancetype)dictionaryWithContentsOfURL:(NSURL *)url {
+    CFStringRef path = url ? CFURLCopyFileSystemPath((CFURLRef)url, kCFURLPOSIXPathStyle) : NULL;
+    CFPropertyListRef plist;
+
+    if (path == NULL)
+        return nil;
+    plist = pd_plist_from_path(path);
+    CFRelease(path);
+    return plist ? (id)CFAutorelease(plist) : nil;
 }
 
 + (nullable instancetype)dictionaryWithContentsOfURL:(NSURL *)url
@@ -471,6 +541,34 @@ BOOL pd_write_plist(CFPropertyListRef plist, NSString *path,
     return pd_write_plist((CFPropertyListRef)self, path, atomically);
 }
 
+// the alloc'ed placeholder is dropped like the other initialisers do, a mutable receiver gets a mutable copy
+- (nullable instancetype)initWithContentsOfFile:(NSString *)path {
+    if (path == nil) {
+        return nil;
+    }
+    CFPropertyListRef plist = pd_plist_from_path((CFStringRef)path);
+
+    if (plist != NULL && [self isKindOfClass:[NSMutableDictionary class]]) {
+        CFMutableDictionaryRef copy = CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0, (CFDictionaryRef)plist);
+        CFRelease(plist);
+        return (id)copy;
+    }
+    return (id)plist;
+}
+
+- (nullable instancetype)initWithContentsOfURL:(NSURL *)url {
+    if (url == nil) {
+        return nil;
+    }
+    CFStringRef path = CFURLCopyFileSystemPath((CFURLRef)url, kCFURLPOSIXPathStyle);
+    if (path == NULL) {
+        return nil;
+    }
+    id result = [self initWithContentsOfFile:(NSString *)path];
+    CFRelease(path);
+    return result;
+}
+
 + (nullable instancetype)dictionaryWithContentsOfFile:(NSString *)path {
     if (path == nil) {
         return nil;
@@ -479,11 +577,108 @@ BOOL pd_write_plist(CFPropertyListRef plist, NSString *path,
 }
 
 - (NSUInteger)count {
+    if (__NSDictionaryIsForeign(self)) {
+        __NSDictionaryAbstract(self, _cmd);
+        return 0;
+    }
     return (NSUInteger)CFDictionaryGetCount((CFDictionaryRef)self);
 }
 
 - (nullable id)objectForKey:(id)key {
+    if (__NSDictionaryIsForeign(self)) {
+        __NSDictionaryAbstract(self, _cmd);
+        return nil;
+    }
     return (id)CFDictionaryGetValue((CFDictionaryRef)self, (const void *)key);
+}
+
+- (CFTypeID)_cfTypeID {
+    return CFDictionaryGetTypeID();
+}
+
+// what CFDictionary's functions send a dictionary that is not a CFDictionary, built on the primitives
+- (void)getObjects:(id __unsafe_unretained *)objects andKeys:(id __unsafe_unretained *)keys {
+    NSUInteger i = 0;
+
+    if (!__NSDictionaryIsForeign(self)) {
+        CFDictionaryGetKeysAndValues((CFDictionaryRef)self, (const void **)keys, (const void **)objects);
+        return;
+    }
+    for (id key in [[self keyEnumerator] allObjects]) {
+        if (keys != NULL)
+            keys[i] = key;
+        if (objects != NULL)
+            objects[i] = [self objectForKey:key];
+        i++;
+    }
+}
+
+- (void)getObjects:(id __unsafe_unretained *)objects andKeys:(id __unsafe_unretained *)keys count:(NSUInteger)count {
+    NSUInteger n = [self count];
+    id *allKeys = malloc((n ? n : 1) * sizeof(id));
+    id *allObjects = malloc((n ? n : 1) * sizeof(id));
+
+    [self getObjects:allObjects andKeys:allKeys];
+    for (NSUInteger i = 0; i < n && i < count; i++) {
+        if (keys != NULL)
+            keys[i] = allKeys[i];
+        if (objects != NULL)
+            objects[i] = allObjects[i];
+    }
+    free(allKeys);
+    free(allObjects);
+}
+
+- (NSUInteger)countForKey:(id)key {
+    return [self objectForKey:key] != nil ? 1 : 0;
+}
+
+- (BOOL)containsKey:(id)key {
+    return [self objectForKey:key] != nil;
+}
+
+- (NSUInteger)countForObject:(id)object {
+    NSUInteger found = 0;
+
+    for (id key in [[self keyEnumerator] allObjects]) {
+        id value = [self objectForKey:key];
+
+        if (value == object || [value isEqual:object])
+            found++;
+    }
+    return found;
+}
+
+- (BOOL)containsObject:(id)object {
+    return [self countForObject:object] != 0;
+}
+
+- (BOOL)__getValue:(id *)value forKey:(id)key {
+    id object = [self objectForKey:key];
+
+    if (object != nil && value != NULL)
+        *value = object;
+    return object != nil;
+}
+
+- (void)__apply:(void (*)(const void *, const void *, void *))applier context:(void *)context {
+    for (id key in [[self keyEnumerator] allObjects]) {
+        applier(key, [self objectForKey:key], context);
+    }
+}
+
+- (void)__addObject:(id)object forKey:(id)key {
+    if ([self objectForKey:key] == nil)
+        [self setObject:object forKey:key];
+}
+
+- (void)replaceObject:(id)object forKey:(id)key {
+    if ([self objectForKey:key] != nil)
+        [self setObject:object forKey:key];
+}
+
+- (void)__setObject:(id)object forKey:(id)key {
+    [self setObject:object forKey:key];
 }
 
 - (nullable id)objectForKeyedSubscript:(id)key {
@@ -512,6 +707,10 @@ BOOL pd_write_plist(CFPropertyListRef plist, NSString *path,
 }
 
 - (NSEnumerator *)keyEnumerator {
+    if (__NSDictionaryIsForeign(self)) {
+        __NSDictionaryAbstract(self, _cmd);
+        return nil;
+    }
     return [[self allKeys] objectEnumerator];
 }
 
@@ -524,6 +723,17 @@ BOOL pd_write_plist(CFPropertyListRef plist, NSString *path,
         return NO;
     }
     if (self == other) {
+        return YES;
+    }
+    if (__NSDictionaryIsForeign(self) || __NSDictionaryIsForeign(other)) {
+        if ([other count] != [self count])
+            return NO;
+        for (id key in [[self keyEnumerator] allObjects]) {
+            id left = [self objectForKey:key], right = [other objectForKey:key];
+
+            if (right == nil || (left != right && ![left isEqual:right]))
+                return NO;
+        }
         return YES;
     }
     return CFEqual((CFTypeRef)self, (CFTypeRef)other) ? YES : NO;
@@ -577,6 +787,17 @@ BOOL pd_write_plist(CFPropertyListRef plist, NSString *path,
     return [self objectForKey:key];
 }
 
+// the keys whose value -isEqual: OBJECT
+- (NSArray *)allKeysForObject:(id)object {
+    NSMutableArray *keys = [NSMutableArray array];
+
+    for (id key in [self allKeys]) {
+        if ([[self objectForKey:key] isEqual:object])
+            [keys addObject:key];
+    }
+    return keys;
+}
+
 - (NSArray *)allKeys {
     CFIndex n = CFDictionaryGetCount((CFDictionaryRef)self);
     const void **keys = malloc(sizeof(void *) * (size_t)(n > 0 ? n : 1));
@@ -594,6 +815,9 @@ BOOL pd_write_plist(CFPropertyListRef plist, NSString *path,
  * NSObject versions apply and compare pointers, which makes any dictionary or
  * set keyed by value fail to find an equal-but-distinct object. */
 - (NSUInteger)hash {
+    // CF hashes a dictionary by its count too
+    if (__NSDictionaryIsForeign(self))
+        return [self count];
     return (NSUInteger)CFHash((CFTypeRef)self);
 }
 
@@ -604,7 +828,7 @@ BOOL pd_write_plist(CFPropertyListRef plist, NSString *path,
     if (other == nil || ![other isKindOfClass:[NSDictionary class]]) {
         return NO;
     }
-    return CFEqual((CFTypeRef)self, (CFTypeRef)other) ? YES : NO;
+    return [self isEqualToDictionary:other];
 }
 
 @end
@@ -612,10 +836,14 @@ BOOL pd_write_plist(CFPropertyListRef plist, NSString *path,
 @implementation NSMutableDictionary
 
 + (instancetype)new {
+    if (self != [NSMutableDictionary class])
+        return [[self alloc] init];
     return [self dictionaryWithCapacity:0];
 }
 
 - (instancetype)init {
+    if (__NSDictionaryIsForeign(self))
+        return [super init];
     // Must be +1: callers reach here through -alloc/-init and +new.
     return (id)CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
                                          &ns_dictionary_key_callbacks,

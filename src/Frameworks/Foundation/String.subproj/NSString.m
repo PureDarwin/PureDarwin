@@ -14,8 +14,10 @@
 #include <CoreFoundation/CFString.h>
 #include <CoreFoundation/CFCharacterSet.h>
 #include <CoreFoundation/CFData.h>
+#include <CoreFoundation/CFURL.h>
 #include <objc/runtime.h>
 #include <stdarg.h>
+#include <stdlib.h>
 
 extern CFStringRef _CFStringCreateWithFormatAndArgumentsAux(
     CFAllocatorRef allocator,
@@ -62,7 +64,114 @@ __NSStringCFEncoding(NSStringEncoding encoding)
                                               : kCFStringEncodingASCII;
 }
 
+extern Boolean _CFIsObjC(CFTypeID typeID, void *obj);
+
+// a subclass that is not a CFString (Swift's string storage): the abstract methods work through its primitives
+// the cluster's own classes are not: an +alloc'd NSMutableString is a placeholder whose -init returns a CFString
+static inline BOOL __NSStringIsForeign(id string) {
+    Class cls = object_getClass(string);
+
+    if (cls == [NSString class] || cls == [NSMutableString class])
+        return NO;
+    return _CFIsObjC(CFStringGetTypeID(), (void *)string) ? YES : NO;
+}
+
+static void __NSStringAbstract(id self, SEL _cmd) {
+    [NSException raise:NSInvalidArgumentException
+                format:@"*** -[%s %s]: method only defined for abstract class", object_getClassName(self), sel_getName(_cmd)];
+}
+
+// a CFString holding the characters of any NSString, read through -length and -getCharacters:range:
+__attribute__((visibility("hidden"))) CFMutableStringRef __NSStringCreateCFCopy(NSString *string) {
+    NSUInteger length = [string length];
+    UniChar *buffer = malloc(length ? length * sizeof(UniChar) : 1);
+    CFMutableStringRef copy = CFStringCreateMutable(kCFAllocatorDefault, 0);
+
+    [string getCharacters:(unichar *)buffer range:NSMakeRange(0, length)];
+    CFStringAppendCharacters(copy, buffer, (CFIndex)length);
+    free(buffer);
+    return copy;
+}
+
 @implementation NSString
+
+- (NSUInteger)length {
+    __NSStringAbstract(self, _cmd);
+    return 0;
+}
+
+- (unichar)characterAtIndex:(NSUInteger)index {
+    __NSStringAbstract(self, _cmd);
+    return 0;
+}
+
+- (void)getCharacters:(unichar *)buffer range:(NSRange)range {
+    for (NSUInteger i = 0; i < range.length; i++) {
+        buffer[i] = [self characterAtIndex:range.location + i];
+    }
+}
+
+- (CFTypeID)_cfTypeID {
+    return CFStringGetTypeID();
+}
+
+// NSCFString overrides both with CF's own copies
+- (id)copyWithZone:(NSZone *)zone {
+    CFMutableStringRef copy = __NSStringCreateCFCopy(self);
+    CFStringRef result = CFStringCreateCopy(kCFAllocatorDefault, copy);
+
+    CFRelease(copy);
+    return (id)result;
+}
+
+- (id)mutableCopyWithZone:(NSZone *)zone {
+    return (id)__NSStringCreateCFCopy(self);
+}
+
+// what CF sends a string that is not a CFString, built on the primitives
+- (id)_createSubstringWithRange:(NSRange)range {
+    UniChar *buffer = malloc(range.length ? range.length * sizeof(UniChar) : 1);
+    CFStringRef result;
+
+    [self getCharacters:(unichar *)buffer range:range];
+    result = CFStringCreateWithCharacters(kCFAllocatorDefault, buffer, (CFIndex)range.length);
+    free(buffer);
+    return (id)result;
+}
+
+- (const char *)_fastCStringContents:(BOOL)nullTerminationRequired {
+    return NULL;
+}
+
+- (const unichar *)_fastCharacterContents {
+    return NULL;
+}
+
+- (BOOL)_encodingCantBeStoredInEightBitCFString {
+    NSUInteger length = [self length];
+
+    for (NSUInteger i = 0; i < length; i++) {
+        if ([self characterAtIndex:i] > 0x7f)
+            return YES;
+    }
+    return NO;
+}
+
+- (CFStringEncoding)_fastestEncodingInCFStringEncoding {
+    return kCFStringEncodingUnicode;
+}
+
+- (CFStringEncoding)_smallestEncodingInCFStringEncoding {
+    return [self _encodingCantBeStoredInEightBitCFString] ? kCFStringEncodingUnicode : kCFStringEncodingASCII;
+}
+
+- (BOOL)_getCString:(char *)buffer maxLength:(NSUInteger)maxLength encoding:(CFStringEncoding)encoding {
+    CFMutableStringRef copy = __NSStringCreateCFCopy(self);
+    Boolean ok = CFStringGetCString(copy, buffer, (CFIndex)maxLength + 1, encoding);
+
+    CFRelease(copy);
+    return ok ? YES : NO;
+}
 
 /* Derived from the -getCharacters:range: primitive, so every subclass gets it.
    The key-event path in -[NSResponder interpretKeyEvents:] uses this form, and
@@ -81,6 +190,17 @@ __NSStringCFEncoding(NSStringEncoding encoding)
     CFStringRef result = _NSStringCreateWithFormatAndArguments(format, args);
     va_end(args);
     return (id)result;
+}
+
+- (NSString *)stringByAppendingFormat:(NSString *)format, ... {
+    va_list args;
+    va_start(args, format);
+    CFStringRef formatted = _NSStringCreateWithFormatAndArguments(format, args);
+    va_end(args);
+
+    NSString *result = [self stringByAppendingString:(NSString *)formatted];
+    CFRelease(formatted);
+    return result;
 }
 
 + (instancetype)stringWithContentsOfFile:(NSString *)path
@@ -144,6 +264,9 @@ __NSStringCFEncoding(NSStringEncoding encoding)
 }
 
 - (instancetype)init {
+    // a subclass outside the cluster gets a real instance of itself
+    if (__NSStringIsForeign(self))
+        return [super init];
     return (id)CFStringCreateWithCString(kCFAllocatorDefault, "",
                                           kCFStringEncodingUTF8);
 }
@@ -170,11 +293,56 @@ __NSStringCFEncoding(NSStringEncoding encoding)
     return (id)_NSStringCreateWithFormatAndArguments(format, arguments);
 }
 
+// formats are not localized here, so a locale formats like none
+- (instancetype)initWithFormat:(NSString *)format locale:(id)locale arguments:(va_list)arguments {
+    return [self initWithFormat:format arguments:arguments];
+}
+
+- (instancetype)initWithFormat:(NSString *)format locale:(id)locale, ... {
+    va_list arguments;
+
+    va_start(arguments, locale);
+    id result = [self initWithFormat:format arguments:arguments];
+    va_end(arguments);
+    return result;
+}
+
++ (instancetype)localizedStringWithFormat:(NSString *)format, ... {
+    va_list arguments;
+
+    va_start(arguments, format);
+    id result = [[self alloc] initWithFormat:format arguments:arguments];
+    va_end(arguments);
+    return [result autorelease];
+}
+
 - (instancetype)initWithCharacters:(const unichar *)characters
                             length:(NSUInteger)length {
     return (id)CFStringCreateWithCharacters(kCFAllocatorDefault,
                                             (const UniChar *)characters,
                                             (CFIndex)length);
+}
+
+// copied, so the buffer can be freed at once
+- (instancetype)initWithCharactersNoCopy:(unichar *)characters length:(NSUInteger)length freeWhenDone:(BOOL)freeBuffer {
+    id result = [self initWithCharacters:characters length:length];
+
+    if (freeBuffer)
+        free(characters);
+    return result;
+}
+
+- (NSString *)stringByRemovingPercentEncoding {
+    CFStringRef result = CFURLCreateStringByReplacingPercentEscapes(kCFAllocatorDefault, (CFStringRef)self, CFSTR(""));
+
+    return result ? (NSString *)CFAutorelease(result) : nil;
+}
+
+- (NSString *)stringByReplacingPercentEscapesUsingEncoding:(NSStringEncoding)encoding {
+    CFStringRef result = CFURLCreateStringByReplacingPercentEscapesUsingEncoding(kCFAllocatorDefault, (CFStringRef)self,
+                                                                                  CFSTR(""), __NSStringCFEncoding(encoding));
+
+    return result ? (NSString *)CFAutorelease(result) : nil;
 }
 
 - (instancetype)initWithCString:(const char *)cString
@@ -235,15 +403,56 @@ __NSStringCFEncoding(NSStringEncoding encoding)
     return (id)result;
 }
 
++ (nullable instancetype)stringWithContentsOfURL:(NSURL *)url
+                                         encoding:(NSStringEncoding)encoding
+                                            error:(NSError **)error {
+    return [[[self alloc] initWithContentsOfURL:url encoding:encoding error:error] autorelease];
+}
+
+// file URLs only, like the path reader
+- (nullable instancetype)initWithContentsOfURL:(NSURL *)url
+                                       encoding:(NSStringEncoding)encoding
+                                          error:(NSError **)error {
+    CFStringRef path = url ? CFURLCopyFileSystemPath((CFURLRef)url, kCFURLPOSIXPathStyle) : NULL;
+    id result;
+
+    if (path == NULL) {
+        if (error != NULL) {
+            *error = nil;
+        }
+        [self release];
+        return nil;
+    }
+    result = [self initWithContentsOfFile:(NSString *)path encoding:encoding error:error];
+    CFRelease(path);
+    return result;
+}
+
 - (BOOL)isEqualToString:(NSString *)other {
     if (other == nil) {
         return NO;
     }
+    if (__NSStringIsForeign(self) || __NSStringIsForeign(other))
+        return CFStringCompare((CFStringRef)self, (CFStringRef)other, 0) == kCFCompareEqualTo;
     return CFEqual((CFStringRef)self, (CFStringRef)other) ? YES : NO;
 }
 
 - (const char *)cString {
     return [self UTF8String];
+}
+
+// a lossy conversion writes '?' for characters the encoding lacks
+- (NSData *)dataUsingEncoding:(NSStringEncoding)encoding allowLossyConversion:(BOOL)lossy {
+    if (!lossy)
+        return [self dataUsingEncoding:encoding];
+
+    CFStringRef string = (CFStringRef)self;
+    CFDataRef result;
+
+    if (__NSStringIsForeign(self))
+        string = (CFStringRef)CFAutorelease(__NSStringCreateCFCopy(self));
+    result = CFStringCreateExternalRepresentation(kCFAllocatorDefault, string, __NSStringCFEncoding(encoding), '?');
+    return result ? (NSData *)CFAutorelease(result) : nil;
 }
 
 - (NSData *)dataUsingEncoding:(NSStringEncoding)encoding {
@@ -261,6 +470,14 @@ __NSStringCFEncoding(NSStringEncoding encoding)
  * NSObject versions apply and compare pointers, which makes any dictionary or
  * set keyed by value fail to find an equal-but-distinct object. */
 - (NSUInteger)hash {
+    // hashed as the CFString with the same characters, so equal strings hash alike
+    if (__NSStringIsForeign(self)) {
+        CFMutableStringRef copy = __NSStringCreateCFCopy(self);
+        NSUInteger hash = (NSUInteger)CFHash(copy);
+
+        CFRelease(copy);
+        return hash;
+    }
     return (NSUInteger)CFHash((CFTypeRef)self);
 }
 
@@ -271,7 +488,7 @@ __NSStringCFEncoding(NSStringEncoding encoding)
     if (other == nil || ![other isKindOfClass:[NSString class]]) {
         return NO;
     }
-    return CFEqual((CFTypeRef)self, (CFTypeRef)other) ? YES : NO;
+    return [self isEqualToString:other];
 }
 
 
@@ -402,7 +619,12 @@ static CFOptionFlags __NSStringCFCompareFlags(NSStringCompareOptions options) {
     }
 
     CFStringRef string = CFStringCreateWithCString(kCFAllocatorDefault, cString,
-                                                   (CFStringEncoding)encoding);
+                                                   __NSStringCFEncoding(encoding));
+
+    // a byte sequence the encoding rejects is nil, not a NULL handed to CFAutorelease
+    if (string == NULL) {
+        return nil;
+    }
 
     return (id)CFAutorelease(string);
 }
@@ -412,7 +634,7 @@ static CFOptionFlags __NSStringCFCompareFlags(NSStringCompareOptions options) {
 }
 
 - (const char *)cStringUsingEncoding:(NSStringEncoding)encoding {
-    return CFStringGetCStringPtr((CFStringRef)self, (CFStringEncoding)encoding);
+    return CFStringGetCStringPtr((CFStringRef)self, __NSStringCFEncoding(encoding));
 }
 
 
@@ -472,6 +694,10 @@ static CFOptionFlags __NSStringCFCompareFlags(NSStringCompareOptions options) {
 }
 
 - (void)appendString:(NSString *)string {
+    if (__NSStringIsForeign(self)) {
+        [self replaceCharactersInRange:NSMakeRange([self length], 0) withString:string];
+        return;
+    }
     CFStringAppend((CFMutableStringRef)self, (CFStringRef)string);
 }
 
@@ -488,7 +714,90 @@ static CFOptionFlags __NSStringCFCompareFlags(NSStringCompareOptions options) {
 }
 
 - (void)setString:(NSString *)string {
+    if (__NSStringIsForeign(self)) {
+        [self replaceCharactersInRange:NSMakeRange(0, [self length]) withString:string];
+        return;
+    }
     CFStringReplaceAll((CFMutableStringRef)self, (CFStringRef)string);
+}
+
+// the primitive, NSCFString overrides it
+- (void)replaceCharactersInRange:(NSRange)range withString:(NSString *)string {
+    __NSStringAbstract(self, _cmd);
+}
+
+- (void)insertString:(NSString *)string atIndex:(NSUInteger)index {
+    [self replaceCharactersInRange:NSMakeRange(index, 0) withString:string];
+}
+
+- (void)deleteCharactersInRange:(NSRange)range {
+    [self replaceCharactersInRange:range withString:@""];
+}
+
+- (void)appendCharacters:(const unichar *)characters length:(NSUInteger)length {
+    CFStringRef string = CFStringCreateWithCharacters(kCFAllocatorDefault, (const UniChar *)characters, (CFIndex)length);
+
+    [self appendString:(NSString *)string];
+    CFRelease(string);
+}
+
+// CF's in-place edits on a string that is not a CFString: edit a CF copy, then put it back through -setString:
+static void __NSMutableStringEdit(NSMutableString *self, void (^edit)(CFMutableStringRef copy)) {
+    CFMutableStringRef copy = __NSStringCreateCFCopy(self);
+
+    edit(copy);
+    [self setString:(NSString *)copy];
+    CFRelease(copy);
+}
+
+- (NSUInteger)replaceOccurrencesOfString:(NSString *)target
+                              withString:(NSString *)replacement
+                                 options:(NSStringCompareOptions)options
+                                   range:(NSRange)range {
+    __block CFIndex replaced = 0;
+
+    __NSMutableStringEdit(self, ^(CFMutableStringRef copy) {
+        replaced = CFStringFindAndReplace(copy, (CFStringRef)target, (CFStringRef)replacement,
+                                          CFRangeMake((CFIndex)range.location, (CFIndex)range.length),
+                                          (CFStringCompareFlags)options);
+    });
+    return (NSUInteger)replaced;
+}
+
+- (void)_cfAppendCString:(const unsigned char *)cString length:(NSInteger)length {
+    CFStringRef string = CFStringCreateWithBytes(kCFAllocatorDefault, cString, (CFIndex)length,
+                                                 kCFStringEncodingASCII, false);
+
+    [self appendString:(NSString *)string];
+    CFRelease(string);
+}
+
+- (void)_cfPad:(CFStringRef)padString length:(uint32_t)length padIndex:(uint32_t)padIndex {
+    __NSMutableStringEdit(self, ^(CFMutableStringRef copy) { CFStringPad(copy, padString, length, padIndex); });
+}
+
+- (void)_cfTrim:(CFStringRef)trimString {
+    __NSMutableStringEdit(self, ^(CFMutableStringRef copy) { CFStringTrim(copy, trimString); });
+}
+
+- (void)_cfTrimWS {
+    __NSMutableStringEdit(self, ^(CFMutableStringRef copy) { CFStringTrimWhitespace(copy); });
+}
+
+- (void)_cfLowercase:(const void *)locale {
+    __NSMutableStringEdit(self, ^(CFMutableStringRef copy) { CFStringLowercase(copy, (CFLocaleRef)locale); });
+}
+
+- (void)_cfUppercase:(const void *)locale {
+    __NSMutableStringEdit(self, ^(CFMutableStringRef copy) { CFStringUppercase(copy, (CFLocaleRef)locale); });
+}
+
+- (void)_cfCapitalize:(const void *)locale {
+    __NSMutableStringEdit(self, ^(CFMutableStringRef copy) { CFStringCapitalize(copy, (CFLocaleRef)locale); });
+}
+
+- (void)_cfNormalize:(CFStringNormalizationForm)form {
+    __NSMutableStringEdit(self, ^(CFMutableStringRef copy) { CFStringNormalize(copy, form); });
 }
 
 @end

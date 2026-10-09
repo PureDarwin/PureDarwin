@@ -87,12 +87,13 @@ struct __CFBoolean {
 
 DECLARE_STATIC_CLASS_REF(__NSCFBoolean);
 
-static _CF_CONSTANT_OBJECT_BACKING struct __CFBoolean __kCFBooleanTrue = {
+// exported like Apple's: clang emits @YES and @NO as references to these
+_CF_CONSTANT_OBJECT_BACKING struct __CFBoolean __kCFBooleanTrue = {
     INIT_CFRUNTIME_BASE_WITH_CLASS(__NSCFBoolean, _kCFRuntimeIDCFBoolean)
 };
 const CFBooleanRef kCFBooleanTrue = &__kCFBooleanTrue;
 
-static _CF_CONSTANT_OBJECT_BACKING struct __CFBoolean __kCFBooleanFalse = {
+_CF_CONSTANT_OBJECT_BACKING struct __CFBoolean __kCFBooleanFalse = {
     INIT_CFRUNTIME_BASE_WITH_CLASS(__NSCFBoolean, _kCFRuntimeIDCFBoolean)
 };
 const CFBooleanRef kCFBooleanFalse = &__kCFBooleanFalse;

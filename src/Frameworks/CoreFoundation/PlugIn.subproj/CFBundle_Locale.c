@@ -667,8 +667,48 @@ static CFStringRef _CFBundleCopyLanguageFoundInLocalizations(CFArrayRef localiza
     return NULL;
 }
 
+#if !__HAS_APPLE_ICU__
+// without Apple's ualoc_localizationsToUse: each preferred language in order, in any form the bundle has it,
+// then its language alone (en_GB -> en). Base is never a choice of its own
+static CFMutableArrayRef _CFBundleCreateMutableArrayOfFallbackLanguagesWithoutICU(CFArrayRef availableLocalizations, CFArrayRef preferredLocalizations) {
+    CFMutableArrayRef result = CFArrayCreateMutable(kCFAllocatorSystemDefault, 0, &kCFTypeArrayCallBacks);
+    CFIndex preferredCount = CFArrayGetCount(preferredLocalizations);
+
+    for (CFIndex i = 0; i < preferredCount; i++) {
+        CFStringRef preferred = (CFStringRef)CFArrayGetValueAtIndex(preferredLocalizations, i);
+        CFStringRef found = _CFBundleCopyLanguageFoundInLocalizations(availableLocalizations, preferred);
+
+        if (!found) {
+            CFRange separator;
+
+            if (CFStringFindWithOptions(preferred, CFSTR("_"), CFRangeMake(0, CFStringGetLength(preferred)), 0, &separator) ||
+                CFStringFindWithOptions(preferred, CFSTR("-"), CFRangeMake(0, CFStringGetLength(preferred)), 0, &separator)) {
+                CFStringRef language = CFStringCreateWithSubstring(kCFAllocatorSystemDefault, preferred, CFRangeMake(0, separator.location));
+
+                found = _CFBundleCopyLanguageFoundInLocalizations(availableLocalizations, language);
+                CFRelease(language);
+            }
+        }
+        if (found) {
+            if (!CFEqual(found, _CFBundleBaseDirectory) &&
+                !CFArrayContainsValue(result, CFRangeMake(0, CFArrayGetCount(result)), found))
+                CFArrayAppendValue(result, found);
+            CFRelease(found);
+        }
+    }
+    if (CFArrayGetCount(result) == 0) {
+        CFRelease(result);
+        return NULL;
+    }
+    return result;
+}
+#endif
+
 // Given a list of localizations (e.g., provided as argument to API, or present as .lproj directories), return a mutable array of localizations in preferred order. Returns NULL if nothing is found.
 static CFMutableArrayRef _CFBundleCreateMutableArrayOfFallbackLanguages(CFArrayRef availableLocalizations, CFArrayRef preferredLocalizations) {
+#if !__HAS_APPLE_ICU__
+    return _CFBundleCreateMutableArrayOfFallbackLanguagesWithoutICU(availableLocalizations, preferredLocalizations);
+#endif
     
     // stringPointers must be the length of list
     char * (^makeBuffer)(CFArrayRef, char **) = ^(CFArrayRef list, char *stringPointers[]) {

@@ -13,6 +13,8 @@
 
 
 
+// non-CF instances of this type are messaged, see CFObjCDispatch.h
+#define CF_OBJC_DISPATCH_ENABLED 1
 #include <CoreFoundation/CFSet.h>
 #include "CFInternal.h"
 #include "CFBasicHash.h"

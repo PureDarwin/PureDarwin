@@ -18,6 +18,8 @@
 
 @class NSURL;
 
+@class NSIndexSet;
+
 @interface NSArray<__covariant ObjectType> : NSObject <NSFastEnumeration>
 
 - (NSArray<ObjectType> *)arrayByAddingObjectsFromArray:(NSArray<ObjectType> *)other;
@@ -43,8 +45,8 @@
 + (nullable instancetype)arrayWithContentsOfURL:(NSURL *_Nonnull)url;
 
 - (NSUInteger)count;
-- (id)objectAtIndex:(NSUInteger)index;
-- (id)objectAtIndexedSubscript:(NSUInteger)index;
+- (ObjectType)objectAtIndex:(NSUInteger)index;
+- (ObjectType)objectAtIndexedSubscript:(NSUInteger)index;
 - (nullable ObjectType)firstObject;
 - (nullable ObjectType)lastObject;
 - (NSEnumerator *)objectEnumerator;
@@ -58,6 +60,16 @@
 - (NSString *)componentsJoinedByString:(NSString *)separator;
 - (NSArray<ObjectType> *)sortedArrayUsingSelector:(SEL)selector;
 - (NSArray<ObjectType> *)sortedArrayUsingComparator:(NSComparator)comparator;
+- (void)enumerateObjectsUsingBlock:(void (^)(ObjectType object, NSUInteger index, BOOL *stop))block;
+- (void)enumerateObjectsWithOptions:(NSEnumerationOptions)options
+                         usingBlock:(void (^)(ObjectType object, NSUInteger index, BOOL *stop))block;
+- (void)getObjects:(ObjectType __unsafe_unretained *)objects;
+- (NSArray<ObjectType> *)objectsAtIndexes:(NSIndexSet *)indexes;
+- (NSEnumerator *)reverseObjectEnumerator;
+- (nullable ObjectType)firstObjectCommonWithArray:(NSArray<ObjectType> *)other;
+- (NSUInteger)indexOfObjectPassingTest:(BOOL (^)(ObjectType object, NSUInteger index, BOOL *stop))predicate;
+- (NSUInteger)indexOfObjectWithOptions:(NSEnumerationOptions)options
+                           passingTest:(BOOL (^)(ObjectType object, NSUInteger index, BOOL *stop))predicate;
 - (NSArray<ObjectType> *)sortedArrayUsingDescriptors:(NSArray *)descriptors;
 - (void)makeObjectsPerformSelector:(SEL)selector;
 - (void)makeObjectsPerformSelector:(SEL)selector withObject:(id)object;
@@ -79,6 +91,7 @@
 - (void)removeObject:(ObjectType)object;
 - (void)sortUsingFunction:(NSInteger (*)(id, id, void *))comparator context:(void *)context;
 - (void)replaceObjectAtIndex:(NSUInteger)index withObject:(ObjectType)object;
+- (void)setObject:(ObjectType)object atIndexedSubscript:(NSUInteger)index;
 - (void)removeAllObjects;
 - (void)sortUsingSelector:(SEL)selector;
 - (void)sortUsingComparator:(NSComparator)comparator;
