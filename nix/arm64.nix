@@ -2422,6 +2422,30 @@ let
     inherit arm64CrossToolchain;
     extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=T8010" ];
   };
+  kernelArm64Sc8280xpBuild = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm64-sc8280xp";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "RELEASE";
+    puredarwinArch = "arm64";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=SC8280XP" ];
+  };
+  kernelArm64Sc8280xpDebugBuild = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm64-sc8280xp-debug";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "DEBUG";
+    puredarwinArch = "arm64";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=SC8280XP" ];
+  };
   kernelArm32Bcm2835Build = mkPureDarwinBuild {
     pname = "puredarwin-kernel-arm32-bcm2835";
     src = kernelSource;
@@ -3041,6 +3065,8 @@ in
     kernelArm64Virt4kDebugBuild
     kernelArm64Sun50iBuild
     kernelArm64Sun50iDebugBuild
+    kernelArm64Sc8280xpBuild
+    kernelArm64Sc8280xpDebugBuild
     kernelArm32Bcm2835Build
     kernelArm32Bcm2835DebugBuild
     kernelArm32Bcm2835DevBuild

@@ -113,6 +113,8 @@
 , kernelArm64Bcm2837DebugBuild
 , kernelArm64Sun50iBuild
 , kernelArm64Sun50iDebugBuild
+, kernelArm64Sc8280xpBuild
+, kernelArm64Sc8280xpDebugBuild
 , kernelArm64Virt4kDebugBuild
 , kernelArm32Bcm2835Build
 , kernelArm32Bcm2835DebugBuild
@@ -798,6 +800,7 @@ let
         });
       xnuLoaderDefault = makeXnuLoaderHostBuild xnu-loader.packages.${system}.default pkgs.pkgsCross.gnu64;
       xnuLoaderArm64 = makeXnuLoaderHostBuild xnu-loader.packages.${system}.arm64-virt pkgs.pkgsCross.aarch64-multiplatform;
+      xnuLoaderArm64Sc8280xp = makeXnuLoaderHostBuild xnu-loader.packages.${system}.arm64-sc8280xp pkgs.pkgsCross.aarch64-multiplatform;
       # 32-bit UEFI on a 64-bit CPU: the firmware loads only IA32 PE images,
       # while the kernel it boots stays x86_64. Built from the i686 set so
       # libgcc, gnu-efi and binutils are all 32-bit.
@@ -869,6 +872,18 @@ let
         kexts = kextsArm64Build;
         kcTools = kc-tools.packages.${system}.default;
         kcBase = "fffffff006000000";
+      };
+      kcArm64Sc8280xpReleaseBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
+        kernel = kernelArm64Sc8280xpBuild;
+        inherit kernelSource;
+        kexts = kextsArm64Build;
+        kcTools = kc-tools.packages.${system}.default;
+      };
+      kcArm64Sc8280xpDebugBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
+        kernel = kernelArm64Sc8280xpDebugBuild;
+        inherit kernelSource;
+        kexts = kextsArm64Build;
+        kcTools = kc-tools.packages.${system}.default;
       };
       prelinkedArm32Bcm2835Build =
         pkgs.callPackage ./pkgs/toolchain/prelinked-arm32-bcm2835.nix {
@@ -1093,6 +1108,11 @@ let
       # same pruned ext4 root as T8010, for the Orange Pi Zero 3: xnu-loader carries it as ramdisk.img
       ramdiskArm64Sun50iBuild = ramdiskArm64T8010Build.override {
         kc = kcArm64Sun50iReleaseBuild;
+      };
+      ramdiskArm64Sc8280xpBuild = ramdiskArm64T8010Build.override {
+        kc = kcArm64Sc8280xpReleaseBuild;
+        xnuLoader = xnuLoaderArm64Sc8280xp;
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=0 rd=md0 hid-legacy-shim=1";
       };
       imageArm64Bcm2837Build = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemArm64VirtMinimal;
@@ -2005,10 +2025,13 @@ EOF
       kc-arm64-t8010-debug = kcArm64T8010DebugBuild;
       ramdisk-arm64-t8010 = ramdiskArm64T8010Build;
       ramdisk-arm64-sun50i = ramdiskArm64Sun50iBuild;
+      ramdisk-arm64-sc8280xp = ramdiskArm64Sc8280xpBuild;
       kc-arm64-t8010 = kcArm64T8010ReleaseBuild;
       kc-arm64-virt4k-debug = kcArm64Virt4kDebugBuild;
       kc-arm64-sun50i = kcArm64Sun50iReleaseBuild;
       kc-arm64-sun50i-debug = kcArm64Sun50iDebugBuild;
+      kc-arm64-sc8280xp = kcArm64Sc8280xpReleaseBuild;
+      kc-arm64-sc8280xp-debug = kcArm64Sc8280xpDebugBuild;
       kc-arm64-bcm2837 = kcArm64Bcm2837ReleaseBuild;
       kc-arm64-bcm2837-debug = kcArm64Bcm2837DebugBuild;
       prelinked-arm32-bcm2835 = prelinkedArm32Bcm2835Build;
