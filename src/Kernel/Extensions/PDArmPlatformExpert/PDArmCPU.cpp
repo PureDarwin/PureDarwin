@@ -30,6 +30,20 @@ PDArmCPU::setCPUCount(unsigned int count)
 	gPDCpuCount = (count != 0) ? count : 1;
 }
 
+static uint64_t gPDCpuIntEnabled;
+
+static void
+pd_enable_cpu_interrupt(IOCPUInterruptController *ic, PDArmCPU *cpu, unsigned int number)
+{
+    uint64_t bit = 1ULL << (number & 63);
+
+    if (gPDCpuIntEnabled & bit) {
+        return;
+    }
+    gPDCpuIntEnabled |= bit;
+    ic->enableCPUInterrupt(cpu);
+}
+
 static IOCPUInterruptController *
 pd_cpu_ic(IOService *owner)
 {
@@ -249,7 +263,7 @@ PDArmCPU::initCPU(bool boot)
 
 	if (pdCpuNumber != 0) {
 		PDArmGIC_init_cpu(pdCpuNumber);
-		cpuIC->enableCPUInterrupt(this);
+		pd_enable_cpu_interrupt(cpuIC, this, pdCpuNumber);
 		PDArmGIC_enable_cpu(pdCpuNumber);
 		setCPUState(kIOCPUStateRunning);
 		// xnu clears SIGPdisabled only when a CPU first takes an IPI,
@@ -258,7 +272,7 @@ PDArmCPU::initCPU(bool boot)
 		return;
 	}
 
-	cpuIC->enableCPUInterrupt(this);
+	pd_enable_cpu_interrupt(cpuIC, this, pdCpuNumber);
 	PDArmGIC_enable();
 	setCPUState(kIOCPUStateRunning);
 	PDArmGIC_send_ipi(pdPhysId);
