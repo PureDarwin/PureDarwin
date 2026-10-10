@@ -447,7 +447,8 @@ private:
      * recurse into hub downstream enumeration or search its configuration
      * for a bulk-only mass storage interface and publish a disk nub. */
     bool enumerateSlotDevice(UInt32 slotId, UInt32 rootPort0based, UInt32 routeString,
-                             UInt32 speed, int depth);
+                             UInt32 speed, int depth, UInt16 maxPkt0);
+    bool evaluateEP0MaxPacket(UInt32 slotId, UInt16 maxPkt);
 
     bool tryEnumerateMassStorage(UInt32 port0based, UInt32 speed);
 };
