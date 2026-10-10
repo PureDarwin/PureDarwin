@@ -74,9 +74,11 @@ bool IOUSBHIDKeyboard::start(IOService *provider)
     PDHIDPublishKeyboardDevice();
 
     fRunning = true;
+    retain(); // the poll thread's reference. dropped when it exits
     thread_t thread = THREAD_NULL;
     if (kernel_thread_start((thread_continue_t)&IOUSBHIDKeyboard::pollThread, this, &thread) != KERN_SUCCESS) {
         fRunning = false;
+        release();
         IOLog("IOUSBHIDKeyboard: failed to start poll thread\n");
         return false;
     }
@@ -88,7 +90,8 @@ bool IOUSBHIDKeyboard::start(IOService *provider)
 void IOUSBHIDKeyboard::stop(IOService *provider)
 {
     fRunning = false;
-    if (fInterface) fInterface->close(this);
+    if (fInterruptPipe) fInterruptPipe->Abort();
+    if (fInterface && fInterface->isOpen(this)) fInterface->close(this);
     super::stop(provider);
 }
 
@@ -123,7 +126,10 @@ bool IOUSBHIDKeyboard::setBootProtocol()
 
 void IOUSBHIDKeyboard::pollThread(void *arg, wait_result_t)
 {
-    ((IOUSBHIDKeyboard *)arg)->pollLoop();
+    IOUSBHIDKeyboard *self = (IOUSBHIDKeyboard *)arg;
+
+    self->pollLoop();
+    self->release();
     thread_terminate(current_thread());
 }
 
@@ -245,4 +251,17 @@ UInt32 IOUSBHIDKeyboard::deviceType()
 UInt32 IOUSBHIDKeyboard::interfaceID()
 {
     return NX_EVS_DEVICE_INTERFACE_ADB;
+}
+
+bool IOUSBHIDKeyboard::willTerminate(IOService *provider, IOOptionBits options)
+{
+    fRunning = false;
+    if (fInterruptPipe) fInterruptPipe->Abort();
+    return super::willTerminate(provider, options);
+}
+
+bool IOUSBHIDKeyboard::didTerminate(IOService *provider, IOOptionBits options, bool *defer)
+{
+    if (fInterface && fInterface->isOpen(this)) fInterface->close(this);
+    return super::didTerminate(provider, options, defer);
 }
