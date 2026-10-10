@@ -259,11 +259,25 @@ mapBARFromConfig(IOPCIDevice         * provider,
     return true;
 }
 
+#define kA733Compatible     "allwinner,sunxi-plat-dwc3"
+#define kSC8280XPCompatible "qcom,sc8280xp-dwc3"
+
+static bool
+isCompatible(IOService *provider, const char *compat)
+{
+    OSString *s = OSString::withCStringNoCopy(compat);
+    bool ok = s != NULL && provider->compareName(s);
+
+    OSSafeReleaseNULL(s);
+    return ok;
+}
+
 IOService *
 RavynXHCIPort::probe(IOService *provider, SInt32 *score)
 {
     IOPCIDevice *pci = OSDynamicCast(IOPCIDevice, provider);
-    if (!pci && !provider->compareName(OSString::withCStringNoCopy("allwinner,sunxi-plat-dwc3"))) return NULL;
+    if (!pci && !isCompatible(provider, kA733Compatible) && !isCompatible(provider, kSC8280XPCompatible))
+        return NULL;
     if (score) *score += 1000;
     return super::probe(provider, score);
 }
@@ -315,6 +329,9 @@ RavynXHCIPort::probe(IOService *provider, SInt32 *score)
 #define kU2PHY_PHYTUNE      0x18
 
 #define kDWC3_GCTL          0xc110
+#define kDWC3_GCTL_PRTCAP(v)    (((v) >> 12) & 3)   // port compat direction, 1 = host
+#define kDWC3_GSNPSID       0xc120
+#define kDWC3_USB31_ID      0x3331                  // GSNPSID[31:16] of a DWC_usb31 core
 #define kDWC3_GUSB2PHYCFG   0xc200
 #define kDWC3_GUSB3PIPECTL  0xc2c0
 #define kDWC3_DCTL          0xc704
@@ -475,6 +492,38 @@ bool RavynXHCIPort::startA733(IOService *provider)
     return true;
 }
 
+// x13s usb_1: the firmware leaves the core clocked, powered, in host mode and halted
+// across ExitBootServices, so nothing here writes. A core whose clock is gated never
+// answers the first read and the boot stops, so that read is logged first
+bool RavynXHCIPort::startSC8280XP(IOService *provider)
+{
+    fBARMap = provider->mapDeviceMemoryWithIndex(0, kIOMapInhibitCache);
+    if (!fBARMap || fBARMap->getLength() < kDWC3_GSNPSID + 4) {
+        XHCI_Log("sc8280xp: %s has no usable reg", provider->getName());
+        return false;
+    }
+    volatile UInt32 *dwc = (volatile UInt32 *)fBARMap->getVirtualAddress();
+
+    XHCI_Log("sc8280xp: first read of the core at %016llx",
+             (unsigned long long)fBARMap->getPhysicalAddress());
+    UInt32 id = dwc[kDWC3_GSNPSID / 4];
+    UInt32 gctl = dwc[kDWC3_GCTL / 4];
+    XHCI_Log("sc8280xp: GSNPSID=%08x GCTL=%08x GUSB2PHYCFG=%08x GUSB3IPECTL=%08x",
+             id, gctl, dwc[kDWC3_GUSB2PHYCFG / 4], dwc[kDWC3_GUSB3PIPECTL / 4]);
+    if ((id >> 16) != kDWC3_USB31_ID) {
+        XHCI_Log("sc8280xp: not a usb31 core, leaving it alone");
+        return false;
+    }
+    if (kDWC3_GCTL_PRTCAP(gctl) != 1) {
+        XHCI_Log("sc8280xp: core is not in host mode, leaving it alone");
+        return false;
+    }
+    // HCCPARAMS1.AC64 is set, so buffers may sit above 4 GiB. Page alignment keeps each
+    // one off cache lines the cpu shares with anything else, which dmaFlush relies on
+    fDMAMask = 0xFFFFFFFFFFFFF000ULL;
+    return true;
+}
+
 void RavynXHCIPort::dmaFlush(const volatile void *va, UInt64 len) const
 {
     if (!fNonCoherent || !va || !len) return;
@@ -544,6 +593,8 @@ bool RavynXHCIPort::start(IOService *provider)
         fBARMap = mapUsableBAR(fPCI, kIOPCIConfigBaseAddress0);
         if (!fBARMap) mapBARFromAssignedAddresses(fPCI, &fBARDesc, &fBARMap);
         if (!fBARMap) mapBARFromConfig(fPCI, &fBARDesc, &fBARMap);
+    } else if (isCompatible(provider, kSC8280XPCompatible)) {
+        if (!startSC8280XP(provider)) return false;
     } else if (!startA733(provider)) {
         return false;
     }

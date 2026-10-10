@@ -349,6 +349,7 @@ private:
         }
 
     bool startA733(IOService *provider);
+    bool startSC8280XP(IOService *provider);
     void quiesce(const char *why);
     static IOReturn restartHandler(void *target, void *refCon, UInt32 messageType,
                                    IOService *provider, void *messageArgument, vm_size_t argSize);
