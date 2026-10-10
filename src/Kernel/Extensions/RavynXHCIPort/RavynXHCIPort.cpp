@@ -2406,7 +2406,7 @@ bool RavynXHCIPort::enumerateHubPort(UInt32 hubSlotId, UInt32 rootPort0based, UI
         return false;
     }
 
-    if (!enumerateSlotDevice(slotId, rootPort0based, routeString, speed, depth + 1)) {
+    if (!enumerateSlotDevice(slotId, rootPort0based, routeString, speed, depth + 1, maxPkt0)) {
         if (disableSlot(slotId))
             freeSlotResources(slotId);
         return false;
@@ -2418,10 +2418,16 @@ bool RavynXHCIPort::enumerateHubPort(UInt32 hubSlotId, UInt32 rootPort0based, UI
  * downstream ports) or a candidate mass storage device (search for a
  * bulk-only MSC interface and, if found, publish a disk nub). */
 bool RavynXHCIPort::enumerateSlotDevice(UInt32 slotId, UInt32 rootPort0based, UInt32 routeString,
-                                        UInt32 speed, int depth)
+                                        UInt32 speed, int depth, UInt16 maxPkt0)
 {
     USBDeviceDescriptor devDesc;
     bzero(&devDesc, sizeof(devDesc));
+    USBSetupPacket getDevDesc8 = { 0x80, USB_REQ_GET_DESCRIPTOR,
+                                  (UInt16)(USB_DESC_DEVICE << 8), 0, 8 };
+    if (!controlTransfer(slotId, getDevDesc8, &devDesc, 8, true)) return false;
+    if (devDesc.bMaxPacketSize0 && devDesc.bMaxPacketSize0 != maxPkt0 && speed != 4) {
+        if (!evaluateEP0MaxPacket(slotId, devDesc.bMaxPacketSize0)) return false;
+    }
     USBSetupPacket getDevDesc = { 0x80, USB_REQ_GET_DESCRIPTOR,
                                   (UInt16)(USB_DESC_DEVICE << 8), 0, sizeof(devDesc) };
     if (!controlTransfer(slotId, getDevDesc, &devDesc, sizeof(devDesc), true)) return false;
@@ -2653,6 +2659,22 @@ bool RavynXHCIPort::enumerateSlotDevice(UInt32 slotId, UInt32 rootPort0based, UI
     return true;
 }
 
+bool RavynXHCIPort::evaluateEP0MaxPacket(UInt32 slotId, UInt16 maxPkt)
+{
+    SlotResources &sr = fSlots[slotId];
+    void *ic = sr.inputCtxMem->getBytesNoCopy();
+    bzero(ic, inputCtxBytes());
+    inputCtl(ic)->addFlags = (1u << 1);
+    inputEp(ic, 1)->dword1 = EP_CTX_CERR(3) | (EP_TYPE_CONTROL << EP_CTX_TYPE_SHIFT) |
+                             ((UInt32)maxPkt << EP_CTX_MAXPKT_SHIFT);
+    UInt8 cc = 0;
+    bool ok = doCommand(sr.inputCtxMem->getPhysicalAddress(), 0,
+                        TRB_SET_TYPE(TRB_TYPE_EVALUATE_CONTEXT) | TRB_SET_SLOT(slotId),
+                        &cc, NULL, 1000);
+    XHCI_Log("slot %u: evaluate ep0 mps=%u cc=%u", slotId, maxPkt, cc);
+    return ok && cc == TRB_CC_SUCCESS;
+}
+
 /* Full enumeration: Enable Slot -> Address -> GET_DESCRIPTOR -> hub or MSC */
 bool RavynXHCIPort::tryEnumerateMassStorage(UInt32 port0based, UInt32 speed)
 {
@@ -2671,7 +2693,7 @@ bool RavynXHCIPort::tryEnumerateMassStorage(UInt32 port0based, UInt32 speed)
         return false;
     }
 
-    if (!enumerateSlotDevice(slotId, port0based, 0, speed, 0)) {
+    if (!enumerateSlotDevice(slotId, port0based, 0, speed, 0, maxPkt0)) {
         if (disableSlot(slotId))
             freeSlotResources(slotId);
         return false;
