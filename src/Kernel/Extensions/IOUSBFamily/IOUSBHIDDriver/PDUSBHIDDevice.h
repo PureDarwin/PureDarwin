@@ -16,6 +16,8 @@ public:
 	virtual bool handleStart(IOService *provider) APPLE_KEXT_OVERRIDE;
 	virtual void handleStop(IOService *provider) APPLE_KEXT_OVERRIDE;
 	virtual void free(void) APPLE_KEXT_OVERRIDE;
+	virtual bool willTerminate(IOService *provider, IOOptionBits options) APPLE_KEXT_OVERRIDE;
+	virtual bool didTerminate(IOService *provider, IOOptionBits options, bool *defer) APPLE_KEXT_OVERRIDE;
 
 	virtual IOReturn newReportDescriptor(IOMemoryDescriptor **descriptor) const APPLE_KEXT_OVERRIDE;
 	virtual OSString *newTransportString() const APPLE_KEXT_OVERRIDE;
