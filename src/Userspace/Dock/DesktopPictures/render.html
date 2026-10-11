@@ -1,0 +1,11 @@
+<!doctype html>
+<!-- render.html: the PureDarwin desktop pictures, opened at 2560x1600 per picture with ?NAME -->
+<html><head><meta charset="utf-8"><style>
+html, body { margin: 0; width: 100%; height: 100%; }
+body { background: var(--g); }
+body.Sunset { --g: radial-gradient(120% 90% at 18% 115%, #f0b583 0 38%, transparent 38.3%), radial-gradient(80% 140% at 108% 40%, #df6a6a 0 46%, transparent 46.4%), radial-gradient(90% 60% at 70% 52%, rgba(255,235,230,.55) 0 8%, transparent 30%), linear-gradient(135deg, #e08a5c 0%, #e79a6c 40%, #e2777a 70%, #d4504f 100%); }
+body.Lagoon { --g: radial-gradient(120% 90% at 18% 115%, #7fd3c9 0 38%, transparent 38.3%), radial-gradient(80% 140% at 108% 40%, #3b6fd1 0 46%, transparent 46.4%), linear-gradient(135deg, #3fa7b5 0%, #4b9ad6 50%, #2f4fae 100%); }
+body.Dusk { --g: radial-gradient(120% 90% at 18% 115%, #c58ad8 0 38%, transparent 38.3%), radial-gradient(80% 140% at 108% 40%, #3a2a6b 0 46%, transparent 46.4%), linear-gradient(135deg, #8b5fbf 0%, #6a4aa8 50%, #2b1f55 100%); }
+body.Graphite { --g: radial-gradient(120% 90% at 18% 115%, #8d8f94 0 38%, transparent 38.3%), radial-gradient(80% 140% at 108% 40%, #2c2e33 0 46%, transparent 46.4%), linear-gradient(135deg, #6c6f75 0%, #4a4d53 50%, #222428 100%); }
+</style></head>
+<body><script>document.body.className = location.search.slice(1);</script></body></html>

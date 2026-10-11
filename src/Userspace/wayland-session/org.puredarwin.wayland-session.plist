@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>org.puredarwin.wayland-session</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/libexec/pd-wayland-session</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>/var/root</string>
+		<key>SHELL</key>
+		<string>/bin/zsh</string>
+		<key>PATH</key>
+		<string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>LANG</key>
+		<string>en_US.UTF-8</string>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>/var/root</string>
+	<key>StandardOutPath</key>
+	<string>/var/log/wayland-session.log</string>
+	<key>StandardErrorPath</key>
+	<string>/var/log/wayland-session.log</string>
+	<key>RunAtLoad</key>
+	<true/>
+</dict>
+</plist>

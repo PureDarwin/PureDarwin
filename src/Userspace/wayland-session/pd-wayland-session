@@ -1,0 +1,33 @@
+#!/bin/sh
+# pd-wayland-session [CLIENT ARGS...]: neuswc with pdwm plus one client, the Wayland counterpart
+# of startx with xterm. CLIENT defaults to Terminal.app.
+#
+# Copyright (c) 2026 The PureDarwin Project
+# SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
+: "${XDG_RUNTIME_DIR:=/var/run/user/0}"
+export XDG_RUNTIME_DIR
+# launchd empties /var/run at boot, so the runtime directory is made here
+mkdir -p -m 0700 "$XDG_RUNTIME_DIR" || exit 1
+
+/bin/neuswc &
+compositor=$!
+
+# libwayland-server names its first socket wayland-0; AppKit waits for it to appear
+WAYLAND_DISPLAY=wayland-0
+export WAYLAND_DISPLAY
+
+# the Dock draws the desktop picture, the menu bar serves every app's menus, both before the first client
+/System/Library/CoreServices/Dock.app/Contents/MacOS/Dock &
+dock=$!
+/System/Library/CoreServices/MenuBar.app/Contents/MacOS/MenuBar &
+menubar=$!
+
+if [ $# -eq 0 ]; then
+    set -- /Applications/Utilities/Terminal.app/Contents/MacOS/Terminal
+fi
+# the first app is only the opening window, quitting it must leave the desktop running
+"$@" &
+
+wait $compositor
+kill $menubar $dock 2>/dev/null
