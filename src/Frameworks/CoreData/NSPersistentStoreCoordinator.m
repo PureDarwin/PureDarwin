@@ -74,7 +74,7 @@ static NSMutableDictionary *_storeTypes=nil;
     }
    }
    
-   Class          class=[[isa registeredStoreTypes] objectForKey:storeType];
+   Class          class=[[[self class] registeredStoreTypes] objectForKey:storeType];
    NSAtomicStore *store=[[[class alloc] initWithPersistentStoreCoordinator:self configurationName:configuration URL:storeURL options:options] autorelease];
 
    if(![store load:error])
