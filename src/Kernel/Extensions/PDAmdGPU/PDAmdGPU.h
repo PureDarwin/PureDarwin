@@ -68,7 +68,11 @@ private:
     // psp ring, fence, command buffer and firmware staging, all in the carveout
     uint64_t           fbStart, fbOffset, pspBase;
     uint32_t           pspFence;
-    uint64_t           ihBase;
+    uint64_t           ihBase, dmubBase;
+    const uint8_t     *dmubInst;
+    uint32_t           dmubInstSize, dmubStateSize, dmubTraceSize;
+    uint8_t           *vbios;
+    uint32_t           vbiosSize, dmubWptr;
     uint32_t           ihRptr;
     IOFilterInterruptEventSource *irqSource;
     volatile UInt32    irqCount;
@@ -102,6 +106,22 @@ private:
     uint32_t ihDrain(const char *why);
     void ihStop(void);
     bool irqInit(void);
+    bool dmubLoad(void);
+    void dmubReset(void);
+    bool dmubInit(void);
+    void dmubStop(void);
+    void dmubDump(const char *why);
+    bool readVbios(void);
+    bool dmubCmd(uint32_t *cmd, bool wantReply);
+    bool dmubQueryCaps(void);
+    void vbiosDisplayPaths(void);
+    bool dmubSetPixelClock(uint32_t pix100hz, uint8_t pll, uint8_t encoderId, uint8_t mode, uint8_t crtc);
+    bool dmubTransmitter(uint8_t phy, uint8_t action, uint8_t mode, uint8_t lanes, uint32_t symclk10khz, uint8_t hpd,
+                         uint8_t digfe, uint8_t connector);
+    void hdmiLinkUp(void);
+    bool findRomHole(uint32_t size, uint32_t *outAddr);
+    int32_t dispSmuSend(uint32_t msg, uint32_t arg);
+    bool clkInit(void);
     void irqStop(void);
     bool irqWait(UInt32 seen, uint32_t ms);
     static bool irqFilter(OSObject *owner, IOFilterInterruptEventSource *src);

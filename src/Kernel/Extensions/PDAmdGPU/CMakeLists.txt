@@ -11,11 +11,13 @@ target_sources(PDAmdGPU.kext PRIVATE
     PDAmdGfx.cpp
     PDAmdGmc.cpp
     PDAmdKiq.cpp
-    PDAmdIh.cpp)
+    PDAmdIh.cpp
+    PDAmdDmub.cpp
+    PDAmdClk.cpp)
 
-set_source_files_properties(PDAmdPsp.cpp PROPERTIES
+set_source_files_properties(PDAmdPsp.cpp PDAmdDmub.cpp PROPERTIES
     COMPILE_DEFINITIONS "PDAMDGPU_FW_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/firmware\""
-    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/firmware/psp_13_0_5_toc.bin;${CMAKE_CURRENT_SOURCE_DIR}/firmware/sdma_5_2_6.bin;${CMAKE_CURRENT_SOURCE_DIR}/firmware/gc_10_3_6_ce.bin;${CMAKE_CURRENT_SOURCE_DIR}/firmware/gc_10_3_6_pfp.bin;${CMAKE_CURRENT_SOURCE_DIR}/firmware/gc_10_3_6_me.bin;${CMAKE_CURRENT_SOURCE_DIR}/firmware/gc_10_3_6_mec.bin;${CMAKE_CURRENT_SOURCE_DIR}/firmware/gc_10_3_6_rlc.bin")
+    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/firmware/psp_13_0_5_toc.bin;${CMAKE_CURRENT_SOURCE_DIR}/firmware/sdma_5_2_6.bin;${CMAKE_CURRENT_SOURCE_DIR}/firmware/gc_10_3_6_ce.bin;${CMAKE_CURRENT_SOURCE_DIR}/firmware/gc_10_3_6_pfp.bin;${CMAKE_CURRENT_SOURCE_DIR}/firmware/gc_10_3_6_me.bin;${CMAKE_CURRENT_SOURCE_DIR}/firmware/gc_10_3_6_mec.bin;${CMAKE_CURRENT_SOURCE_DIR}/firmware/gc_10_3_6_rlc.bin;${CMAKE_CURRENT_SOURCE_DIR}/firmware/dcn_3_1_5_dmcub.bin")
 install(FILES firmware/LICENSE.amdgpu
     DESTINATION System/Library/Extensions/PDAmdGPU.kext/Contents/Resources COMPONENT BaseSystem)
 

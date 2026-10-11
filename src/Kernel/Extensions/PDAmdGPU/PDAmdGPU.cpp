@@ -84,6 +84,7 @@ bool PDAmdGPU::start(IOService *provider)
 
 void PDAmdGPU::stop(IOService *provider)
 {
+    if (vbios) IOFreeData(vbios, vbiosSize);
     OSSafeReleaseNULL(doorbellMap);
     OSSafeReleaseNULL(regMap);
     super::stop(provider);

@@ -317,6 +317,11 @@ void PDAmdGPU::pspLoadGfx(void)
         if (cpStat == 0 && (boot & 0x80000000)) break;
         IODelay(1000);
     }
+    if (dmubLoad() && dmubInit()) {
+        dmubQueryCaps();
+        vbiosDisplayPaths();
+        if (clkInit()) hdmiLinkUp();
+    }
     LOG("gfx: autoload %s, CP_STAT 0x%08x RLC_RLCS_BOOTLOAD_STATUS 0x%08x\n",
         cpStat == 0 && (boot & 0x80000000) ? "complete" : "timed out", cpStat, boot);
     if (cpStat == 0 && (boot & 0x80000000)) {
@@ -388,6 +393,7 @@ void PDAmdGPU::probePsp(void)
 // so the next driver to run (ours or amdgpu) finds a psp that accepts SETUP_TMR and AUTOLOAD_RLC again
 void PDAmdGPU::teardown(void)
 {
+    dmubStop();
     ihStop();
     irqStop();
     wreg(soc15(kHwGC, 0, 0x0f56), rreg(soc15(kHwGC, 0, 0x0f56)) | 0x15000000);     // CP_ME_CNTL ce, pfp, me halt
