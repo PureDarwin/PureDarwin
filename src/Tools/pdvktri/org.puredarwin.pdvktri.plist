@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>org.puredarwin.pdvktri</string>
+	<key>Disabled</key>
+	<true/>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/sh</string>
+		<string>-c</string>
+		<string>(while :; do sleep 5; sync; done) &amp; for m in linear copy; do /usr/local/bin/pdvktri $m &gt;&gt; /var/log/pdvktri.log 2&gt;&amp;1; echo "pdvktri: $m exit $?" &gt;&gt; /var/log/pdvktri.log; done; sync; tail -n 60 /var/log/pdvktri.log</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PVR_I_WANT_A_BROKEN_VULKAN_DRIVER</key>
+		<string>1</string>
+		<key>VK_DRIVER_FILES</key>
+		<string>/usr/share/vulkan/icd.d/powervr_mesa_icd.arm64.json</string>
+		<key>VK_LOADER_DEBUG</key>
+		<string>error,warn,driver</string>
+		<key>PD_DRM_DEBUG</key>
+		<string>1</string>
+		<key>MESA_LOG_LEVEL</key>
+		<string>debug</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/dev/console</string>
+	<key>StandardErrorPath</key>
+	<string>/dev/console</string>
+</dict>
+</plist>
