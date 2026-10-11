@@ -15,6 +15,11 @@
 /* The geometry types belong to CoreFoundation, as on Darwin; NSPoint and
  * friends are aliases of them so CG and NS code share one layout. */
 #include <CoreFoundation/CFCGTypes.h>
+// as on macOS, Foundation users also get CGPointMake/CGSizeMake/CGRectMake and friends, Foundation's own
+// build has no CoreGraphics headers yet, so only when they're there
+#if __has_include(<CoreGraphics/CGGeometry.h>)
+#import <CoreGraphics/CGGeometry.h>
+#endif
 
 typedef CGPoint NSPoint;
 typedef CGSize NSSize;

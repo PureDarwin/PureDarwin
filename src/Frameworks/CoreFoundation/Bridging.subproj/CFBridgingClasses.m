@@ -32,6 +32,20 @@
 
 @implementation __NSCFBoolean
 
+// a CF object, not an ObjC allocation, so refcounting goes to CF, which also keeps the constants immortal
+- (id)retain {
+    CFRetain((CFTypeRef)self);
+    return self;
+}
+
+- (oneway void)release {
+    CFRelease((CFTypeRef)self);
+}
+
+- (NSUInteger)retainCount {
+    return (NSUInteger)CFGetRetainCount((CFTypeRef)self);
+}
+
 /* A bridged kCFBooleanTrue/False reports this class, not NSNumber, so the
  * NSNumber accessors callers use on it have to be answered here. */
 - (BOOL)isKindOfClass:(Class)aClass {
@@ -81,6 +95,20 @@
 @end
 
 @implementation __NSCFNumber
+
+// a CF object, not an ObjC allocation, so refcounting goes to CF, which also keeps the constants immortal
+- (id)retain {
+    CFRetain((CFTypeRef)self);
+    return self;
+}
+
+- (oneway void)release {
+    CFRelease((CFTypeRef)self);
+}
+
+- (NSUInteger)retainCount {
+    return (NSUInteger)CFGetRetainCount((CFTypeRef)self);
+}
 
 - (double)doubleValue {
     double value = 0.0;

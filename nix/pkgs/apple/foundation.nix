@@ -23,6 +23,7 @@ let
     "String.subproj/NSString"
     "String.subproj/NSCFString"
     "Runtime.subproj/NSObjectDescription"
+    "Runtime.subproj/NSUUID"
     "Collections.subproj/NSArray"
     "Collections.subproj/NSData"
     "Collections.subproj/NSDictionary"
@@ -58,6 +59,7 @@ let
     "Collections.subproj/NSHashTable"
     "Collections.subproj/NSRangeEntries"
     "Collections.subproj/NSCountedSet"
+    "Collections.subproj/NSOrderedSet"
     "Runtime.subproj/NSInvocation"
     "Date.subproj/NSCalendar"
     "Formatters.subproj/NSNumberFormatter"
@@ -100,6 +102,9 @@ let
     "String.subproj/NSRegularExpression"
     "Coding.subproj/NSJSONSerialization"
     "Collections.subproj/NSConstantCollections"
+    "Runtime.subproj/NSAssertionHandler"
+    "Runtime.subproj/NSOperation"
+    "RunLoop.subproj/NSPortMessage"
   ];
 in
 stdenv.mkDerivation {

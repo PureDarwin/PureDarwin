@@ -15,6 +15,7 @@
 #include <CoreFoundation/CFString.h>
 #include <CoreFoundation/CFURL.h>
 #include <objc/runtime.h>
+#include <pthread.h>
 
 /* Backed by CFBundle: -bundlePath and friends unwrap the CFBundleRef we hold
  * rather than reimplementing bundle layout. */
@@ -40,8 +41,38 @@
     return [[self alloc] initWithPath:path];
 }
 
+// the bundle of the binary the class was loaded from: its .framework, or the app it is part of
 + (NSBundle *)bundleForClass:(Class)aClass {
-    return [self mainBundle];
+    static NSMutableDictionary *byPath;
+    static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+    const char *image = aClass != Nil ? class_getImageName(aClass) : NULL;
+    NSString *path, *bundlePath = nil;
+    NSRange framework;
+    NSBundle *bundle;
+
+    if (image == NULL)
+        return [self mainBundle];
+    path = [NSString stringWithUTF8String:image];
+    framework = [path rangeOfString:@".framework/"];
+    if (framework.location != NSNotFound)
+        bundlePath = [path substringToIndex:NSMaxRange(framework) - 1];
+    else if ([path rangeOfString:@".app/Contents/MacOS/"].location != NSNotFound)
+        return [self mainBundle];
+    // a plain dylib or the main executable has no bundle of its own
+    if (bundlePath == nil)
+        return [self mainBundle];
+
+    pthread_mutex_lock(&lock);
+    if (byPath == nil)
+        byPath = [[NSMutableDictionary alloc] init];
+    bundle = [byPath objectForKey:bundlePath];
+    if (bundle == nil) {
+        bundle = [[[NSBundle alloc] initWithPath:bundlePath] autorelease];
+        if (bundle != nil)
+            [byPath setObject:bundle forKey:bundlePath];
+    }
+    pthread_mutex_unlock(&lock);
+    return bundle ?: [self mainBundle];
 }
 
 - (instancetype)initWithPath:(NSString *)path {
@@ -97,15 +128,40 @@
     return [path autorelease];
 }
 
+// the resources URL from CFBundle is relative to the bundle, so resolve it or the path is "Contents/Resources".
 - (NSString *)resourcePath {
     CFURLRef url = CFBundleCopyResourcesDirectoryURL(_bundle);
     if (url == NULL) {
         return nil;
     }
 
-    NSString *path = (NSString *)CFURLCopyFileSystemPath(url, kCFURLPOSIXPathStyle);
+    CFURLRef absolute = CFURLCopyAbsoluteURL(url);
+    NSString *path = (NSString *)CFURLCopyFileSystemPath(absolute, kCFURLPOSIXPathStyle);
+    CFRelease(absolute);
     CFRelease(url);
     return path;
+}
+
+// the InfoPlist.strings values over the Info.plist ones
+- (NSDictionary *)localizedInfoDictionary {
+    CFDictionaryRef local = CFBundleGetLocalInfoDictionary(_bundle);
+    NSMutableDictionary *result = [NSMutableDictionary dictionaryWithDictionary:[[self infoDictionary] autorelease]];
+
+    if (local != NULL)
+        [result addEntriesFromDictionary:(NSDictionary *)local];
+    return result;
+}
+
++ (NSBundle *)bundleWithIdentifier:(NSString *)identifier {
+    CFBundleRef bundle = CFBundleGetBundleWithIdentifier((CFStringRef)identifier);
+    CFURLRef url = bundle ? CFBundleCopyBundleURL(bundle) : NULL;
+    NSBundle *result;
+
+    if (url == NULL)
+        return nil;
+    result = [self bundleWithPath:[(NSURL *)url path]];
+    CFRelease(url);
+    return result;
 }
 
 - (NSDictionary *)infoDictionary {
@@ -116,6 +172,48 @@
 - (id)objectForInfoDictionaryKey:(NSString *)key {
     CFTypeRef value = CFBundleGetValueForInfoDictionaryKey(_bundle, (CFStringRef)key);
     return value == NULL ? nil : (__bridge id)value;
+}
+
+- (NSURL *)resourceURL {
+    return [(NSURL *)CFBundleCopyResourcesDirectoryURL(_bundle) autorelease];
+}
+
+- (NSURL *)URLForResource:(NSString *)name withExtension:(NSString *)extension {
+    return [self URLForResource:name withExtension:extension subdirectory:nil];
+}
+
+- (NSURL *)URLForResource:(NSString *)name
+            withExtension:(NSString *)extension
+             subdirectory:(NSString *)subpath {
+    return [(NSURL *)CFBundleCopyResourceURL(_bundle, (CFStringRef)name, (CFStringRef)extension,
+                                             (CFStringRef)subpath) autorelease];
+}
+
+- (NSURL *)URLForResource:(NSString *)name
+            withExtension:(NSString *)extension
+             subdirectory:(NSString *)subpath
+             localization:(NSString *)localizationName {
+    return [(NSURL *)CFBundleCopyResourceURLForLocalization(_bundle, (CFStringRef)name, (CFStringRef)extension,
+                                                            (CFStringRef)subpath, (CFStringRef)localizationName) autorelease];
+}
+
+// the .lproj names the bundle carries
+- (NSArray<NSString *> *)localizations {
+    return [(NSArray *)CFBundleCopyBundleLocalizations(_bundle) autorelease];
+}
+
+- (NSArray<NSString *> *)preferredLocalizations {
+    return [NSBundle preferredLocalizationsFromArray:[self localizations]];
+}
+
++ (NSArray<NSString *> *)preferredLocalizationsFromArray:(NSArray<NSString *> *)localizationsArray {
+    return [(NSArray *)CFBundleCopyPreferredLocalizationsFromArray((CFArrayRef)localizationsArray) autorelease];
+}
+
++ (NSArray<NSString *> *)preferredLocalizationsFromArray:(NSArray<NSString *> *)localizationsArray
+                                          forPreferences:(NSArray<NSString *> *)preferencesArray {
+    return [(NSArray *)CFBundleCopyLocalizationsForPreferences((CFArrayRef)localizationsArray,
+                                                               (CFArrayRef)preferencesArray) autorelease];
 }
 
 - (NSString *)pathForResource:(NSString *)name ofType:(NSString *)extension {
@@ -205,13 +303,19 @@
 }
 
 
+// the .strings tables in the bundle's localizations, through CFBundle. A missing key gives VALUE, else the key
 - (NSString *)localizedStringForKey:(NSString *)key
                               value:(NSString *)value
                               table:(NSString *)tableName {
-    if (key != nil) {
-        return key;
-    }
-    return (value != nil) ? value : @"";
+    if (key == nil)
+        return (value != nil) ? value : @"";
+    if ([tableName length] == 0)
+        tableName = @"Localizable";
+
+    CFStringRef result = CFBundleCopyLocalizedString(_bundle, (CFStringRef)key,
+                                                     (CFStringRef)([value length] ? value : key), (CFStringRef)tableName);
+
+    return result ? [(NSString *)result autorelease] : key;
 }
 
 

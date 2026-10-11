@@ -10,6 +10,8 @@
 #define __FOUNDATION_FOUNDATION__ 1
 
 #include <dispatch/dispatch.h>
+// as on macOS, Foundation users get all of CoreFoundation (and with it assert.h and friends)
+#include <CoreFoundation/CoreFoundation.h>
 
 #import <Foundation/NSObjCRuntime.h>
 #import <Foundation/FoundationErrors.h>
@@ -28,7 +30,11 @@
 #import <Foundation/NSOrthography.h>
 #import <Foundation/NSSortDescriptor.h>
 #import <Foundation/NSValueTransformer.h>
+#import <Foundation/NSOrderedSet.h>
 #import <Foundation/NSPredicate.h>
+#import <Foundation/NSExpression.h>
+#import <Foundation/NSComparisonPredicate.h>
+#import <Foundation/NSCompoundPredicate.h>
 #import <Foundation/NSSpellEngine.h>
 #import <Foundation/NSPlatform.h>
 #import <Foundation/NSRaiseException.h>
@@ -89,9 +95,13 @@
 #import <Foundation/NSProxy.h>
 #import <Foundation/NSConnection.h>
 #import <Foundation/NSPort.h>
+#import <Foundation/NSPortMessage.h>
+#import <Foundation/NSOperation.h>
+#import <Foundation/NSAssertionHandler.h>
 #import <Foundation/NSNetServices.h>
 #import <Foundation/NSDistributedNotificationCenter.h>
 #import <Foundation/NSRegularExpression.h>
 #import <Foundation/NSJSONSerialization.h>
 
 #endif /* ! __FOUNDATION_FOUNDATION__ */
+#import <Foundation/NSUUID.h>

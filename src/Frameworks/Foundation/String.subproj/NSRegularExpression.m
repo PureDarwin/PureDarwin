@@ -186,4 +186,52 @@ static NSUInteger _utf16IndexForByteOffset(const char *utf8, size_t offset) {
     return (match != nil) ? [match range] : NSMakeRange(NSNotFound, 0);
 }
 
+// TEMPLATE with $0-$9 replaced by the match's groups, a backslash escapes the next character
+- (NSString *)replacementStringForResult:(NSTextCheckingResult *)result
+                                inString:(NSString *)string
+                                  offset:(NSInteger)offset
+                                template:(NSString *)templ {
+    NSMutableString *out = [NSMutableString string];
+    NSUInteger length = [templ length];
+
+    for (NSUInteger i = 0; i < length; i++) {
+        unichar c = [templ characterAtIndex:i];
+
+        if (c == '\\' && i + 1 < length) {
+            [out appendFormat:@"%C", [templ characterAtIndex:++i]];
+        } else if (c == '$' && i + 1 < length && [templ characterAtIndex:i + 1] >= '0' &&
+                   [templ characterAtIndex:i + 1] <= '9') {
+            NSUInteger group = [templ characterAtIndex:++i] - '0';
+
+            if (group < [result numberOfRanges]) {
+                NSRange r = [result rangeAtIndex:group];
+
+                if (r.location != NSNotFound)
+                    [out appendString:[string substringWithRange:NSMakeRange(r.location + offset, r.length)]];
+            }
+        } else {
+            [out appendFormat:@"%C", c];
+        }
+    }
+    return out;
+}
+
+- (NSString *)stringByReplacingMatchesInString:(NSString *)string
+                                       options:(NSMatchingOptions)options
+                                         range:(NSRange)range
+                                  withTemplate:(NSString *)templ {
+    NSMutableString *result = [[string mutableCopy] autorelease];
+    NSArray *matches = [self matchesInString:string options:options range:range];
+    NSInteger offset = 0;
+
+    for (NSTextCheckingResult *match in matches) {
+        NSRange r = [match range];
+        NSString *replacement = [self replacementStringForResult:match inString:string offset:0 template:templ];
+
+        [result replaceCharactersInRange:NSMakeRange(r.location + offset, r.length) withString:replacement];
+        offset += (NSInteger)[replacement length] - (NSInteger)r.length;
+    }
+    return result;
+}
+
 @end

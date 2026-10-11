@@ -14,6 +14,7 @@
 #import <Foundation/NSNumber.h>
 #import <Foundation/NSPathUtilities.h>
 #import <Foundation/NSString.h>
+#import <Foundation/NSURL.h>
 #include <CoreFoundation/CFString.h>
 #include <dirent.h>
 #include <errno.h>
@@ -93,6 +94,7 @@ NSString *const NSFileSystemFileNumber = @"NSFileSystemFileNumber";
     NSString *full = [_root stringByAppendingPathComponent:relative];
     BOOL isDirectory = NO;
 
+    _lastQueued = 0;
     if ([[NSFileManager defaultManager] fileExistsAtPath:full isDirectory:&isDirectory] &&
         isDirectory) {
         NSArray *entries = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:full
@@ -102,6 +104,7 @@ NSString *const NSFileSystemFileNumber = @"NSFileSystemFileNumber";
             [_stack addObject:[relative stringByAppendingPathComponent:
                                  [entries objectAtIndex:i]]];
         }
+        _lastQueued = count;
     }
     return relative;
 }
@@ -114,7 +117,17 @@ NSString *const NSFileSystemFileNumber = @"NSFileSystemFileNumber";
     return nil;
 }
 
+// the children of the directory just returned sit at the end of the queue
+- (void)skipDescendants {
+    NSUInteger count = [_stack count];
+
+    if (_lastQueued > 0 && _lastQueued <= count)
+        [_stack removeObjectsInRange:NSMakeRange(count - _lastQueued, _lastQueued)];
+    _lastQueued = 0;
+}
+
 - (void)skipDescendents {
+    [self skipDescendants];
 }
 
 @end
@@ -325,6 +338,46 @@ static void _setPOSIXError(NSError **error) {
         return NO;
     }
     return YES;
+}
+
+// the search-path directories as file URLs, in NSSearchPathForDirectoriesInDomains order
+- (NSArray<NSURL *> *)URLsForDirectory:(NSSearchPathDirectory)directory inDomains:(NSSearchPathDomainMask)domainMask {
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(directory, domainMask, YES);
+    NSMutableArray *urls = [NSMutableArray arrayWithCapacity:[paths count]];
+
+    for (NSString *path in paths)
+        [urls addObject:[NSURL fileURLWithPath:path isDirectory:YES]];
+    return urls;
+}
+
+// one domain's directory, made on request. No replacement directories, so the URL argument is unused
+- (NSURL *)URLForDirectory:(NSSearchPathDirectory)directory
+                  inDomain:(NSSearchPathDomainMask)domain
+         appropriateForURL:(NSURL *)url
+                    create:(BOOL)shouldCreate
+                     error:(NSError **)error {
+    NSArray *urls = [self URLsForDirectory:directory inDomains:domain];
+    NSURL *result = [urls count] ? [urls objectAtIndex:0] : nil;
+
+    if (result == nil) {
+        if (error != NULL)
+            *error = [NSError errorWithDomain:NSCocoaErrorDomain code:4 userInfo:nil];
+        return nil;
+    }
+    if (shouldCreate && ![self createDirectoryAtPath:[result path] withIntermediateDirectories:YES attributes:nil error:error])
+        return nil;
+    return result;
+}
+
+- (BOOL)moveItemAtURL:(NSURL *)source toURL:(NSURL *)destination error:(NSError **)error {
+    return [self moveItemAtPath:[source path] toPath:[destination path] error:error];
+}
+
+- (BOOL)createDirectoryAtURL:(NSURL *)url
+ withIntermediateDirectories:(BOOL)createIntermediates
+                  attributes:(NSDictionary *)attributes
+                       error:(NSError **)error {
+    return [self createDirectoryAtPath:[url path] withIntermediateDirectories:createIntermediates attributes:attributes error:error];
 }
 
 - (BOOL)removeItemAtPath:(NSString *)path error:(NSError **)error {

@@ -12,7 +12,7 @@
 #import <Foundation/NSObject.h>
 #import <Foundation/NSObjCRuntime.h>
 
-@class NSMutableDictionary, NSString;
+@class NSArray, NSMutableDictionary, NSString;
 
 @interface NSThread : NSObject {
     NSMutableDictionary *_dictionary;
@@ -47,6 +47,7 @@
 - (BOOL)isCancelled;
 - (NSString *)name;
 - (void)setName:(NSString *)name;
+- (void)setSharedObject:(id)object forClassName:(NSString *)className;
 
 @end
 
@@ -57,6 +58,11 @@
 - (void)performSelectorOnMainThread:(SEL)selector
                          withObject:(id)object
                       waitUntilDone:(BOOL)wait;
+- (void)performSelectorOnMainThread:(SEL)selector
+                         withObject:(id)object
+                      waitUntilDone:(BOOL)wait
+                              modes:(NSArray *)modes;
+- (void)performSelectorInBackground:(SEL)selector withObject:(id)object;
 @end
 
 

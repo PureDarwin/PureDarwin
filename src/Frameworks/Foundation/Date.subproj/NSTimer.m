@@ -9,6 +9,7 @@
 #import <Foundation/NSTimer.h>
 
 #include <dispatch/dispatch.h>
+#include <pthread.h>
 #include <objc/message.h>
 
 @interface NSTimer (Private)
@@ -18,6 +19,7 @@
                              userInfo:(id)userInfo
                               repeats:(BOOL)repeats;
 - (void)_schedule;
+- (void)_scheduleOnQueue:(dispatch_queue_t)queue;
 @end
 
 @implementation NSTimer
@@ -73,13 +75,19 @@
     [super dealloc];
 }
 
+// a timer fires on the thread whose run loop has it: the main queue for the main thread, which the
+// application's event loop drains, other threads run no queue of their own, so those use a global one
 - (void)_schedule {
+    [self _scheduleOnQueue:pthread_main_np() ? dispatch_get_main_queue()
+                                             : dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0)];
+}
+
+- (void)_scheduleOnQueue:(dispatch_queue_t)queue {
     if (!_valid || _source != NULL)
         return;
 
     uint64_t interval = (uint64_t)(_interval * (NSTimeInterval)NSEC_PER_SEC);
-    _source = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
-        dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
+    _source = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
     if (_source == NULL) {
         _valid = NO;
         return;

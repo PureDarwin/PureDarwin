@@ -29,6 +29,7 @@ typedef NS_OPTIONS(NSUInteger, NSNotificationCoalescing) {
     NSNotificationCenter *_center;
     NSMutableArray *_asapQueue;
     NSMutableArray *_idleQueue;
+    void *_observer;
 }
 
 + (NSNotificationQueue *)defaultQueue;

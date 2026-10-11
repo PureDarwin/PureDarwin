@@ -40,6 +40,7 @@ FOUNDATION_EXPORT NSKeyValueChangeKey const NSKeyValueChangeNotificationIsPriorK
 
 + (BOOL)automaticallyNotifiesObserversForKey:(NSString *)key;
 + (NSSet *)keyPathsForValuesAffectingValueForKey:(NSString *)key;
++ (void)setKeys:(NSArray *)keys triggerChangeNotificationsForDependentKey:(NSString *)dependentKey;
 
 - (void)addObserver:(NSObject *)observer
          forKeyPath:(NSString *)keyPath

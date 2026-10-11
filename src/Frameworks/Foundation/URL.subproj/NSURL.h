@@ -22,6 +22,18 @@
 - (nullable NSString *)path;
 - (BOOL)isFileURL;
 
++ (instancetype)fileURLWithPath:(NSString *)path isDirectory:(BOOL)isDirectory;
+- (nullable NSURL *)absoluteURL;
+- (nullable NSString *)lastPathComponent;
+- (nullable NSString *)pathExtension;
+- (nullable NSURL *)URLByAppendingPathComponent:(NSString *)component;
+- (nullable NSURL *)URLByAppendingPathComponent:(NSString *)component isDirectory:(BOOL)isDirectory;
+- (nullable NSURL *)URLByDeletingLastPathComponent;
+- (nullable NSURL *)URLByAppendingPathExtension:(NSString *)extension;
+- (nullable NSURL *)URLByDeletingPathExtension;
+- (nullable NSURL *)standardizedURL;
+- (const char *)fileSystemRepresentation;
+
 
 - (NSNumber *)port;
 

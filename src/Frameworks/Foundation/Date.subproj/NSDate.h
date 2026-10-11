@@ -14,6 +14,8 @@
 
 typedef double NSTimeInterval;
 
+@class NSTimeZone;
+
 @interface NSDate : NSObject
 
 + (instancetype)date;
@@ -32,6 +34,8 @@ typedef double NSTimeInterval;
 - (NSTimeInterval)timeIntervalSinceNow;
 - (NSTimeInterval)timeIntervalSinceReferenceDate;
 - (NSTimeInterval)timeIntervalSince1970;
+- (BOOL)isEqualToDate:(NSDate *)other;
+- (NSString *)descriptionWithCalendarFormat:(NSString *)format timeZone:(NSTimeZone *)zone locale:(id)locale;
 - (instancetype)dateByAddingTimeInterval:(NSTimeInterval)seconds;
 
 @end

@@ -567,6 +567,10 @@ static void __NSArrayAbstract(id self, SEL _cmd) {
     }
 }
 
+- (void)removeObjectsInRange:(NSRange)range {
+    [self replaceObjectsInRange:range withObjects:NULL count:0];
+}
+
 - (void)removeObjectsInArray:(NSArray *)array {
     NSUInteger count = [array count];
 

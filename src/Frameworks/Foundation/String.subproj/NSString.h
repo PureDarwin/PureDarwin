@@ -119,6 +119,7 @@ typedef NS_OPTIONS(NSUInteger, NSStringCompareOptions) {
 - (const char *)cStringUsingEncoding:(NSStringEncoding)encoding NS_RETURNS_INNER_POINTER;
 - (NSRange)rangeOfCharacterFromSet:(NSCharacterSet *)set;
 - (BOOL)writeToFile:(NSString *)path atomically:(BOOL)atomically;
+- (BOOL)writeToFile:(NSString *)path atomically:(BOOL)atomically encoding:(NSStringEncoding)enc error:(NSError **)error;
 - (NSArray *)componentsSeparatedByCharactersInSet:(NSCharacterSet *)set;
 - (NSString *)stringByReplacingCharactersInRange:(NSRange)range withString:(NSString *)replacement;
 - (NSString *)stringByReplacingOccurrencesOfString:(NSString *)target withString:(NSString *)replacement;
@@ -172,6 +173,7 @@ typedef NS_OPTIONS(NSUInteger, NSStringCompareOptions) {
 
 + (instancetype)string;
 + (instancetype)stringWithCapacity:(NSUInteger)capacity;
+- (instancetype)initWithCapacity:(NSUInteger)capacity;
 
 - (void)appendString:(NSString *)string;
 - (void)appendFormat:(NSString *)format, ...;

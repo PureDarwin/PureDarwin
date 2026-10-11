@@ -128,6 +128,63 @@ static NSString *_string(const char *cString) {
     return @"NSMACHOperatingSystem";
 }
 
+// SystemVersion.plist is where the release lives (ProductVersion, ProductBuildVersion)
+static NSDictionary *systemVersionPlist(void) {
+    static NSDictionary *plist;
+
+    if (plist == nil) {
+        plist = [[NSDictionary alloc] initWithContentsOfFile:@"/System/Library/CoreServices/SystemVersion.plist"];
+    }
+    return plist;
+}
+
+- (NSOperatingSystemVersion)operatingSystemVersion {
+    NSOperatingSystemVersion v = { 0, 0, 0 };
+    NSArray *parts = [[systemVersionPlist() objectForKey:@"ProductVersion"] componentsSeparatedByString:@"."];
+
+    if ([parts count] > 0) {
+        v.majorVersion = [[parts objectAtIndex:0] integerValue];
+    }
+    if ([parts count] > 1) {
+        v.minorVersion = [[parts objectAtIndex:1] integerValue];
+    }
+    if ([parts count] > 2) {
+        v.patchVersion = [[parts objectAtIndex:2] integerValue];
+    }
+    return v;
+}
+
+// the same shape as Apple's: "Version 26.5 (Build 25F74)"
+- (NSString *)operatingSystemVersionString {
+    NSString *version = [systemVersionPlist() objectForKey:@"ProductVersion"];
+    NSString *build = [systemVersionPlist() objectForKey:@"ProductBuildVersion"];
+
+    if (version == nil) {
+        return @"Version unknown";
+    }
+    if (build == nil) {
+        return [NSString stringWithFormat:@"Version %@", version];
+    }
+    return [NSString stringWithFormat:@"Version %@ (Build %@)", version, build];
+}
+
+- (BOOL)isOperatingSystemAtLeastVersion:(NSOperatingSystemVersion)version {
+    NSOperatingSystemVersion v = [self operatingSystemVersion];
+
+    if (v.majorVersion != version.majorVersion) {
+        return v.majorVersion > version.majorVersion;
+    }
+    if (v.minorVersion != version.minorVersion) {
+        return v.minorVersion > version.minorVersion;
+    }
+    return v.patchVersion >= version.patchVersion;
+}
+
+// every processor here is online and schedulable
+- (NSUInteger)activeProcessorCount {
+    return [self processorCount];
+}
+
 - (NSUInteger)processorCount {
     int count = 0;
     size_t length = sizeof(count);

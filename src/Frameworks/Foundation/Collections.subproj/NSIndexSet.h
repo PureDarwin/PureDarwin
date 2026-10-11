@@ -56,6 +56,7 @@
 - (void)removeIndexes:(NSIndexSet *)other;
 - (void)removeIndexesInRange:(NSRange)range;
 - (void)removeAllIndexes;
+- (void)shiftIndexesStartingAtIndex:(NSUInteger)start by:(NSInteger)delta;
 
 @end
 

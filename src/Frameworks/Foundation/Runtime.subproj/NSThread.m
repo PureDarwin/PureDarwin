@@ -174,7 +174,7 @@ static void *startThreadObject(void *context) {
     return _cancelled;
 }
 
-/* Thread names are advisory; Gershwin sets them for its worker threads. */
+// thread names are advisory
 - (NSString *)name {
     return _name;
 }
@@ -219,6 +219,14 @@ static void *startThreadObject(void *context) {
 
 - (NSMutableDictionary *)sharedDictionary {
     return _sharedDictionary;
+}
+
+// the setter Cocotron uses for the per-thread singletons, nil removes the entry
+- (void)setSharedObject:(id)object forClassName:(NSString *)className {
+    if (object == nil)
+        [_sharedDictionary removeObjectForKey:className];
+    else
+        [_sharedDictionary setObject:object forKey:className];
 }
 
 @end
@@ -290,6 +298,18 @@ id NSThreadSharedInstanceDoNotCreate(NSString *className) {
 
     dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
     dispatch_release(done);
+}
+
+// the modes are not told apart, the common modes serve every one
+- (void)performSelectorOnMainThread:(SEL)selector
+                         withObject:(id)object
+                      waitUntilDone:(BOOL)wait
+                              modes:(NSArray *)modes {
+    [self performSelectorOnMainThread:selector withObject:object waitUntilDone:wait];
+}
+
+- (void)performSelectorInBackground:(SEL)selector withObject:(id)object {
+    [NSThread detachNewThreadSelector:selector toTarget:self withObject:object];
 }
 
 @end

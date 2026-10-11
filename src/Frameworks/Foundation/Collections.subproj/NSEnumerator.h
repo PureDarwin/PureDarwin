@@ -11,12 +11,12 @@
 
 #import <Foundation/NSObject.h>
 
-@class NSArray;
+@class NSArray<ObjectType>;
 
-@interface NSEnumerator : NSObject
+@interface NSEnumerator<ObjectType> : NSObject <NSFastEnumeration>
 
-- (id)nextObject;
-- (NSArray *)allObjects;
+- (ObjectType)nextObject;
+- (NSArray<ObjectType> *)allObjects;
 
 @end
 

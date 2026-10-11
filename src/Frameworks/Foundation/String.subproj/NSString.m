@@ -11,6 +11,8 @@
 #import <Foundation/NSArray.h>
 #include <CoreFoundation/CFBase.h>
 #import <Foundation/NSData.h>
+#import <Foundation/NSError.h>
+#import <Foundation/NSDictionary.h>
 #include <CoreFoundation/CFString.h>
 #include <CoreFoundation/CFCharacterSet.h>
 #include <CoreFoundation/CFData.h>
@@ -60,8 +62,10 @@ CFStringRef _NSStringCreateWithFormatAndArguments(NSString *format,
 static CFStringEncoding
 __NSStringCFEncoding(NSStringEncoding encoding)
 {
-    return (encoding == NSUTF8StringEncoding) ? kCFStringEncodingUTF8
-                                              : kCFStringEncodingASCII;
+    // CF knows every Cocoa encoding, an unknown one falls back to ASCII as before
+    CFStringEncoding cf = CFStringConvertNSStringEncodingToEncoding((unsigned long)encoding);
+
+    return cf == kCFStringEncodingInvalidId ? kCFStringEncodingASCII : cf;
 }
 
 extern Boolean _CFIsObjC(CFTypeID typeID, void *obj);
@@ -531,6 +535,18 @@ __attribute__((visibility("hidden"))) CFMutableStringRef __NSStringCreateCFCopy(
                                                            atomically:atomically];
 }
 
+// Cocoa's error codes, 517 when the encoding can't hold the text and 512 when the write fails
+- (BOOL)writeToFile:(NSString *)path atomically:(BOOL)atomically encoding:(NSStringEncoding)enc error:(NSError **)error {
+    NSData *data = [self dataUsingEncoding:enc];
+
+    if (data != nil && [data writeToFile:path atomically:atomically])
+        return YES;
+    if (error != NULL)
+        *error = [NSError errorWithDomain:NSCocoaErrorDomain code:data == nil ? 517 : 512
+                                 userInfo:[NSDictionary dictionaryWithObject:path forKey:NSFilePathErrorKey]];
+    return NO;
+}
+
 
 - (NSArray *)componentsSeparatedByString:(NSString *)separator {
     NSMutableArray *parts = [NSMutableArray array];
@@ -647,7 +663,51 @@ static CFOptionFlags __NSStringCFCompareFlags(NSStringCompareOptions options) {
 /* CFStringCreateMutable takes maxLength, not a capacity hint: a non-zero value
  * is a hard limit on the string's length. NSMutableString has no such limit, so
  * the requested capacity is only a hint and 0 is passed through. */
+// NSString's initializers make immutable CFStrings, a mutable alloc has to get a mutable one back
+static id __NSMakeMutable(id string) {
+    CFMutableStringRef mutable;
+
+    if (string == nil || __NSStringIsForeign(string))
+        return string;
+    mutable = CFStringCreateMutableCopy(kCFAllocatorDefault, 0, (CFStringRef)string);
+    CFRelease((CFStringRef)string);
+    return (id)mutable;
+}
+
 @implementation NSMutableString
+
+- (instancetype)init {
+    return __NSMakeMutable([super init]);
+}
+
+- (instancetype)initWithCapacity:(NSUInteger)capacity {
+    (void)capacity;
+    return [self init];
+}
+
+- (instancetype)initWithString:(NSString *)string {
+    return __NSMakeMutable([super initWithString:string]);
+}
+
+- (instancetype)initWithCharacters:(const unichar *)characters length:(NSUInteger)length {
+    return __NSMakeMutable([super initWithCharacters:characters length:length]);
+}
+
+- (instancetype)initWithCString:(const char *)cString encoding:(NSStringEncoding)encoding {
+    return __NSMakeMutable([super initWithCString:cString encoding:encoding]);
+}
+
+- (instancetype)initWithUTF8String:(const char *)utf8String {
+    return __NSMakeMutable([super initWithUTF8String:utf8String]);
+}
+
+- (instancetype)initWithBytes:(const void *)bytes length:(NSUInteger)length encoding:(NSStringEncoding)encoding {
+    return __NSMakeMutable([super initWithBytes:bytes length:length encoding:encoding]);
+}
+
+- (instancetype)initWithData:(NSData *)data encoding:(NSStringEncoding)encoding {
+    return __NSMakeMutable([super initWithData:data encoding:encoding]);
+}
 
 + (instancetype)string {
     return [self stringWithCapacity:0];

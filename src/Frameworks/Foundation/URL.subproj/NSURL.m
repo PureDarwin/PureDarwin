@@ -7,6 +7,7 @@
  */
 
 #import <Foundation/NSURL.h>
+#import <Foundation/NSArray.h>
 #import <Foundation/NSNumber.h>
 #include <CoreFoundation/CFURL.h>
 #include <CoreFoundation/ForFoundationOnly.h>
@@ -52,6 +53,74 @@
     return isFile;
 }
 
++ (instancetype)fileURLWithPath:(NSString *)path isDirectory:(BOOL)isDirectory {
+    return [(id)CFURLCreateWithFileSystemPath(kCFAllocatorDefault, (CFStringRef)path,
+                                              kCFURLPOSIXPathStyle, isDirectory) autorelease];
+}
+
+- (nullable NSURL *)absoluteURL {
+    return [(id)CFURLCopyAbsoluteURL((CFURLRef)self) autorelease];
+}
+
+- (nullable NSString *)lastPathComponent {
+    return [(id)CFURLCopyLastPathComponent((CFURLRef)self) autorelease];
+}
+
+- (nullable NSString *)pathExtension {
+    CFStringRef ext = CFURLCopyPathExtension((CFURLRef)self);
+
+    return ext ? [(id)ext autorelease] : @"";
+}
+
+- (nullable NSURL *)URLByAppendingPathComponent:(NSString *)component {
+    return [self URLByAppendingPathComponent:component isDirectory:[component hasSuffix:@"/"]];
+}
+
+- (nullable NSURL *)URLByAppendingPathComponent:(NSString *)component isDirectory:(BOOL)isDirectory {
+    return [(id)CFURLCreateCopyAppendingPathComponent(kCFAllocatorDefault, (CFURLRef)self,
+                                                      (CFStringRef)component, isDirectory) autorelease];
+}
+
+- (nullable NSURL *)URLByDeletingLastPathComponent {
+    return [(id)CFURLCreateCopyDeletingLastPathComponent(kCFAllocatorDefault, (CFURLRef)self) autorelease];
+}
+
+- (nullable NSURL *)URLByAppendingPathExtension:(NSString *)extension {
+    return [(id)CFURLCreateCopyAppendingPathExtension(kCFAllocatorDefault, (CFURLRef)self,
+                                                      (CFStringRef)extension) autorelease];
+}
+
+- (nullable NSURL *)URLByDeletingPathExtension {
+    return [(id)CFURLCreateCopyDeletingPathExtension(kCFAllocatorDefault, (CFURLRef)self) autorelease];
+}
+
+// "." and ".." removed from a file URL's path, other URLs come back as they are
+- (nullable NSURL *)standardizedURL {
+    if (![self isFileURL])
+        return [[self copy] autorelease];
+
+    NSMutableArray *out = [NSMutableArray array];
+    NSString *path = [self path];
+
+    for (NSString *c in [path componentsSeparatedByString:@"/"]) {
+        if ([c length] == 0 || [c isEqualToString:@"."])
+            continue;
+        if ([c isEqualToString:@".."]) {
+            if ([out count])
+                [out removeLastObject];
+            continue;
+        }
+        [out addObject:c];
+    }
+    NSString *clean = [@"/" stringByAppendingString:[out componentsJoinedByString:@"/"]];
+    return [NSURL fileURLWithPath:clean isDirectory:[[self absoluteString] hasSuffix:@"/"]];
+}
+
+- (const char *)fileSystemRepresentation {
+    CFStringRef path = CFURLCopyFileSystemPath((CFURLRef)self, kCFURLPOSIXPathStyle);
+
+    return path ? [[(id)path autorelease] fileSystemRepresentation] : NULL;
+}
 
 /* nil when the URL carries no explicit port, matching Foundation. */
 - (NSNumber *)port {

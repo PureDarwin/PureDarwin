@@ -148,22 +148,20 @@ NSArray<NSString *> *NSSearchPathForDirectoriesInDomains(
     return [components objectAtIndex:count - 1];
 }
 
+// plain string arithmetic, as CFURL makes a bare name relative and gives "." for its parent
+// "a/b/" gives "a", "/a" and "/" give "/", a bare name gives ""
 - (NSString *)stringByDeletingLastPathComponent {
-    CFURLRef url = CFURLCreateWithFileSystemPath(kCFAllocatorDefault, (CFStringRef)self,
-                                                 kCFURLPOSIXPathStyle, false);
-    if (url == NULL) {
-        return self;
-    }
+    NSUInteger length = [self length];
 
-    CFURLRef parent = CFURLCreateCopyDeletingLastPathComponent(kCFAllocatorDefault, url);
-    CFRelease(url);
-    if (parent == NULL) {
-        return self;
-    }
-
-    CFStringRef path = CFURLCopyFileSystemPath(parent, kCFURLPOSIXPathStyle);
-    CFRelease(parent);
-    return (NSString *)path;
+    while (length > 1 && [self characterAtIndex:length - 1] == '/')
+        length--;
+    while (length > 0 && [self characterAtIndex:length - 1] != '/')
+        length--;
+    if (length == 0)
+        return @"";
+    while (length > 1 && [self characterAtIndex:length - 1] == '/')
+        length--;
+    return [self substringToIndex:length];
 }
 
 - (NSString *)pathExtension {

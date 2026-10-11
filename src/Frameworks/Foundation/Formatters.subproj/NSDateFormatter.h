@@ -26,6 +26,7 @@ typedef NS_ENUM(NSUInteger, NSDateFormatterStyle) {
     NSDateFormatterStyle _dateStyle;
     NSDateFormatterStyle _timeStyle;
     NSLocale *_locale;
+    void *_cfFormatter;
 }
 
 - (NSString *)dateFormat;

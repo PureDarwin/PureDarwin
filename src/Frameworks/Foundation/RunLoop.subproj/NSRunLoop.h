@@ -27,12 +27,15 @@ FOUNDATION_EXPORT NSRunLoopMode const NSModalPanelRunLoopMode;
     NSMutableArray *_timers;
     NSMutableArray *_performs;
     NSString *_currentMode;
+    // the CFRunLoop of the thread this run loop belongs to
+    struct __CFRunLoop *_cfRunLoop;
 }
 
 + (NSRunLoop *)currentRunLoop;
 + (NSRunLoop *)mainRunLoop;
 
 - (NSString *)currentMode;
+- (struct __CFRunLoop *)getCFRunLoop;
 
 - (void)addInputSource:(NSInputSource *)source forMode:(NSRunLoopMode)mode;
 - (void)addPort:(NSPort *)port forMode:(NSRunLoopMode)mode;

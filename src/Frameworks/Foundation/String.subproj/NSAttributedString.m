@@ -93,10 +93,28 @@ longestEffectiveRange:(NSRangePointer)range
     return (id)result;
 }
 
+// built from the primitives, so a subclass such as NSTextStorage works too; CF's own copy would read
+// a subclass's memory as its struct (CFAttributedStringCreateWithSubstring has no ObjC dispatch)
 - (NSAttributedString *)attributedSubstringFromRange:(NSRange)range {
-    CFAttributedStringRef result = CFAttributedStringCreateWithSubstring(
-        kCFAllocatorDefault, (CFAttributedStringRef)self, NSToCFRange(range));
+    CFMutableAttributedStringRef result = CFAttributedStringCreateMutable(kCFAllocatorDefault, 0);
+    NSUInteger at = range.location, end = NSMaxRange(range);
 
+    CFAttributedStringReplaceString(result, CFRangeMake(0, 0),
+                                    (CFStringRef)[[self string] substringWithRange:range]);
+    CFAttributedStringBeginEditing(result);
+    while (at < end) {
+        NSRange run = NSMakeRange(at, 0);
+        NSDictionary *attributes = [self attributesAtIndex:at effectiveRange:&run];
+        NSUInteger runEnd = MIN(NSMaxRange(run), end);
+
+        // a zero-length answer would never advance, so take at least one character
+        if (runEnd <= at)
+            runEnd = at + 1;
+        CFAttributedStringSetAttributes(result, CFRangeMake((CFIndex)(at - range.location), (CFIndex)(runEnd - at)),
+                                        (CFDictionaryRef)attributes, true);
+        at = runEnd;
+    }
+    CFAttributedStringEndEditing(result);
     return (NSAttributedString *)CFAutorelease(result);
 }
 

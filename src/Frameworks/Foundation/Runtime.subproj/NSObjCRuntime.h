@@ -137,8 +137,8 @@ enum { NSNotFound = NSIntegerMax };
 
 @class NSString;
 
-void NSLog(NSString *format, ...) __attribute__((format(__NSString__, 1, 2)));
-void NSLogv(NSString *format, va_list args) __attribute__((format(__NSString__, 1, 0)));
+FOUNDATION_EXPORT void NSLog(NSString *format, ...) __attribute__((format(__NSString__, 1, 2)));
+FOUNDATION_EXPORT void NSLogv(NSString *format, va_list args) __attribute__((format(__NSString__, 1, 0)));
 
 FOUNDATION_EXPORT NSString *NSStringFromSelector(SEL selector);
 FOUNDATION_EXPORT SEL NSSelectorFromString(NSString *name);
@@ -150,6 +150,11 @@ FOUNDATION_EXPORT Protocol *NSProtocolFromString(NSString *name);
 /* The block-based comparator and the enumeration options that go with the
  * -enumerate.../-sortUsingComparator: family. */
 typedef NSComparisonResult (^NSComparator)(id obj1, id obj2);
+
+// variadic object lists end in nil, the compiler checks it as on Apple's SDK
+#ifndef NS_REQUIRES_NIL_TERMINATION
+#define NS_REQUIRES_NIL_TERMINATION __attribute__((sentinel(0, 1)))
+#endif
 
 typedef NS_OPTIONS(NSUInteger, NSEnumerationOptions) {
     NSEnumerationConcurrent = (1UL << 0),

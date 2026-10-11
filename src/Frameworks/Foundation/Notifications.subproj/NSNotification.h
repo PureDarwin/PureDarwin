@@ -12,7 +12,7 @@
 #import <Foundation/NSObject.h>
 #import <Foundation/NSObjCRuntime.h>
 
-@class NSString, NSDictionary, NSArray, NSMutableArray;
+@class NSString, NSDictionary, NSArray, NSMutableArray, NSOperationQueue;
 
 typedef NSString *NSNotificationName;
 
@@ -47,6 +47,11 @@ typedef NSString *NSNotificationName;
            selector:(SEL)selector
                name:(NSNotificationName)name
              object:(id)object;
+
+- (id)addObserverForName:(NSNotificationName)name
+                   object:(id)object
+                    queue:(NSOperationQueue *)queue
+               usingBlock:(void (^)(NSNotification *notification))block;
 
 - (void)removeObserver:(id)observer;
 - (void)removeObserver:(id)observer name:(NSNotificationName)name object:(id)object;

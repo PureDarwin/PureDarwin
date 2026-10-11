@@ -20,6 +20,12 @@
 
 @class NSIndexSet;
 
+typedef NS_OPTIONS(NSUInteger, NSBinarySearchingOptions) {
+    NSBinarySearchingFirstEqual = (1UL << 8),
+    NSBinarySearchingLastEqual = (1UL << 9),
+    NSBinarySearchingInsertionIndex = (1UL << 10),
+};
+
 @interface NSArray<__covariant ObjectType> : NSObject <NSFastEnumeration>
 
 - (NSArray<ObjectType> *)arrayByAddingObjectsFromArray:(NSArray<ObjectType> *)other;
@@ -27,6 +33,7 @@
 - (BOOL)isEqualToArray:(NSArray<ObjectType> *)other;
 - (BOOL)writeToFile:(NSString *)path atomically:(BOOL)atomically;
 - (void)setArray:(NSArray<ObjectType> *)array;
+- (void)removeObjectsInRange:(NSRange)range;
 - (void)removeObjectsInArray:(NSArray<ObjectType> *)array;
 - (void)exchangeObjectAtIndex:(NSUInteger)index1 withObjectAtIndex:(NSUInteger)index2;
 - (id)valueForKey:(NSString *)key;

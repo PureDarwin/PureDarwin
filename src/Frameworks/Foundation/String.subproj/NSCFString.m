@@ -465,8 +465,10 @@ extern int __CFConstantStringClassReference[];
          options:(NSStringEncodingConversionOptions)options
            range:(NSRange)range
   remainingRange:(NSRange *)leftover {
-    CFStringEncoding cfEncoding = (encoding == NSUTF8StringEncoding)
-        ? kCFStringEncodingUTF8 : kCFStringEncodingASCII;
+    CFStringEncoding cfEncoding = CFStringConvertNSStringEncodingToEncoding((unsigned long)encoding);
+
+    if (cfEncoding == kCFStringEncodingInvalidId)
+        cfEncoding = kCFStringEncodingASCII;
     CFRange cfRange = CFRangeMake((CFIndex)range.location, (CFIndex)range.length);
     CFIndex used = 0;
     CFIndex converted = CFStringGetBytes((CFStringRef)self, cfRange, cfEncoding,

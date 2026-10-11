@@ -7,6 +7,10 @@
  */
 
 #import <Foundation/NSDate.h>
+#import <Foundation/NSString.h>
+#import <Foundation/NSTimeZone.h>
+#include <math.h>
+#include <time.h>
 #include <CoreFoundation/CFDate.h>
 #include <CoreFoundation/ForFoundationOnly.h>
 
@@ -98,6 +102,10 @@
     return (NSUInteger)[self timeIntervalSinceReferenceDate];
 }
 
+- (BOOL)isEqualToDate:(NSDate *)other {
+    return other != nil && [self timeIntervalSinceReferenceDate] == [other timeIntervalSinceReferenceDate];
+}
+
 - (BOOL)isEqual:(id)other {
     if (self == other) {
         return YES;
@@ -107,6 +115,25 @@
     }
     return [self timeIntervalSinceReferenceDate] ==
            [(NSDate *)other timeIntervalSinceReferenceDate];
+}
+
+// strftime-style format of an NSCalendarDate in ZONE (the local zone when nil), the locale is unused
+- (NSString *)descriptionWithCalendarFormat:(NSString *)format timeZone:(NSTimeZone *)zone locale:(id)locale {
+    time_t seconds = (time_t)floor([self timeIntervalSince1970]);
+    struct tm parts;
+    char text[256];
+
+    if (zone != nil) {
+        seconds += (time_t)[zone secondsFromGMTForDate:self];
+        gmtime_r(&seconds, &parts);
+    } else {
+        localtime_r(&seconds, &parts);
+    }
+    if (format == nil)
+        format = @"%Y-%m-%d %H:%M:%S %z";
+    if (strftime(text, sizeof(text), [format UTF8String], &parts) == 0)
+        return @"";
+    return [NSString stringWithUTF8String:text];
 }
 
 @end

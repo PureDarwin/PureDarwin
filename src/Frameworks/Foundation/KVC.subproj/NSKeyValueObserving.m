@@ -13,6 +13,10 @@
 #import <Foundation/NSDictionary.h>
 #import <Foundation/NSNumber.h>
 #import <Foundation/NSLock.h>
+#import <Foundation/NSSet.h>
+#import <Foundation/NSObjCRuntime.h>
+#include <objc/runtime.h>
+#include <objc/message.h>
 
 NSKeyValueChangeKey const NSKeyValueChangeKindKey = @"kind";
 NSKeyValueChangeKey const NSKeyValueChangeNewKey = @"new";
@@ -86,8 +90,73 @@ static NSMutableArray *observationsForObject(id object, BOOL create) {
     return YES;
 }
 
+// dependent keys registered with +setKeys:triggerChangeNotificationsForDependentKey:, per class name
+static NSMutableDictionary *dependentKeysByClass(void) {
+    static NSMutableDictionary *shared = nil;
+
+    if (shared == nil)
+        shared = [[NSMutableDictionary alloc] init];
+    return shared;
+}
+
++ (void)setKeys:(NSArray *)keys triggerChangeNotificationsForDependentKey:(NSString *)dependentKey {
+    [observationLock() lock];
+    NSString *name = NSStringFromClass(self);
+    NSMutableDictionary *table = [dependentKeysByClass() objectForKey:name];
+
+    if (table == nil) {
+        table = [NSMutableDictionary dictionary];
+        [dependentKeysByClass() setObject:table forKey:name];
+    }
+    NSMutableSet *affecting = [table objectForKey:dependentKey];
+
+    if (affecting == nil) {
+        affecting = [NSMutableSet set];
+        [table setObject:affecting forKey:dependentKey];
+    }
+    [affecting addObjectsFromArray:keys];
+    [observationLock() unlock];
+}
+
+// the keys registered for this class and its superclasses, and +keyPathsForValuesAffecting<Key>
 + (NSSet *)keyPathsForValuesAffectingValueForKey:(NSString *)key {
-    return nil;
+    NSMutableSet *result = nil;
+
+    [observationLock() lock];
+    for (Class c = self; c != Nil; c = class_getSuperclass(c)) {
+        NSSet *keys = [[dependentKeysByClass() objectForKey:NSStringFromClass(c)] objectForKey:key];
+
+        if (keys == nil)
+            continue;
+        if (result == nil)
+            result = [NSMutableSet set];
+        [result unionSet:keys];
+    }
+    [observationLock() unlock];
+
+    if ([key length] > 0) {
+        NSString *name = [NSString stringWithFormat:@"keyPathsForValuesAffecting%@%@",
+                                   [[key substringToIndex:1] uppercaseString], [key substringFromIndex:1]];
+        SEL selector = NSSelectorFromString(name);
+
+        if ([self respondsToSelector:selector]) {
+            NSSet *keys = ((NSSet *(*)(id, SEL))objc_msgSend)(self, selector);
+
+            if (keys != nil) {
+                if (result == nil)
+                    result = [NSMutableSet set];
+                [result unionSet:keys];
+            }
+        }
+    }
+    return result;
+}
+
+// an observation of KEYPATH also hears about the keys that affect it
+static BOOL observationMatches(id object, NSKVOObservation *entry, NSString *key) {
+    if ([entry->_keyPath isEqualToString:key])
+        return YES;
+    return [[[object class] keyPathsForValuesAffectingValueForKey:entry->_keyPath] containsObject:key];
 }
 
 - (void)addObserver:(NSObject *)observer
@@ -161,12 +230,12 @@ static NSMutableArray *observationsForObject(id object, BOOL create) {
     for (NSUInteger i = 0; i < count; i++) {
         NSKVOObservation *entry = [list objectAtIndex:i];
 
-        if (![entry->_keyPath isEqualToString:key]) {
+        if (!observationMatches(self, entry, key)) {
             continue;
         }
         if (entry->_options & NSKeyValueObservingOptionOld) {
             [entry->_priorValue release];
-            entry->_priorValue = [[self valueForKeyPath:key] retain];
+            entry->_priorValue = [[self valueForKeyPath:entry->_keyPath] retain];
         }
         if (entry->_options & NSKeyValueObservingOptionPrior) {
             NSMutableDictionary *change = [NSMutableDictionary dictionary];
@@ -175,7 +244,7 @@ static NSMutableArray *observationsForObject(id object, BOOL create) {
                        forKey:NSKeyValueChangeKindKey];
             [change setObject:[NSNumber numberWithBool:YES]
                        forKey:NSKeyValueChangeNotificationIsPriorKey];
-            [entry->_observer observeValueForKeyPath:key
+            [entry->_observer observeValueForKeyPath:entry->_keyPath
                                             ofObject:self
                                               change:change
                                              context:entry->_context];
@@ -193,7 +262,7 @@ static NSMutableArray *observationsForObject(id object, BOOL create) {
     for (NSUInteger i = 0; i < count; i++) {
         NSKVOObservation *entry = [list objectAtIndex:i];
 
-        if (![entry->_keyPath isEqualToString:key]) {
+        if (!observationMatches(self, entry, key)) {
             continue;
         }
 
@@ -209,12 +278,12 @@ static NSMutableArray *observationsForObject(id object, BOOL create) {
             entry->_priorValue = nil;
         }
         if (entry->_options & NSKeyValueObservingOptionNew) {
-            id value = [self valueForKeyPath:key];
+            id value = [self valueForKeyPath:entry->_keyPath];
             if (value != nil) {
                 [change setObject:value forKey:NSKeyValueChangeNewKey];
             }
         }
-        [entry->_observer observeValueForKeyPath:key
+        [entry->_observer observeValueForKeyPath:entry->_keyPath
                                         ofObject:self
                                           change:change
                                          context:entry->_context];

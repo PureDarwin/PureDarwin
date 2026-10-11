@@ -17,6 +17,12 @@
 #import <Foundation/NSDictionary.h>
 #import <Foundation/NSString.h>
 
+typedef struct {
+    NSInteger majorVersion;
+    NSInteger minorVersion;
+    NSInteger patchVersion;
+} NSOperatingSystemVersion;
+
 @interface NSProcessInfo : NSObject
 
 enum {
@@ -40,6 +46,9 @@ enum {
 - (NSTimeInterval)systemUptime;
 - (NSUInteger)operatingSystem;
 - (NSString *)operatingSystemName;
+- (NSOperatingSystemVersion)operatingSystemVersion;
+- (NSString *)operatingSystemVersionString;
+- (BOOL)isOperatingSystemAtLeastVersion:(NSOperatingSystemVersion)version;
 - (NSUInteger)processorCount;
 - (unsigned long long)physicalMemory;
 

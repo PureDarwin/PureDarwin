@@ -137,4 +137,14 @@ static NSNumberFormatterBehavior defaultBehavior = NSNumberFormatterBehaviorDefa
     return YES;
 }
 
++ (NSString *)localizedStringFromNumber:(NSNumber *)number numberStyle:(NSNumberFormatterStyle)style {
+    NSNumberFormatter *formatter = [[self alloc] init];
+    NSString *result;
+
+    [formatter setNumberStyle:style];
+    result = [formatter stringFromNumber:number];
+    [formatter release];
+    return result;
+}
+
 @end

@@ -15,25 +15,39 @@
 /* The NSArray category below needs the real interface, not a forward
  * declaration. */
 #import <Foundation/NSArray.h>
+#import <Foundation/NSSet.h>
 
 @class NSString, NSDictionary;
 
-/* Declared so bindings and controllers compile. Predicate parsing is not
- * implemented: +predicateWithFormat: raises, and a predicate built any other
- * way evaluates true. */
 @interface NSPredicate : NSObject <NSCopying>
 
 + (NSPredicate *)predicateWithFormat:(NSString *)format, ...;
++ (NSPredicate *)predicateWithFormat:(NSString *)format argumentArray:(NSArray *)arguments;
++ (NSPredicate *)predicateWithFormat:(NSString *)format arguments:(va_list)arguments;
 + (NSPredicate *)predicateWithValue:(BOOL)value;
++ (NSPredicate *)predicateWithBlock:(BOOL (^)(id evaluatedObject, NSDictionary *bindings))block;
 
 - (BOOL)evaluateWithObject:(id)object;
 - (BOOL)evaluateWithObject:(id)object substitutionVariables:(NSDictionary *)variables;
+- (NSPredicate *)predicateWithSubstitutionVariables:(NSDictionary *)variables;
 - (NSString *)predicateFormat;
 
 @end
 
-@interface NSArray (NSPredicateFiltering)
+@interface NSArray (NSPredicateSupport)
 - (NSArray *)filteredArrayUsingPredicate:(NSPredicate *)predicate;
+@end
+
+@interface NSMutableArray (NSPredicateSupport)
+- (void)filterUsingPredicate:(NSPredicate *)predicate;
+@end
+
+@interface NSSet (NSPredicateSupport)
+- (NSSet *)filteredSetUsingPredicate:(NSPredicate *)predicate;
+@end
+
+@interface NSMutableSet (NSPredicateSupport)
+- (void)filterUsingPredicate:(NSPredicate *)predicate;
 @end
 
 #endif /* NSPredicate_h */

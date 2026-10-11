@@ -7,6 +7,8 @@
  */
 
 #import <Foundation/NSIndexSet.h>
+#import <Foundation/NSNumber.h>
+#import <Foundation/NSArray.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -374,6 +376,25 @@ static void removeRange(NSIndexSet *self, NSRange range) {
 
 - (void)removeAllIndexes {
     _rangeCount = 0;
+}
+
+
+// indexes from START on move by DELTA. Moving down drops the ones the shift lands on, as Cocoa does
+- (void)shiftIndexesStartingAtIndex:(NSUInteger)start by:(NSInteger)delta {
+    NSMutableArray *kept = [NSMutableArray array];
+
+    for (NSUInteger i = [self firstIndex]; i != NSNotFound; i = [self indexGreaterThanIndex:i]) {
+        if (i < start) {
+            if (delta < 0 && (NSInteger)i >= (NSInteger)start + delta)
+                continue;
+            [kept addObject:[NSNumber numberWithUnsignedInteger:i]];
+        } else if ((NSInteger)i + delta >= 0) {
+            [kept addObject:[NSNumber numberWithUnsignedInteger:(NSUInteger)((NSInteger)i + delta)]];
+        }
+    }
+    [self removeAllIndexes];
+    for (NSNumber *n in kept)
+        [self addIndex:[n unsignedIntegerValue]];
 }
 
 @end

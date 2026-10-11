@@ -66,6 +66,10 @@ typedef NS_OPTIONS(NSUInteger, NSMatchingOptions) {
                              options:(NSMatchingOptions)options
                                range:(NSRange)range;
 
+- (NSString *)stringByReplacingMatchesInString:(NSString *)string options:(NSMatchingOptions)options
+                                         range:(NSRange)range withTemplate:(NSString *)templ;
+- (NSString *)replacementStringForResult:(NSTextCheckingResult *)result inString:(NSString *)string
+                                  offset:(NSInteger)offset template:(NSString *)templ;
 @end
 
 #endif /* NSRegularExpression_h */

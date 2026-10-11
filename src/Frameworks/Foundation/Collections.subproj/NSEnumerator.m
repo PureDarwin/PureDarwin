@@ -68,4 +68,22 @@
     return result;
 }
 
+// every enumerator supports for-in on macOS, a batch here is just the next objects in turn
+- (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state
+                                  objects:(id __unsafe_unretained [])buffer
+                                    count:(NSUInteger)len {
+    NSUInteger n = 0;
+    id object;
+
+    if (state->state == 0) {
+        state->state = 1;
+        state->mutationsPtr = &state->extra[0];
+    }
+    while (n < len && (object = [self nextObject]) != nil) {
+        buffer[n++] = object;
+    }
+    state->itemsPtr = buffer;
+    return n;
+}
+
 @end

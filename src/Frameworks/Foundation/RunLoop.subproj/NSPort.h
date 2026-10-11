@@ -13,16 +13,29 @@
 #import <Foundation/NSRunLoop.h>
 #include <mach/mach.h>
 
-@class NSRunLoop;
+@class NSRunLoop, NSDate, NSMutableArray, NSPortMessage;
 
 FOUNDATION_EXPORT NSString * const NSPortDidBecomeInvalidNotification;
 
 /* Backed by a real Mach port; NSMachPort is the only concrete kind here. */
+@protocol NSPortDelegate <NSObject>
+@optional
+- (void)handlePortMessage:(NSPortMessage *)message;
+@end
+
+@protocol NSMachPortDelegate <NSPortDelegate>
+@optional
+- (void)handleMachMessage:(void *)msg;
+@end
+
 @interface NSPort : NSObject {
     mach_port_t _machPort;
     BOOL _ownsPort;
     BOOL _valid;
     id _delegate;
+    // the CFMachPort and its run loop source once the port is scheduled
+    void *_cfPort;
+    void *_cfSource;
 }
 
 + (NSPort *)port;
@@ -35,6 +48,12 @@ FOUNDATION_EXPORT NSString * const NSPortDidBecomeInvalidNotification;
 
 - (void)scheduleInRunLoop:(NSRunLoop *)runLoop forMode:(NSRunLoopMode)mode;
 - (void)removeFromRunLoop:(NSRunLoop *)runLoop forMode:(NSRunLoopMode)mode;
+
+- (NSUInteger)reservedSpaceLength;
+- (BOOL)sendBeforeDate:(NSDate *)limitDate components:(NSMutableArray *)components
+                  from:(NSPort *)receivePort reserved:(NSUInteger)headerSpaceReserved;
+- (BOOL)sendBeforeDate:(NSDate *)limitDate msgid:(NSUInteger)msgID components:(NSMutableArray *)components
+                  from:(NSPort *)receivePort reserved:(NSUInteger)headerSpaceReserved;
 
 @end
 

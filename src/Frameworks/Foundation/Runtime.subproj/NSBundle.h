@@ -28,10 +28,24 @@
 - (NSString *)executablePath;
 - (NSURL *)executableURL;
 - (NSString *)resourcePath;
+- (NSURL *)resourceURL;
 - (NSDictionary *)infoDictionary;
 - (id)objectForInfoDictionaryKey:(NSString *)key;
+- (NSDictionary *)localizedInfoDictionary;
++ (NSBundle *)bundleWithIdentifier:(NSString *)identifier;
 
+- (NSURL *)URLForResource:(NSString *)name withExtension:(NSString *)extension subdirectory:(NSString *)subpath
+             localization:(NSString *)localizationName;
+@property (readonly, copy) NSArray *localizations;
+@property (readonly, copy) NSArray *preferredLocalizations;
++ (NSArray *)preferredLocalizationsFromArray:(NSArray *)localizationsArray;
++ (NSArray *)preferredLocalizationsFromArray:(NSArray *)localizationsArray
+                                          forPreferences:(NSArray *)preferencesArray;
 - (NSString *)pathForResource:(NSString *)name ofType:(NSString *)extension;
+- (NSURL *)URLForResource:(NSString *)name withExtension:(NSString *)extension;
+- (NSURL *)URLForResource:(NSString *)name
+            withExtension:(NSString *)extension
+             subdirectory:(NSString *)subpath;
 
 - (NSString *)localizedStringForKey:(NSString *)key
                               value:(NSString *)value

@@ -22,3 +22,24 @@
 }
 
 @end
+
+// the scripting comparisons (NSScriptWhoseTests.h), equality and ordering through -isEqual: and -compare:
+@implementation NSObject (NSComparisonMethods)
+
+- (BOOL)isEqualTo:(id)object {
+    return [self isEqual:object];
+}
+
+- (BOOL)isNotEqualTo:(id)object {
+    return ![self isEqual:object];
+}
+
+- (BOOL)isLessThan:(id)object {
+    return [self respondsToSelector:@selector(compare:)] && (NSInteger)[(id)self compare:object] < 0;
+}
+
+- (BOOL)isGreaterThan:(id)object {
+    return [self respondsToSelector:@selector(compare:)] && (NSInteger)[(id)self compare:object] > 0;
+}
+
+@end

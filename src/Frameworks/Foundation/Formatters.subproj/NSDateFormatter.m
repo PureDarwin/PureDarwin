@@ -10,42 +10,91 @@
 #import <Foundation/NSDate.h>
 #import <Foundation/NSString.h>
 #import <Foundation/NSLocale.h>
+#import <CoreFoundation/CFDateFormatter.h>
 #include <time.h>
 #include <string.h>
 
-/* strftime over the local timezone. The date/time *styles* are stored and
- * mapped to a few fixed patterns; full locale-driven formatting would go
- * through CFDateFormatter, which CoreFoundation does build. */
+// formatting goes through CFDateFormatter and ICU, as Apple's does
+// strftime is only the fallback when ICU cannot make a formatter
 
 @implementation NSDateFormatter
 
 - (void)dealloc {
+    [self _invalidate];
     [_dateFormat release];
     [_locale release];
     [super dealloc];
 }
 
-- (NSString *)dateFormat { return _dateFormat; }
+- (void)_invalidate {
+    if (_cfFormatter != NULL) {
+        CFRelease((CFDateFormatterRef)_cfFormatter);
+        _cfFormatter = NULL;
+    }
+}
+
+// built on first use and dropped whenever the format, styles or locale change
+- (CFDateFormatterRef)_formatter {
+    CFLocaleRef locale;
+
+    if (_cfFormatter != NULL) {
+        return (CFDateFormatterRef)_cfFormatter;
+    }
+    locale = _locale != nil ? (CFLocaleRef)CFRetain((CFLocaleRef)_locale) : CFLocaleCopyCurrent();
+    _cfFormatter = (void *)CFDateFormatterCreate(kCFAllocatorDefault, locale,
+                                                 (CFDateFormatterStyle)_dateStyle,
+                                                 (CFDateFormatterStyle)_timeStyle);
+    if (locale != NULL) {
+        CFRelease(locale);
+    }
+    if (_cfFormatter != NULL && _dateFormat != nil) {
+        CFDateFormatterSetFormat((CFDateFormatterRef)_cfFormatter, (CFStringRef)_dateFormat);
+    }
+    return (CFDateFormatterRef)_cfFormatter;
+}
+
+// a style-built formatter reports the pattern ICU picked for the locale
+- (NSString *)dateFormat {
+    CFDateFormatterRef formatter;
+
+    if (_dateFormat != nil) {
+        return _dateFormat;
+    }
+    formatter = [self _formatter];
+    return formatter != NULL ? (NSString *)CFDateFormatterGetFormat(formatter) : nil;
+}
 
 - (void)setDateFormat:(NSString *)format {
     format = [format copy];
     [_dateFormat release];
     _dateFormat = format;
+    [self _invalidate];
 }
 
 - (NSDateFormatterStyle)dateStyle { return _dateStyle; }
-- (void)setDateStyle:(NSDateFormatterStyle)style { _dateStyle = style; }
+- (void)setDateStyle:(NSDateFormatterStyle)style {
+    _dateStyle = style;
+    [_dateFormat release];
+    _dateFormat = nil;
+    [self _invalidate];
+}
 - (NSDateFormatterStyle)timeStyle { return _timeStyle; }
-- (void)setTimeStyle:(NSDateFormatterStyle)style { _timeStyle = style; }
+- (void)setTimeStyle:(NSDateFormatterStyle)style {
+    _timeStyle = style;
+    [_dateFormat release];
+    _dateFormat = nil;
+    [self _invalidate];
+}
 - (NSLocale *)locale { return _locale; }
 
 - (void)setLocale:(NSLocale *)locale {
     locale = [locale retain];
     [_locale release];
     _locale = locale;
+    [self _invalidate];
 }
 
-/* Translates the ICU-style pattern subset callers actually use into strftime. */
+// the fallback's strftime patterns for the common ICU ones
 - (const char *)_strftimeFormat {
     if (_dateFormat != nil) {
         const char *pattern = [_dateFormat UTF8String];
@@ -64,8 +113,17 @@
 }
 
 - (NSString *)stringFromDate:(NSDate *)date {
+    CFDateFormatterRef formatter;
+    CFStringRef text;
+
     if (date == nil) {
         return nil;
+    }
+    formatter = [self _formatter];
+    if (formatter != NULL) {
+        text = CFDateFormatterCreateStringWithAbsoluteTime(kCFAllocatorDefault, formatter,
+                                                           [date timeIntervalSinceReferenceDate]);
+        return [(NSString *)text autorelease];
     }
 
     time_t seconds = (time_t)[date timeIntervalSince1970];
@@ -82,8 +140,18 @@
 }
 
 - (NSDate *)dateFromString:(NSString *)string {
+    CFDateFormatterRef formatter;
+    CFAbsoluteTime when;
+
     if (string == nil) {
         return nil;
+    }
+    formatter = [self _formatter];
+    if (formatter != NULL) {
+        if (!CFDateFormatterGetAbsoluteTimeFromString(formatter, (CFStringRef)string, NULL, &when)) {
+            return nil;
+        }
+        return [NSDate dateWithTimeIntervalSinceReferenceDate:when];
     }
 
     struct tm broken;

@@ -36,7 +36,8 @@
         memcpy(value->_bytes, bytes, size);
         value->_type = strdup(type);
     }
-    return value;
+    // a convenience constructor hands back an autoreleased object
+    return [value autorelease];
 }
 
 + (instancetype)value:(const void *)bytes withObjCType:(const char *)type {
@@ -86,6 +87,7 @@
 - (void)dealloc {
     free(_bytes);
     free(_type);
+    [super dealloc];
 }
 
 - (void)getValue:(void *)buffer {

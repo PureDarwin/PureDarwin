@@ -78,14 +78,16 @@ stdenv.mkDerivation {
     substituteInPlace $out/include/unicode/uconfig.h \
       --replace-fail '#define U_DISABLE_RENAMING 0' '#define U_DISABLE_RENAMING 1'
 
-    # The data library is built under stubdata/ rather than lib/, so glob both
-    # or the reexport below has nothing to point at.
+    # lib/ holds the data library and stubdata/ an empty one of the same name, lib/ wins
     for f in build/lib/*.dylib build/stubdata/*.dylib; do
       [ -e "$f" ] || continue
-      [ -L "$f" ] && continue${lib.optionalString (lib.hasPrefix "riscv64-" targetTriple)
-        "\n      # the real data library is in lib/, the stub one must not replace it\n      [ -e \"$out/usr/lib/$(basename \"$f\")\" ] && continue"}
+      [ -L "$f" ] && continue
+      # the real data library is in lib/, the stub one must not replace it
+      [ -e "$out/usr/lib/$(basename "$f")" ] && continue
       cp "$f" "$out/usr/lib/$(basename "$f")"
     done
+    # a 4 KB stub instead of the data means every locale lookup fails, so stop here
+    [ "$(stat -c %s "$out/usr/lib/libicudata.76.1.dylib")" -gt 1000000 ] || { echo "icucore: libicudata is the stub" >&2; exit 1; }
     for f in "$out"/usr/lib/*.dylib; do
       name=$(basename "$f")
       ${darwinCrossToolchain}/bin/${targetTriple}-install_name_tool \

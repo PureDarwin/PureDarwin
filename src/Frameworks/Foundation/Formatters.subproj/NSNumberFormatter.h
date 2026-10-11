@@ -42,6 +42,7 @@ typedef NS_ENUM(NSUInteger, NSNumberFormatterBehavior) {
 + (NSNumberFormatterBehavior)defaultFormatterBehavior;
 + (void)setDefaultFormatterBehavior:(NSNumberFormatterBehavior)behavior;
 
++ (NSString *)localizedStringFromNumber:(NSNumber *)number numberStyle:(NSNumberFormatterStyle)style;
 - (NSNumberFormatterStyle)numberStyle;
 - (void)setNumberStyle:(NSNumberFormatterStyle)style;
 

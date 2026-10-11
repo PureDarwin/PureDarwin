@@ -39,13 +39,25 @@ NSErrorUserInfoKey const NSURLErrorKey = @"NSURL";
 + (instancetype)errorWithDomain:(NSString *)domain
                            code:(NSInteger)code
                        userInfo:(NSDictionary *)userInfo {
-    NSError *err = [[self alloc] init];
-    if (err != nil) {
-        err->_domain = [domain copy];
-        err->_code = code;
-        err->_userInfo = [userInfo retain];
+    return [[self alloc] initWithDomain:domain code:code userInfo:userInfo];
+}
+
+- (instancetype)initWithDomain:(NSString *)domain
+                          code:(NSInteger)code
+                      userInfo:(NSDictionary *)userInfo {
+    self = [super init];
+    if (self != nil) {
+        _domain = [domain copy];
+        _code = code;
+        _userInfo = [userInfo retain];
     }
-    return err;
+    return self;
+}
+
+- (void)dealloc {
+    [_domain release];
+    [_userInfo release];
+    [super dealloc];
 }
 
 - (NSDictionary *)userInfo {

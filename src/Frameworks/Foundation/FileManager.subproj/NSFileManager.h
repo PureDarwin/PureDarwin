@@ -16,8 +16,9 @@
 
 #import <Foundation/NSArray.h>
 #import <Foundation/NSString.h>
+#import <Foundation/NSPathUtilities.h>
 
-@class NSData, NSDictionary, NSError, NSMutableArray, NSString;
+@class NSData, NSDictionary, NSError, NSMutableArray, NSString, NSURL;
 
 FOUNDATION_EXPORT NSString *const NSFileSize;
 FOUNDATION_EXPORT NSString *const NSFileType;
@@ -54,12 +55,15 @@ FOUNDATION_EXPORT NSString *const NSFileSystemFreeNodes;
 @interface NSDirectoryEnumerator : NSEnumerator {
     NSMutableArray *_stack;
     NSString *_root;
+    // entries the last nextObject queued, dropped again by skipDescendants
+    NSUInteger _lastQueued;
 }
 
 - (instancetype)initWithPath:(NSString *)path;
 
 - (NSDictionary *)fileAttributes;
 - (NSDictionary *)directoryAttributes;
+- (void)skipDescendants;
 - (void)skipDescendents;
 
 @end
@@ -105,6 +109,12 @@ FOUNDATION_EXPORT NSString *const NSFileSystemFreeNodes;
 - (NSString *)pathContentOfSymbolicLinkAtPath:(NSString *)path;
 - (BOOL)createSymbolicLinkAtPath:(NSString *)path pathContent:(NSString *)destination;
 
+- (NSArray<NSURL *> *)URLsForDirectory:(NSSearchPathDirectory)directory inDomains:(NSSearchPathDomainMask)domainMask;
+- (NSURL *)URLForDirectory:(NSSearchPathDirectory)directory inDomain:(NSSearchPathDomainMask)domain
+         appropriateForURL:(NSURL *)url create:(BOOL)shouldCreate error:(NSError **)error;
+- (BOOL)moveItemAtURL:(NSURL *)source toURL:(NSURL *)destination error:(NSError **)error;
+- (BOOL)createDirectoryAtURL:(NSURL *)url withIntermediateDirectories:(BOOL)createIntermediates
+                  attributes:(NSDictionary *)attributes error:(NSError **)error;
 - (NSString *)currentDirectoryPath;
 - (BOOL)changeCurrentDirectoryPath:(NSString *)path;
 
