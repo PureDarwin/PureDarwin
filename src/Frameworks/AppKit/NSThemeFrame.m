@@ -31,6 +31,11 @@
 #import <AppKit/NSToolbarView.h>
 #import <AppKit/NSAttributedString.h>
 #import <Onyx2D/O2Context.h>
+#include <stdint.h>
+
+// libSystem exports notify(3), the sdk ships no header for it
+extern uint32_t notify_register_check(const char *name, int *out_token);
+extern uint32_t notify_get_state(int token, uint64_t *state64);
 
 extern void CGNativeBorderFrameWidthsForStyle(unsigned styleMask, CGFloat *top,
     CGFloat *left, CGFloat *bottom, CGFloat *right);
@@ -75,6 +80,18 @@ const float NSWindowUnifiedTitleHeight = 52;
 const float NSWindowCompactTitleHeight = 38;
 const float NSWindowEdgePad = 2;
 const float NSWindowCornerRadius = 8;
+
+// Settings' window style, the same state the compositor reads, bit 0 means square corners
+static BOOL _pdWindowCornersSquare(void) {
+    static int token = -1;
+    uint64_t state = 0;
+
+    if(token == -1 && notify_register_check("org.puredarwin.WindowServer.windowstyle", &token) != 0)
+        token = -1;
+    if(token == -1 || notify_get_state(token, &state) != 0)
+        return NO;
+    return (state & 0x1) != 0;
+}
 const float NSWindowControlDiameter = 12;
 const float NSWindowControlSpacing = 8;
 const float NSWindowControlInset = 12;
@@ -331,7 +348,7 @@ static void drawWindowControl(O2Context *context, CGRect rect,
     O2ContextSetGrayStrokeColor(_context, bar, 1);
 
     // let's round these corners
-    float radius = NSWindowCornerRadius;
+    float radius = _pdWindowCornersSquare() ? 0 : NSWindowCornerRadius;
     O2ContextBeginPath(_context);
     O2ContextMoveToPoint(_context, _frame.origin.x+radius, NSMaxY(_frame));
     O2ContextAddArc(_context, _frame.origin.x + _frame.size.width - radius,

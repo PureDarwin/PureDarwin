@@ -874,6 +874,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     [editor setRichText: _isRichText];
    [editor setString: strValue];
    [editor setFont:[self font]];
+   // typed text takes the cell's colour, setTextColor: also resets the editor's typing attributes
+   if([self respondsToSelector:@selector(textColor)] && [(id)self textColor] != nil)
+    [editor setTextColor:[(id)self textColor]];
    [editor setAlignment:[self alignment]];
    if([self respondsToSelector:@selector(drawsBackground)])
     [editor setDrawsBackground:(BOOL)(int)[self performSelector:@selector(drawsBackground)]];

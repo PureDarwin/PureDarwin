@@ -249,6 +249,40 @@ NSColor *NSColorGetCatalogColor(NSString *catalogName,NSString *colorName);
    return [[self _resolvedColor] blendedColorWithFraction:fraction ofColor:color];
 }
 
+// the rest of NSColor's questions are answered by the colour for the current appearance,
+// the base class raises for them, which text drawing swallows and window teardown does not
+-(NSColor *)_rgb {
+   return [[self _resolvedColor] colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+}
+
+-(NSInteger)numberOfComponents {
+   return [[self _rgb] numberOfComponents];
+}
+
+-(void)getComponents:(CGFloat *)components {
+   [[self _rgb] getComponents:components];
+}
+
+-(void)getHue:(CGFloat *)huep saturation:(CGFloat *)saturationp brightness:(CGFloat *)brightnessp alpha:(CGFloat *)alphap {
+   [[self _rgb] getHue:huep saturation:saturationp brightness:brightnessp alpha:alphap];
+}
+
+-(NSColorSpace *)colorSpace {
+   return [[self _resolvedColor] colorSpace];
+}
+
+-(void)encodeWithCoder:(NSCoder *)coder {
+   [[self _resolvedColor] encodeWithCoder:coder];
+}
+
+-(BOOL)isEqual:otherObject {
+   return otherObject==self;
+}
+
+-(NSUInteger)hash {
+   return (NSUInteger)self;
+}
+
 @end
 
 @implementation NSColor(NSDynamicColor)
