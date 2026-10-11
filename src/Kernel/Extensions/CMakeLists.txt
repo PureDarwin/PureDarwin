@@ -49,6 +49,7 @@ add_subdirectory(IOVirtIOFamily)
 add_subdirectory(IOVirtIOGPU)
 add_subdirectory(IOIntelFramebuffer)
 add_subdirectory(PDRadeonFramebuffer)
+add_subdirectory(PDAmdGPU)
 add_subdirectory(IOVirtIONet)
 add_subdirectory(IOVirtIOBlock)
 if(PUREDARWIN_ARCH STREQUAL "x86_64")
@@ -95,7 +96,7 @@ add_dependencies(kexts
     RavynAHCIPort.kext RavynXHCIPort.kext
     IOGOPFramebuffer.kext IOVirtIOFamily.kext IOVirtIOGPU.kext IOVirtIONet.kext
     IOVirtIOBlock.kext
-    IOIntelFramebuffer.kext PDRadeonFramebuffer.kext
+    IOIntelFramebuffer.kext PDRadeonFramebuffer.kext PDAmdGPU.kext
     IOHIDFamily.kext IONetworkingFamily.kext PDE1000.kext PDRealtek8111.kext
     IO80211Family.kext PDRalinkUSB.kext
     IOAudioFamily.kext RavynHDAudio.kext
