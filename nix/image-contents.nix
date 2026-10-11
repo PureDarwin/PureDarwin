@@ -1408,6 +1408,12 @@ let
         mkdir -p $out/bin
         cp "$(find ${userlandNoxBuild} -path '*/bin/ps' | head -n 1)" $out/bin/ps
       '';
+      # the kernel log and the wifi tool, for bringing drivers up in the minimal image
+      diagToolsBuild = pkgs.runCommand "puredarwin-diag-tools" { } ''
+        mkdir -p $out/bin $out/usr/sbin
+        cp "$(find ${userlandNoxBuild} -path '*/bin/dmesg' | head -n 1)" $out/bin/dmesg
+        cp "$(find ${userlandNoxBuild} -path '*/usr/sbin/wifiutil' | head -n 1)" $out/usr/sbin/wifiutil
+      '';
       # the Wayland counterpart of a minimal X11 session: neuswc with pdwm, and the
       # AppKit Terminal started by org.puredarwin.wayland-session.
       imageWaylandMinimalBuild = pkgs.callPackage ../image.nix {
@@ -1418,7 +1424,7 @@ let
           waylandBuild xkbcommonNoxBuild xkeyboardConfigBuild neuswcBuild
           quartzcoreBuild corevideoBuild applicationservicesBuild windowserverBuild appkitBuild coredataBuild cocoaBuild appFrameworksBuild mpsNoxBuild
           openglFrameworkNoxBuild mesaNoxBuild gluNoxBuild llvmCrossBuild pdVirglShimBuild
-          terminalBuild menubarBuild dockBuild finderBuild systemInformationBuild calculatorBuild settingsBuild waylandSessionBuild psOnlyBuild
+          terminalBuild menubarBuild dockBuild finderBuild systemInformationBuild calculatorBuild settingsBuild waylandSessionBuild psOnlyBuild diagToolsBuild
           # Inter and the other system faces the window chrome and menu bar are drawn in
           systemFontsBuild
           # something full-screen to run in it

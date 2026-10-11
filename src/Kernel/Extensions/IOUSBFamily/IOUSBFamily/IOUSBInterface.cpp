@@ -221,6 +221,17 @@ IOReturn IOUSBInterface::ReopenPipesGated() { return CreatePipes(); }
 void IOUSBInterface::RememberStreamsGated(void) { }
 IOReturn IOUSBInterface::RecreateStreamsGated(void) { return kIOReturnSuccess; }
 
+// the interface's own descriptor fields, declared in the header but never defined
+UInt8 IOUSBInterface::GetConfigValue() { return _configDesc ? _configDesc->bConfigurationValue : 0; }
+IOUSBDevice *IOUSBInterface::GetDevice() { return _device; }
+UInt8 IOUSBInterface::GetInterfaceNumber() { return _interfaceDesc ? _interfaceDesc->bInterfaceNumber : 0; }
+UInt8 IOUSBInterface::GetAlternateSetting() { return _interfaceDesc ? _interfaceDesc->bAlternateSetting : 0; }
+UInt8 IOUSBInterface::GetNumEndpoints() { return _interfaceDesc ? _interfaceDesc->bNumEndpoints : 0; }
+UInt8 IOUSBInterface::GetInterfaceClass() { return _interfaceDesc ? _interfaceDesc->bInterfaceClass : 0; }
+UInt8 IOUSBInterface::GetInterfaceSubClass() { return _interfaceDesc ? _interfaceDesc->bInterfaceSubClass : 0; }
+UInt8 IOUSBInterface::GetInterfaceProtocol() { return _interfaceDesc ? _interfaceDesc->bInterfaceProtocol : 0; }
+UInt8 IOUSBInterface::GetInterfaceStringIndex() { return _interfaceDesc ? _interfaceDesc->iInterface : 0; }
+
 IOUSBPipe *IOUSBInterface::GetPipeObj(UInt8 index)
 {
     if (index >= kUSBMaxPipes) return NULL;

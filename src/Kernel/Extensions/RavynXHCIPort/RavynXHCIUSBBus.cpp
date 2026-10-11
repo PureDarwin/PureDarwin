@@ -11,7 +11,6 @@ bool RavynXHCIUSBBus::initWithPort(RavynXHCIPort *port)
 {
     if (!init(NULL)) return false;
     fPort = port;
-    bzero(fBulkConfigured, sizeof(fBulkConfigured));
     return true;
 }
 
@@ -27,22 +26,8 @@ IOReturn RavynXHCIUSBBus::UIMOpenPipe(USBDeviceAddress address, UInt8 speed, End
             return kIOReturnSuccess;
 
         case kUSBBulk:
-            if (fBulkConfigured[slotId])
-                return kIOReturnSuccess; /* single ring pair per slot, see header note */
-            {
-                UInt8 inEp  = (endpoint->direction == kUSBIn)  ? endpoint->number : 0;
-                UInt8 outEp = (endpoint->direction == kUSBOut) ? endpoint->number : 0;
-                /* We only ever see one direction per OpenPipe call, but
-                 * configureBulkEndpoints() wants both at once - the other
-                 * side just won't be usable until/unless it's also opened.
-                 * Real composite devices with only one bulk direction are
-                 * the common case this covers. */
-                if (!fPort->configureBulkEndpoints(slotId, inEp, endpoint->maxPacketSize,
-                                                    outEp, endpoint->maxPacketSize))
-                    return kIOReturnError;
-                fBulkConfigured[slotId] = true;
-            }
-            return kIOReturnSuccess;
+            return fPort->openBulkEndpoint(slotId, endpoint->number, endpoint->direction == kUSBIn,
+                                           endpoint->maxPacketSize) ? kIOReturnSuccess : kIOReturnError;
 
         case kUSBInterrupt:
             if (endpoint->direction != kUSBIn)
@@ -69,6 +54,8 @@ IOReturn RavynXHCIUSBBus::UIMAbortPipe(USBDeviceAddress address, Endpoint *endpo
 {
     if (endpoint && endpoint->transferType == kUSBInterrupt && endpoint->direction == kUSBIn)
         return fPort->abortInterruptEndpoint(address, endpoint->number);
+    if (endpoint && endpoint->transferType == kUSBBulk)
+        return fPort->abortBulk(address, endpoint->number, endpoint->direction == kUSBIn, false);
     return kIOReturnSuccess;
 }
 
@@ -76,6 +63,8 @@ IOReturn RavynXHCIUSBBus::UIMClearPipeStall(USBDeviceAddress address, Endpoint *
 {
     if (endpoint && endpoint->transferType == kUSBInterrupt && endpoint->direction == kUSBIn)
         return fPort->abortInterruptEndpoint(address, endpoint->number, true);
+    if (endpoint && endpoint->transferType == kUSBBulk)
+        return fPort->abortBulk(address, endpoint->number, endpoint->direction == kUSBIn, true);
     return kIOReturnSuccess;
 }
 
@@ -114,20 +103,7 @@ IOReturn RavynXHCIUSBBus::UIMReadWrite(IOMemoryDescriptor *buffer, USBDeviceAddr
         return fPort->interruptTransfer(slotId, endpoint->number, buffer, len, 20);
     }
 
-    IOBufferMemoryDescriptor *bounce =
-        IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task, kIODirectionInOut, len);
-    if (!bounce) return kIOReturnNoMemory;
-
-    if (isWrite)
-        buffer->readBytes(0, bounce->getBytesNoCopy(), len);
-
-    bool ok = fPort->bulkTransfer(slotId, endpoint->number, !isWrite, bounce, len, 5000);
-
-    if (ok && !isWrite)
-        buffer->writeBytes(0, bounce->getBytesNoCopy(), len);
-
-    bounce->release();
-    return ok ? kIOReturnSuccess : kIOReturnError;
+    return fPort->bulkSync(slotId, endpoint->number, !isWrite, buffer, len, 5000, NULL);
 }
 
 IOReturn RavynXHCIUSBBus::Read(IOMemoryDescriptor *buffer, USBDeviceAddress address,
@@ -140,6 +116,8 @@ IOReturn RavynXHCIUSBBus::Read(IOMemoryDescriptor *buffer, USBDeviceAddress addr
                               Endpoint *endpoint, IOUSBCompletion *completion,
                               UInt32 noDataTimeout, UInt32 completionTimeout, IOByteCount reqCount)
 {
+    if (endpoint && endpoint->transferType == kUSBBulk)
+        return bulkIO(buffer, address, endpoint, completion, completionTimeout, reqCount, true);
     if (!endpoint || endpoint->transferType != kUSBInterrupt)
         return super::Read(buffer, address, endpoint, completion, noDataTimeout, completionTimeout, reqCount);
     UInt32 done = 0;
@@ -155,5 +133,37 @@ IOReturn RavynXHCIUSBBus::Read(IOMemoryDescriptor *buffer, USBDeviceAddress addr
         (*completion->action)(completion->target, completion->parameter, ret,
             (UInt32)(reqCount - done));
     }
+    return ret;
+}
+
+IOReturn RavynXHCIUSBBus::Write(IOMemoryDescriptor *buffer, USBDeviceAddress address,
+                               Endpoint *endpoint, IOUSBCompletion *completion)
+{
+    return Write(buffer, address, endpoint, completion, 0, 0, buffer ? buffer->getLength() : 0);
+}
+
+IOReturn RavynXHCIUSBBus::Write(IOMemoryDescriptor *buffer, USBDeviceAddress address,
+                               Endpoint *endpoint, IOUSBCompletion *completion,
+                               UInt32 noDataTimeout, UInt32 completionTimeout, IOByteCount reqCount)
+{
+    if (endpoint && endpoint->transferType == kUSBBulk)
+        return bulkIO(buffer, address, endpoint, completion, completionTimeout, reqCount, false);
+    return super::Write(buffer, address, endpoint, completion, noDataTimeout, completionTimeout, reqCount);
+}
+
+// sync callers get the length through the marker's parameter, async ones through the completion
+IOReturn RavynXHCIUSBBus::bulkIO(IOMemoryDescriptor *buffer, USBDeviceAddress address, Endpoint *endpoint,
+                                IOUSBCompletion *completion, UInt32 timeoutMs, IOByteCount reqCount, bool in)
+{
+    if (!buffer || !reqCount || reqCount > buffer->getLength() || reqCount > 0xffffffffULL)
+        return kIOReturnBadArgument;
+    if (completion && completion->action && completion->action != &IOUSBSyncCompletion)
+        return fPort->submitBulk(address, endpoint->number, in, buffer, (UInt32)reqCount, completion);
+
+    UInt32 done = 0;
+    IOReturn ret = fPort->bulkSync(address, endpoint->number, in, buffer, (UInt32)reqCount,
+                                   timeoutMs ? timeoutMs : 5000, &done);
+    if (completion && completion->parameter)
+        *(IOByteCount *)completion->parameter = done;
     return ret;
 }

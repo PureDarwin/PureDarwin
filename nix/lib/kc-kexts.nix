@@ -50,6 +50,8 @@
     "PDRadeonFramebuffer.kext"
     "PDE1000.kext"
     "PDRealtek8111.kext"
+    "IO80211Family.kext"
+    "PDRalinkUSB.kext"
     "IOAudioFamily.kext"
     "RavynHDAudio.kext"
 ]

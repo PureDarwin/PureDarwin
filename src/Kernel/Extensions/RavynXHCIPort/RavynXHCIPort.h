@@ -34,6 +34,7 @@
 #include <IOKit/IOWorkLoop.h>
 #include <IOKit/IOInterruptEventSource.h>
 #include <IOKit/pci/IOPCIDevice.h>
+#include <IOKit/usb/USB.h>
 #include "XHCI.h"
 
 extern void XHCI_Log(const char *fmt, ...);
@@ -99,6 +100,30 @@ private:
         volatile XHCITRB          * ring;
         UInt32                     enqueue;
         UInt8                      cycle;
+    };
+
+    // a generic bulk endpoint with its own ring and queued async transfers
+    enum { kBulkMaxTDs = 64 };
+    struct BulkTD {
+        IOUSBCompletion            completion;
+        IOMemoryDescriptor       * client;
+        IOBufferMemoryDescriptor * bounce;
+        UInt32                     len;
+        UInt64                     trbPhys;
+        bool                       done;
+        UInt8                      cc;
+        UInt32                     residual;
+    };
+    struct BulkEndpoint {
+        bool                       valid, in;
+        UInt32                     slotId, dci;
+        UInt16                     maxPkt;
+        IOBufferMemoryDescriptor * ringMem;
+        volatile XHCITRB          * ring;
+        UInt32                     enqueue;
+        UInt8                      cycle;
+        UInt32                     head, count;
+        BulkTD                     td[kBulkMaxTDs];
     };
 
     IOService          * fProvider;
@@ -250,6 +275,13 @@ private:
 
     InterruptInEndpoint fIntrIn[64][16]; /* [slotId][endpoint number] */
 
+    BulkEndpoint * fBulk[64][32]; // [slotId][dci], guarded by fEventLock
+    volatile bool  fBulkThreadStarted;
+    volatile bool  fBulkStop;
+    static void bulkThread(void *arg, wait_result_t);
+    void deliverBulkCompletions();
+    bool recordBulkEvent(UInt32 slot, UInt32 dci, UInt64 param, UInt32 status);
+
     /*
      * Context array addressing. HCCPARAMS1.CSZ picks 32- or 64-byte contexts,
      * and with 64-byte contexts every entry is simply spaced twice as far
@@ -379,6 +411,16 @@ private:
     void resetHaltedRing(UInt32 slotId, UInt32 dci, UInt64 deq, UInt8 cycle, UInt8 *cc1, UInt8 *cc2);
     bool bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
                       IOBufferMemoryDescriptor *xferMem, UInt32 len, UInt32 timeoutMs);
+
+public:
+    // generic bulk endpoints for the IOUSBController bus, one ring each
+    bool openBulkEndpoint(UInt32 slotId, UInt8 epNum, bool in, UInt16 maxPkt);
+    IOReturn submitBulk(UInt32 slotId, UInt8 epNum, bool in, IOMemoryDescriptor *buffer,
+                        UInt32 len, IOUSBCompletion *completion);
+    IOReturn bulkSync(UInt32 slotId, UInt8 epNum, bool in, IOMemoryDescriptor *buffer,
+                      UInt32 len, UInt32 timeoutMs, UInt32 *done);
+    IOReturn abortBulk(UInt32 slotId, UInt8 epNum, bool in, bool reset);
+private:
 
     /* Slot Context Hub/NumberOfPorts/TTT update via Configure Endpoint (only
      * the A0 slot-context flag set, no endpoints touched) so the xHC treats

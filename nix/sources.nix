@@ -94,6 +94,9 @@ let
     # the PDPowerVR user-client uAPI header, shared with the kext, used by the
     # puredarwingop DDX's scanout path (pdscanout.c).
     "src/Kernel/Extensions/PDPowerVR/include/pd_pvr_uapi.h"
+    # the apple80211 request ABI, shared with IO80211Family, used by wifiutil
+    "src/Kernel/Extensions/IO80211Family/apple80211_ioctl.h"
+    "src/Libraries/CommonCrypto/include"
     # plain-C virgl shim (built into a static archive for Mesa's libGL)
     "src/Libraries/PDVirglShim"
     # mdnsd is built from src/Userspace/mdnsd but its sources are

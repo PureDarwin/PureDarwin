@@ -37,6 +37,7 @@
 OSDefineMetaClassAndStructors(RavynXHCIPort, IOService);
 
 #define kAssignedAddrKey "assigned-addresses"
+#define kBulkAborted 0xff   // bulk td cc for a transfer cut short by abort
 #define kRingTRBs   256   /* TRBs per ring segment, last one reserved for LINK */
 
 #define XHCI_DMA_LOG(name, mem) \
@@ -663,6 +664,7 @@ bool RavynXHCIPort::start(IOService *provider)
     bzero(fMSC, sizeof(fMSC));
     bzero(fDiskNubs, sizeof(fDiskNubs));
     bzero(fIntrIn, sizeof(fIntrIn));
+    bzero(fBulk, sizeof(fBulk));
     bzero(fSlots, sizeof(fSlots));
     bzero(fSlotRootPort, sizeof(fSlotRootPort));
     bzero(fUSBDeviceNubs, sizeof(fUSBDeviceNubs));
@@ -751,6 +753,7 @@ IOReturn RavynXHCIPort::message(UInt32 type, IOService *provider, void *argument
 
 void RavynXHCIPort::free()
 {
+    fBulkStop = true;
     for (int i = 0; i < 16; i++) {
         if (fDiskNubs[i]) { fDiskNubs[i]->release(); fDiskNubs[i] = NULL; }
     }
@@ -1107,7 +1110,9 @@ void RavynXHCIPort::serviceEventRing()
         } else if (type == TRB_TYPE_TRANSFER_EVENT) {
             UInt32 slot = TRB_GET_SLOT(evControl);
             UInt32 dci  = (evControl >> 16) & 0x1F; /* Endpoint ID field */
-            if (slot < 64 && dci < 32) {
+            if (slot < 64 && dci < 32 && fBulk[slot][dci]) {
+                recordBulkEvent(slot, dci, evParam, evStatus);
+            } else if (slot < 64 && dci < 32) {
                 if (dci == 1 && TRB_CC(evStatus) == TRB_CC_SHORT_PACKET) {
                     fXferDone[slot][dci].shortResidual = evStatus & 0xffffff;
                     fXferDone[slot][dci].shortTRB = evParam;
@@ -1593,6 +1598,26 @@ bool RavynXHCIPort::disableSlot(UInt32 slotId)
 void RavynXHCIPort::freeSlotResources(UInt32 slotId)
 {
     if (slotId == 0 || slotId >= 64) return;
+
+    for (UInt32 dci = 2; dci < 32; ++dci) {
+        IOLockLock(fEventLock);
+        BulkEndpoint *be = fBulk[slotId][dci];
+        if (be) {
+            be->valid = false;
+            for (UInt32 i = 0; i < be->count; i++) {
+                BulkTD &td = be->td[(be->head + i) % kBulkMaxTDs];
+                if (!td.done) { td.cc = kBulkAborted; td.done = true; }
+            }
+        }
+        IOLockUnlock(fEventLock);
+        if (!be) continue;
+        deliverBulkCompletions();
+        IOLockLock(fEventLock);
+        fBulk[slotId][dci] = NULL;
+        IOLockUnlock(fEventLock);
+        be->ringMem->release();
+        IODelete(be, BulkEndpoint, 1);
+    }
 
     for (UInt32 ep = 1; ep < 16; ++ep) {
         InterruptInEndpoint &intr = fIntrIn[slotId][ep];
@@ -2712,4 +2737,258 @@ IOReturn RavynXHCIPort::botTransfer(UInt32 slotId,
 
     cbwMem->release();
     return statusOk ? kIOReturnSuccess : kIOReturnIOError;
+}
+
+// generic bulk endpoints: one ring per endpoint, transfers queue and complete
+// on the bulk thread, which also polls the event ring when msi is missing
+#define kBulkMaxTRB  0x10000U
+
+bool RavynXHCIPort::openBulkEndpoint(UInt32 slotId, UInt8 epNum, bool in, UInt16 maxPkt)
+{
+    if (!slotId || slotId >= 64 || !epNum || epNum >= 16)
+        return false;
+    SlotResources &sr = fSlots[slotId];
+    if (!sr.inputCtxMem || !sr.deviceCtxMem)
+        return false;
+    UInt32 dci = epNum * 2 + (in ? 1 : 0);
+    if (fBulk[slotId][dci] && fBulk[slotId][dci]->valid)
+        return true;
+
+    BulkEndpoint *be = IONew(BulkEndpoint, 1);
+    if (!be) return false;
+    bzero(be, sizeof(*be));
+    if (!allocRing(&be->ringMem, &be->ring, kRingTRBs)) {
+        IODelete(be, BulkEndpoint, 1);
+        return false;
+    }
+    be->in = in;
+    be->slotId = slotId;
+    be->dci = dci;
+    be->maxPkt = maxPkt & 0x7ff;
+    be->cycle = 1;
+    be->ring[kRingTRBs - 1].param = be->ringMem->getPhysicalAddress();
+    be->ring[kRingTRBs - 1].control = TRB_SET_TYPE(TRB_TYPE_LINK) | TRB_TC | TRB_CYCLE;
+    dmaFlush(&be->ring[kRingTRBs - 1], sizeof(XHCITRB));
+
+    void *ic = sr.inputCtxMem->getBytesNoCopy();
+    bzero(ic, inputCtxBytes());
+    inputCtl(ic)->addFlags = (1U << 0) | (1U << dci);
+    *inputSlot(ic) = *deviceSlot(sr.deviceCtxMem->getBytesNoCopy());
+    UInt32 entries = (inputSlot(ic)->dword0 >> SLOT_CTX_ENTRIES_SHIFT) & 0x1f;
+    if (dci > entries) entries = dci;
+    inputSlot(ic)->dword0 = (inputSlot(ic)->dword0 & ~(0x1fU << SLOT_CTX_ENTRIES_SHIFT)) |
+                           (entries << SLOT_CTX_ENTRIES_SHIFT);
+    inputEp(ic, dci)->dword1 = EP_CTX_CERR(3) |
+        ((in ? EP_TYPE_BULK_IN : EP_TYPE_BULK_OUT) << EP_CTX_TYPE_SHIFT) |
+        ((UInt32)be->maxPkt << EP_CTX_MAXPKT_SHIFT);
+    inputEp(ic, dci)->trDequeuePtr = be->ringMem->getPhysicalAddress() | 1;
+    inputEp(ic, dci)->avgTrbLen_maxEsitLo = 1024;
+
+    UInt8 cc = 0;
+    UInt32 slotOut = 0;
+    bool ok = doCommand(sr.inputCtxMem->getPhysicalAddress(), 0,
+        TRB_SET_TYPE(TRB_TYPE_CONFIGURE_EP) | TRB_SET_SLOT(slotId), &cc, &slotOut, 1000);
+    if (!ok || cc != TRB_CC_SUCCESS) {
+        XHCI_Log("bulk: configure slot=%u ep=%u in=%d failed cc=%u", slotId, epNum, in, cc);
+        be->ringMem->release();
+        IODelete(be, BulkEndpoint, 1);
+        return false;
+    }
+    be->valid = true;
+    IOLockLock(fEventLock);
+    fBulk[slotId][dci] = be;
+    IOLockUnlock(fEventLock);
+    XHCI_Log("bulk: slot=%u ep=%u in=%d maxPkt=%u ready", slotId, epNum, in, be->maxPkt);
+
+    if (!fBulkThreadStarted) {
+        thread_t t;
+        fBulkThreadStarted = true;
+        if (kernel_thread_start((thread_continue_t)&RavynXHCIPort::bulkThread, this, &t) == KERN_SUCCESS)
+            thread_deallocate(t);
+        else
+            fBulkThreadStarted = false;
+    }
+    return true;
+}
+
+IOReturn RavynXHCIPort::submitBulk(UInt32 slotId, UInt8 epNum, bool in, IOMemoryDescriptor *buffer,
+                                   UInt32 len, IOUSBCompletion *completion)
+{
+    if (!slotId || slotId >= 64 || !epNum || epNum >= 16 || !buffer || !completion)
+        return kIOReturnBadArgument;
+    if (!len || len > kBulkMaxTRB || len > buffer->getLength())
+        return kIOReturnBadArgument;
+    UInt32 dci = epNum * 2 + (in ? 1 : 0);
+
+    IOBufferMemoryDescriptor *bounce = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+        kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, len, fDMAMask);
+    if (!bounce) return kIOReturnNoMemory;
+    if (!in && buffer->readBytes(0, bounce->getBytesNoCopy(), len) != len) {
+        bounce->release();
+        return kIOReturnIOError;
+    }
+    dmaFlush(bounce->getBytesNoCopy(), len);
+
+    IOLockLock(fEventLock);
+    BulkEndpoint *be = fBulk[slotId][dci];
+    if (!be || !be->valid || be->count == kBulkMaxTDs) {
+        IOLockUnlock(fEventLock);
+        bounce->release();
+        return be && be->valid ? kIOReturnNoResources : kIOReturnNotOpen;
+    }
+    BulkTD &td = be->td[(be->head + be->count) % kBulkMaxTDs];
+    td.completion = *completion;
+    td.client = buffer;
+    buffer->retain();
+    td.bounce = bounce;
+    td.len = len;
+    td.done = false;
+    td.cc = 0;
+    td.residual = 0;
+    td.trbPhys = be->ringMem->getPhysicalAddress() + (UInt64)be->enqueue * sizeof(XHCITRB);
+    pushTRB(be->ring, be->enqueue, be->cycle, kRingTRBs, bounce->getPhysicalAddress(), len,
+            TRB_SET_TYPE(TRB_TYPE_NORMAL) | TRB_IOC | (in ? TRB_ISP : 0));
+    be->count++;
+    IOLockUnlock(fEventLock);
+    ringDoorbell(slotId, dci);
+    return kIOReturnSuccess;
+}
+
+// called from serviceEventRing with fEventLock held
+bool RavynXHCIPort::recordBulkEvent(UInt32 slot, UInt32 dci, UInt64 param, UInt32 status)
+{
+    BulkEndpoint *be = fBulk[slot][dci];
+    if (!be) return false;
+    for (UInt32 i = 0; i < be->count; i++) {
+        BulkTD &td = be->td[(be->head + i) % kBulkMaxTDs];
+        if (td.done || td.trbPhys != param) continue;
+        td.cc = TRB_CC(status);
+        td.residual = status & 0xffffff;
+        td.done = true;
+        break;
+    }
+    return true;
+}
+
+void RavynXHCIPort::deliverBulkCompletions()
+{
+    for (UInt32 slot = 1; slot < 64; slot++) {
+        for (UInt32 dci = 2; dci < 32; dci++) {
+            for (;;) {
+                IOLockLock(fEventLock);
+                BulkEndpoint *be = fBulk[slot][dci];
+                if (!be || !be->count || !be->td[be->head].done) {
+                    IOLockUnlock(fEventLock);
+                    break;
+                }
+                BulkTD td = be->td[be->head];
+                be->head = (be->head + 1) % kBulkMaxTDs;
+                be->count--;
+                bool in = be->in;
+                UInt8 epNum = (UInt8)(dci / 2);
+                IOLockUnlock(fEventLock);
+
+                UInt32 actual = td.residual > td.len ? 0 : td.len - td.residual;
+                IOReturn ret;
+                if (td.cc == TRB_CC_SUCCESS || td.cc == TRB_CC_SHORT_PACKET) {
+                    ret = kIOReturnSuccess;
+                    if (in && actual) {
+                        dmaFlush(td.bounce->getBytesNoCopy(), actual);
+                        td.client->writeBytes(0, td.bounce->getBytesNoCopy(), actual);
+                    }
+                } else {
+                    actual = 0;
+                    // 26 and 27 are the controller's stopped codes, a deliberate stop rather than a fault
+                    ret = (td.cc == kBulkAborted || td.cc == 26 || td.cc == 27) ? kIOReturnAborted :
+                          td.cc == TRB_CC_STALL ? kIOUSBPipeStalled : kIOReturnIOError;
+                }
+                td.bounce->release();
+                td.client->release();
+                // a halted ring holds every later transfer, so flush it and let the driver resubmit
+                if (ret != kIOReturnSuccess && ret != kIOReturnAborted) {
+                    XHCI_Log("bulk: slot=%u ep=%u in=%d cc=%u, resetting", slot, epNum, in, td.cc);
+                    abortBulk(slot, epNum, in, true);
+                }
+                if (td.completion.action)
+                    (*td.completion.action)(td.completion.target, td.completion.parameter, ret, td.len - actual);
+            }
+        }
+    }
+}
+
+IOReturn RavynXHCIPort::abortBulk(UInt32 slotId, UInt8 epNum, bool in, bool reset)
+{
+    if (!slotId || slotId >= 64 || !epNum || epNum >= 16)
+        return kIOReturnBadArgument;
+    UInt32 dci = epNum * 2 + (in ? 1 : 0);
+    BulkEndpoint *be = fBulk[slotId][dci];
+    if (!be || !be->valid)
+        return kIOReturnSuccess;
+
+    UInt8 cc = 0;
+    UInt32 slotOut = 0;
+    // a halted endpoint refuses stop, a running one refuses reset
+    if (!doCommand(0, 0, TRB_SET_TYPE(reset ? TRB_TYPE_RESET_EP : TRB_TYPE_STOP_EP) |
+                   TRB_SET_SLOT(slotId) | TRB_SET_EP(dci), &cc, &slotOut, 1000) || cc != TRB_CC_SUCCESS)
+        doCommand(0, 0, TRB_SET_TYPE(reset ? TRB_TYPE_STOP_EP : TRB_TYPE_RESET_EP) |
+                  TRB_SET_SLOT(slotId) | TRB_SET_EP(dci), &cc, &slotOut, 1000);
+    serviceEventRing();
+
+    IOLockLock(fEventLock);
+    UInt64 next = be->ringMem->getPhysicalAddress() + (UInt64)be->enqueue * sizeof(XHCITRB);
+    UInt8 cycle = be->cycle;
+    for (UInt32 i = 0; i < be->count; i++) {
+        BulkTD &td = be->td[(be->head + i) % kBulkMaxTDs];
+        if (td.done) continue;
+        td.cc = kBulkAborted;
+        td.done = true;
+    }
+    IOLockUnlock(fEventLock);
+    bool ok = doCommand(next | cycle, 0, TRB_SET_TYPE(TRB_TYPE_SET_TR_DEQUEUE) |
+                        TRB_SET_SLOT(slotId) | TRB_SET_EP(dci), &cc, &slotOut, 1000) && cc == TRB_CC_SUCCESS;
+    return ok ? kIOReturnSuccess : kIOReturnIOError;
+}
+
+static void pdBulkSyncDone(void *target, void *parameter, IOReturn status, UInt32 remaining)
+{
+    UInt32 *out = (UInt32 *)parameter;
+    out[0] = (UInt32)status;
+    out[1] = remaining;
+    out[2] = 1;
+}
+
+IOReturn RavynXHCIPort::bulkSync(UInt32 slotId, UInt8 epNum, bool in, IOMemoryDescriptor *buffer,
+                                 UInt32 len, UInt32 timeoutMs, UInt32 *done)
+{
+    volatile UInt32 result[3] = { 0, 0, 0 };
+    IOUSBCompletion c = { NULL, &pdBulkSyncDone, (void *)result };
+    if (done) *done = 0;
+    IOReturn ret = submitBulk(slotId, epNum, in, buffer, len, &c);
+    if (ret != kIOReturnSuccess)
+        return ret;
+    for (UInt32 waited = 0; !result[2]; waited++) {
+        serviceEventRing();
+        deliverBulkCompletions();
+        if (result[2]) break;
+        if (timeoutMs && waited == timeoutMs)
+            abortBulk(slotId, epNum, in, false);
+        IOSleep(1);
+    }
+    if (done) *done = len - result[1];
+    return (IOReturn)result[0] == kIOReturnAborted && timeoutMs ? kIOUSBTransactionTimeout : (IOReturn)result[0];
+}
+
+void RavynXHCIPort::bulkThread(void *arg, wait_result_t)
+{
+    RavynXHCIPort *self = (RavynXHCIPort *)arg;
+    while (!self->fBulkStop) {
+        self->serviceEventRing();
+        self->deliverBulkCompletions();
+        AbsoluteTime deadline;
+        clock_interval_to_deadline(self->fInterruptsEnabled ? 20 : 2, kMillisecondScale, &deadline);
+        IOLockLock(self->fEventWaitLock);
+        IOLockSleepDeadline(self->fEventWaitLock, &self->fEventWaitChannel, deadline, THREAD_UNINT);
+        IOLockUnlock(self->fEventWaitLock);
+    }
+    thread_terminate(current_thread());
 }
