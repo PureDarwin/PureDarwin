@@ -1,0 +1,8 @@
+// swift-pd: Foundation clang module over PD's Foundation headers
+framework module Foundation [extern_c] [system] {
+    umbrella header "Foundation.h"
+    export *
+    module * {
+      export *
+    }
+}

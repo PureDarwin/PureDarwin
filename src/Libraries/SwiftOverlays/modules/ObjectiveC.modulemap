@@ -1,0 +1,16 @@
+// swift-pd: ObjectiveC clang module over PD's objc4 public headers
+module ObjectiveC [system] [extern_c] {
+  header "objc.h"
+  header "runtime.h"
+  header "message.h"
+  header "objc-api.h"
+  header "objc-exception.h"
+  header "objc-sync.h"
+  header "NSObjCRuntime.h"
+  module NSObject {
+    requires objc
+    header "NSObject.h"
+    export *
+  }
+  export *
+}

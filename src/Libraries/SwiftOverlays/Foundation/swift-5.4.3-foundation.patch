@@ -1,0 +1,123 @@
+diff -ru a/Date.swift b/Date.swift
+--- a/Date.swift	2026-10-06 11:26:06.135534843 +0000
++++ b/Date.swift	2026-10-06 11:26:06.138442238 +0000
+@@ -209,7 +209,7 @@
+      */
+     public var description: String {
+         // Defer to NSDate for description
+-        return NSDate(timeIntervalSinceReferenceDate: _time).description
++        return NSDate(timeIntervalSinceReferenceDate: _time).description as String
+     }
+     
+     /**
+@@ -220,9 +220,7 @@
+      
+      - Returns: A string representation of the `Date`, using the given locale, or if the locale argument is `nil`, in the international format `YYYY-MM-DD HH:MM:SS ±HHMM`, where `±HHMM` represents the time zone offset in hours and minutes from UTC (for example, "`2001-03-24 10:45:32 +0600`").
+      */
+-    public func description(with locale: Locale?) -> String {
+-        return NSDate(timeIntervalSinceReferenceDate: _time).description(with: locale)
+-    }
++    // pd: Locale is not in this overlay subset yet
+     
+     public var debugDescription: String {
+         return description
+@@ -249,7 +247,7 @@
+     }
+     
+     public static func _conditionallyBridgeFromObjectiveC(_ x: NSDate, result: inout Date?) -> Bool {
+-        result = Date(timeIntervalSinceReferenceDate: x.timeIntervalSinceReferenceDate)
++        result = Date(timeIntervalSinceReferenceDate: x.timeIntervalSinceReferenceDate())
+         return true
+     }
+ 
+@@ -269,19 +267,7 @@
+     }
+ }
+ 
+-extension Date : _CustomPlaygroundQuickLookable {
+-    var summary: String {
+-        let df = DateFormatter()
+-        df.dateStyle = .medium
+-        df.timeStyle = .short
+-        return df.string(from: self)
+-    }
+-    
+-    @available(*, deprecated, message: "Date.customPlaygroundQuickLook will be removed in a future Swift version")
+-    public var customPlaygroundQuickLook: PlaygroundQuickLook {
+-        return .text(summary)
+-    }
+-}
++// pd: playground quick look needs DateFormatter, dropped
+ 
+ extension Date : Codable {
+     public init(from decoder: Decoder) throws {
+diff -ru a/Foundation.swift b/Foundation.swift
+--- a/Foundation.swift	2026-10-06 11:26:06.143534868 +0000
++++ b/Foundation.swift	2026-10-06 11:26:06.145304968 +0000
+@@ -12,7 +12,7 @@
+ 
+ @_exported import Foundation // Clang module
+ import CoreFoundation
+-import CoreGraphics
++// pd: CGFloat lives in the CoreFoundation overlay here
+ 
+ //===----------------------------------------------------------------------===//
+ // NSObject
+@@ -180,7 +180,7 @@
+ public
+ func NSLocalizedString(_ key: String,
+                        tableName: String? = nil,
+-                       bundle: Bundle = Bundle.main,
++                       bundle: Bundle = Bundle.main()!,
+                        value: String = "",
+                        comment: String) -> String {
+   return bundle.localizedString(forKey: key, value:value, table:tableName)
+diff -ru a/NSFastEnumeration.swift b/NSFastEnumeration.swift
+--- a/NSFastEnumeration.swift	2026-10-06 11:26:06.146534877 +0000
++++ b/NSFastEnumeration.swift	2026-10-06 11:26:06.148708074 +0000
+@@ -86,11 +86,5 @@
+     }
+ }
+ 
+-extension NSEnumerator : Sequence {
+-    /// Return an *iterator* over the *enumerator*.
+-    ///
+-    /// - Complexity: O(1).
+-    public func makeIterator() -> NSFastEnumerationIterator {
+-        return NSFastEnumerationIterator(self)
+-    }
+-}
++// pd: NSEnumerator does not adopt NSFastEnumeration in PD Foundation yet
++
+diff -ru a/NSStringEncodings.swift b/NSStringEncodings.swift
+--- a/NSStringEncodings.swift	2026-10-06 11:26:06.140623772 +0000
++++ b/NSStringEncodings.swift	2026-10-06 11:26:06.141534862 +0000
+@@ -46,7 +46,6 @@
+   }
+ 
+   public typealias EncodingConversionOptions = NSString.EncodingConversionOptions
+-  public typealias EnumerationOptions = NSString.EnumerationOptions
+   public typealias CompareOptions = NSString.CompareOptions
+ }
+ 
+@@ -82,7 +81,8 @@
+ 
+ extension String.Encoding : CustomStringConvertible {
+   public var description: String {
+-    return String.localizedName(of: self)
++    // pd: localizedName lives in NSStringAPI, not in this subset
++    return "String.Encoding(rawValue: \(rawValue))"
+   }
+ }
+ 
+diff -ru a/String.swift b/String.swift
+--- a/String.swift	2026-10-06 11:26:06.123534806 +0000
++++ b/String.swift	2026-10-06 11:26:06.126074963 +0000
+@@ -96,6 +96,7 @@
+   }
+ }
+ 
++
+ extension String: CVarArg {}
+ 
+ /*
