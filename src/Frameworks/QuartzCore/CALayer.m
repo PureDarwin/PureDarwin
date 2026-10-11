@@ -6,6 +6,18 @@
 
 NSString * const kCAFilterLinear=@"linear";
 NSString * const kCAFilterNearest=@"nearest";
+NSString * const kCAGravityCenter=@"center";
+NSString * const kCAGravityTop=@"top";
+NSString * const kCAGravityBottom=@"bottom";
+NSString * const kCAGravityLeft=@"left";
+NSString * const kCAGravityRight=@"right";
+NSString * const kCAGravityTopLeft=@"topLeft";
+NSString * const kCAGravityTopRight=@"topRight";
+NSString * const kCAGravityBottomLeft=@"bottomLeft";
+NSString * const kCAGravityBottomRight=@"bottomRight";
+NSString * const kCAGravityResize=@"resize";
+NSString * const kCAGravityResizeAspect=@"resizeAspect";
+NSString * const kCAGravityResizeAspectFill=@"resizeAspectFill";
 NSString * const kCAFilterTrilinear=@"trilinear";
 
 @implementation CALayer
@@ -183,6 +195,34 @@ NSString * const kCAFilterTrilinear=@"trilinear";
    _minificationFilter=value;
 }
 
+-(NSString *)name {
+   return _name;
+}
+
+-(void)setName:(NSString *)value {
+   value=[value copy];
+   [_name release];
+   _name=value;
+}
+
+-(NSString *)contentsGravity {
+   return _contentsGravity ? _contentsGravity : kCAGravityResize;
+}
+
+-(void)setContentsGravity:(NSString *)value {
+   value=[value copy];
+   [_contentsGravity release];
+   _contentsGravity=value;
+}
+
+-(CGFloat)contentsScale {
+   return _contentsScale;
+}
+
+-(void)setContentsScale:(CGFloat)value {
+   _contentsScale=value;
+}
+
 -(NSString *)magnificationFilter {
    return _magnificationFilter;
 }
@@ -207,6 +247,7 @@ NSString * const kCAFilterTrilinear=@"trilinear";
    _sublayerTransform=CATransform3DIdentity;
    _minificationFilter=kCAFilterLinear;
    _magnificationFilter=kCAFilterLinear;
+   _contentsScale=1.0;
    _animations=[[NSMutableDictionary alloc] init];
    return self;
 }
@@ -216,6 +257,8 @@ NSString * const kCAFilterTrilinear=@"trilinear";
    [_animations release];
    [_minificationFilter release];
    [_magnificationFilter release];
+   [_contentsGravity release];
+   [_name release];
    [super dealloc];
 }
 

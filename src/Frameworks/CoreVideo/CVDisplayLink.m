@@ -1,44 +1,89 @@
 #import <CoreVideo/CVDisplayLink.h>
 
-// A single shared timer would avoid one run-loop source per display link.
+#include <mach/mach_time.h>
+#include <pthread.h>
+
+// the callback runs on the link's own thread at 60 Hz, as on macOS, so an app may block its main thread
+// (MoltenVK's vkcube renders from it). Times are host time and a 60 Hz video clock
+
+enum {
+    pdTimeScale = 6000,
+    pdRefreshPeriod = 100,
+    pdTimeStampValid = (1 << 0) | (1 << 1) | (1 << 3) | (1 << 4),
+};
 
 @interface CVDisplayLink : NSObject {
-    NSTimer *_timer;
+@public
     CVDisplayLinkOutputCallback _callback;
     void *_userInfo;
+    pthread_t _thread;
+    volatile BOOL _running;
+    // a stop then a start makes a new thread, the old one sees the generation change and leaves
+    volatile unsigned _generation;
 }
 
 @end
 
-@implementation CVDisplayLink
-
--init {
-    return self;
+static void fillTimeStamp(CVTimeStamp *t, uint64_t frame, uint64_t start, uint64_t period) {
+    memset(t, 0, sizeof *t);
+    t->videoTimeScale = pdTimeScale;
+    t->videoTime = (int64_t)frame * pdRefreshPeriod;
+    t->hostTime = start + frame * period;
+    t->rateScalar = 1.0;
+    t->videoRefreshPeriod = pdRefreshPeriod;
+    t->flags = pdTimeStampValid;
 }
 
+static void *displayLinkThread(void *arg) {
+    CVDisplayLink *link = arg;
+    mach_timebase_info_data_t tb;
+    uint64_t start = mach_absolute_time(), period, frame = 0;
+    unsigned generation = link->_generation;
+
+    mach_timebase_info(&tb);
+    period = (uint64_t)(1e9 / 60.0 * tb.denom / tb.numer);
+    while (link->_running && link->_generation == generation) {
+        CVTimeStamp now, out;
+        CVOptionFlags flagsOut = 0;
+
+        frame++;
+        mach_wait_until(start + frame * period);
+        if (!link->_running || link->_generation != generation)
+            break;
+        fillTimeStamp(&now, frame, start, period);
+        fillTimeStamp(&out, frame + 1, start, period);
+
+        NSAutoreleasePool *pool = [NSAutoreleasePool new];
+        if (link->_callback != NULL)
+            link->_callback(link, &now, &out, 0, &flagsOut, link->_userInfo);
+        [pool release];
+    }
+    [link release];
+    return NULL;
+}
+
+@implementation CVDisplayLink
+
 -(void)dealloc {
-    [_timer invalidate];
-    [_timer release];
+    _running = NO;
     [super dealloc];
 }
 
--(void)displayLinkTimer:(NSTimer *)timer {
-    if (_callback != NULL)
-        _callback(self, NULL, NULL, 0, NULL, _userInfo);
-}
-
 -(void)start {
-    _timer = [[NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0
-                                               target:self
-                                             selector:@selector(displayLinkTimer:)
-                                             userInfo:nil
-                                              repeats:YES] retain];
+    _generation++;
+    _running = YES;
+    // the thread holds the link until it notices the stop
+    [self retain];
+    if (pthread_create(&_thread, NULL, displayLinkThread, self) != 0) {
+        _running = NO;
+        [self release];
+        return;
+    }
+    pthread_detach(_thread);
 }
 
 -(void)stop {
-    [_timer invalidate];
-    [_timer release];
-    _timer = nil;
+    _running = NO;
 }
 
 CVReturn CVDisplayLinkCreateWithActiveCGDisplays(CVDisplayLinkRef *result) {
@@ -88,7 +133,7 @@ CVReturn CVDisplayLinkStop(CVDisplayLinkRef self) {
 }
 
 Boolean CVDisplayLinkIsRunning(CVDisplayLinkRef self) {
-    return self != nil && self->_timer != nil;
+    return self != nil && self->_running;
 }
 
 CVDisplayLinkRef CVDisplayLinkRetain(CVDisplayLinkRef self) {

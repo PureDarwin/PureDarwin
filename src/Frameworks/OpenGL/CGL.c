@@ -13,8 +13,10 @@
 #endif
 
 #include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/sysctl.h>
 
 /* Size of the backing buffer for a context. Large enough that a caller which
  * renders without ever setting a viewport still has somewhere sensible to draw,
@@ -42,12 +44,16 @@ struct _CGLContextObject {
 #ifdef PD_CGL_USE_EGL
 	EGLContext        glx;
 	EGLSurface        pbuffer;
+	EGLConfig         config;
 #else
 	GLXContext        glx;
 	GLXPbuffer        pbuffer;
+	GLXFBConfig       config;
 #endif
 	int               width;
 	int               height;
+	// the window an NSOpenGLContext draws for, 0 while offscreen only
+	int               window_number;
 	CGLPixelFormatObj pixel_format;
 	int               virtual_screen;
 	int               swap_interval;
@@ -318,6 +324,7 @@ CGLCreateContext(CGLPixelFormatObj pix, CGLContextObj share, CGLContextObj *ctx)
 		EGL_HEIGHT, c->height,
 		EGL_NONE
 	};
+	c->config = config;
 	c->pbuffer = eglCreatePbufferSurface(dpy, config, pb_attribs);
 	if (c->pbuffer == EGL_NO_SURFACE) {
 		free(c);
@@ -380,6 +387,7 @@ CGLCreateContext(CGLPixelFormatObj pix, CGLContextObj share, CGLContextObj *ctx)
 		GLX_LARGEST_PBUFFER, False,
 		None
 	};
+	c->config = configs[0];
 	c->pbuffer = glXCreatePbuffer(dpy, configs[0], pb_attribs);
 	if (c->pbuffer == None) {
 		XFree(configs);
@@ -568,6 +576,57 @@ CGLFlushDrawable(CGLContextObj ctx)
 	return kCGLNoError;
 }
 
+// a view's size for the drawable: a new pbuffer of that size, bound again if the context is current
+static CGLError
+pd_cgl_resize(CGLContextObj ctx, int width, int height)
+{
+	if (width < 1)
+		width = 1;
+	if (height < 1)
+		height = 1;
+	if (width == ctx->width && height == ctx->height)
+		return kCGLNoError;
+
+#ifdef PD_CGL_USE_EGL
+	EGLDisplay dpy = pd_cgl_get_display();
+	EGLint pb_attribs[] = { EGL_WIDTH, width, EGL_HEIGHT, height, EGL_NONE };
+	EGLSurface pbuffer = eglCreatePbufferSurface(dpy, ctx->config, pb_attribs);
+
+	if (pbuffer == EGL_NO_SURFACE)
+		return kCGLBadAlloc;
+	if (pd_cgl_current == ctx && !eglMakeCurrent(dpy, pbuffer, pbuffer, ctx->glx)) {
+		eglDestroySurface(dpy, pbuffer);
+		return kCGLBadContext;
+	}
+	// PD_CGL_TRACE=1 logs each drawable size change
+	if (getenv("PD_CGL_TRACE") != NULL) {
+		EGLint w = 0, h = 0;
+
+		eglQuerySurface(dpy, pbuffer, EGL_WIDTH, &w);
+		eglQuerySurface(dpy, pbuffer, EGL_HEIGHT, &h);
+		fprintf(stderr, "CGL: drawable %dx%d (asked %dx%d) current %d error %x\n", w, h, width, height,
+		    pd_cgl_current == ctx, eglGetError());
+	}
+	eglDestroySurface(dpy, ctx->pbuffer);
+#else
+	Display *dpy = pd_cgl_get_display();
+	int pb_attribs[] = {
+		GLX_PBUFFER_WIDTH, width, GLX_PBUFFER_HEIGHT, height, GLX_LARGEST_PBUFFER, False, None
+	};
+	GLXPbuffer pbuffer = glXCreatePbuffer(dpy, ctx->config, pb_attribs);
+
+	if (pbuffer == None)
+		return kCGLBadAlloc;
+	if (pd_cgl_current == ctx)
+		glXMakeContextCurrent(dpy, pbuffer, pbuffer, ctx->glx);
+	glXDestroyPbuffer(dpy, ctx->pbuffer);
+#endif
+	ctx->pbuffer = pbuffer;
+	ctx->width = width;
+	ctx->height = height;
+	return kCGLNoError;
+}
+
 CGLError
 CGLSetParameter(CGLContextObj ctx, CGLContextParameter parameter,
     const int *params)
@@ -582,6 +641,16 @@ CGLSetParameter(CGLContextObj ctx, CGLContextParameter parameter,
 	switch (parameter) {
 	case kCGLCPSwapInterval:
 		ctx->swap_interval = params[0];
+		return kCGLNoError;
+	case kCGLCPSurfaceBackingSize:
+		return pd_cgl_resize(ctx, params[0], params[1]);
+	case kCGLCPSurfaceWindowNumber:
+		ctx->window_number = params[0];
+		return kCGLNoError;
+	// where the view sits and whether it shows are AppKit's business when it presents
+	case kCGLCPSurfaceBackingOrigin:
+	case kCGLCPSurfaceHidden:
+	case kCGLCPSurfaceOpacity:
 		return kCGLNoError;
 	default:
 		return kCGLBadEnumeration;
@@ -603,7 +672,11 @@ CGLGetParameter(CGLContextObj ctx, CGLContextParameter parameter, int *params)
 		params[0] = ctx->swap_interval;
 		return kCGLNoError;
 	case kCGLCPHasDrawable:
-		params[0] = 0;          /* offscreen only */
+		params[0] = ctx->window_number != 0;
+		return kCGLNoError;
+	case kCGLCPSurfaceBackingSize:
+		params[0] = ctx->width;
+		params[1] = ctx->height;
 		return kCGLNoError;
 	default:
 		return kCGLBadEnumeration;
@@ -706,5 +779,91 @@ CGLError CGLUnlockContext(CGLContextObj ctx)
 		return kCGLBadContext;
 	}
 	pthread_mutex_unlock(&ctx->lock);
+	return kCGLNoError;
+}
+
+// one renderer, the Mesa one CGL's contexts use, on every display
+// its memory is the machine's, since Mesa's rasterizer and the paravirtual GPUs draw from system RAM
+struct _CGLRendererInfoObject {
+	int count;
+};
+
+// kCGLRendererGenericFloatID
+#define PD_CGL_RENDERER_ID 0x00020400
+
+CGLError
+CGLQueryRendererInfo(unsigned int display_mask, CGLRendererInfoObj *rend, int *nrend)
+{
+	if (rend == NULL || nrend == NULL)
+		return kCGLBadAddress;
+
+	struct _CGLRendererInfoObject *info = calloc(1, sizeof(*info));
+	if (info == NULL)
+		return kCGLBadAlloc;
+	info->count = 1;
+	*rend = info;
+	*nrend = info->count;
+	return kCGLNoError;
+}
+
+CGLError
+CGLDestroyRendererInfo(CGLRendererInfoObj rend)
+{
+	free(rend);
+	return kCGLNoError;
+}
+
+static int
+pd_cgl_memory_megabytes(void)
+{
+	uint64_t bytes = 0;
+	size_t size = sizeof(bytes);
+
+	if (sysctlbyname("hw.memsize", &bytes, &size, NULL, 0) != 0)
+		return 512;
+	return (int)(bytes >> 20);
+}
+
+CGLError
+CGLDescribeRenderer(CGLRendererInfoObj rend, int rend_num, CGLRendererProperty prop, int *value)
+{
+	if (rend == NULL || value == NULL)
+		return kCGLBadAddress;
+	if (rend_num < 0 || rend_num >= rend->count)
+		return kCGLBadRendererInfo;
+
+	switch (prop) {
+	case kCGLRPRendererCount:
+		*value = rend->count;
+		break;
+	case kCGLRPRendererID:
+		*value = PD_CGL_RENDERER_ID;
+		break;
+	case kCGLRPDisplayMask:
+		*value = (int)0xffffffff;
+		break;
+	case kCGLRPOffScreen: case kCGLRPWindow: case kCGLRPMPSafe: case kCGLRPCompliant:
+	case kCGLRPOnline: case kCGLRPGPUVertProcCapable: case kCGLRPGPUFragProcCapable:
+		*value = 1;
+		break;
+	case kCGLRPAccelerated: case kCGLRPFullScreen: case kCGLRPRobust: case kCGLRPBackingStore:
+	case kCGLRPMultiScreen: case kCGLRPAcceleratedCompute: case kCGLRPMaxAuxBuffers:
+	case kCGLRPMaxSampleBuffers: case kCGLRPMaxSamples:
+		*value = 0;
+		break;
+	case kCGLRPVideoMemoryMegabytes: case kCGLRPTextureMemoryMegabytes:
+		*value = pd_cgl_memory_megabytes();
+		break;
+	case kCGLRPVideoMemory: case kCGLRPTextureMemory: {
+		int megabytes = pd_cgl_memory_megabytes();
+		*value = megabytes >= 2048 ? 0x7fffffff : megabytes << 20;
+		break;
+	}
+	case kCGLRPMajorGLVersion:
+		*value = 4;
+		break;
+	default:
+		return kCGLBadProperty;
+	}
 	return kCGLNoError;
 }

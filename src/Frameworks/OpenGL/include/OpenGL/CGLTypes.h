@@ -46,6 +46,41 @@ typedef enum _CGLPixelFormatAttribute {
 	kCGLPFAVirtualScreenCount      = 128,
 } CGLPixelFormatAttribute;
 
+// what CGLDescribeRenderer reports about a renderer
+typedef enum _CGLRendererProperty {
+	kCGLRPOffScreen                =  53,
+	kCGLRPFullScreen               =  54,
+	kCGLRPRendererID               =  70,
+	kCGLRPAccelerated              =  73,
+	kCGLRPRobust                   =  75,
+	kCGLRPBackingStore             =  76,
+	kCGLRPMPSafe                   =  78,
+	kCGLRPWindow                   =  80,
+	kCGLRPMultiScreen              =  81,
+	kCGLRPCompliant                =  83,
+	kCGLRPDisplayMask              =  84,
+	kCGLRPBufferModes              = 100,
+	kCGLRPColorModes               = 103,
+	kCGLRPAccumModes               = 104,
+	kCGLRPDepthModes               = 105,
+	kCGLRPStencilModes             = 106,
+	kCGLRPMaxAuxBuffers            = 107,
+	kCGLRPMaxSampleBuffers         = 108,
+	kCGLRPMaxSamples               = 109,
+	kCGLRPSampleModes              = 110,
+	kCGLRPSampleAlpha              = 111,
+	kCGLRPVideoMemory              = 120,
+	kCGLRPTextureMemory            = 121,
+	kCGLRPGPUVertProcCapable       = 122,
+	kCGLRPGPUFragProcCapable       = 123,
+	kCGLRPRendererCount            = 128,
+	kCGLRPOnline                   = 129,
+	kCGLRPAcceleratedCompute       = 130,
+	kCGLRPVideoMemoryMegabytes     = 131,
+	kCGLRPTextureMemoryMegabytes   = 132,
+	kCGLRPMajorGLVersion           = 133,
+} CGLRendererProperty;
+
 /* Values for kCGLPFAOpenGLProfile. */
 enum {
 	kCGLOGLPVersion_Legacy   = 0x1000,

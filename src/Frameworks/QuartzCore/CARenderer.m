@@ -222,7 +222,8 @@ void CATexImage2DCGImage(CGImageRef image){
             break;
 
         case kCGImageAlphaPremultipliedLast:
-            if(byteOrder==kO2BitmapByteOrder32Big){
+            // default order is component order, the same bytes as 32Big
+            if(byteOrder==kO2BitmapByteOrder32Big || byteOrder==kCGBitmapByteOrderDefault){
                 glFormat=GL_RGBA;
                 glType=GL_UNSIGNED_BYTE;
             }

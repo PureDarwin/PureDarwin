@@ -38,8 +38,8 @@ typedef struct {
  CGFloat _C1[4];
 } CIGradientColors;
 
-static void evaluate(void *info,const float *in, float *output) {
-   float         x=in[0];
+static void evaluate(void *info,const CGFloat *in, CGFloat *output) {
+   CGFloat       x=in[0];
    CIGradientColors *colors=info;
    int           i;
    
@@ -56,8 +56,8 @@ static void evaluate(void *info,const float *in, float *output) {
     CIColor *endColor=[filter valueForKey:@"inputColor1"];
     CIVector *startVector=[filter valueForKey:@"inputPoint0"];
     CIVector *endVector=[filter valueForKey:@"inputPoint1"];
-    float         domain[2]={0,1};
-    float         range[8]={0,1,0,1,0,1,0,1};
+    CGFloat       domain[2]={0,1};
+    CGFloat       range[8]={0,1,0,1,0,1,0,1};
     CGFunctionCallbacks callbacks={0,evaluate,NULL};
     CIGradientColors colors;
     const CGFloat *startComponents=[startColor components];

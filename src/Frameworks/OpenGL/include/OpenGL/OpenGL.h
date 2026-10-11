@@ -20,6 +20,9 @@ extern "C" {
 CGLError CGLChoosePixelFormat(const CGLPixelFormatAttribute *attribs,
     CGLPixelFormatObj *pix, int *npix);
 CGLError CGLDestroyPixelFormat(CGLPixelFormatObj pix);
+CGLError CGLQueryRendererInfo(unsigned int display_mask, CGLRendererInfoObj *rend, int *nrend);
+CGLError CGLDestroyRendererInfo(CGLRendererInfoObj rend);
+CGLError CGLDescribeRenderer(CGLRendererInfoObj rend, int rend_num, CGLRendererProperty prop, int *value);
 CGLError CGLDescribePixelFormat(CGLPixelFormatObj pix, int pix_num,
     CGLPixelFormatAttribute attrib, int *value);
 CGLPixelFormatObj CGLRetainPixelFormat(CGLPixelFormatObj pix);

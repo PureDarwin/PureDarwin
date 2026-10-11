@@ -21,6 +21,20 @@ CA_EXPORT NSString *const kCAFilterLinear;
 CA_EXPORT NSString *const kCAFilterNearest;
 CA_EXPORT NSString *const kCAFilterTrilinear;
 
+// how contents sit in the bounds (contentsGravity)
+CA_EXPORT NSString *const kCAGravityCenter;
+CA_EXPORT NSString *const kCAGravityTop;
+CA_EXPORT NSString *const kCAGravityBottom;
+CA_EXPORT NSString *const kCAGravityLeft;
+CA_EXPORT NSString *const kCAGravityRight;
+CA_EXPORT NSString *const kCAGravityTopLeft;
+CA_EXPORT NSString *const kCAGravityTopRight;
+CA_EXPORT NSString *const kCAGravityBottomLeft;
+CA_EXPORT NSString *const kCAGravityBottomRight;
+CA_EXPORT NSString *const kCAGravityResize;
+CA_EXPORT NSString *const kCAGravityResizeAspect;
+CA_EXPORT NSString *const kCAGravityResizeAspectFill;
+
 @interface CALayer : NSObject {
     CALayerContext *_context;
     CALayer *_superlayer;
@@ -39,6 +53,9 @@ CA_EXPORT NSString *const kCAFilterTrilinear;
     BOOL _needsDisplay;
     NSMutableDictionary *_animations;
     NSNumber *_textureId;
+    CGFloat _contentsScale;
+    NSString *_contentsGravity;
+    NSString *_name;
 }
 
 + layer;
@@ -58,6 +75,11 @@ CA_EXPORT NSString *const kCAFilterTrilinear;
 
 @property(copy) NSString *minificationFilter;
 @property(copy) NSString *magnificationFilter;
+// backing pixels per point, stored only, the renderer draws at 1
+@property CGFloat contentsScale;
+// stored for the app: the renderer places contents at the origin
+@property(copy) NSString *contentsGravity;
+@property(copy) NSString *name;
 
 - init;
 

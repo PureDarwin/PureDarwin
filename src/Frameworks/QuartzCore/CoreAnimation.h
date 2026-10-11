@@ -3,3 +3,7 @@
 #import <QuartzCore/CARenderer.h>
 #import <QuartzCore/CAMediaTimingFunction.h>
 #import <QuartzCore/CATransaction.h>
+#import <QuartzCore/CADisplayLink.h>
+#import <QuartzCore/CAMetalLayer.h>
+#import <QuartzCore/CAMetalDisplayLink.h>
+#import <QuartzCore/CAEDRMetadata.h>
