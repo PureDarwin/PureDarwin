@@ -24,9 +24,26 @@ static NSFont *font(NSString *name, CGFloat size)
     return f != nil ? f : [NSFont systemFontOfSize:size];
 }
 
+// greys follow the appearance, light value to dark value after the demo's dark windows
 static NSColor *grey(int v)
 {
-    return [NSColor colorWithCalibratedWhite:v / 255.0 alpha:1];
+    static const int dark[][2] = {
+        { 0x1b, 0xe6 }, { 0x4a, 0xc8 }, { 0x6e, 0xa0 }, { 0x8a, 0x96 }, { 0xec, 0x26 }, { 0xc4, 0x55 },
+        { 0xfa, 0x3a }, { 0xe2, 0x14 }, { 0xd6, 0x14 },
+    };
+    int night = v;
+
+    for (unsigned i = 0; i < sizeof(dark) / sizeof(dark[0]); i++)
+        if (dark[i][0] == v)
+            night = dark[i][1];
+    return [NSColor colorWithName:nil dynamicProvider:^NSColor *(NSAppearance *a) {
+        return [NSColor colorWithCalibratedWhite:([a _isDark] ? night : v) / 255.0 alpha:1];
+    }];
+}
+
+static BOOL darkNow(void)
+{
+    return [[NSAppearance currentDrawingAppearance] _isDark];
 }
 
 static NSString *sysctlString(const char *name)
@@ -251,7 +268,7 @@ static NSString *startupDisk(void)
     _button = NSMakeRect(floor((PANEL_W - size.width - 28) / 2), y + 16, ceil(size.width) + 28, 22);
     [grey(0xc4) setFill];
     [[NSBezierPath bezierPathWithRoundedRect:_button xRadius:6 yRadius:6] fill];
-    [(_pressed ? grey(0xe2) : grey(0xfa)) setFill];
+    [(_pressed ? (darkNow() ? grey(0x50) : grey(0xe2)) : grey(0xfa)) setFill];
     [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(_button, 1, 1) xRadius:5 yRadius:5] fill];
     [@"More Info…" drawAtPoint:NSMakePoint(NSMinX(_button) + 14, NSMinY(_button) + floor((22 - size.height) / 2)) withAttributes:label];
 

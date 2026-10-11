@@ -18,9 +18,26 @@
 #define PAD 20
 #define LINE_SCROLL 24
 
+// greys follow the appearance, light value to dark value after the demo's dark windows
 static NSColor *grey(int v)
 {
-    return [NSColor colorWithCalibratedWhite:v / 255.0 alpha:1];
+    static const int dark[][2] = {
+        { 0x1b, 0xe6 }, { 0x4a, 0xc8 }, { 0x6e, 0xa0 }, { 0x8a, 0x96 }, { 0xec, 0x26 }, { 0xc4, 0x55 },
+        { 0xfa, 0x3a }, { 0xe2, 0x14 }, { 0xd6, 0x14 },
+    };
+    int night = v;
+
+    for (unsigned i = 0; i < sizeof(dark) / sizeof(dark[0]); i++)
+        if (dark[i][0] == v)
+            night = dark[i][1];
+    return [NSColor colorWithName:nil dynamicProvider:^NSColor *(NSAppearance *a) {
+        return [NSColor colorWithCalibratedWhite:([a _isDark] ? night : v) / 255.0 alpha:1];
+    }];
+}
+
+static BOOL darkNow(void)
+{
+    return [[NSAppearance currentDrawingAppearance] _isDark];
 }
 
 static NSFont *font(NSString *name, CGFloat size)
@@ -109,7 +126,8 @@ static NSFont *font(NSString *name, CGFloat size)
     CGFloat y = SIDE_TOP;
     NSUInteger i;
 
-    [[NSColor colorWithCalibratedRed:0xe8 / 255.0 green:0xe6 / 255.0 blue:0xe6 / 255.0 alpha:1] setFill];
+    [(darkNow() ? [NSColor colorWithCalibratedRed:0x30 / 255.0 green:0x2e / 255.0 blue:0x30 / 255.0 alpha:1]
+               : [NSColor colorWithCalibratedRed:0xe8 / 255.0 green:0xe6 / 255.0 blue:0xe6 / 255.0 alpha:1]) setFill];
     NSRectFill(NSMakeRect(0, 0, SIDE_W, NSHeight([self bounds])));
     [grey(0xd6) setFill];
     NSRectFill(NSMakeRect(SIDE_W, 0, 1, NSHeight([self bounds])));
@@ -119,7 +137,7 @@ static NSFont *font(NSString *name, CGFloat size)
         NSRect r = NSMakeRect(10, y, SIDE_W - 20, ROW_H);
 
         if (i == _current) {
-            [[NSColor colorWithCalibratedWhite:0 alpha:0.1] setFill];
+            [[NSColor colorWithCalibratedWhite:darkNow() ? 1 : 0 alpha:0.1] setFill];
             [[NSBezierPath bezierPathWithRoundedRect:r xRadius:6 yRadius:6] fill];
         }
         [_report[i][@"name"] drawAtPoint:NSMakePoint(NSMinX(r) + 10, NSMinY(r) + 3) withAttributes:row];
@@ -136,7 +154,7 @@ static NSFont *font(NSString *name, CGFloat size)
     int row;
 
     for (row = 0; row < TB_H; row++) {
-        [[NSColor colorWithCalibratedWhite:([[self window] isKeyWindow] ? 0xf9 - 8.0 * row / (TB_H - 1) : 0xf6) / 255.0 alpha:1] setFill];
+        [[NSColor colorWithCalibratedWhite:([[self window] isKeyWindow] ? (darkNow() ? 0x33 - 7.0 * row / (TB_H - 1) : 0xf9 - 8.0 * row / (TB_H - 1)) : (darkNow() ? 0x2c : 0xf6)) / 255.0 alpha:1] setFill];
         NSRectFill(NSMakeRect(SIDE_W + 1, row, NSWidth(b) - SIDE_W - 1, 1));
     }
     [grey(0xe2) setFill];
@@ -163,7 +181,7 @@ static NSFont *font(NSString *name, CGFloat size)
     CGFloat x = NSMinX(main) + PAD, y = NSMinY(main) + 16 - _scroll;
     CGFloat valueX = x + KEY_W + 12, valueW = NSMaxX(main) - PAD - valueX;
 
-    [[NSColor whiteColor] setFill];
+    [(darkNow() ? [NSColor colorWithCalibratedRed:0x1f / 255.0 green:0x1f / 255.0 blue:0x21 / 255.0 alpha:1] : [NSColor whiteColor]) setFill];
     NSRectFill(main);
     [NSGraphicsContext saveGraphicsState];
     [NSBezierPath clipRect:main];

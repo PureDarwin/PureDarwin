@@ -17,6 +17,9 @@ void PDSetPref(NSString *domain, NSString *key, id value);
 // nil domain means the global domain every app reads, like AppleAccentColor
 id PDGlobalPref(NSString *key);
 void PDSetGlobalPref(NSString *key, id value);
+// window rounding and shadows default to on, the compositor hears changes through notify(3)
+BOOL PDWindowStyleEnabled(NSString *key);
+void PDPushWindowStyle(void);
 
 NSString *PDSystemVersion(void);
 NSString *PDBuildVersion(void);

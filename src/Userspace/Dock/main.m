@@ -165,16 +165,20 @@ static BOOL magnify = YES;
         [[NSBezierPath bezierPathWithRoundedRect:r xRadius:BAR_R + i yRadius:BAR_R + i] fill];
     }
 
-    [[NSColor colorWithCalibratedWhite:1 alpha:0.4] setFill];
+    // the demo's dark dock, rgba(40,40,42,.35) inside a 15% white edge
+    BOOL dark = [[NSAppearance currentDrawingAppearance] _isDark];
+
+    [[NSColor colorWithCalibratedWhite:1 alpha:dark ? 0.15 : 0.4] setFill];
     [[NSBezierPath bezierPathWithRoundedRect:bar xRadius:BAR_R yRadius:BAR_R] fill];
-    [[NSColor colorWithCalibratedWhite:1 alpha:0.28] setFill];
+    [(dark ? [NSColor colorWithCalibratedRed:40 / 255.0 green:40 / 255.0 blue:42 / 255.0 alpha:0.35]
+           : [NSColor colorWithCalibratedWhite:1 alpha:0.28]) setFill];
     [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(bar, 1, 1) xRadius:BAR_R - 1 yRadius:BAR_R - 1] fill];
 
     for (DockItem *item in _items) {
         NSRect r = item->frame;
 
         if (item->separator) {
-            [[NSColor colorWithCalibratedWhite:0 alpha:0.15] setFill];
+            [[NSColor colorWithCalibratedWhite:dark ? 1 : 0 alpha:0.15] setFill];
             [[NSBezierPath bezierPathWithRect:NSMakeRect(NSMidX(r) - 0.5, NSMinY(bar) + 3, 1, NSHeight(bar) - 6)] fill];
             continue;
         }
@@ -185,7 +189,7 @@ static BOOL magnify = YES;
         }
         [item->icon drawInRect:r fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1];
         if (item->running) {
-            [[NSColor colorWithCalibratedWhite:0 alpha:0.65] setFill];
+            [[NSColor colorWithCalibratedWhite:dark ? 1 : 0 alpha:dark ? 0.75 : 0.65] setFill];
             [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(NSMidX(item->frame) - 2, NSMinY(item->frame) - 5, 4, 4)] fill];
         }
     }
@@ -246,7 +250,9 @@ static BOOL magnify = YES;
 
     if (font == nil)
         font = [NSFont systemFontOfSize:12];
-    return @{ NSFontAttributeName: font, NSForegroundColorAttributeName: [NSColor colorWithCalibratedWhite:0.1 alpha:1] };
+    return @{ NSFontAttributeName: font, NSForegroundColorAttributeName: [NSColor colorWithName:nil dynamicProvider:^NSColor *(NSAppearance *a) {
+        return [NSColor colorWithCalibratedWhite:[a _isDark] ? 0.93 : 0.1 alpha:1];
+    }] };
 }
 
 - (void)setText:(NSString *)text
@@ -265,7 +271,7 @@ static BOOL magnify = YES;
     NSRectFill([self bounds]);
     [[NSColor colorWithCalibratedWhite:0 alpha:0.06] setFill];
     [[NSBezierPath bezierPathWithRoundedRect:NSOffsetRect(NSInsetRect(b, -1, -1), 0, -1) xRadius:6 yRadius:6] fill];
-    [[NSColor colorWithCalibratedWhite:0.94 alpha:0.92] setFill];
+    [[NSColor colorWithCalibratedWhite:[[NSAppearance currentDrawingAppearance] _isDark] ? 0.17 : 0.94 alpha:0.92] setFill];
     [[NSBezierPath bezierPathWithRoundedRect:b xRadius:5 yRadius:5] fill];
     [_text drawAtPoint:NSMakePoint(floor(NSMidX(b) - size.width / 2), floor(NSMidY(b) - size.height / 2))
         withAttributes:[DockTipView attributes]];

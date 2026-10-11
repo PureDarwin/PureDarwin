@@ -47,9 +47,43 @@ enum { KindFolder, KindApp, KindFile };
 
 @end
 
-static NSColor *rgb(int r, int g, int b)
+static NSColor *fixed(int r, int g, int b)
 {
     return [NSColor colorWithCalibratedRed:r / 255.0 green:g / 255.0 blue:b / 255.0 alpha:1];
+}
+
+// the light palette and its dark counterpart, after the demo's dark Finder
+static const struct { unsigned light, dark; } palette[] = {
+    { 0x1b1b1b, 0xe6e6e6 }, { 0x8a8a8a, 0x969696 }, { 0x777777, 0x9a9a9a }, { 0x555555, 0xc4c4c4 },
+    { 0xc4c4c4, 0x555555 }, { 0xe8e6e6, 0x302e30 }, { 0xd6d6d6, 0x141414 }, { 0xf6f6f6, 0x2c2c2e },
+    { 0xe2e2e2, 0x141414 }, { 0xc8c8c8, 0x555555 }, { 0xfafafa, 0x3a3a3c },
+};
+
+static BOOL darkNow(void)
+{
+    return [[NSAppearance currentDrawingAppearance] _isDark];
+}
+
+static NSColor *rgb(int r, int g, int b)
+{
+    unsigned light = (unsigned)(r << 16 | g << 8 | b);
+
+    for (unsigned i = 0; i < sizeof(palette) / sizeof(palette[0]); i++) {
+        if (palette[i].light != light)
+            continue;
+        unsigned dark = palette[i].dark;
+        return [NSColor colorWithName:nil dynamicProvider:^NSColor *(NSAppearance *a) {
+            unsigned v = [a _isDark] ? dark : light;
+            return fixed(v >> 16, (v >> 8) & 0xff, v & 0xff);
+        }];
+    }
+    return fixed(r, g, b);
+}
+
+// the file grid and status bar, the demo's #1f1f21
+static NSColor *paper(void)
+{
+    return darkNow() ? fixed(0x1f, 0x1f, 0x21) : [NSColor whiteColor];
 }
 
 static NSFont *font(NSString *name, CGFloat size)
@@ -336,7 +370,7 @@ static NSString *iconForPath(NSString *path)
         NSRect r = NSMakeRect(10, y, SIDE_W - 20, ROW_H);
 
         if ([place[1] isEqualToString:_path]) {
-            [[NSColor colorWithCalibratedWhite:0 alpha:0.1] setFill];
+            [[NSColor colorWithCalibratedWhite:darkNow() ? 1 : 0 alpha:0.1] setFill];
             [[NSBezierPath bezierPathWithRoundedRect:r xRadius:6 yRadius:6] fill];
         }
         [iconImage(iconForPath(place[1]), YES) drawInRect:NSMakeRect(NSMinX(r) + 8, NSMinY(r) + 3, 16, 16)
@@ -362,7 +396,7 @@ static NSString *iconForPath(NSString *path)
             NSRectFill(NSMakeRect(x, 0, NSWidth(b) - x, TB_H));
             break;
         }
-        [[NSColor colorWithCalibratedWhite:(0xf9 - 8.0 * row / (TB_H - 1)) / 255.0 alpha:1] setFill];
+        [[NSColor colorWithCalibratedWhite:((darkNow() ? 0x33 : 0xf9) - (darkNow() ? 7.0 : 8.0) * row / (TB_H - 1)) / 255.0 alpha:1] setFill];
         NSRectFill(NSMakeRect(x, row, NSWidth(b) - x, 1));
     }
     [rgb(0xe2, 0xe2, 0xe2) setFill];
@@ -396,7 +430,7 @@ static NSString *iconForPath(NSString *path)
     NSDictionary *picked = @{ NSFontAttributeName: font(@"Inter-Regular", 12), NSForegroundColorAttributeName: [NSColor whiteColor] };
     NSUInteger i;
 
-    [[NSColor whiteColor] setFill];
+    [paper() setFill];
     NSRectFill(grid);
     [NSGraphicsContext saveGraphicsState];
     [NSBezierPath clipRect:grid];
@@ -413,7 +447,7 @@ static NSString *iconForPath(NSString *path)
         if (NSMaxY(cell) < NSMinY(grid) || NSMinY(cell) > NSMaxY(grid))
             continue;
         if (sel) {
-            [[NSColor colorWithCalibratedWhite:0 alpha:0.08] setFill];
+            [[NSColor colorWithCalibratedWhite:darkNow() ? 1 : 0 alpha:0.08] setFill];
             [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(iconRect, -4, -4) xRadius:6 yRadius:6] fill];
         }
         if (e->kind == KindFile)
@@ -452,7 +486,7 @@ static NSString *iconForPath(NSString *path)
     NSSize size = [text sizeWithAttributes:attrs];
     CGFloat top = NSHeight(b) - STATUS_H;
 
-    [[NSColor whiteColor] setFill];
+    [paper() setFill];
     NSRectFill(NSMakeRect(x, top - 1, NSWidth(b) - x, STATUS_H + 1));
     [rgb(0xe2, 0xe2, 0xe2) setFill];
     NSRectFill(NSMakeRect(x, top - 1, NSWidth(b) - x, 1));

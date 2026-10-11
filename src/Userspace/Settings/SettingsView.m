@@ -23,9 +23,47 @@
 typedef void (^HitBlock)(NSPoint p, BOOL dragging);
 typedef void (^DrawBlock)(NSRect r);
 
-static NSColor *rgb(int r, int g, int b)
+// a colour that never changes, for previews that show one appearance whatever the current one is
+static NSColor *fixed(int r, int g, int b)
 {
     return [NSColor colorWithCalibratedRed:r / 255.0 green:g / 255.0 blue:b / 255.0 alpha:1];
+}
+
+// the light palette and what each colour turns into in the dark, after the demo's dark rules
+static const struct { unsigned light, dark; } palette[] = {
+    { 0x1b1b1b, 0xe6e6e6 }, { 0x4a4a4a, 0xc8c8c8 }, { 0x6e6e6e, 0xa0a0a0 }, { 0x8a8a8a, 0x969696 },
+    { 0xf4f1ee, 0x242224 }, { 0xf0ebe6, 0x3c383a }, { 0xf1ece7, 0x3a3537 }, { 0xd8d3ce, 0x4a4547 },
+    { 0xdcd6d0, 0x1c1c1c }, { 0xc4c4c4, 0x555555 }, { 0x555555, 0xc4c4c4 }, { 0xfbfbfb, 0x3a3a3c },
+    { 0xc9c2bb, 0x5a5456 }, { 0x9a8b7e, 0xa8998c }, { 0x8a7d72, 0x9a8d82 }, { 0x6b5d52, 0xd8ccc2 },
+    { 0xb9aea4, 0x7a6f66 },
+};
+
+static BOOL darkNow(void)
+{
+    return [[NSAppearance currentDrawingAppearance] _isDark];
+}
+
+// palette colours follow the appearance, the rest are fixed
+static NSColor *rgb(int r, int g, int b)
+{
+    unsigned light = (unsigned)(r << 16 | g << 8 | b);
+
+    for (unsigned i = 0; i < sizeof(palette) / sizeof(palette[0]); i++) {
+        if (palette[i].light != light)
+            continue;
+        unsigned dark = palette[i].dark;
+        return [NSColor colorWithName:nil dynamicProvider:^NSColor *(NSAppearance *a) {
+            unsigned v = [a _isDark] ? dark : light;
+            return fixed(v >> 16, (v >> 8) & 0xff, v & 0xff);
+        }];
+    }
+    return fixed(r, g, b);
+}
+
+// cards and controls sitting on the window background
+static NSColor *surface(void)
+{
+    return darkNow() ? fixed(0x30, 0x2d, 0x2f) : [NSColor whiteColor];
 }
 
 static NSColor *rgba(int r, int g, int b, CGFloat a)
@@ -542,7 +580,7 @@ static NSArray *paneInfo(NSString *pane)
         [self drawLabel:label sub:nil in:NSMakeRect(NSMinX(r) + 12, NSMinY(r), NSMinX(b) - 24 - NSMinX(r), NSHeight(r)) code:NO];
         [[NSColor colorWithCalibratedWhite:0 alpha:0.12] setFill];
         [[NSBezierPath bezierPathWithRoundedRect:NSOffsetRect(b, 0, 0.5) xRadius:5 yRadius:5] fill];
-        [[NSColor whiteColor] setFill];
+        [(darkNow() ? fixed(0x57, 0x51, 0x53) : [NSColor whiteColor]) setFill];
         [[NSBezierPath bezierPathWithRoundedRect:b xRadius:5 yRadius:5] fill];
         [title drawAtPoint:NSMakePoint(NSMinX(b) + 10, NSMidY(b) - 8) withAttributes:a];
         [chevron moveToPoint:NSMakePoint(cx - 3, cy - 2)];
@@ -608,9 +646,9 @@ static NSArray *paneInfo(NSString *pane)
     for (NSDictionary *row in rows)
         h += [row[@"h"] doubleValue];
     box = NSMakeRect(x, y, w, h);
-    [rgba(80, 50, 30, 0.1) setFill];
+    [(darkNow() ? [NSColor colorWithCalibratedWhite:1 alpha:0.06] : rgba(80, 50, 30, 0.1)) setFill];
     [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(box, -1, -1) xRadius:CARD_R + 1 yRadius:CARD_R + 1] fill];
-    [[NSColor whiteColor] setFill];
+    [surface() setFill];
     [[NSBezierPath bezierPathWithRoundedRect:box xRadius:CARD_R yRadius:CARD_R] fill];
     ry = y;
     for (NSUInteger i = 0; i < [rows count]; i++) {
@@ -729,9 +767,9 @@ static NSArray *paneInfo(NSString *pane)
             CGFloat tx = NSMinX(r) + 12 + 30 + 10;
 
             { TSTART;
-            [rgba(80, 50, 30, 0.1) setFill];
+            [(darkNow() ? [NSColor colorWithCalibratedWhite:1 alpha:0.06] : rgba(80, 50, 30, 0.1)) setFill];
             [[NSBezierPath bezierPathWithRoundedRect:NSOffsetRect(NSInsetRect(r, -1, -1), 0, 0.5) xRadius:CARD_R + 1 yRadius:CARD_R + 1] fill];
-            [[NSColor whiteColor] setFill];
+            [surface() setFill];
             [[NSBezierPath bezierPathWithRoundedRect:r xRadius:CARD_R yRadius:CARD_R] fill];
             TEND(tCard); }
             { TSTART; [self drawGlyph:t in:NSMakeRect(NSMinX(r) + 12, NSMidY(r) - 15, 30, 30)]; TEND(tGlyph); }
@@ -766,7 +804,7 @@ static NSArray *paneInfo(NSString *pane)
     y = [self card:@[
         [self row:72 draw:^(NSRect r) {
             NSArray *looks = @[ @[ @"light", @"Light" ], @[ @"dark", @"Dark" ], @[ @"auto", @"Auto" ] ];
-            CGFloat x = NSMaxX(r) - 12 - 3 * 64 - 2 * 14;
+            CGFloat x = NSMaxX(r) - 12 - 3 * 64 - 2 * 16;
 
             [self drawLabel:@"Mode" sub:nil in:NSMakeRect(NSMinX(r) + 12, NSMinY(r), 200, NSHeight(r)) code:NO];
             for (NSArray *l in looks) {
@@ -775,25 +813,23 @@ static NSArray *paneInfo(NSString *pane)
                 NSSize s = [l[1] sizeWithAttributes:a];
                 BOOL on = [look isEqualToString:l[0]];
 
-                if (on) {
-                    [accent() setFill];
-                    [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(p, -3, -3) xRadius:9 yRadius:9] fill];
-                }
-                [rgb(0xd0, 0xd0, 0xd0) setFill];
-                [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(p, -1, -1) xRadius:7 yRadius:7] fill];
+                // a hairline outline, or the accent ring in its place when chosen
+                [(on ? accent() : [NSColor colorWithCalibratedWhite:0 alpha:0.15]) setFill];
+                CGFloat ring = on ? 3 : 1;
+                [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(p, -ring, -ring) xRadius:6 + ring yRadius:6 + ring] fill];
                 [NSGraphicsContext saveGraphicsState];
                 [[NSBezierPath bezierPathWithRoundedRect:p xRadius:6 yRadius:6] addClip];
                 if ([l[0] isEqualToString:@"auto"]) {
-                    [rgb(0xf4, 0xf1, 0xee) setFill];
+                    [fixed(0xf4, 0xf1, 0xee) setFill];
                     NSRectFill(NSMakeRect(NSMinX(p), NSMinY(p), 32, 42));
                     [rgb(0x2c, 0x2a, 0x2c) setFill];
                     NSRectFill(NSMakeRect(NSMinX(p) + 32, NSMinY(p), 32, 42));
                 } else {
                     BOOL dark = [l[0] isEqualToString:@"dark"];
 
-                    [(dark ? rgb(0x24, 0x22, 0x24) : [NSColor whiteColor]) setFill];
+                    [(dark ? fixed(0x24, 0x22, 0x24) : [NSColor whiteColor]) setFill];
                     NSRectFill(p);
-                    [(dark ? rgb(0x3a, 0x35, 0x37) : rgb(0xf4, 0xf1, 0xee)) setFill];
+                    [(dark ? fixed(0x3a, 0x35, 0x37) : fixed(0xf4, 0xf1, 0xee)) setFill];
                     NSRectFill(NSMakeRect(NSMinX(p), NSMinY(p), 64, 13));
                 }
                 [NSGraphicsContext restoreGraphicsState];
@@ -803,9 +839,11 @@ static NSArray *paneInfo(NSString *pane)
                         return;
                     PDSetGlobalPref(@"AppleInterfaceStyle", [l[0] isEqualToString:@"dark"] ? @"Dark" : nil);
                     PDSetGlobalPref(@"AppleInterfaceStyleSwitchesAutomatically", [l[0] isEqualToString:@"auto"] ? @YES : nil);
+                    // running apps restyle on the same notification macOS sends
+                    [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"AppleInterfaceThemeChangedNotification" object:nil];
                     [self setNeedsDisplay:YES];
                 }];
-                x += 64 + 14;
+                x += 64 + 16;
             }
         }],
         [self row:ROW_MIN draw:^(NSRect r) {
@@ -832,6 +870,16 @@ static NSArray *paneInfo(NSString *pane)
                 }];
                 x += 16 + 8;
             }
+        }],
+        [self switchRow:@"Rounded window corners" sub:nil code:NO dot:nil on:PDWindowStyleEnabled(@"PDWindowRoundedCorners") enabled:YES toggle:^(BOOL on) {
+            PDSetGlobalPref(@"PDWindowRoundedCorners", on ? nil : @NO);
+            PDPushWindowStyle();
+            [self setNeedsDisplay:YES];
+        }],
+        [self switchRow:@"Window shadows" sub:nil code:NO dot:nil on:PDWindowStyleEnabled(@"PDWindowShadows") enabled:YES toggle:^(BOOL on) {
+            PDSetGlobalPref(@"PDWindowShadows", on ? nil : @NO);
+            PDPushWindowStyle();
+            [self setNeedsDisplay:YES];
         }],
     ] at:y];
 
@@ -1157,7 +1205,7 @@ static NSArray *paneInfo(NSString *pane)
                 NSRectFill(NSMakeRect(NSMinX(t), NSMinY(t), tileW, MAX(24 * f, 1.5)));
                 [[NSColor colorWithCalibratedWhite:0 alpha:0.15] setFill];
                 [[NSBezierPath bezierPathWithRoundedRect:NSOffsetRect(win, 0, 0.5) xRadius:2 yRadius:2] fill];
-                [rgb(0xf4, 0xf1, 0xee) setFill];
+                [fixed(0xf4, 0xf1, 0xee) setFill];
                 [[NSBezierPath bezierPathWithRoundedRect:win xRadius:2 yRadius:2] fill];
                 [[NSColor whiteColor] setFill];
                 NSRectFill(NSMakeRect(NSMinX(win), NSMinY(win), NSWidth(win), MAX(38 * f, 1.5)));
@@ -1339,7 +1387,9 @@ static NSArray *paneInfo(NSString *pane)
     int row;
 
     for (row = 0; row < TB_H; row++) {
-        [[NSColor colorWithCalibratedWhite:([[self window] isKeyWindow] ? 0xf7 - 10.0 * row / (TB_H - 1) : 0xf3) / 255.0 alpha:1] setFill];
+        CGFloat top = darkNow() ? 0x33 : 0xf7, idle = darkNow() ? 0x2c : 0xf3;
+
+        [[NSColor colorWithCalibratedWhite:([[self window] isKeyWindow] ? top - (darkNow() ? 7.0 : 10.0) * row / (TB_H - 1) : idle) / 255.0 alpha:1] setFill];
         NSRectFill(NSMakeRect(0, row, NSWidth(b), 1));
     }
     [rgb(0xdc, 0xd6, 0xd0) setFill];
@@ -1367,7 +1417,7 @@ static NSArray *paneInfo(NSString *pane)
         [[accent() colorWithAlphaComponent:0.6] setFill];
         [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(search, -2.5, -2.5) xRadius:8 yRadius:8] fill];
     }
-    [[NSColor colorWithCalibratedWhite:1 alpha:0.9] setFill];
+    [[NSColor colorWithCalibratedWhite:1 alpha:darkNow() ? 0.08 : 0.9] setFill];
     [[NSBezierPath bezierPathWithRoundedRect:search xRadius:6 yRadius:6] fill];
     [image(@"search") drawInRect:NSMakeRect(NSMinX(search) + 8, NSMidY(search) - 6, 12, 12) fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:0.55 respectFlipped:YES hints:nil];
     s = [placeholder sizeWithAttributes:field];

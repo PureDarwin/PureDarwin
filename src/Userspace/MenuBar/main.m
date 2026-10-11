@@ -10,6 +10,19 @@
 #import "PDMenuServer.h"
 #import "MenuBarView.h"
 #include <dlfcn.h>
+#include <stdint.h>
+#if __has_include(<notify.h>)
+#include <notify.h>
+#else
+// libSystem exports notify(3) but this sdk does not ship its header
+#define NOTIFY_STATUS_OK 0
+uint32_t notify_post(const char *name);
+uint32_t notify_register_check(const char *name, int *out_token);
+uint32_t notify_register_file_descriptor(const char *name, int *notify_fd, int flags, int *out_token);
+uint32_t notify_set_state(int token, uint64_t state64);
+uint32_t notify_get_state(int token, uint64_t *state64);
+uint32_t notify_cancel(int token);
+#endif
 #include <execinfo.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -54,9 +67,26 @@
     [_window _setBackgroundBlurInset:0 radius:0];
 }
 
+// the compositor starts with rounded, shadowed windows, a login applies the saved choice
+static void pushWindowStyle(void)
+{
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    id round = [defaults objectForKey:@"PDWindowRoundedCorners"], shadow = [defaults objectForKey:@"PDWindowShadows"];
+    uint64_t style = (round && ![round boolValue] ? 1 : 0) | (shadow && ![shadow boolValue] ? 2 : 0);
+    int token;
+
+    if (style == 0 || notify_register_check("org.puredarwin.WindowServer.windowstyle", &token) != NOTIFY_STATUS_OK)
+        return;
+    notify_set_state(token, style);
+    notify_post("org.puredarwin.WindowServer.windowstyle");
+    notify_cancel(token);
+}
+
 - (void)applicationDidFinishLaunching:(NSNotification *)note
 {
     NSRect frame = NSMakeRect(0, 0, 1024, MenuBarHeight);
+
+    pushWindowStyle();
 
     // a display mode change moves the screen edges
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(placeBar:)

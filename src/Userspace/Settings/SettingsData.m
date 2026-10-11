@@ -6,6 +6,19 @@
  * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
  */
 
+#include <stdint.h>
+#if __has_include(<notify.h>)
+#include <notify.h>
+#else
+// libSystem exports notify(3) but this sdk does not ship its header
+#define NOTIFY_STATUS_OK 0
+uint32_t notify_post(const char *name);
+uint32_t notify_register_check(const char *name, int *out_token);
+uint32_t notify_register_file_descriptor(const char *name, int *notify_fd, int flags, int *out_token);
+uint32_t notify_set_state(int token, uint64_t state64);
+uint32_t notify_get_state(int token, uint64_t *state64);
+uint32_t notify_cancel(int token);
+#endif
 #import "SettingsData.h"
 #include <sys/sysctl.h>
 #include <sys/utsname.h>
@@ -47,6 +60,25 @@ id PDGlobalPref(NSString *key)
 void PDSetGlobalPref(NSString *key, id value)
 {
     PDSetPref((NSString *)kCFPreferencesAnyApplication, key, value);
+}
+
+BOOL PDWindowStyleEnabled(NSString *key)
+{
+    id value = PDGlobalPref(key);
+
+    return value ? [value boolValue] : YES;
+}
+
+void PDPushWindowStyle(void)
+{
+    uint64_t style = (PDWindowStyleEnabled(@"PDWindowRoundedCorners") ? 0 : 1) | (PDWindowStyleEnabled(@"PDWindowShadows") ? 0 : 2);
+    int token;
+
+    if (notify_register_check("org.puredarwin.WindowServer.windowstyle", &token) != NOTIFY_STATUS_OK)
+        return;
+    notify_set_state(token, style);
+    notify_post("org.puredarwin.WindowServer.windowstyle");
+    notify_cancel(token);
 }
 
 static NSString *sysctlString(const char *name)

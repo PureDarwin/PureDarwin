@@ -49,6 +49,42 @@ static NSColor *lookoutRGB(int r, int g, int b, CGFloat a)
     return [NSColor colorWithCalibratedRed:r / 255.0 green:g / 255.0 blue:b / 255.0 alpha:a];
 }
 
+static BOOL darkNow(void)
+{
+    return [[NSAppearance currentDrawingAppearance] _isDark];
+}
+
+// one colour in the light appearance, another in the dark
+static NSColor *lightDark(NSColor *light, NSColor *dark)
+{
+    return [NSColor colorWithName:nil dynamicProvider:^NSColor *(NSAppearance *a) {
+        return [a _isDark] ? dark : light;
+    }];
+}
+
+// the demo's #eee text on the dark panels
+static NSColor *ink(void)
+{
+    return lightDark(lookoutRGB(0x1b, 0x1b, 0x1b, 1), lookoutRGB(0xee, 0xee, 0xee, 1));
+}
+
+// monochrome icons are drawn light on the dark bar
+static void drawIcon(NSImage *image, NSRect rect)
+{
+    if (!darkNow()) {
+        [image drawInRect:rect fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1];
+        return;
+    }
+    NSImage *tinted = [[image copy] autorelease];
+    NSRect all = { NSZeroPoint, [tinted size] };
+
+    [tinted lockFocus];
+    [lookoutRGB(0xf0, 0xf0, 0xf0, 1) set];
+    NSRectFillUsingOperation(all, NSCompositeSourceAtop);
+    [tinted unlockFocus];
+    [tinted drawInRect:rect fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1];
+}
+
 static NSFont *lookoutFont(NSString *name, CGFloat size)
 {
     return [NSFont fontWithName:name size:size] ?: [NSFont systemFontOfSize:size];
@@ -101,26 +137,23 @@ static void lookoutCentred(NSString *text, NSDictionary *attrs, CGFloat midX, CG
 {
     NSRect b = [self bounds];
     NSBezierPath *panel = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(b, 0.25, 0.25) xRadius:LookoutRadius yRadius:LookoutRadius];
-    NSDictionary *row = @{ NSFontAttributeName: lookoutFont(@"Inter-Regular", 13), NSForegroundColorAttributeName: lookoutRGB(0x1b, 0x1b, 0x1b, 1) };
+    NSDictionary *row = @{ NSFontAttributeName: lookoutFont(@"Inter-Regular", 13), NSForegroundColorAttributeName: ink() };
     NSDictionary *rowOn = @{ NSFontAttributeName: lookoutFont(@"Inter-Regular", 13), NSForegroundColorAttributeName: [NSColor whiteColor] };
-    NSDictionary *head = @{ NSFontAttributeName: lookoutFont(@"Inter-SemiBold", 11), NSForegroundColorAttributeName: lookoutRGB(0x7a, 0x7a, 0x7a, 1) };
-    NSDictionary *grey = @{ NSFontAttributeName: lookoutFont(@"Inter-Regular", 12), NSForegroundColorAttributeName: lookoutRGB(0x7a, 0x7a, 0x7a, 1) };
+    NSDictionary *head = @{ NSFontAttributeName: lookoutFont(@"Inter-SemiBold", 11), NSForegroundColorAttributeName: lightDark(lookoutRGB(0x7a, 0x7a, 0x7a, 1), lookoutRGB(0x9a, 0x9a, 0x9a, 1)) };
+    NSDictionary *grey = @{ NSFontAttributeName: lookoutFont(@"Inter-Regular", 12), NSForegroundColorAttributeName: lightDark(lookoutRGB(0x7a, 0x7a, 0x7a, 1), lookoutRGB(0x9a, 0x9a, 0x9a, 1)) };
     NSDictionary *selected = selection < (NSInteger)[hits count] ? hits[selection] : nil;
     NSString *group = nil;
 
     [[NSColor clearColor] set];
     NSRectFill(b);
-    [lookoutRGB(240, 238, 236, 0.82) setFill];
+    [(darkNow() ? lookoutRGB(44, 42, 44, 0.82) : lookoutRGB(240, 238, 236, 0.82)) setFill];
     [panel fill];
-    [lookoutRGB(0, 0, 0, 0.25) setStroke];
+    [(darkNow() ? lookoutRGB(255, 255, 255, 0.12) : lookoutRGB(0, 0, 0, 0.25)) setStroke];
     [panel setLineWidth:0.5];
     [panel stroke];
 
     [glass drawInRect:NSMakeRect(16, (LookoutBarH - 22) / 2, 22, 22) fromRect:NSZeroRect operation:NSCompositeSourceOver
              fraction:0.6 respectFlipped:YES hints:nil];
-    if ([[field stringValue] length] == 0)
-        [@"Lookout Search" drawAtPoint:NSMakePoint(50, (LookoutBarH - 30) / 2)
-                          withAttributes:@{ NSFontAttributeName: lookoutFont(@"Inter-Light", 24), NSForegroundColorAttributeName: lookoutRGB(0x9a, 0x9a, 0x9a, 1) }];
     if (selected[@"icon"] != nil)
         [selected[@"icon"] drawInRect:NSMakeRect(LookoutW - 16 - 26, (LookoutBarH - 26) / 2, 26, 26) fromRect:NSZeroRect
                             operation:NSCompositeSourceOver fraction:1 respectFlipped:YES hints:nil];
@@ -128,9 +161,9 @@ static void lookoutCentred(NSString *text, NSDictionary *attrs, CGFloat midX, CG
         return;
 
     // hairlines blend over the panel, NSRectFill would copy their alpha straight in
-    [lookoutRGB(0, 0, 0, 0.1) setFill];
+    [(darkNow() ? lookoutRGB(255, 255, 255, 0.1) : lookoutRGB(0, 0, 0, 0.1)) setFill];
     NSRectFillUsingOperation(NSMakeRect(0, LookoutBarH, LookoutW, 1), NSCompositeSourceOver);
-    [lookoutRGB(0, 0, 0, 0.08) setFill];
+    [(darkNow() ? lookoutRGB(255, 255, 255, 0.08) : lookoutRGB(0, 0, 0, 0.08)) setFill];
     NSRectFillUsingOperation(NSMakeRect(LookoutListW, LookoutBarH + 1, 1, LookoutResH), NSCompositeSourceOver);
 
     for (NSInteger i = 0; i < (NSInteger)[hits count]; i++) {
@@ -158,7 +191,7 @@ static void lookoutCentred(NSString *text, NSDictionary *attrs, CGFloat midX, CG
 
     if (selected[@"answer"] != nil) {
         lookoutCentred(selected[@"answer"], @{ NSFontAttributeName: lookoutFont(@"Inter-Light", 40),
-                                            NSForegroundColorAttributeName: lookoutRGB(0x1b, 0x1b, 0x1b, 1) }, mid, centre - 40);
+                                            NSForegroundColorAttributeName: ink() }, mid, centre - 40);
         lookoutCentred([field stringValue], grey, mid, centre + 12);
         lookoutCentred(@"Return copies the result", grey, mid, centre + 32);
         return;
@@ -166,7 +199,7 @@ static void lookoutCentred(NSString *text, NSDictionary *attrs, CGFloat midX, CG
     [selected[@"icon"] drawInRect:NSMakeRect(mid - 48, centre - 80, 96, 96) fromRect:NSZeroRect
                         operation:NSCompositeSourceOver fraction:1 respectFlipped:YES hints:nil];
     lookoutCentred(selected[@"name"], @{ NSFontAttributeName: lookoutFont(@"Inter-Bold", 17),
-                                      NSForegroundColorAttributeName: lookoutRGB(0x1b, 0x1b, 0x1b, 1) }, mid, centre + 26);
+                                      NSForegroundColorAttributeName: ink() }, mid, centre + 26);
     lookoutCentred(selected[@"path"] ? [NSString stringWithFormat:@"%@ · %@", selected[@"kind"],
                                      [selected[@"path"] stringByAbbreviatingWithTildeInPath]] : selected[@"kind"],
                 grey, mid, centre + 52);
@@ -389,7 +422,7 @@ static NSImage *loadImage(NSString *name)
 - (void)drawText:(NSString *)text bold:(BOOL)bold atX:(CGFloat)x
 {
     NSFont *font = [self fontBold:bold];
-    NSDictionary *attrs = @{ NSFontAttributeName : font, NSForegroundColorAttributeName : [NSColor colorWithCalibratedWhite:0.1 alpha:1] };
+    NSDictionary *attrs = @{ NSFontAttributeName : font, NSForegroundColorAttributeName : lightDark([NSColor colorWithCalibratedWhite:0.1 alpha:1], lookoutRGB(0xf0, 0xf0, 0xf0, 1)) };
     CGFloat lineHeight = [font ascender] - [font descender];
 
     [text drawAtPoint:NSMakePoint(x, floor((MenuBarHeight - lineHeight) / 2)) withAttributes:attrs];
@@ -404,7 +437,7 @@ static NSImage *loadImage(NSString *name)
 {
     NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(rect, 0, 3) xRadius:5 yRadius:5];
 
-    [[NSColor colorWithCalibratedWhite:0 alpha:0.1] setFill];
+    [[NSColor colorWithCalibratedWhite:darkNow() ? 1 : 0 alpha:darkNow() ? 0.14 : 0.1] setFill];
     [path fill];
 }
 
@@ -440,18 +473,17 @@ static NSImage *loadImage(NSString *name)
     CGFloat x, w;
 
     // the demo's rgba(246,240,236,.72), the compositor blurs the desktop under it
-    [[NSColor colorWithCalibratedRed:0.965 green:0.941 blue:0.925 alpha:0.72] setFill];
+    [(darkNow() ? lookoutRGB(40, 38, 40, 0.72) : [NSColor colorWithCalibratedRed:0.965 green:0.941 blue:0.925 alpha:0.72]) setFill];
     NSRectFill(bounds);
     // the panel colour darkened by 8%, solid because NSRectFill copies rather than blends
-    [[NSColor colorWithCalibratedRed:0.888 green:0.869 blue:0.851 alpha:1] setFill];
+    [(darkNow() ? lookoutRGB(0x1c, 0x1c, 0x1c, 1) : [NSColor colorWithCalibratedRed:0.888 green:0.869 blue:0.851 alpha:1]) setFill];
     NSRectFill(NSMakeRect(0, 0, NSWidth(bounds), 1));
 
     [_titleRects removeAllObjects];
     beakRect = NSMakeRect(4, 0, IconSize + 2 * 6, MenuBarHeight);
     if (_open == BeakIndex)
         [self drawHighlight:beakRect];
-    [_beak drawInRect:NSMakeRect(NSMinX(beakRect) + 6, (MenuBarHeight - IconSize) / 2, IconSize, IconSize)
-             fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1];
+    drawIcon(_beak, NSMakeRect(NSMinX(beakRect) + 6, (MenuBarHeight - IconSize) / 2, IconSize, IconSize));
 
     x = NSMaxX(beakRect) + 2;
     for (NSUInteger i = 0; i < count; i++) {
@@ -470,8 +502,7 @@ static NSImage *loadImage(NSString *name)
     [self drawText:clock bold:NO atX:x];
     for (NSImage *image in [_status reverseObjectEnumerator]) {
         x -= IconSize + 2 * ItemPad;
-        [image drawInRect:NSMakeRect(x + ItemPad, (MenuBarHeight - IconSize) / 2, IconSize, IconSize)
-                 fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1];
+        drawIcon(image, NSMakeRect(x + ItemPad, (MenuBarHeight - IconSize) / 2, IconSize, IconSize));
     }
 }
 
@@ -512,7 +543,10 @@ static NSImage *loadImage(NSString *name)
         [_lookoutField setBezeled:NO];
         [_lookoutField setDrawsBackground:NO];
         [_lookoutField setFont:lookoutFont(@"Inter-Light", 24)];
-        [_lookoutField setTextColor:lookoutRGB(0x1b, 0x1b, 0x1b, 1)];
+        [_lookoutField setTextColor:ink()];
+        // the cell draws the placeholder where the field editor puts the text
+        [[_lookoutField cell] setPlaceholderAttributedString:[[NSAttributedString alloc] initWithString:@"Lookout Search"
+            attributes:@{ NSFontAttributeName: lookoutFont(@"Inter-Light", 24), NSForegroundColorAttributeName: lightDark(lookoutRGB(0x9a, 0x9a, 0x9a, 1), lookoutRGB(0x7a, 0x7a, 0x7a, 1)) }]];
         [_lookoutField setTarget:self];
         [_lookoutField setAction:@selector(searchLookout:)];
         [_lookoutField setDelegate:self];
