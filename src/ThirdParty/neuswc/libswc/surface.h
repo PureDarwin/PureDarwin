@@ -36,7 +36,8 @@ enum {
 	SURFACE_COMMIT_DAMAGE = (1 << 1),
 	SURFACE_COMMIT_OPAQUE = (1 << 2),
 	SURFACE_COMMIT_INPUT = (1 << 3),
-	SURFACE_COMMIT_FRAME = (1 << 4)
+	SURFACE_COMMIT_FRAME = (1 << 4),
+	SURFACE_COMMIT_BLUR = (1 << 5)
 };
 
 struct surface_state {
@@ -52,6 +53,9 @@ struct surface_state {
 
 	/* The region that accepts input. */
 	pixman_region32_t input;
+
+	// the region whose background the compositor blurs, from ext-background-effect-v1
+	pixman_region32_t blur;
 
 	struct wl_list frame_callbacks;
 

@@ -1,4 +1,5 @@
 #include "fb.h"
+#include "mode.h"
 #include "internal.h"
 #include "output.h"
 #include "pointer.h"
@@ -44,7 +45,12 @@ fb_initialize(void)
 	if (!swc_fb.backend.context) {
 		goto error1;
 	}
-	swc_fb.backend.renderer = wld_create_renderer(swc_fb.backend.context);
+	#ifdef __PUREDARWIN__
+	if (getenv("SWC_GPU_COMPOSITOR"))
+		swc_fb.backend.renderer = wld_gl_create_renderer();
+	else
+	#endif
+		swc_fb.backend.renderer = wld_create_renderer(swc_fb.backend.context);
 	if (!swc_fb.backend.renderer) {
 		goto error2;
 	}
@@ -74,10 +80,24 @@ fb_finalize(void)
 bool
 fb_create_screens(struct wl_list *screens)
 {
+	struct fb_mode found[64];
+	struct mode modes[64];
 	struct output *output;
 	struct screen *screen;
+	int count = framebuffer_modes(found, 64), current = 0;
 
-	output = output_new_fb(swc_fb.width, swc_fb.height, framebuffer_name());
+	// every mode the framebuffer offers, the one it is in now as the preferred
+	for (int i = 0; i < count; i++) {
+		mode_initialize_simple(&modes[i], found[i].width, found[i].height, 60000);
+		modes[i].fb_id = found[i].id;
+		if (found[i].current || (found[i].width == swc_fb.width && found[i].height == swc_fb.height))
+			current = i;
+	}
+	if (count == 0) {
+		mode_initialize_simple(&modes[0], swc_fb.width, swc_fb.height, 60000);
+		count = 1;
+	}
+	output = output_new_fb_modes(modes, count, current, framebuffer_name());
 	if (!output) {
 		return false;
 	}
@@ -92,6 +112,23 @@ fb_create_screens(struct wl_list *screens)
 	return true;
 }
 
+// the backend switches first, then the composition buffer follows its new size
+bool
+fb_set_mode(uint32_t mode_id)
+{
+	uint32_t *pixels;
+
+	if (!framebuffer_set_mode(&swc_fb, mode_id))
+		return false;
+	pixels = calloc(swc_fb.height, (size_t)swc_fb.width * sizeof(*pixels));
+	if (!pixels)
+		return false;
+	free(swc_fb.pixels);
+	swc_fb.pixels = pixels;
+	swc_fb.pitch = (size_t)swc_fb.width * sizeof(*swc_fb.pixels);
+	return true;
+}
+
 bool
 fb_present(struct wld_buffer *buffer, int32_t origin_x, int32_t origin_y)
 {
@@ -100,6 +137,19 @@ fb_present(struct wld_buffer *buffer, int32_t origin_x, int32_t origin_y)
 	int32_t cursor_x = 0, cursor_y = 0;
 	uint32_t width, height, x, y;
 	bool cursor_mapped = false;
+
+	#ifdef __PUREDARWIN__
+	if (getenv("SWC_GPU_COMPOSITOR")) {
+		if (!buffer) return false;
+		if (pointer && pointer->cursor.view.buffer) {
+			cursor = pointer->cursor.buffer;
+			cursor_x = pointer->cursor.view.geometry.x - origin_x;
+			cursor_y = pointer->cursor.view.geometry.y - origin_y;
+		}
+		return wld_gl_present(swc_fb.backend.renderer, buffer, cursor,
+		                      cursor_x, cursor_y);
+	}
+	#endif
 
 	if (!buffer || !wld_map(buffer)) {
 		return false;

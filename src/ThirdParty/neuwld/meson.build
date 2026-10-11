@@ -58,6 +58,12 @@ libwld_src = files(
   'pixman.c',
 )
 
+gpu = get_option('gpu')
+if gpu.enabled()
+  libwld_src += 'gl.c'
+  requires_private += [dependency('egl'), dependency('gl')]
+endif
+
 wayland = dependency('wayland-client', required: get_option('wayland'))
 if wayland.found()
   libwld_src += ['wayland.c', 'wayland-shm.c']

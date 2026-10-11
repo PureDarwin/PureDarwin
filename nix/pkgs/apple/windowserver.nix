@@ -49,6 +49,21 @@ stdenv.mkDerivation {
     wayland-scanner client-header "$layer" wlr-layer-shell-unstable-v1-client-protocol.h
     wayland-scanner private-code "$layer" wlr-layer-shell-protocol.c
 
+    # display modes are listed and switched through wlr-output-management, which neuswc implements
+    outputs=wlr-output-management-unstable-v1.xml
+    wayland-scanner client-header "$outputs" wlr-output-management-unstable-v1-client-protocol.h
+    wayland-scanner private-code "$outputs" wlr-output-management-protocol.c
+
+    # where the compositor put each window, neuswc's own protocol
+    position=pd-window-position-v1.xml
+    wayland-scanner client-header "$position" pd-window-position-v1-client-protocol.h
+    wayland-scanner private-code "$position" pd-window-position-protocol.c
+
+    # translucent menus and bars ask the compositor to blur what is behind them
+    blur=${waylandProtocols}/share/wayland-protocols/staging/ext-background-effect/ext-background-effect-v1.xml
+    wayland-scanner client-header "$blur" ext-background-effect-v1-client-protocol.h
+    wayland-scanner private-code "$blur" ext-background-effect-protocol.c
+
     cc="${darwinCrossToolchain}/bin/${targetTriple}-clang"
     cflags="
       -isysroot $DARWIN_SDK_ROOT
@@ -68,6 +83,9 @@ stdenv.mkDerivation {
     $cc $cflags -c xdg-shell-protocol.c -o xdg-shell-protocol.o
     $cc $cflags -c wlr-layer-shell-protocol.c -o wlr-layer-shell-protocol.o
     $cc $cflags -c linux-dmabuf-protocol.c -o linux-dmabuf-protocol.o
+    $cc $cflags -c ext-background-effect-protocol.c -o ext-background-effect-protocol.o
+    $cc $cflags -c wlr-output-management-protocol.c -o wlr-output-management-protocol.o
+    $cc $cflags -c pd-window-position-protocol.c -o pd-window-position-protocol.o
 
     $cc \
       -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \
@@ -82,7 +100,10 @@ stdenv.mkDerivation {
       -Wl,-install_name,/usr/lib/libWindowServer.dylib \
       rpc_wayland.o xdg-shell-protocol.o wlr-layer-shell-protocol.o \
       linux-dmabuf-protocol.o \
-      -lwayland-client -lxkbcommon -lCoreGraphics -lCoreFoundation -lSystem \
+      ext-background-effect-protocol.o \
+      wlr-output-management-protocol.o \
+      pd-window-position-protocol.o \
+      -lwayland-client -lwayland-cursor -lxkbcommon -lCoreGraphics -lCoreFoundation -lSystem \
       -o libWindowServer.dylib
 
     runHook postBuild

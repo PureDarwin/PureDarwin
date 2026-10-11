@@ -91,5 +91,10 @@ screen_mask(struct screen *screen)
 
 void
 screen_update_usable_geometry(struct screen *screen);
+struct mode;
+bool
+screen_set_mode(struct screen *screen, const struct mode *mode);
+void
+screens_update_pointer_region(void);
 
 #endif

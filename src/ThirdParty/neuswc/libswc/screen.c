@@ -35,7 +35,13 @@
 #include "plane.h"
 #endif
 #include "pointer.h"
+#include "seat.h"
 #include "util.h"
+#include <pixman.h>
+#include "view.h"
+#include "output_management.h"
+#include "layer_shell.h"
+#include "compositor.h"
 
 #include "swc-server-protocol.h"
 #include <stdlib.h>
@@ -243,6 +249,56 @@ screen_update_usable_geometry(struct screen *screen)
 			screen->handler->usable_geometry_changed(screen->handler_data);
 		}
 	}
+}
+
+// the pointer may go anywhere on any screen, worked out again whenever a screen changes size
+void
+screens_update_pointer_region(void)
+{
+	pixman_region32_t region;
+	struct screen *screen;
+
+	if (!swc.seat || !swc.seat->pointer)
+		return;
+	pixman_region32_init(&region);
+	wl_list_for_each(screen, &swc.screens, link)
+	{
+		struct swc_rectangle *geom = &screen->base.geometry;
+
+		pixman_region32_union_rect(&region, &region, geom->x, geom->y, geom->width, geom->height);
+	}
+	pointer_set_region(swc.seat->pointer, &region);
+	pixman_region32_fini(&region);
+}
+
+// a new display mode: the framebuffer, then everything sized from the screen
+bool
+screen_set_mode(struct screen *screen, const struct mode *mode)
+{
+	struct output *output;
+
+#ifdef ENABLE_DRM
+	(void)screen;
+	(void)mode;
+	return false;
+#else
+	if (!fb_set_mode(mode->fb_id))
+		return false;
+	screen->planes.primary.mode = *mode;
+	view_set_size(&screen->planes.primary.view, swc_fb.width, swc_fb.height);
+	screen->base.geometry.width = swc_fb.width;
+	screen->base.geometry.height = swc_fb.height;
+	compositor_screen_resized(screen);
+	layer_shell_screen_resized(screen);
+	screen_update_usable_geometry(screen);
+	screens_update_pointer_region();
+	wl_list_for_each(output, &screen->outputs, link)
+		output_send_current(output);
+	if (screen->handler->geometry_changed)
+		screen->handler->geometry_changed(screen->handler_data);
+	output_management_changed();
+	return true;
+#endif
 }
 
 bool

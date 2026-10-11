@@ -70,6 +70,7 @@ state_initialize(struct surface_state *state)
 	pixman_region32_init(&state->damage);
 	pixman_region32_init(&state->opaque);
 	pixman_region32_init_with_extents(&state->input, &infinite_extents);
+	pixman_region32_init(&state->blur);
 
 	wl_list_init(&state->frame_callbacks);
 	wl_list_init(&state->subsurfaces_below);
@@ -88,6 +89,7 @@ state_finalize(struct surface_state *state)
 	pixman_region32_fini(&state->damage);
 	pixman_region32_fini(&state->opaque);
 	pixman_region32_fini(&state->input);
+	pixman_region32_fini(&state->blur);
 
 	/* Remove all leftover callbacks. */
 	wl_list_for_each_safe(resource, tmp, &state->frame_callbacks, link)
@@ -287,6 +289,13 @@ surface_apply_pending(struct surface *surface, bool flush_children)
 	if (surface->pending.commit & SURFACE_COMMIT_INPUT) {
 		pixman_region32_copy(&surface->state.input,
 		                     &surface->pending.state.input);
+	}
+
+	// blur, damaged whole so the blurred background is redrawn with the new shape
+	if (surface->pending.commit & SURFACE_COMMIT_BLUR) {
+		pixman_region32_union(&surface->state.damage, &surface->state.damage, &surface->state.blur);
+		pixman_region32_copy(&surface->state.blur, &surface->pending.state.blur);
+		pixman_region32_union(&surface->state.damage, &surface->state.damage, &surface->state.blur);
 	}
 
 	/* Frame */

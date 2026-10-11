@@ -24,10 +24,20 @@ bool fb_initialize(void);
 void fb_finalize(void);
 bool fb_create_screens(struct wl_list *screens);
 bool fb_present(struct wld_buffer *buffer, int32_t x, int32_t y);
+bool fb_set_mode(uint32_t mode_id);
+
+// a framebuffer mode: its id for the driver and its size
+struct fb_mode {
+	uint32_t id;
+	uint32_t width, height;
+	bool current;
+};
 
 bool framebuffer_initialize(struct swc_fb *fb);
 void framebuffer_finalize(struct swc_fb *fb);
 bool framebuffer_present(struct swc_fb *fb);
 const char *framebuffer_name(void);
+int framebuffer_modes(struct fb_mode *modes, int max);
+bool framebuffer_set_mode(struct swc_fb *fb, uint32_t mode_id);
 
 #endif

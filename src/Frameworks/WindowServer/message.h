@@ -28,6 +28,10 @@ enum {
     kWSWindowFlush = 7,
     kWSWindowMove = 8,
     kWSWindowResize = 9,
+    // wsRPCSimple: window, on, inset from the edges, corner radius
+    kWSWindowSetBlur = 10,
+    // wsRPCSimple: window, 1 to let pointer events pass through to what is below
+    kWSWindowSetIgnoresMouse = 11,
     kCGGetLastMouseDelta = 100,
     kCGGetMouseLocation = 101,
     /* windowID 0 asks for the active application window. */
@@ -51,6 +55,7 @@ enum {
     MAXIMIZED = 2,
     HIDDEN = 3,
     CLOSED = 4,
+    FULLSCREEN = 5,
 };
 
 enum {
@@ -117,6 +122,11 @@ struct wsRPCSimple {
  * every NSEventType so they cannot collide with a real event code. */
 #define WS_EVENT_FOCUS_GAINED 1000
 #define WS_EVENT_FOCUS_LOST   1001
+// the compositor asks for a toplevel size (dx, dy) or for the window to close
+#define WS_EVENT_CONFIGURE    1002
+#define WS_EVENT_CLOSE        1003
+// the compositor moved the window, x and y are its top left in screen coordinates
+#define WS_EVENT_MOVED        1004
 
 struct mach_event {
     int windowID;

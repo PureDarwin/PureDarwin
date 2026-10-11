@@ -38,6 +38,10 @@ struct output *
 output_new(drmModeConnector *connector);
 #endif
 struct output *
+output_new_fb_modes(const struct mode *modes, int count, int preferred, const char *name);
+void
+output_send_current(struct output *output);
+struct output *
 output_new_fb(uint32_t width, uint32_t height, const char *name);
 void
 output_destroy(struct output *output);

@@ -36,6 +36,8 @@ struct mode {
 	uint32_t refresh;
 
 	bool preferred;
+	// the framebuffer's id for this mode, 0 where the backend has no such ids
+	uint32_t fb_id;
 
 #ifdef ENABLE_DRM
 	drmModeModeInfo info;

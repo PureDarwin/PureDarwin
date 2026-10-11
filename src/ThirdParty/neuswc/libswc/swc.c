@@ -36,6 +36,9 @@
 #include "keyboard.h"
 #include "launch.h"
 #include "layer_shell.h"
+#include "output_management.h"
+#include "background_effect.h"
+#include "window_position.h"
 #include "panel_manager.h"
 #include "pointer.h"
 #include "screen.h"
@@ -80,10 +83,6 @@ struct swc swc = {
 static void
 setup_compositor(void)
 {
-	pixman_region32_t pointer_region;
-	struct screen *screen;
-	struct swc_rectangle *geom;
-
 	wl_list_insert(&swc.seat->keyboard->handlers,
 	               &swc.bindings->keyboard_handler->link);
 	wl_list_insert(&swc.seat->pointer->handlers,
@@ -91,21 +90,9 @@ setup_compositor(void)
 	wl_list_insert(&swc.seat->pointer->handlers,
 	               &swc.compositor->pointer_handler->link);
 	wl_list_insert(&swc.seat->pointer->handlers, &screens_pointer_handler.link);
-	wl_signal_add(&swc.seat->pointer->focus.event_signal,
-	              &window_enter_listener);
+	// pointer entry no longer focuses a window, a click does (see window_clicked)
 
-	/* Calculate pointer region */
-	pixman_region32_init(&pointer_region);
-
-	wl_list_for_each(screen, &swc.screens, link)
-	{
-		geom = &screen->base.geometry;
-		pixman_region32_union_rect(&pointer_region, &pointer_region, geom->x,
-		                           geom->y, geom->width, geom->height);
-	}
-
-	pointer_set_region(swc.seat->pointer, &pointer_region);
-	pixman_region32_fini(&pointer_region);
+	screens_update_pointer_region();
 }
 
 void
@@ -262,6 +249,19 @@ swc_initialize(struct wl_display *display, struct wl_event_loop *event_loop,
 		goto error13;
 	}
 
+	// display modes for clients, optional like the other extras
+	if (!output_management_create(display))
+		WARNING("Could not create the output management global\n");
+
+	// optional, without it clients simply get no blur
+	swc.background_effect = background_effect_create(display);
+	if (!swc.background_effect)
+		WARNING("Could not initialize background effects\n");
+
+	// optional, without it AppKit windows only know the position they asked for
+	if (!window_position_create(display))
+		WARNING("Could not create the window position global\n");
+
 	swc.panel_manager = panel_manager_create(display);
 	if (!swc.panel_manager) {
 		ERROR("Could not initialize panel manager\n");
@@ -357,6 +357,8 @@ swc_finalize(void)
 	wl_global_destroy(swc.snap_manager);
 	wl_global_destroy(swc.select_manager);
 	wl_global_destroy(swc.panel_manager);
+	if (swc.background_effect)
+		wl_global_destroy(swc.background_effect);
 	wl_global_destroy(swc.layer_shell);
 	wl_global_destroy(swc.xdg_decoration_manager);
 	wl_global_destroy(swc.xdg_shell);

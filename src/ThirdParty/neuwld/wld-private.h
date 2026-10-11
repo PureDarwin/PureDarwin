@@ -108,6 +108,12 @@ struct wld_renderer_impl {
 	void (*copy_region)(struct wld_renderer *renderer, struct buffer *src,
 	                    int32_t dst_x, int32_t dst_y,
 	                    pixman_region32_t *region);
+	void (*blend_region)(struct wld_renderer *renderer, struct buffer *src,
+	                     int32_t dst_x, int32_t dst_y,
+	                     pixman_region32_t *region);
+	/* blurs the target in place inside region, for translucent surfaces that ask for a blurred background */
+	void (*blur_region)(struct wld_renderer *renderer,
+	                    pixman_region32_t *region, uint32_t radius);
 	void (*draw_circle)(struct wld_renderer *renderer, uint32_t color,
 				int32_t x, int32_t y, uint32_t r, bool fill);
 	void (*draw_line)(struct wld_renderer *renderer, uint32_t color,

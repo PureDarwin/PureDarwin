@@ -94,6 +94,7 @@ struct window_impl {
 };
 
 extern struct wl_listener window_enter_listener;
+void window_clicked(struct window *window);
 
 bool
 window_initialize(struct window *window, const struct window_impl *impl,

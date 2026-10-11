@@ -355,3 +355,20 @@ framebuffer_name(void)
 {
 	return "wsdisplay-0";
 }
+
+// this backend has one size, the one it started with
+int
+framebuffer_modes(struct fb_mode *modes, int max)
+{
+	(void)modes;
+	(void)max;
+	return 0;
+}
+
+bool
+framebuffer_set_mode(struct swc_fb *fb, uint32_t mode_id)
+{
+	(void)fb;
+	(void)mode_id;
+	return false;
+}

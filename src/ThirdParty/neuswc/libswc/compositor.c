@@ -28,6 +28,9 @@
  */
 
 #include "compositor.h"
+
+// how far the background blur reaches, as the demo blur(30px)
+#define BLUR_RADIUS 30
 #include "backend.h"
 #include "data_device_manager.h"
 #include "decor.h"
@@ -35,6 +38,7 @@
 #include "drm.h"
 #endif
 #include "event.h"
+#include "keyboard.h"
 #include "internal.h"
 #include "launch.h"
 #include "output.h"
@@ -249,6 +253,39 @@ error0:
 	return NULL;
 }
 
+static void
+schedule_updates(uint32_t screens);
+
+// the target's buffers belong to the old size, a fresh surface replaces them and the whole screen repaints
+void
+compositor_screen_resized(struct screen *screen)
+{
+	struct target *target = target_get(screen);
+	struct swc_rectangle *geom = &screen->base.geometry;
+	struct wld_surface *surface;
+
+	if (!target)
+		return;
+	surface = wld_create_surface(swc.backend->context, geom->width, geom->height, WLD_FORMAT_XRGB8888,
+#ifdef ENABLE_DRM
+	                             WLD_DRM_FLAG_SCANOUT
+#else
+	                             WLD_FLAG_MAP
+#endif
+	);
+	if (!surface)
+		return;
+	if (target->current_buffer)
+		wld_surface_release(target->surface, target->current_buffer);
+	wld_destroy_surface(target->surface);
+	target->surface = surface;
+	target->current_buffer = NULL;
+	target->next_buffer = NULL;
+	compositor.pending_flips &= ~target->mask;
+	pixman_region32_union_rect(&compositor.damage, &compositor.damage, geom->x, geom->y, geom->width, geom->height);
+	schedule_updates(target->mask);
+}
+
 /* Rendering {{{ */
 
 /* check the client's window buffer is opaque */
@@ -311,6 +348,22 @@ view_buffer_is_opaque(struct compositor_view *view)
 	return view->buffer_opaque;
 }
 
+// the four corner squares a rounded window does not fully cover, in global coordinates
+static void
+corner_region(struct compositor_view *view, pixman_region32_t *corners)
+{
+	const struct swc_rectangle *g = &view->base.geometry;
+	int32_t r = view->corner_radius;
+
+	pixman_region32_init(corners);
+	if (r == 0 || g->width < 2 * (uint32_t)r || g->height < 2 * (uint32_t)r)
+		return;
+	pixman_region32_union_rect(corners, corners, g->x, g->y, r, r);
+	pixman_region32_union_rect(corners, corners, g->x + g->width - r, g->y, r, r);
+	pixman_region32_union_rect(corners, corners, g->x, g->y + g->height - r, r, r);
+	pixman_region32_union_rect(corners, corners, g->x + g->width - r, g->y + g->height - r, r, r);
+}
+
 static void
 repaint_view(struct target *target, struct compositor_view *view,
              pixman_region32_t *damage)
@@ -356,6 +409,48 @@ repaint_view(struct target *target, struct compositor_view *view,
 	pixman_region32_subtract(&view_damage, &view_damage, &view->clip);
 	pixman_region32_intersect(&border_damage, &view_damage, &border_region);
 	pixman_region32_intersect(&buffer_damage, &view_damage, &buffer_region);
+
+	// the shadow goes down first, the window and its rounded corners are drawn over it
+	// a tiny or off-screen helper window gets none, its shadow would only smudge the edge of the screen
+	if (view->shadow && geom->width >= 32 && geom->height >= 32 && geom->y + (int32_t)geom->height > target_geom->y) {
+		pixman_region32_t shadow;
+
+		pixman_region32_init(&shadow);
+		pixman_region32_copy(&shadow, &view_damage);
+		pixman_region32_translate(&shadow, -target_geom->x, -target_geom->y);
+		wld_draw_shadow(swc.backend->renderer, &shadow, geom->x - target_geom->x, geom->y - target_geom->y,
+		                geom->width, geom->height, view->corner_radius, WINDOW_SHADOW_BLUR,
+		                WINDOW_SHADOW_OFFSET, WINDOW_SHADOW_ALPHA);
+		pixman_region32_fini(&shadow);
+	}
+
+	// what is already composited under a translucent surface's blur region is blurred before it is blended on
+	if (pixman_region32_not_empty(&view->surface->state.blur)) {
+		pixman_region32_t blur;
+
+		pixman_region32_init(&blur);
+		pixman_region32_copy(&blur, &view->surface->state.blur);
+		pixman_region32_translate(&blur, geom->x - view->buffer_offset_x, geom->y - view->buffer_offset_y);
+		pixman_region32_intersect(&blur, &blur, &view_damage);
+		pixman_region32_translate(&blur, -target_geom->x, -target_geom->y);
+		wld_blur_region(swc.backend->renderer, &blur, BLUR_RADIUS);
+		pixman_region32_fini(&blur);
+	}
+
+	// a rounded window's corners blend through its shape, the rest takes the usual path
+	if (view->corner_radius && pixman_region32_not_empty(&buffer_damage)) {
+		pixman_region32_t corners;
+
+		corner_region(view, &corners);
+		pixman_region32_intersect(&corners, &corners, &buffer_damage);
+		pixman_region32_subtract(&buffer_damage, &buffer_damage, &corners);
+		if (pixman_region32_not_empty(&corners)) {
+			pixman_region32_translate(&corners, -buf_x, -buf_y);
+			wld_blend_region_rounded(swc.backend->renderer, view->buffer, buf_x - target_geom->x,
+			                         buf_y - target_geom->y, &corners, view->corner_radius);
+		}
+		pixman_region32_fini(&corners);
+	}
 
 	if (pixman_region32_not_empty(&buffer_damage)) {
 		pixman_region32_translate(&buffer_damage,
@@ -654,10 +749,10 @@ update_extents(struct compositor_view *view)
 	    buffer_y1 +
 	    (view->base.buffer ? view->base.buffer->height : (uint32_t)geom_h);
 
-	view->extents.x1 = clamp_i32(MIN(MIN(border_x1, decor_x1), buffer_x1));
-	view->extents.y1 = clamp_i32(MIN(MIN(border_y1, decor_y1), buffer_y1));
-	view->extents.x2 = clamp_i32(MAX(MAX(border_x2, decor_x2), buffer_x2));
-	view->extents.y2 = clamp_i32(MAX(MAX(border_y2, decor_y2), buffer_y2));
+	view->extents.x1 = clamp_i32(MIN(MIN(MIN(border_x1, decor_x1), buffer_x1), geom_x - (int64_t)view->shadow));
+	view->extents.y1 = clamp_i32(MIN(MIN(MIN(border_y1, decor_y1), buffer_y1), geom_y - (int64_t)view->shadow));
+	view->extents.x2 = clamp_i32(MAX(MAX(MAX(border_x2, decor_x2), buffer_x2), geom_x + geom_w + (int64_t)view->shadow));
+	view->extents.y2 = clamp_i32(MAX(MAX(MAX(border_y2, decor_y2), buffer_y2), geom_y + geom_h + (int64_t)view->shadow));
 
 	if (view->extents.x2 < view->extents.x1) {
 		view->extents.x2 = view->extents.x1;
@@ -1443,6 +1538,9 @@ compositor_create_view(struct surface *surface)
 	view->buffer_offset_y = 0;
 	view->visible = false;
 	view->always_top = false;
+	view->focus_on_click = false;
+	view->corner_radius = 0;
+	view->shadow = 0;
 	view->stack_layer = STACK_LAYER_NORMAL;
 	view->extents.x1 = 0;
 	view->extents.y1 = 0;
@@ -1693,6 +1791,13 @@ calculate_damage(void)
 		                          geom->y - view->buffer_offset_y);
 		pixman_region32_intersect(&surface_opaque, &surface_opaque,
 		                          &view_region);
+		if (view->corner_radius) {
+			pixman_region32_t corners;
+
+			corner_region(view, &corners);
+			pixman_region32_subtract(&surface_opaque, &surface_opaque, &corners);
+			pixman_region32_fini(&corners);
+		}
 
 		/* Add the surface's opaque region to the accumulated opaque region. */
 		pixman_region32_union(&compositor.opaque, &compositor.opaque,
@@ -1736,6 +1841,26 @@ calculate_damage(void)
 		}
 
 		pixman_region32_fini(&view_region);
+	}
+
+	// damage touching a blurred area repaints all of it, the blur reads the whole area below
+	wl_list_for_each(view, &compositor.views, link)
+	{
+		pixman_region32_t blur, touched;
+
+		if (!view->visible || !pixman_region32_not_empty(&view->surface->state.blur))
+			continue;
+		geom = &view->base.geometry;
+		pixman_region32_init(&blur);
+		pixman_region32_copy(&blur, &view->surface->state.blur);
+		pixman_region32_translate(&blur, geom->x - view->buffer_offset_x, geom->y - view->buffer_offset_y);
+		pixman_region32_intersect_rect(&blur, &blur, geom->x, geom->y, geom->width, geom->height);
+		pixman_region32_init(&touched);
+		pixman_region32_intersect(&touched, &blur, &compositor.damage);
+		if (pixman_region32_not_empty(&touched))
+			pixman_region32_union(&compositor.damage, &compositor.damage, &blur);
+		pixman_region32_fini(&touched);
+		pixman_region32_fini(&blur);
 	}
 
 	pixman_region32_fini(&surface_opaque);
@@ -1868,6 +1993,10 @@ handle_button(struct pointer_handler *handler, uint32_t time,
 	struct compositor_view *view = view_at(x, y);
 
 	pointer_set_focus(swc.seat->pointer, view);
+	if (view && view->focus_on_click)
+		keyboard_set_focus(swc.seat->keyboard, view);
+	if (view && view->window)
+		window_clicked(view->window);
 	raise_window(view);
 
 	return false;

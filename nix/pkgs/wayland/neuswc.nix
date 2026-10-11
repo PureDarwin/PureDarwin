@@ -15,6 +15,7 @@
 , iokit
 , iokitHeaders
 , neuwld
+, mesaNox
 , pdsurface
 , pixman
 , wayland
@@ -28,7 +29,7 @@
 
 let
   targetInfo = import ../../lib/target-info.nix targetTriple;
-  deps = [ fontconfig freetype neuwld pixman wayland waylandProtocols xkbcommon ];
+  deps = [ fontconfig freetype neuwld mesaNox pixman wayland waylandProtocols xkbcommon ];
 in
 stdenv.mkDerivation {
   pname = "puredarwin-neuswc";
@@ -42,7 +43,7 @@ stdenv.mkDerivation {
     runHook preConfigure
     export DARWIN_SDK_ROOT="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
     export PATH="${waylandScanner}/bin:$PATH"
-    export PKG_CONFIG_PATH="${fontconfig}/lib/pkgconfig:${freetype}/lib/pkgconfig:${neuwld}/lib/pkgconfig:${pdsurface}/usr/lib/pkgconfig:${pixman}/lib/pkgconfig:${wayland}/lib/pkgconfig:${waylandProtocols}/share/pkgconfig:${xkbcommon}/lib/pkgconfig"
+    export PKG_CONFIG_PATH="${fontconfig}/lib/pkgconfig:${freetype}/lib/pkgconfig:${neuwld}/lib/pkgconfig:${mesaNox}/usr/lib/pkgconfig:${pdsurface}/usr/lib/pkgconfig:${pixman}/lib/pkgconfig:${wayland}/lib/pkgconfig:${waylandProtocols}/share/pkgconfig:${xkbcommon}/lib/pkgconfig"
     export PKG_CONFIG_LIBDIR="$PKG_CONFIG_PATH"
 
     cat > puredarwin-cross.ini <<EOF

@@ -11,6 +11,7 @@
 , fontconfig
 , freetype
 , pixman
+, mesaNox
 , src
 , targetTriple ? "x86_64-apple-darwin20.4"
 , appleSdk
@@ -18,7 +19,7 @@
 
 let
   targetInfo = import ../../lib/target-info.nix targetTriple;
-  deps = [ fontconfig freetype pixman ];
+  deps = [ fontconfig freetype pixman mesaNox ];
 in
 stdenv.mkDerivation {
   pname = "puredarwin-neuwld";
@@ -31,7 +32,7 @@ stdenv.mkDerivation {
   configurePhase = ''
     runHook preConfigure
     export DARWIN_SDK_ROOT="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
-    export PKG_CONFIG_PATH="${lib.makeSearchPath "lib/pkgconfig" deps}:${lib.makeSearchPath "share/pkgconfig" deps}"
+    export PKG_CONFIG_PATH="${lib.makeSearchPath "lib/pkgconfig" deps}:${lib.makeSearchPath "usr/lib/pkgconfig" deps}:${lib.makeSearchPath "share/pkgconfig" deps}"
     export PKG_CONFIG_LIBDIR="$PKG_CONFIG_PATH"
 
     cat > puredarwin-cross.ini <<EOF
@@ -65,6 +66,7 @@ EOF
       -Dauto_features=disabled \
       -Dwayland=disabled \
       -Ddrm=disabled \
+      -Dgpu=enabled \
       -Ddoxygen=disabled
     runHook postConfigure
   '';

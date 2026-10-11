@@ -258,6 +258,21 @@ void wld_blend_region(struct wld_renderer *renderer,
                       int32_t dst_x, int32_t dst_y,
                       pixman_region32_t *region);
 
+/* blurs what is already in the target inside region, radius is roughly the gaussian's sigma times two */
+void wld_blur_region(struct wld_renderer *renderer,
+                     pixman_region32_t *region, uint32_t radius);
+
+/* blends buffer through a rounded rectangle of its own size, so the corners outside radius stay what was below */
+void wld_blend_region_rounded(struct wld_renderer *renderer,
+                              struct wld_buffer *buffer,
+                              int32_t dst_x, int32_t dst_y,
+                              pixman_region32_t *region, uint32_t radius);
+
+/* a soft black shadow under the w x h rectangle at x, y with rounded corners, drawn inside region */
+void wld_draw_shadow(struct wld_renderer *renderer, pixman_region32_t *region,
+                     int32_t x, int32_t y, uint32_t w, uint32_t h,
+                     uint32_t radius, uint32_t blur, int32_t offset_y, uint8_t alpha);
+
 void wld_draw_circle(struct wld_renderer *renderer, uint32_t color,
 				int32_t x, int32_t y, uint32_t r, bool fill);
 
@@ -278,5 +293,10 @@ void wld_draw_text(struct wld_renderer *renderer,
                    struct wld_extents *extents);
 
 void wld_flush(struct wld_renderer *renderer);
+
+// optional OpenGL renderer for PureDarwin's Radeon framebuffer.
+struct wld_renderer *wld_gl_create_renderer(void);
+bool wld_gl_present(struct wld_renderer *renderer, struct wld_buffer *buffer,
+                    struct wld_buffer *cursor, int32_t cursor_x, int32_t cursor_y);
 
 #endif

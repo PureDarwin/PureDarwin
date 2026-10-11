@@ -375,12 +375,15 @@ handle_attach(struct view_handler *handler)
 	bool mapped = surface->view->base.buffer != NULL;
 
 	if (mapped) {
+		surface->view->focus_on_click = surface->current.keyboard_interactivity ==
+		                                ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND;
 		update_position(surface);
 		restack_layer(surface);
 		if (!surface->mapped) {
 			compositor_view_show(surface->view);
-			if (surface->current.keyboard_interactivity !=
-			    ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE) {
+			// only an exclusive surface takes the keyboard when it appears, on demand waits for a click
+			if (surface->current.keyboard_interactivity ==
+			    ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE) {
 				keyboard_set_focus(swc.seat->keyboard, surface->view);
 			}
 		}
@@ -430,6 +433,29 @@ handle_surface_commit(struct wl_listener *listener, void *data)
 	if (!surface->configured || state_changed) {
 		send_configure(surface);
 		surface->configured = true;
+	}
+}
+
+static void
+modify(struct screen_modifier *modifier, const struct swc_rectangle *geom,
+       pixman_region32_t *usable);
+
+void
+layer_shell_screen_resized(struct screen *screen)
+{
+	struct screen_modifier *modifier;
+
+	wl_list_for_each(modifier, &screen->modifiers, link)
+	{
+		struct layer_surface *surface;
+
+		// only layer surfaces add this modifier, others on the list are left alone
+		if (modifier->modify != &modify)
+			continue;
+		surface = wl_container_of(modifier, surface, modifier);
+		if (surface->mapped)
+			update_position(surface);
+		send_configure(surface);
 	}
 }
 

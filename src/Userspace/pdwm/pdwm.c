@@ -14,6 +14,7 @@
  * compositor Super+Q would eat every application's quit shortcut.
  */
 
+#include <signal.h>
 #include <stdlib.h>
 #include <wayland-server.h>
 #include <swc.h>
@@ -40,12 +41,19 @@ focus(struct window *window)
 	swc_window_focus(window ? window->swc : NULL);
 }
 
+// a bar that reserves its space after windows are up pushes any window it covers down below it
 static void
 screen_usable_geometry_changed(void *data)
 {
-	/* Clients place themselves against the screen and the layer-shell
-	 * exclusive zones, so there is no layout here to recompute. */
-	(void)data;
+	struct screen *screen = data;
+	struct swc_rectangle usable = screen->swc->usable_geometry, geom;
+	struct window *window;
+
+	wl_list_for_each(window, &screen->windows, link) {
+		swc_window_get_geometry(window->swc, &geom);
+		if (geom.y < usable.y)
+			swc_window_set_position(window->swc, geom.x, usable.y);
+	}
 }
 
 static const struct swc_screen_handler screen_handler = {
@@ -133,6 +141,12 @@ new_window(struct swc_window *swc)
 		wl_list_init(&window->link);
 	}
 
+	// start inside the usable area, below the menu bar's exclusive zone
+	if (active_screen) {
+		swc_window_set_position(swc, active_screen->swc->usable_geometry.x,
+		                        active_screen->swc->usable_geometry.y);
+	}
+
 	swc_window_show(swc);
 	focus(window);
 }
@@ -146,6 +160,9 @@ main(int argc, char *argv[])
 
 	(void)argc;
 	(void)argv;
+
+	// a client that quits mid-write must not take the compositor with it
+	signal(SIGPIPE, SIG_IGN);
 
 	display = wl_display_create();
 	if (!display) {

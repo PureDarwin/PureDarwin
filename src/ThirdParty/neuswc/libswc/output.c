@@ -170,6 +170,60 @@ output_new_fb(uint32_t width, uint32_t height, const char *name)
 	return output;
 }
 
+// an output carrying every mode the framebuffer offers
+struct output *
+output_new_fb_modes(const struct mode *modes, int count, int preferred, const char *name)
+{
+	struct output *output = output_new_fb(modes[preferred].width, modes[preferred].height, name);
+
+	if (!output)
+		return NULL;
+	wl_array_release(&output->modes);
+	wl_array_init(&output->modes);
+	for (int i = 0; i < count; i++) {
+		struct mode *mode = wl_array_add(&output->modes, sizeof(*mode));
+
+		if (!mode) {
+			output_destroy(output);
+			return NULL;
+		}
+		*mode = modes[i];
+		mode->preferred = i == preferred;
+	}
+	// set once the array stops growing, adding moves it
+	output->preferred_mode = (struct mode *)output->modes.data + preferred;
+	return output;
+}
+
+// a mode change, told again to every client bound to the output
+void
+output_send_current(struct output *output)
+{
+	struct screen *screen = output->screen;
+	struct wl_resource *resource;
+	struct mode *mode;
+
+	wl_resource_for_each(resource, &output->resources)
+	{
+		wl_output_send_geometry(resource, screen->base.geometry.x, screen->base.geometry.y,
+		                        output->physical_width, output->physical_height, 0, "unknown",
+		                        "unknown", WL_OUTPUT_TRANSFORM_NORMAL);
+		wl_array_for_each(mode, &output->modes)
+		{
+			uint32_t flags = 0;
+
+			if (mode->preferred)
+				flags |= WL_OUTPUT_MODE_PREFERRED;
+			if (mode_equal(&screen->planes.primary.mode, mode))
+				flags |= WL_OUTPUT_MODE_CURRENT;
+			if (flags & WL_OUTPUT_MODE_CURRENT)
+				wl_output_send_mode(resource, flags, mode->width, mode->height, mode->refresh);
+		}
+		if (wl_resource_get_version(resource) >= 2)
+			wl_output_send_done(resource);
+	}
+}
+
 void
 output_destroy(struct output *output)
 {

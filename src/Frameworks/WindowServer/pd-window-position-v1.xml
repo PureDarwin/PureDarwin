@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="pd_window_position_v1">
+  <copyright>
+    Copyright (c) 2026 The PureDarwin Project
+    SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+  </copyright>
+
+  <interface name="pd_window_position_manager_v1" version="1">
+    <description summary="where the compositor placed a client's windows">
+      Wayland keeps window positions with the compositor. AppKit reports frames in screen
+      coordinates, so a window learns where it is from this.
+    </description>
+
+    <request name="destroy" type="destructor"/>
+
+    <request name="get_window_position">
+      <arg name="id" type="new_id" interface="pd_window_position_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+  </interface>
+
+  <interface name="pd_window_position_v1" version="1">
+    <description summary="one window's position">
+      Sent once when created and again every time the compositor moves the window.
+    </description>
+
+    <request name="destroy" type="destructor"/>
+
+    <request name="set_position">
+      <description summary="where the client wants its window">
+        Top left in global compositor coordinates. Wayland leaves placement to the compositor,
+        an AppKit window still opens and moves where the app put it.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+    </request>
+
+    <event name="position">
+      <description summary="top left of the window in global compositor coordinates"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+    </event>
+  </interface>
+</protocol>

@@ -63,6 +63,12 @@ compositor_finalize(void);
 void
 compositor_damage_all(void);
 
+// how app windows are drawn, matching macOS's window shape and shadow
+#define WINDOW_CORNER_RADIUS 8
+#define WINDOW_SHADOW_BLUR 28
+#define WINDOW_SHADOW_OFFSET 10
+#define WINDOW_SHADOW_ALPHA 90
+
 struct compositor_view {
 	struct view base;
 	struct surface *surface;
@@ -79,6 +85,11 @@ struct compositor_view {
 
 	/* Whether or not to make it always be on top of other windows */
 	bool always_top;
+	// a layer surface that asked for keyboard focus on demand gets it when clicked
+	bool focus_on_click;
+	// app windows get rounded corners and a drop shadow drawn around them, like macOS
+	uint32_t corner_radius;
+	uint32_t shadow;
 
 	/* Global stacking layer for this view */
 	uint32_t stack_layer;
@@ -185,5 +196,10 @@ enum compositor_stack_layer {
 void
 compositor_view_set_stack_layer(struct compositor_view *view, uint32_t layer,
 	                            bool raise);
+
+struct screen;
+// the screen changed size, its render target is rebuilt at the new size
+void
+compositor_screen_resized(struct screen *screen);
 
 #endif
