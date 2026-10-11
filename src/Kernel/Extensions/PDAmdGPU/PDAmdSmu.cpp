@@ -69,33 +69,14 @@ bool PDAmdGPU::smuSend(uint32_t msg, uint32_t arg, uint32_t *out)
 }
 
 // gfxoff powers the gfx block down when idle, so keep it up while the rings come up
+// before the psp has brought the firmware up the smu only answers queries, gfxoff is disallowed after autoload,
+// the order amdgpu follows with its smu block after the psp block, the mode 2 reset now lives in the teardown
 void PDAmdGPU::smuInit(void)
 {
     uint32_t ver = 0;
 
     if (smuSend(kSmuMsgGetSmuVersion, 0, &ver))
         LOG("smu: firmware %u.%u.%u\n", (ver >> 16) & 0xff, (ver >> 8) & 0xff, ver & 0xff);
-    LOG("smu: gfxoff before reset %s\n", smuSend(kSmuMsgDisallowGfxOff, 0, nullptr) ? "disallowed" : "still allowed");
-
-    // the iGPU is never reset between guest boots, so start every run from a mode 2 reset of the gfx engines
-    // a clean shutdown of the previous driver leaves the engines idle, and this reset wedged the smu, so it is off for now
-    bool reset = false;
-    uint32_t respReg = soc15(kHwMP1, 0, mmMP1_C2PMSG_33);
-    uint32_t first = rregAny(respReg), ms = 0, resp = first;
-    for (; reset && ms < 5000 && resp == first; ms += 10) {
-        IOSleep(10);
-        resp = rregAny(respReg);
-    }
-    LOG("smu: mode 2 reset %s, response 0x%x then 0x%x after %u ms, RCC_CONFIG_MEMSIZE %u\n", reset ? "done" : "failed",
-        first, resp, ms, rreg(mmRCC_CONFIG_MEMSIZE));
-
-    // the smu is still busy with the reset for a moment, so give the message a few tries
-    bool ok = false;
-    for (int i = 0; i < 10 && !ok; i++) {
-        ok = smuSend(kSmuMsgDisallowGfxOff, 0, nullptr);
-        if (!ok) IOSleep(50);
-    }
-    LOG("smu: gfxoff %s\n", ok ? "disallowed" : "still allowed");
 }
 
 void PDAmdGPU::smuDisallowGfxOff(const char *when)
