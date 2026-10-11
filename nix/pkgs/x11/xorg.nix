@@ -27,6 +27,8 @@
 , libXfixes
 , mesaGlHeaders
 , glHeaders
+  # without glx the server needs no mesa, which keeps llvm out of its closure
+, withGlx ? true
 , targetTriple ? "x86_64-apple-darwin20.4"
 , appleSdk
 }:
@@ -50,11 +52,12 @@ let
   # GLX pulls in Mesa (gl.pc, dri.pc) plus everything gl.pc/glx.pc name in
   # Requires.private - pkg-config walks those even for a shared link, so all
   # of x11, xext, xfixes, x11-xcb, xcb, xcb-glx and xcb-dri2 have to resolve.
-  glxDeps = [ mesa libX11 libxcb libXext libXfixes glHeaders ];
+  glxDeps = lib.optionals withGlx [ mesa libX11 libxcb libXext libXfixes glHeaders ];
+  glMesa = if withGlx then "${mesa}" else "/nonexistent";
   glxPkgConfigDeps = map lib.getDev glxDeps;
 in
 stdenv.mkDerivation {
-  pname = "puredarwin-xorg";
+  pname = "puredarwin-xorg${lib.optionalString (!withGlx) "-noglx"}";
   version = "21.1.24";
 
   src = xorg-server.src;
@@ -148,14 +151,14 @@ Version: 1.0.0
     Cflags: -I${mesaGlHeaders}/include
 EOF
     cat > dri-pkgconfig/lib/pkgconfig/gl.pc <<EOF
-prefix=${mesa}
-exec_prefix=${mesa}
-libdir=${mesa}/usr/lib
+prefix=${glMesa}
+exec_prefix=${glMesa}
+libdir=${glMesa}/usr/lib
 includedir=${glHeaders}/include
 Name: gl
 Description: PureDarwin Mesa OpenGL library
 Version: 1.2
-Libs: -L${mesa}/usr/lib -lGL
+Libs: -L${glMesa}/usr/lib -lGL
 Cflags: -I${glHeaders}/include
 EOF
     # Mesa keeps its .pc files under usr/lib/pkgconfig, not lib/pkgconfig.
@@ -182,7 +185,7 @@ EOF
       -Dxwin=false \
       -Dxquartz=false \
       -Dglamor=false \
-      -Dglx=true \
+      -Dglx=${lib.boolToString withGlx} \
       -Dxdmcp=false \
       -Dxdm-auth-1=false \
       -Dsecure-rpc=false \

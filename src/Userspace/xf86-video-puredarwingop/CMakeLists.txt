@@ -85,6 +85,7 @@ target_compile_options(puredarwingop_drv PRIVATE
 
 target_sources(puredarwingop_drv PRIVATE
     puredarwingop_drv.c
+    pdscanout.c
 )
 
 # The xf86 SDK headers ship without the usual autotools -D flags; the server
@@ -98,6 +99,7 @@ target_compile_definitions(puredarwingop_drv PRIVATE
 # (usr/include/xorg), xorgproto (X11/*.h), and pixman-1.
 target_include_directories(puredarwingop_drv PRIVATE
     ${PUREDARWIN_XORG_INCLUDE_DIRS}
+    ${CMAKE_SOURCE_DIR}/src/Kernel/Extensions/PDPowerVR/include
 )
 
 # PDGOP (static) pulls in IOKit + the mig device_user stubs transitively.

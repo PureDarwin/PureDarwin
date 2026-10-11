@@ -25,6 +25,41 @@
 #include "xf86cmap.h"
 
 #include <PDGOP.h>
+#include "pdscanout.h"
+
+
+// the libSystem source set covers src/Libraries, so the arm64 cache mode is applied here in place of PDGOP
+extern kern_return_t IOConnectMapMemory64(uint32_t, uint32_t, uint32_t,
+    mach_vm_address_t *, mach_vm_size_t *, uint32_t);
+extern kern_return_t IOConnectUnmapMemory64(uint32_t, uint32_t, uint32_t,
+    mach_vm_address_t);
+extern uint32_t mach_task_self_;
+
+#define PDGOP_VRAM_MEMORY      110
+#define PDGOP_MAP_ANYWHERE     0x1
+#define PDGOP_MAP_WRITECOMBINE 0x400
+
+// arm64 scanouts are not snooped and a device mapping faults on unaligned stores, so remap write-combined
+static kern_return_t
+PDGOPRemapWriteCombine(PDGOPFramebuffer *fb)
+{
+#if defined(__arm64__) || defined(__aarch64__)
+    mach_vm_address_t va = 0;
+    mach_vm_size_t    sz = 0;
+    kern_return_t     kr;
+
+    kr = IOConnectMapMemory64(fb->connect, PDGOP_VRAM_MEMORY, mach_task_self_, &va, &sz,
+                              PDGOP_MAP_ANYWHERE | PDGOP_MAP_WRITECOMBINE);
+    if (kr != KERN_SUCCESS)
+        return kr;
+    (void)IOConnectUnmapMemory64(fb->connect, PDGOP_VRAM_MEMORY, mach_task_self_, fb->address);
+    fb->address = va;
+    fb->size = sz;
+#else
+    (void)fb;
+#endif
+    return KERN_SUCCESS;
+}
 
 #define PDGOP_NAME        "puredarwingop"
 #define PDGOP_DRIVER_NAME "puredarwingop"
@@ -38,6 +73,8 @@ typedef struct {
     PDGOPFramebuffer fb;          /* live IOGOPFramebuffer connection + mapping */
     Bool             fbOpen;
     void            *shadow;      /* cached-RAM render target, blitted to VRAM */
+    struct pdscanout scanout;     // or a cached buffer the display engine reads itself
+    Bool             useScanout;
     DamagePtr        damage;      /* tracks which parts of it need pushing out */
     ScreenBlockHandlerProcPtr BlockHandler;
     CreateScreenResourcesProcPtr CreateScreenResources;
@@ -66,6 +103,7 @@ PDGOPFreeRec(ScrnInfoPtr pScrn)
         PDGOPClose(&p->fb);
         p->fbOpen = FALSE;
     }
+    free(p->Options);
     free(p);
     pScrn->driverPrivate = NULL;
 }
@@ -85,9 +123,10 @@ static Bool PDGOPCloseScreen(ScreenPtr pScreen);
 static ModeStatus PDGOPValidMode(ScrnInfoPtr pScrn, DisplayModePtr mode,
                                  Bool verbose, int flags);
 
-enum { OPTION_NONE = -1 };
+enum { OPTION_SCANOUT };
 
 static const OptionInfoRec PDGOPOptions[] = {
+    { OPTION_SCANOUT, "Scanout", OPTV_BOOLEAN, {0}, FALSE },
     { -1, NULL, OPTV_NONE, {0}, FALSE }
 };
 
@@ -259,6 +298,9 @@ PDGOPPreInit(ScrnInfoPtr pScrn, int flags)
         return FALSE;
     }
     p->fbOpen = TRUE;
+    kr = PDGOPRemapWriteCombine(&p->fb);
+    if (kr != KERN_SUCCESS)
+        xf86DrvMsg(pScrn->scrnIndex, X_WARNING, "write-combined VRAM map failed: 0x%x\n", kr);
 
     xf86DrvMsg(pScrn->scrnIndex, X_INFO,
                "IOGOPFramebuffer: %ux%u, %u bpp, stride %u\n",
@@ -286,6 +328,13 @@ PDGOPPreInit(ScrnInfoPtr pScrn, int flags)
     pScrn->videoRam  = (int)(p->fb.size / 1024);
 
     xf86CollectOptions(pScrn, NULL);
+    p->Options = malloc(sizeof(PDGOPOptions));
+    if (p->Options == NULL)
+        return FALSE;
+    memcpy(p->Options, PDGOPOptions, sizeof(PDGOPOptions));
+    xf86ProcessOptions(pScrn->scrnIndex, pScrn->options, p->Options);
+    // option "Scanout" "off" keeps the shadow copy into the GOP aperture
+    p->useScanout = xf86ReturnOptValBool(p->Options, OPTION_SCANOUT, TRUE);
 
     /* Build a single mode matching the live GOP resolution. */
     mode = xnfcalloc(sizeof(DisplayModeRec), 1);
@@ -337,7 +386,26 @@ PDGOPBlitDamage(ScrnInfoPtr pScrn, RegionPtr region)
     int      bpp = pScrn->bitsPerPixel >> 3;
     size_t   stride = (size_t)pScrn->displayWidth * (size_t)bpp;
 
-    if (region == NULL || p->shadow == NULL) {
+    if (region == NULL) {
+        return;
+    }
+    // scanning out of the drawn buffer: only its dirty lines need to reach memory
+    if (p->scanout.base != NULL) {
+        nbox = RegionNumRects(region);
+        box  = RegionRects(region);
+        for (; nbox--; box++) {
+            int y1 = box->y1 < 0 ? 0 : box->y1;
+            int y2 = box->y2 > pScrn->virtualY ? pScrn->virtualY : box->y2;
+            int x1 = box->x1 < 0 ? 0 : box->x1;
+            int x2 = box->x2 > pScrn->virtualX ? pScrn->virtualX : box->x2;
+
+            if (x2 > x1 && y2 > y1)
+                pdscanout_clean(&p->scanout, x1, y1, x2, y2, bpp);
+        }
+        pdscanout_sync();
+        return;
+    }
+    if (p->shadow == NULL) {
         return;
     }
 
@@ -394,9 +462,10 @@ PDGOPBlockHandler(ScreenPtr pScreen, void *timeout)
         PDGOPBlitDamage(pScrn, region);
         /* The mapped pages are the VirtIO resource backing, but the host
          * scanout only sees them after an explicit transfer/flush. */
-        (void)PDGOPPresent(&p->fb, 0, 0,
-                           (uint32_t)pScrn->virtualX,
-                           (uint32_t)pScrn->virtualY);
+        if (p->scanout.base == NULL)
+            (void)PDGOPPresent(&p->fb, 0, 0,
+                               (uint32_t)pScrn->virtualX,
+                               (uint32_t)pScrn->virtualY);
         DamageEmpty(p->damage);
     }
 }
@@ -449,6 +518,9 @@ PDGOPScreenInit(ScreenPtr pScreen, int argc, char **argv)
             return FALSE;
         }
         p->fbOpen = TRUE;
+        kr = PDGOPRemapWriteCombine(&p->fb);
+        if (kr != KERN_SUCCESS)
+            xf86DrvMsg(pScrn->scrnIndex, X_WARNING, "write-combined VRAM map failed: 0x%x\n", kr);
     }
 
     xf86DrvMsg(pScrn->scrnIndex, X_INFO,
@@ -464,14 +536,29 @@ PDGOPScreenInit(ScreenPtr pScreen, int argc, char **argv)
     /* Clear VRAM to black before X takes over. */
     memset((void *)(uintptr_t)p->fb.address, 0, (size_t)p->fb.size);
 
-    p->shadow = calloc(1, (size_t)p->fb.size);
-    if (p->shadow == NULL) {
-        xf86DrvMsg(pScrn->scrnIndex, X_ERROR,
-                   "failed to allocate %llu-byte shadow framebuffer\n",
-                   (unsigned long long)p->fb.size);
-        return FALSE;
+    if (p->useScanout) {
+        char why[128];
+        int bpp = pScrn->bitsPerPixel >> 3;
+
+        if (pdscanout_open(&p->scanout, (uint32_t)pScrn->virtualX, (uint32_t)pScrn->virtualY,
+                           (uint32_t)(pScrn->displayWidth * bpp), why, sizeof(why)) == 0)
+            xf86DrvMsg(pScrn->scrnIndex, X_INFO, "scanning out of a cached %llu-byte buffer, no shadow copy\n",
+                       (unsigned long long)p->scanout.size);
+        else
+            xf86DrvMsg(pScrn->scrnIndex, X_INFO, "no direct scanout (%s), using a shadow copy\n", why);
     }
-    fbstart = p->shadow;
+    if (p->scanout.base != NULL) {
+        fbstart = p->scanout.base;
+    } else {
+        p->shadow = calloc(1, (size_t)p->fb.size);
+        if (p->shadow == NULL) {
+            xf86DrvMsg(pScrn->scrnIndex, X_ERROR,
+                       "failed to allocate %llu-byte shadow framebuffer\n",
+                       (unsigned long long)p->fb.size);
+            return FALSE;
+        }
+        fbstart = p->shadow;
+    }
 
     miClearVisualTypes();
     if (!miSetVisualTypes(pScrn->depth, miGetDefaultVisualMask(pScrn->depth),
@@ -560,6 +647,7 @@ PDGOPCloseScreen(ScreenPtr pScreen)
         free(p->shadow);
         p->shadow = NULL;
     }
+    pdscanout_close(&p->scanout);
     if (p->fbOpen) {
         PDGOPClose(&p->fb);
         p->fbOpen = FALSE;
