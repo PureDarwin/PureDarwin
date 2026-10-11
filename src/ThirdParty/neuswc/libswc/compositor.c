@@ -68,6 +68,7 @@ uint32_t notify_set_state(int token, uint64_t state64);
 uint32_t notify_get_state(int token, uint64_t *state64);
 uint32_t notify_cancel(int token);
 #endif
+#include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
 #include <limits.h>
@@ -827,6 +828,8 @@ watch_window_style(void)
 
 	if (notify_register_file_descriptor(WINDOW_STYLE_NOTIFICATION, &fd, 0, &window_style_token) != NOTIFY_STATUS_OK)
 		return;
+	// the handler drains every queued token, so a blocking read would stall the event loop on the last one
+	fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
 	notify_get_state(window_style_token, &window_style);
 	wl_event_loop_add_fd(swc.event_loop, fd, WL_EVENT_READABLE, &handle_window_style, NULL);
 }
