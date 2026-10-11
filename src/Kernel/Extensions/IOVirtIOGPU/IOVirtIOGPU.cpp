@@ -28,7 +28,6 @@ extern "C" void vc_progress_set(boolean_t enable, uint32_t vc_delay);
 #define super IOFramebuffer
 OSDefineMetaClassAndStructors(IOVirtIOGPU, IOFramebuffer);
 
-#define kDisplayModeID 1
 #define kDepth         0
 #define kDefaultWidth  1024
 #define kDefaultHeight 768
@@ -1723,7 +1722,15 @@ IOVirtIOGPU::scheduleFlush()
     fPresentPending = false;
 
     bool nativePresent = fNativePresent;
+    bool changing = fModeChanging;
     IOLockUnlock(fCtrlLock);
+
+    if (changing) {
+        AbsoluteTime later;
+        clock_interval_to_deadline(kFlushIntervalMs, kMillisecondScale, &later);
+        thread_call_enter_delayed(fFlushCall, later);
+        return;
+    }
 
     // Only the driver's own framebuffer needs its pixels pushed to the host;
     // a client resource the scanout has been pointed at already lives there.
@@ -1851,6 +1858,9 @@ IOVirtIOGPU::start(IOService *provider)
     fConsolePaused = false;
     fPresentX1 = fPresentY1 = fPresentX2 = fPresentY2 = 0;
     gpuGetDisplayInfo(&fWidth, &fHeight); // best-effort, keep defaults on failure
+    fHostWidth = fWidth;
+    fHostHeight = fHeight;
+    buildModeList();
     fPitch = fWidth * 4;
     fResourceId = 1;
     fScanoutResourceId = fResourceId;
@@ -2076,17 +2086,154 @@ IOVirtIOGPU::getPixelFormats()
     return IO32BitDirectPixels;
 }
 
+// the common desktop sizes up to what the host offered, its own size added when it is not one of them
+void
+IOVirtIOGPU::buildModeList()
+{
+    static const DisplayMode standard[] = {
+        { 640, 480 }, { 800, 600 }, { 1024, 768 }, { 1280, 720 }, { 1280, 800 }, { 1280, 1024 },
+        { 1366, 768 }, { 1440, 900 }, { 1600, 900 }, { 1680, 1050 }, { 1920, 1080 }, { 1920, 1200 },
+        { 2560, 1440 }, { 2560, 1600 }, { 3840, 2160 },
+    };
+    // a virtual display can scan out any size, the limit only keeps the framebuffer allocation sane
+    uint32_t maxW = 3840, maxH = 2160;
+    bool haveHost = false;
+
+    fModeCount = 0;
+    for (unsigned i = 0; i < sizeof(standard) / sizeof(standard[0]) && fModeCount < kMaxDisplayModes; i++) {
+        if (standard[i].width > maxW || standard[i].height > maxH)
+            continue;
+        fModes[fModeCount++] = standard[i];
+        if (standard[i].width == fHostWidth && standard[i].height == fHostHeight)
+            haveHost = true;
+    }
+    if (!haveHost && fHostWidth && fHostHeight && fModeCount < kMaxDisplayModes) {
+        // kept in order of size
+        uint32_t at = fModeCount;
+
+        while (at > 0 && (uint64_t)fModes[at - 1].width * fModes[at - 1].height >
+                             (uint64_t)fHostWidth * fHostHeight) {
+            fModes[at] = fModes[at - 1];
+            at--;
+        }
+        fModes[at].width = fHostWidth;
+        fModes[at].height = fHostHeight;
+        fModeCount++;
+    }
+    fModeID = 0;
+    for (uint32_t i = 0; i < fModeCount; i++) {
+        if (fModes[i].width == fWidth && fModes[i].height == fHeight)
+            fModeID = i + 1;
+    }
+}
+
+bool
+IOVirtIOGPU::modeSize(IODisplayModeID mode, uint32_t *width, uint32_t *height)
+{
+    if (mode < 1 || (uint32_t)mode > fModeCount)
+        return false;
+    *width = fModes[mode - 1].width;
+    *height = fModes[mode - 1].height;
+    return true;
+}
+
 IOReturn
 IOVirtIOGPU::getCurrentDisplayMode(IODisplayModeID *displayMode, IOIndex *depth)
 {
-    *displayMode = kDisplayModeID;
+    *displayMode = fModeID;
     *depth = kDepth;
     return kIOReturnSuccess;
 }
 
+// a new 2D resource at the new size takes over the scanout, the old one goes once nothing shows it
 IOReturn
-IOVirtIOGPU::setDisplayMode(IODisplayModeID, IOIndex)
+IOVirtIOGPU::setDisplayMode(IODisplayModeID mode, IOIndex depth)
 {
+    uint32_t width, height;
+
+    if (depth != kDepth || !modeSize(mode, &width, &height))
+        return kIOReturnUnsupportedMode;
+    if (width == fWidth && height == fHeight) {
+        fModeID = mode;
+        return kIOReturnSuccess;
+    }
+
+    uint32_t pitch = width * 4;
+    size_t bytes = (size_t)pitch * height;
+    IOBufferMemoryDescriptor *mem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+        kernel_task, kIODirectionInOut | kIOMemoryPhysicallyContiguous, bytes, 0xFFFFFFFFULL);
+
+    if (!mem)
+        return kIOReturnNoMemory;
+    bzero(mem->getBytesNoCopy(), bytes);
+
+    uint32_t resourceId = allocResourceId();
+
+    if (!gpuCreateResource2D(resourceId, width, height) ||
+        !gpuAttachBacking(resourceId, mem->getPhysicalAddress(), (uint32_t)bytes)) {
+        gpuResourceUnref(resourceId);
+        mem->release();
+        return kIOReturnNoResources;
+    }
+
+    IOLockLock(fCtrlLock);
+    fModeChanging = true;
+    IOLockUnlock(fCtrlLock);
+
+    if (!gpuSetScanout(0, resourceId, width, height)) {
+        gpuResourceUnref(resourceId);
+        mem->release();
+        IOLockLock(fCtrlLock);
+        fModeChanging = false;
+        IOLockUnlock(fCtrlLock);
+        return kIOReturnError;
+    }
+
+    IOBufferMemoryDescriptor *oldMem = fFbMem;
+    uint32_t oldResource = fResourceId;
+
+    fFbMem = mem;
+    fFbBase = mem->getBytesNoCopy();
+    fFbPhys = mem->getPhysicalAddress();
+    fWidth = width;
+    fHeight = height;
+    fPitch = pitch;
+    fResourceId = resourceId;
+    fScanoutResourceId = resourceId;
+    fScanoutWidth = width;
+    fScanoutHeight = height;
+    fModeID = mode;
+    gpuTransferToHost2D(fResourceId, 0, 0, fWidth, fHeight);
+    gpuResourceFlush(fResourceId, 0, 0, fWidth, fHeight);
+
+    // the kernel console draws into the framebuffer too, it follows to the new one
+#if !defined(__arm64__) && !defined(__aarch64__)
+    IOPlatformExpert *pe = getPlatform();
+
+    if (pe) {
+        PE_Video consoleInfo;
+
+        bzero(&consoleInfo, sizeof(consoleInfo));
+        consoleInfo.v_baseAddr = (unsigned long)fFbBase;
+        consoleInfo.v_width = fWidth;
+        consoleInfo.v_height = fHeight;
+        consoleInfo.v_depth = 32;
+        consoleInfo.v_rowBytes = fPitch;
+        consoleInfo.v_display = kPEGraphicsMode;
+        consoleInfo.v_scale = kPEScaleFactor1x;
+        pe->setConsoleInfo(&consoleInfo, kPEGraphicsMode);
+    }
+#endif
+
+    IOLockLock(fCtrlLock);
+    fModeChanging = false;
+    IOLockUnlock(fCtrlLock);
+
+    // a client that mapped the old framebuffer keeps it alive through its mapping until it remaps
+    gpuResourceUnref(oldResource);
+    if (oldMem)
+        oldMem->release();
+    IOLog("IOVirtIOGPU: display mode %d, %ux%u\n", (int)mode, fWidth, fHeight);
     return kIOReturnSuccess;
 }
 
@@ -2112,11 +2259,15 @@ IOVirtIOGPU::copyFramebufferMemory()
 }
 
 IOReturn
-IOVirtIOGPU::getInformationForDisplayMode(IODisplayModeID, IODisplayModeInformation *info)
+IOVirtIOGPU::getInformationForDisplayMode(IODisplayModeID mode, IODisplayModeInformation *info)
 {
+    uint32_t width, height;
+
+    if (!modeSize(mode, &width, &height))
+        return kIOReturnUnsupportedMode;
     bzero(info, sizeof(*info));
-    info->nominalWidth  = fWidth;
-    info->nominalHeight = fHeight;
+    info->nominalWidth  = width;
+    info->nominalHeight = height;
     info->refreshRate   = 30 << 16; // matches the poll-flush interval
     info->maxDepthIndex = kDepth;
     return kIOReturnSuccess;
@@ -2131,13 +2282,14 @@ IOVirtIOGPU::getPixelFormatsForDisplayMode(IODisplayModeID, IOIndex)
 IOItemCount
 IOVirtIOGPU::getDisplayModeCount(void)
 {
-    return 1;
+    return fModeCount;
 }
 
 IOReturn
 IOVirtIOGPU::getDisplayModes(IODisplayModeID *allDisplayModes)
 {
-    *allDisplayModes = kDisplayModeID;
+    for (uint32_t i = 0; i < fModeCount; i++)
+        allDisplayModes[i] = i + 1;
     return kIOReturnSuccess;
 }
 
@@ -2145,13 +2297,15 @@ IOReturn
 IOVirtIOGPU::getPixelInformation(IODisplayModeID displayMode, IOIndex depth,
                                  IOPixelAperture aperture, IOPixelInformation *info)
 {
-    if (aperture || depth || (displayMode != kDisplayModeID))
+    uint32_t width, height;
+
+    if (aperture || depth || !modeSize(displayMode, &width, &height))
         return kIOReturnUnsupportedMode;
 
     bzero(info, sizeof(*info));
-    info->activeWidth   = fWidth;
-    info->activeHeight  = fHeight;
-    info->bytesPerRow   = fPitch;
+    info->activeWidth   = width;
+    info->activeHeight  = height;
+    info->bytesPerRow   = width * 4;
     info->bytesPerPlane = 0;
 
     // B8G8R8A8 in memory == 0x00RRGGBB as a 32-bit value, matching

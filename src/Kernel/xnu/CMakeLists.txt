@@ -2,6 +2,8 @@ find_program(dsymutil_path NAMES dsymutil llvm-dsymutil REQUIRED)
 # xnu 12377 derives the Darwin version from an SDK/KDK System.kext PD doesn't ship,
 # so this is the version PD advertises (Darwin 25 = macOS 26), not the xnu tag.
 set(PUREDARWIN_DARWIN_KERNEL_VERSION "25.5.0" CACHE STRING "Darwin kernel version reported by the build")
+# the upstream xnu tag this tree is built from
+set(PUREDARWIN_XNU_SOURCE_VERSION "xnu-12377.121.6")
 
 
 execute_process(
@@ -247,7 +249,8 @@ externalproject_add(xnu
             -D PTHREAD_HEADER_PATH=$<TARGET_PROPERTY:pthread_common_headers,INTERFACE_INCLUDE_DIRECTORIES>
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
-        ${CMAKE_COMMAND} -E env LD=${XNU_LD_PATH} STRIP=${XNU_STRIP_PATH} ${XNU_HOST_CC_ENV} --unset=CC --unset=CXX --unset=NM --unset=CTFCONVERT --unset=CTFMERGE --unset=CTFINSERT
+        # kern.version names the source tag like Apple's builds, xnu-12377.121.6~1/RELEASE_X86_64
+        ${CMAKE_COMMAND} -E env LD=${XNU_LD_PATH} STRIP=${XNU_STRIP_PATH} PUREDARWIN_XNU_TAG=${PUREDARWIN_XNU_SOURCE_VERSION}~1 ${XNU_HOST_CC_ENV} --unset=CC --unset=CXX --unset=NM --unset=CTFCONVERT --unset=CTFMERGE --unset=CTFINSERT
         make ${XNU_MAKE_OUTPUT_SYNC_FLAG} -C <SOURCE_DIR> install ARCH_CONFIGS=${XNU_ARCH_CONFIGS} ${XNU_MACHINE_CONFIGS} ${XNU_LD_KERNEL_LIBS} BUILD_LTO=0
             RC_DARWIN_KERNEL_VERSION=${PUREDARWIN_DARWIN_KERNEL_VERSION}
             BUILD_WERROR=0 BUILD_DSYM=0 PUREDARWIN_SKIP_SYMBOLSETS=1 DO_CTFMERGE=0 KERNEL_CONFIGS=${PUREDARWIN_XNU_KERNEL_CONFIG}

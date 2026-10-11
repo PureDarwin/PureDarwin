@@ -58,6 +58,33 @@
 #include <stdatomic.h>
 
 #include "IOHIDEventServiceUserClient.h"
+#include "PDHIDEventQueue.h"
+
+// PureDarwin's compositors and X server read the raw /dev/usb_hid_* queues,
+// so every HID service feeds those queues as well as these events
+static UInt8 pdHIDMouseIndex(void)
+{
+    static volatile SInt32 index = -1;
+
+    if (index < 0)
+        OSCompareAndSwap((UInt32)-1, PDHIDAllocateMouseIndex(), (volatile UInt32 *)&index);
+    return (UInt8)index;
+}
+
+// the queue carries signed bytes, so a large motion goes out in several steps
+static void pdHIDPushMotion(UInt32 buttons, SInt32 dx, SInt32 dy, SInt32 wheel)
+{
+    do {
+        SInt8 sx = (SInt8)(dx > 127 ? 127 : dx < -127 ? -127 : dx);
+        SInt8 sy = (SInt8)(dy > 127 ? 127 : dy < -127 ? -127 : dy);
+        SInt8 sw = (SInt8)(wheel > 127 ? 127 : wheel < -127 ? -127 : wheel);
+
+        PDHIDPushMouseEvent(pdHIDMouseIndex(), (UInt8)(buttons & 7), sx, sy, sw);
+        dx -= sx;
+        dy -= sy;
+        wheel -= sw;
+    } while (dx || dy || wheel);
+}
 #include "IOHIDEventServiceFastPathUserClient.h"
 
 extern "C" int  kern_stack_snapshot_with_reason(char *reason);
@@ -1746,6 +1773,9 @@ void IOHIDEventService::dispatchKeyboardEvent(
     }
   
     
+    if (usagePage == kHIDPage_KeyboardOrKeypad && usage <= 0xE7)
+        PDHIDPushKeyboardEvent((UInt8)usage, value != 0);
+
     event = IOHIDEvent::keyboardEvent(timeStamp, usagePage, usage, (value != 0), options);
     if ( event ) {
         dispatchEvent(event);
@@ -1763,7 +1793,8 @@ void IOHIDEventService::dispatchKeyboardEvent(
             if ( !_keyboardNub ) {
                 _keyboardNub = newKeyboardShim();
             }
-            if ( _keyboardNub ) {
+            // a compositor holding the raw queue owns the keyboard, the console must not see it too
+            if ( _keyboardNub && !PDHIDKeyboardIsGrabbed() ) {
                 _keyboardNub->dispatchKeyboardEvent(timeStamp, usagePage, usage, (value != 0), options);
             }
         }
@@ -1803,6 +1834,8 @@ void IOHIDEventService::dispatchRelativePointerEventWithFixed(
         return;
 
     
+    pdHIDPushMotion(buttonState, dx >> 16, dy >> 16, 0);
+
     IOHIDEvent *event = IOHIDEvent::relativePointerEventWithFixed(timeStamp, dx, dy, 0, buttonState, _relativePointer.buttonState);
 
     if ( event ) {
@@ -2935,6 +2968,9 @@ void IOHIDEventService::dispatchScrollWheelEventWithFixed(
     
     if ( !deltaAxis1 && !deltaAxis2 && !deltaAxis3 && !momentumOrPhase )
         return;
+
+    if (deltaAxis1 >> 16)
+        pdHIDPushMotion(_relativePointer.buttonState, 0, 0, deltaAxis1 >> 16);
 
     IOHIDEvent *event = IOHIDEvent::scrollEventWithFixed(timeStamp, deltaAxis2, deltaAxis1, deltaAxis3); //yxz should be xyz
     if ( event ) {

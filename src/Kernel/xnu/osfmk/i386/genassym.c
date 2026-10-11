@@ -438,6 +438,7 @@ main(
 	DECLARE("BA_VIDEO_WIDTH", offsetof(struct boot_args, Video.v_width));
 	DECLARE("BA_VIDEO_HEIGHT", offsetof(struct boot_args, Video.v_height));
 	DECLARE("BA_VIDEO_DEPTH", offsetof(struct boot_args, Video.v_depth));
+	DECLARE("BA_VIDEO_DISPLAY", offsetof(struct boot_args, Video.v_display));
 
 	DECLARE("RNT_TSC_BASE",
 	    offsetof(pal_rtc_nanotime_t, tsc_base));

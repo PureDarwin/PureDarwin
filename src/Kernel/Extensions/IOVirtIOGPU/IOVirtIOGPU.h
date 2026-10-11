@@ -77,6 +77,18 @@ private:
     uint32_t     fScanoutWidth, fScanoutHeight; // geometry SET_SCANOUT was last given
     bool         fNativePresent;
     bool         fPresentPending;
+
+    // the modes on offer, ids are index + 1, and the one the scanout is in
+    struct DisplayMode { uint32_t width, height; };
+    enum { kMaxDisplayModes = 24 };
+    DisplayMode  fModes[kMaxDisplayModes];
+    uint32_t     fModeCount;
+    IODisplayModeID fModeID;
+    uint32_t     fHostWidth, fHostHeight;
+    // set while setDisplayMode swaps the framebuffer, the flush timer stays off it then
+    bool         fModeChanging;
+    void         buildModeList();
+    bool         modeSize(IODisplayModeID mode, uint32_t *width, uint32_t *height);
     uint32_t     fPresentX1, fPresentY1, fPresentX2, fPresentY2;
 
     // virgl/3D state. fVirglOK is set when the device offered

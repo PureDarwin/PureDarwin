@@ -22,8 +22,27 @@ enum {
 	kHIDRequestGetReport = 0x01,
 	kHIDRequestSetReport = 0x09,
 	kHIDRequestSetIdle = 0x0a,
+	kHIDRequestSetProtocol = 0x0b,
 	kHIDMaxReportDescriptor = 4096,
 };
+
+// HID 1.11: a six-byte header followed by bNumDescriptors three-byte entries.
+static inline uint16_t
+pdUSBHIDReportDescriptorLength(const uint8_t *bytes, size_t length)
+{
+    if (!bytes || length < 6 || bytes[1] != 0x21 || bytes[0] < 6 || bytes[0] > length)
+        return 0;
+    size_t end = bytes[0];
+    if ((size_t)bytes[5] > (end - 6) / 3)
+        return 0;
+    for (size_t i = 0; i < bytes[5]; ++i) {
+        size_t off = 6 + 3 * i;
+        if (bytes[off] == 0x22)
+            return (uint16_t)(bytes[off + 1] | ((uint16_t)bytes[off + 2] << 8));
+    }
+    return 0;
+}
+
 
 IOReturn
 PDUSBHIDDevice::classRequest(bool in, UInt8 request, UInt16 value, void *data, UInt16 length, UInt32 *done)
@@ -48,99 +67,116 @@ PDUSBHIDDevice::classRequest(bool in, UInt8 request, UInt16 value, void *data, U
 bool
 PDUSBHIDDevice::handleStart(IOService *provider)
 {
-	IOUSBFindEndpointRequest pipeReq;
-	IOUSBDevRequest req;
-	void *buf;
-	thread_t th;
+    IOUSBFindEndpointRequest pipeReq;
+    IOUSBDevRequest req;
+    uint8_t hid[255];
+    UInt16 requested = kHIDMaxReportDescriptor;
+    void *buf = NULL;
+    thread_t th;
+    IOUSBInterface *interface = OSDynamicCast(IOUSBInterface, provider);
 
-	if (!super::handleStart(provider)) {
-		return false;
-	}
-	// IOHIDEventDriver personalities only match transports that publish this
-	setProperty("HIDDefaultBehavior", kOSBooleanTrue);
-	fInterface = OSDynamicCast(IOUSBInterface, provider);
-	if (fInterface == NULL || !fInterface->open(this)) {
-		IOLog("PDUSBHIDDevice: cannot open the interface\n");
-		return false;
-	}
+    if (!super::handleStart(provider)) return false;
+    setProperty("HIDDefaultBehavior", kOSBooleanTrue);
+    if (!interface || !interface->open(this)) {
+        IOLog("PDUSBHIDDevice: cannot open the interface\n");
+        return false;
+    }
+    fInterface = interface;
+    fInterface->retain();
 
-	// GET_DESCRIPTOR(Report) is a standard request to the interface
-	buf = IOMalloc(kHIDMaxReportDescriptor);
-	if (buf == NULL) {
-		return false;
-	}
-	bzero(&req, sizeof(req));
-	req.bmRequestType = 0x81;
-	req.bRequest = 6;
-	req.wValue = kHIDDescriptorReport << 8;
-	req.wIndex = (UInt16)pdNumberProperty(fInterface, "bInterfaceNumber");
-	req.wLength = kHIDMaxReportDescriptor;
-	req.pData = buf;
-	bzero(buf, kHIDMaxReportDescriptor);
-	if (fInterface->DeviceRequest(&req) != kIOReturnSuccess) {
-		IOLog("PDUSBHIDDevice: no report descriptor\n");
-		IOFree(buf, kHIDMaxReportDescriptor);
-		return false;
-	}
-	// wLenDone comes back as the requested size here, and QEMU answers no HID (0x21)
-	// descriptor: walk the short items to where the descriptor ends (a 0x00 prefix)
-	{
-		const UInt8 *d = (const UInt8 *)buf;
-		UInt32 off = 0, reportLen;
+    // a boot interface may have been left in boot protocol by firmware. The
+    // report descriptor describes report protocol, including report IDs/NKRO.
+    if (pdNumberProperty(fInterface, "bInterfaceSubClass") == 1 &&
+        classRequest(false, kHIDRequestSetProtocol, 1, NULL, 0, NULL) != kIOReturnSuccess) {
+        IOLog("PDUSBHIDDevice: cannot select report protocol\n");
+        goto fail;
+    }
+    bzero(&req, sizeof(req));
+    bzero(hid, sizeof(hid));
+    req.bmRequestType = 0x81;
+    req.bRequest = 6;
+    req.wValue = 0x21 << 8;
+    req.wIndex = (UInt16)pdNumberProperty(fInterface, "bInterfaceNumber");
+    req.wLength = 9;
+    req.pData = hid;
+    if (fInterface->DeviceRequest(&req) == kIOReturnSuccess && req.wLenDone >= 6) {
+        if (hid[0] > req.wLenDone) {
+            req.wLength = hid[0];
+            req.wLenDone = 0;
+            if (fInterface->DeviceRequest(&req) != kIOReturnSuccess)
+                goto fail;
+        }
+        requested = pdUSBHIDReportDescriptorLength(hid, req.wLenDone);
+        if (!requested || requested > kHIDMaxReportDescriptor)
+            goto fail;
+    }
+    // QEMU devices may not implement GET_DESCRIPTOR(HID). The controller's
+    // actual short-transfer length still bounds this fallback report read.
+    buf = IOMalloc(requested);
+    if (!buf) goto fail;
+    bzero(buf, requested);
+    bzero(&req, sizeof(req));
+    req.bmRequestType = 0x81;
+    req.bRequest = 6;
+    req.wValue = kHIDDescriptorReport << 8;
+    req.wIndex = (UInt16)pdNumberProperty(fInterface, "bInterfaceNumber");
+    req.wLength = requested;
+    req.pData = buf;
+    if (fInterface->DeviceRequest(&req) != kIOReturnSuccess ||
+        !req.wLenDone || req.wLenDone > requested) {
+        IOLog("PDUSBHIDDevice: no valid report descriptor\n");
+        goto fail;
+    }
+    fDescriptor = OSData::withBytes(buf, req.wLenDone);
+    IOFree(buf, requested);
+    buf = NULL;
+    if (!fDescriptor) goto fail;
 
-		while (off < kHIDMaxReportDescriptor && d[off] != 0) {
-			UInt8 size = d[off] & 3;
+    bzero(&pipeReq, sizeof(pipeReq));
+    pipeReq.type = kUSBInterrupt;
+    pipeReq.direction = kUSBIn;
+    fInPipe = fInterface->FindNextPipe(NULL, &pipeReq, true);
+    if (!fInPipe) {
+        IOLog("PDUSBHIDDevice: no interrupt-IN pipe\n");
+        goto fail;
+    }
+    fMaxPacket = (fInPipe->GetMaxPacketSize() & 0x7ff) *
+        (1 + ((fInPipe->GetMaxPacketSize() >> 11) & 3));
+    if (!fMaxPacket || fMaxPacket > 3072) goto fail;
+    fReadBuffer = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task, kIODirectionIn, fMaxPacket);
+    if (!fReadBuffer) goto fail;
 
-			off += 1 + (size == 3 ? 4 : size);
-		}
-		reportLen = off > kHIDMaxReportDescriptor ? kHIDMaxReportDescriptor : off;
-		if (reportLen == 0) {
-			IOFree(buf, kHIDMaxReportDescriptor);
-			return false;
-		}
-		fDescriptor = OSData::withBytes(buf, reportLen);
-	}
-	IOFree(buf, kHIDMaxReportDescriptor);
-	if (fDescriptor == NULL) {
-		return false;
-	}
-
-	bzero(&pipeReq, sizeof(pipeReq));
-	pipeReq.type = kUSBInterrupt;
-	pipeReq.direction = kUSBIn;
-	fInPipe = fInterface->FindNextPipe(NULL, &pipeReq, true);
-	if (fInPipe == NULL) {
-		IOLog("PDUSBHIDDevice: no interrupt-IN pipe\n");
-		return false;
-	}
-	fMaxPacket = fInPipe->GetMaxPacketSize();
-	if (fMaxPacket == 0 || fMaxPacket > 1024) {
-		fMaxPacket = 64;
-	}
-	fReadBuffer = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task, kIODirectionIn, fMaxPacket);
-	if (fReadBuffer == NULL) {
-		return false;
-	}
-
-	// Report only on change
-	classRequest(false, kHIDRequestSetIdle, 0, NULL, 0, NULL);
-
-	fRunning = true;
-	fPolling = true;
-	retain();
-	if (kernel_thread_start(&PDUSBHIDDevice::pollThread, this, &th) != KERN_SUCCESS) {
-		fPolling = false;
-		release();
-		return false;
-	}
-	thread_deallocate(th);
-	return true;
+    classRequest(false, kHIDRequestSetIdle, 0, NULL, 0, NULL);
+    fRunning = true;
+    fPolling = true;
+    retain();
+    if (kernel_thread_start(&PDUSBHIDDevice::pollThread, this, &th) != KERN_SUCCESS) {
+        fPolling = false;
+        release();
+        goto fail;
+    }
+    thread_deallocate(th);
+    IOLog("PDUSBHIDDevice: USB %04x:%04x interface %u descriptor %u bytes endpoint %u packet %u\n",
+        (unsigned)pdNumberProperty(fInterface->getProvider(), "idVendor"),
+        (unsigned)pdNumberProperty(fInterface->getProvider(), "idProduct"),
+        (unsigned)pdNumberProperty(fInterface, "bInterfaceNumber"),
+        (unsigned)fDescriptor->getLength(), fInPipe->GetEndpointNumber(), fMaxPacket);
+    return true;
+fail:
+    if (buf) IOFree(buf, requested);
+    fRunning = false;
+    fInterface->close(this);
+    return false;
 }
 
 void
 PDUSBHIDDevice::handleStop(IOService *provider)
 {
 	fRunning = false;
+	// reads poll for at most 20 ms. Let the reader drop its buffer access before
+	// aborting the controller's persistent TD and closing the provider.
+	while (fPolling)
+		IOSleep(1);
 	if (fInPipe != NULL) {
 		fInPipe->Abort();
 	}
@@ -156,6 +192,7 @@ PDUSBHIDDevice::free(void)
 	OSSafeReleaseNULL(fReadBuffer);
 	OSSafeReleaseNULL(fInPipe);
 	OSSafeReleaseNULL(fDescriptor);
+	OSSafeReleaseNULL(fInterface);
 	super::free();
 }
 
@@ -178,7 +215,7 @@ PDUSBHIDDevice::pollLoop(void)
 		IOByteCount done = fMaxPacket;
 		IOReturn kr = fInPipe->Read(fReadBuffer, 0, 0, fMaxPacket, (IOUSBCompletion *)NULL, &done);
 
-		if (kr == kIOReturnSuccess && done > 0 && fRunning) {
+		if (kr == kIOReturnSuccess && done > 0 && done <= fMaxPacket && fRunning) {
 			IOBufferMemoryDescriptor *report =
 			    IOBufferMemoryDescriptor::withBytes(fReadBuffer->getBytesNoCopy(), done, kIODirectionNone);
 
@@ -186,6 +223,11 @@ PDUSBHIDDevice::pollLoop(void)
 				handleReport(report, kIOHIDReportTypeInput);
 				report->release();
 			}
+		} else if (kr == kIOReturnNotAttached || kr == kIOReturnNoDevice) {
+			break;
+		} else if (kr == kIOUSBPipeStalled) {
+			fInPipe->ClearPipeStall(true);
+			IOSleep(10);
 		} else if (kr != kIOReturnSuccess) {
 			IOSleep(10);
 		}
@@ -243,6 +285,8 @@ PDUSBHIDDevice::newLocationIDNumber() const
 IOReturn
 PDUSBHIDDevice::getReport(IOMemoryDescriptor *report, IOHIDReportType reportType, IOOptionBits options)
 {
+	if (!report || report->getLength() > 0xffff || reportType > kIOHIDReportTypeFeature)
+		return kIOReturnBadArgument;
 	UInt32 done = 0, len = (UInt32)report->getLength();
 	void *buf = IOMalloc(len ? len : 1);
 	IOReturn kr;
@@ -253,7 +297,8 @@ PDUSBHIDDevice::getReport(IOMemoryDescriptor *report, IOHIDReportType reportType
 	kr = classRequest(true, kHIDRequestGetReport, (UInt16)(((reportType + 1) << 8) | (options & 0xff)), buf,
 	    (UInt16)len, &done);
 	if (kr == kIOReturnSuccess) {
-		report->writeBytes(0, buf, done);
+		if (done > len || report->writeBytes(0, buf, done) != done)
+			kr = kIOReturnOverrun;
 	}
 	IOFree(buf, len ? len : 1);
 	return kr;
@@ -262,6 +307,8 @@ PDUSBHIDDevice::getReport(IOMemoryDescriptor *report, IOHIDReportType reportType
 IOReturn
 PDUSBHIDDevice::setReport(IOMemoryDescriptor *report, IOHIDReportType reportType, IOOptionBits options)
 {
+	if (!report || report->getLength() > 0xffff || reportType > kIOHIDReportTypeFeature)
+		return kIOReturnBadArgument;
 	UInt32 len = (UInt32)report->getLength();
 	void *buf = IOMalloc(len ? len : 1);
 	IOReturn kr;

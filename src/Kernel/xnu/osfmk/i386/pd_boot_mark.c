@@ -41,6 +41,10 @@ pd_boot_mark_direct(uint32_t band, boot_args *args)
 	if (args == NULL || args->Video.v_baseAddr == 0) {
 		return;
 	}
+	// a graphical boot (no -v) keeps the logo screen clean
+	if (args->Video.v_display == GRAPHICS_MODE) {
+		return;
+	}
 	if (args->Video.v_depth != 32 || args->Video.v_rowBytes == 0) {
 		return;
 	}
@@ -64,6 +68,9 @@ void
 pd_boot_mark_init(boot_args *args)
 {
 	if (args == NULL || args->Video.v_baseAddr == 0) {
+		return;
+	}
+	if (args->Video.v_display == GRAPHICS_MODE) {
 		return;
 	}
 	/*

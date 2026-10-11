@@ -1256,7 +1256,12 @@ ml_parse_cpu_topology(void)
 		ml_read_reg_range(child, "coresight-reg", &cpu->coresight_pa, &cpu->coresight_len);
 		cpu->cluster_type = CLUSTER_TYPE_SMP;
 
+		// a kernel built without AMP keeps one cluster, whatever types the loader tagged
+#if __AMP__
 		int cluster_type = (int)ml_readprop(child, "cluster-type", 0);
+#else
+		int cluster_type = 0;
+#endif
 		if (cluster_type == 'E') {
 			cpu->cluster_type = CLUSTER_TYPE_E;
 		} else if (cluster_type == 'M') {

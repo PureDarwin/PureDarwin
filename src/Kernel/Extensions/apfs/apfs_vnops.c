@@ -1210,6 +1210,80 @@ apfs_vnop_rename(struct vnop_rename_args *ap)
 	return 0;
 }
 
+// renamex_np: RENAME_EXCL, and RENAME_SWAP through a temporary name beside the target, under the
+// volume lock (launchd's dirs_cleaner swaps /var/run out at every boot)
+static int
+apfs_vnop_renamex(struct vnop_renamex_args *ap)
+{
+	struct apfs_node *fdnode = VTOAPFS(ap->a_fdvp), *tdnode = VTOAPFS(ap->a_tdvp);
+	struct apfs_node *fnode = VTOAPFS(ap->a_fvp), *tnode = ap->a_tvp ? VTOAPFS(ap->a_tvp) : NULL;
+	static uint32_t swaps;
+	char from[MAXPATHLEN], to[MAXPATHLEN], tmp[MAXPATHLEN];
+	int error, n;
+
+	if (ap->a_flags & ~(VFS_RENAME_SWAP | VFS_RENAME_EXCL))
+		return ENOTSUP;
+	if ((ap->a_flags & VFS_RENAME_EXCL) && !(ap->a_flags & VFS_RENAME_SWAP)) {
+		struct vnop_rename_args ra;
+
+		// the vfs lets a case-only rename of the same file through
+		if (ap->a_tvp != NULLVP && ap->a_tvp != ap->a_fvp)
+			return EEXIST;
+		ra.a_desc = &vnop_rename_desc;
+		ra.a_fdvp = ap->a_fdvp;
+		ra.a_fvp = ap->a_fvp;
+		ra.a_fcnp = ap->a_fcnp;
+		ra.a_tdvp = ap->a_tdvp;
+		ra.a_tvp = ap->a_tvp;
+		ra.a_tcnp = ap->a_tcnp;
+		ra.a_context = ap->a_context;
+		return apfs_vnop_rename(&ra);
+	}
+	if (fdnode == NULL || tdnode == NULL || fnode == NULL || fdnode->amp == NULL)
+		return EINVAL;
+	if (tnode == NULL)
+		return ENOENT;
+	if (fdnode->amp->rw == NULL)
+		return ENOTSUP;
+
+	error = apfs_child_path(ap->a_fdvp, ap->a_fcnp, from, sizeof(from));
+	if (error)
+		return error;
+	error = apfs_child_path(ap->a_tdvp, ap->a_tcnp, to, sizeof(to));
+	if (error)
+		return error;
+	n = snprintf(tmp, sizeof(tmp), "%s.pdswap.%u", to, __atomic_fetch_add(&swaps, 1, __ATOMIC_RELAXED));
+	if (n < 0 || n >= (int)sizeof(tmp))
+		return ENAMETOOLONG;
+
+	APFS_RW_LOCK(fdnode->amp);
+	error = apfsrw_rename(fdnode->amp->rw, to, tmp);
+	if (error == 0) {
+		error = apfsrw_rename(fdnode->amp->rw, from, to);
+		if (error == 0) {
+			error = apfsrw_rename(fdnode->amp->rw, tmp, from);
+		} else {
+			apfsrw_rename(fdnode->amp->rw, tmp, to);
+		}
+	}
+	if (error != 0) {
+		APFS_RW_UNLOCK(fdnode->amp);
+		return apfsrw_to_errno(error);
+	}
+	error = apfs_write_done(fdnode->amp);
+	APFS_RW_UNLOCK(fdnode->amp);
+	if (error)
+		return error;
+
+	fnode->parent_id = tdnode->fileid;
+	tnode->parent_id = fdnode->fileid;
+	cache_purge(ap->a_fvp);
+	cache_purge(ap->a_tvp);
+	cache_purge_negatives(ap->a_fdvp);
+	cache_purge_negatives(ap->a_tdvp);
+	return 0;
+}
+
 static int
 apfs_vnop_mknod(struct vnop_mknod_args *ap)
 {
@@ -1576,6 +1650,7 @@ static const struct vnodeopv_entry_desc apfs_vnodeop_entries[] = {
 	{ &vnop_remove_desc, (VOPFUNC)apfs_vnop_remove },
 	{ &vnop_rmdir_desc, (VOPFUNC)apfs_vnop_rmdir },
 	{ &vnop_rename_desc, (VOPFUNC)apfs_vnop_rename },
+	{ &vnop_renamex_desc, (VOPFUNC)apfs_vnop_renamex },
 	{ &vnop_symlink_desc, (VOPFUNC)apfs_vnop_symlink },
 	{ &vnop_link_desc, (VOPFUNC)apfs_vnop_link },
 	{ &vnop_open_desc, (VOPFUNC)apfs_vnop_open },

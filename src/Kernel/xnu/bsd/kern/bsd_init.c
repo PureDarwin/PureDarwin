@@ -1092,6 +1092,11 @@ bsdinit_task(void)
 
 	process_name("init", p);
 
+	// pdpanictest=1 panics here on purpose, late enough for the panic log to reach EFI NVRAM
+	if (PE_parse_boot_argn("pdpanictest", NULL, 0)) {
+		panic("pdpanictest: requested test panic before launchd");
+	}
+
 	/* Set up exception-to-signal reflection */
 	ux_handler_setup();
 

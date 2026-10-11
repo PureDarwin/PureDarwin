@@ -34,7 +34,7 @@ SUPPORTED_ARM_MACHINE_CONFIGS = NONE
 SUPPORTED_ARM64_MACHINE_CONFIGS = NONE
 else
 SUPPORTED_ARM_MACHINE_CONFIGS = T8002 T8004 BCM2835
-SUPPORTED_ARM64_MACHINE_CONFIGS = T7000 T7001 S8000 S8001 T8010 T8011 BCM2837 VIRT VIRT4K SUN50I
+SUPPORTED_ARM64_MACHINE_CONFIGS = T7000 T7001 S8000 S8001 T8010 T8011 BCM2837 VIRT VIRT4K VIRTAMP SUN50I
 
 endif
 
@@ -85,6 +85,10 @@ MACHINE_FLAGS_ARM64_VIRT = -DARM64_BOARD_CONFIG_VIRT -DCURRENT_MACHINE_CONFIG_LC
 # QEMU virt on a Cortex-A53 model: the VIRT board with 4KB pages and the classic
 # subpage-L1 geometry, so the SUN50I page-table path can be debugged under QEMU
 MACHINE_FLAGS_ARM64_VIRT4K = -DARM64_BOARD_CONFIG_VIRT -DPD_VIRT_4K -DCURRENT_MACHINE_CONFIG_LC=$(CURRENT_MACHINE_CONFIG_LC) -mcpu=cortex-a53+crypto
+# the VIRT board with mixed core types (A733: Cortex-A55 E cluster, Cortex-A76 P cluster), AMP scheduling
+# the Edge scheduler wants CAS atomics, which xnu picks on __ARM_ARCH_8_2__ (Apple's clang defines it,
+# upstream clang does not): both core types implement LSE
+MACHINE_FLAGS_ARM64_VIRTAMP = -DARM64_BOARD_CONFIG_VIRT -DPD_VIRT_AMP -D__ARM_ARCH_8_2__=1 -DCURRENT_MACHINE_CONFIG_LC=$(CURRENT_MACHINE_CONFIG_LC) -mcpu=cortex-a76
 # Allwinner H616/H618 and SG2002: Cortex-A53, 4KB pages (no 16KB granule, see SUN50I.h)
 MACHINE_FLAGS_ARM64_SUN50I = -DARM64_BOARD_CONFIG_SUN50I -DCURRENT_MACHINE_CONFIG_LC=$(CURRENT_MACHINE_CONFIG_LC) -mcpu=cortex-a53+crypto
 MACHINE_FLAGS_RISCV64_VIRT = -DRISCV64_BOARD_CONFIG_VIRT -DCURRENT_MACHINE_CONFIG_LC=$(CURRENT_MACHINE_CONFIG_LC)
@@ -407,7 +411,8 @@ ARM64_KC_BASE      =0xfffffff006000000
 # interrupts, and reaches kext loading. It then dies mapping the kexts, but that
 # is a separate KC-layout bug (kc-tools emits two __TEXT_EXEC segments), not a
 # consequence of this.
-ifeq ($(CURRENT_MACHINE_CONFIG),VIRT)
+# VIRTAMP is VIRT with an E and a P cluster: the same geometry
+ifneq ($(filter VIRT VIRTAMP,$(CURRENT_MACHINE_CONFIG)),)
 LARGE_MEMORY_DEFINE=-DARM_LARGE_MEMORY=1
 ARM64_PLKSEG_ADDR  =0xfffffe0004004000
 ARM64_LINK_ADDR    =0xfffffe0007004000

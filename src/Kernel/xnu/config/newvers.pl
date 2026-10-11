@@ -62,6 +62,8 @@ $BUILD_CONFIG = $ENV{'CURRENT_KERNEL_CONFIG_LC'} if defined($ENV{'CURRENT_KERNEL
 my $BUILDER=`whoami`;
 $BUILDER =~ s/[\n\t]//g;
 my $RC_STRING = $ENV{'RC_ProjectNameAndSourceVersion'} . "~" . $ENV{'RC_ProjectBuildVersion'} if defined($ENV{'RC_XBS'});
+# PureDarwin builds outside XBS but still name the source tag, not the build directory
+$RC_STRING = $ENV{'PUREDARWIN_XNU_TAG'} if defined($ENV{'PUREDARWIN_XNU_TAG'});
 
 # Handle four scenarios:
 # SRCROOT=/tmp/xnu

@@ -220,6 +220,7 @@ __XNU_PRIVATE_EXTERN char drivercorefilename[MAXPATHLEN + 1] = {"/private/var/de
 #if PROC_REF_DEBUG
 #include <kern/backtrace.h>
 #endif
+#include <pexpert/pexpert.h>
 
 static LCK_MTX_DECLARE_ATTR(proc_klist_mlock, &proc_mlock_grp, &proc_lck_attr);
 
@@ -3693,6 +3694,49 @@ csops_copy_token(const void *start, size_t length, user_size_t usize, user_addr_
 	return copyout(start, uaddr, length);
 }
 
+extern void IOLog(const char *format, ...) __printflike(1, 2);
+
+// pdcsops=name[,name]: log the code signing queries a listed process makes or is the target of (400 lines)
+static bool
+pd_csops_listed(const char *name, const char *list)
+{
+	size_t n = strlen(name);
+
+	for (const char *p = list; *p != '\0';) {
+		const char *e = strchr(p, ',');
+		size_t len = e ? (size_t)(e - p) : strlen(p);
+
+		if (len == n && strncmp(p, name, n) == 0)
+			return true;
+		if (e == NULL)
+			break;
+		p = e + 1;
+	}
+	return false;
+}
+
+static void
+pd_csops_log(proc_t pt, int ops, int error, bool token)
+{
+	static int state = -1;
+	static char list[96];
+	static uint32_t budget = 400;
+	proc_t self = current_proc();
+	const char *caller = proc_best_name(self), *target = proc_best_name(pt), *team;
+
+	if (state < 0)
+		state = PE_parse_boot_argn("pdcsops", list, sizeof(list)) && list[0] != '\0';
+	if (state == 0 || budget == 0)
+		return;
+	if (!pd_csops_listed(caller, list) && !pd_csops_listed(target, list))
+		return;
+	budget--;
+	team = csproc_get_teamid(pt);
+	IOLog("pdcsops: %s[%d] asks op %d%s of %s[%d]: error %d, csflags 0x%x, platform %d, team %s\n", caller,
+	    proc_getpid(self), ops, token ? " (audit token)" : "", target, proc_getpid(pt), error,
+	    (uint32_t)proc_getcsflags(pt), csproc_get_platform_binary(pt), team ? team : "-");
+}
+
 static int
 csops_internal(pid_t pid, int ops, user_addr_t uaddr, user_size_t usersize, user_addr_t uaudittoken)
 {
@@ -4193,6 +4237,7 @@ csops_internal(pid_t pid, int ops, user_addr_t uaddr, user_size_t usersize, user
 		break;
 	}
 out:
+	pd_csops_log(pt, ops, error, uaudittoken != USER_ADDR_NULL);
 	proc_rele(pt);
 	return error;
 }

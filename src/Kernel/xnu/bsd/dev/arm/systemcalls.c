@@ -351,9 +351,10 @@ unix_syscall(
 	AUDIT_SYSCALL_ENTER(code, proc, uthread);
 	error = (*(callp->sy_call))(proc, &uthread->uu_arg[0], &(uthread->uu_rval[0]));
 	AUDIT_SYSCALL_EXIT(code, proc, uthread, error);
-	if (__improbable(error != 0))
+	// a thread whose task has no proc yet (or any more) has nothing to name: both loggers read p_comm
+	if (__improbable(proc != NULL && error != 0))
 		pd_syserr_log(proc, code, error, (const uint64_t *)&uthread->uu_arg[0]);
-	else if (__improbable(code == SYS_sysctl || code == SYS_sysctlbyname))
+	else if (__improbable(proc != NULL && (code == SYS_sysctl || code == SYS_sysctlbyname)))
 		pd_sysctl_log(proc, code, (const uint64_t *)&uthread->uu_arg[0]);
 
 #if CONFIG_MACF

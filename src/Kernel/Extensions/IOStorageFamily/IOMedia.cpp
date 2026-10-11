@@ -26,6 +26,7 @@
 #include <IOKit/storage/IOMedia.h>
 #include <IOKit/storage/IOBlockStorageDevice.h>
 #include <sys/proc.h>
+#include <pexpert/pexpert.h>
 
 #define super IOStorage
 OSDefineMetaClassAndStructors(IOMedia, IOStorage)
@@ -228,6 +229,28 @@ void IOMedia::detachFromChild(IORegistryEntry *       client,
     super::detachFromChild(client, plane);
 }
 
+// pdmediaopen logs every open and close of an IOMedia: who holds a disk that cannot be erased
+static void pd_media_log(IOMedia * media, const char * what, IOService * client, uintptr_t access)
+{
+    static int state;    // 0 unparsed, 1 on, 2 off
+    char name[32] = "";
+    OSString * bsd;
+
+    if ( state == 0 )
+    {
+        int v;
+
+        state = PE_parse_boot_argn( "pdmediaopen", &v, sizeof( v ) ) ? 1 : 2;
+    }
+    if ( state != 1 )  return;
+
+    bsd = OSDynamicCast( OSString, media->getProperty( "BSD Name" ) );
+    proc_selfname( name, sizeof( name ) );
+    IOLog( "PD-media: %s %s client %s by %s[%d] access 0x%lx\n", what,
+           bsd ? bsd->getCStringNoCopy( ) : "?", client ? client->getMetaClass( )->getClassName( ) : "?",
+           name, proc_selfpid( ), ( unsigned long ) access );
+}
+
 bool IOMedia::handleOpen(IOService *  client,
                          IOOptionBits options,
                          void *       argument)
@@ -244,6 +267,8 @@ bool IOMedia::handleOpen(IOService *  client,
     // method will do nothing and return success.  In all cases, one, singular
     // close-per-client is expected for all opens-per-client received.
     //
+
+    pd_media_log( this, "open", client, ( uintptr_t ) argument );
     // This method will work even when the media is in the terminated state.
     //
     // We are guaranteed that no other opens or closes will be processed until
@@ -515,6 +540,8 @@ void IOMedia::handleClose(IOService * client, IOOptionBits options)
     // We are guaranteed that no other opens or closes will be processed until
     // we change our state and return from this method.
     //
+
+    pd_media_log( this, "close", client, 0 );
 
     IOMediaAccess access;
     IOService *   driver;

@@ -59,6 +59,7 @@
 #include <pexpert/arm64/boot.h>
 #include <sys/kdebug.h>
 #include <arm/machine_routines.h>
+#include <arm/smp.h>
 #include <machine/atomic.h>
 #include <machine/machine_cpc.h>
 #include <san/kasan.h>
@@ -748,6 +749,18 @@ cpu_init(void)
 #if CONFIG_CPU_COUNTERS
 		cpc_cpu_transition(CPC_CPU_EARLY_INIT, cdp);
 #endif /* CONFIG_CPU_COUNTERS */
+#if __AMP__
+		// the loader tags core types from the device tree: each core checks its own MIDR part number
+		{
+			uint32_t part = (uint32_t)(__builtin_arm_rsr64("MIDR_EL1") >> 4) & 0xfff;
+			int big = part == 0xd0b, little = part == 0xd05;	// Cortex-A76, Cortex-A55
+			int type = cdp->cpu_cluster_type;
+
+			printf("cpu %d: MIDR part 0x%03x, cluster type %s%s\n", cdp->cpu_number, part,
+			    type == CLUSTER_TYPE_P ? "P" : type == CLUSTER_TYPE_E ? "E" : "SMP",
+			    (type == CLUSTER_TYPE_P && little) || (type == CLUSTER_TYPE_E && big) ? " (MISMATCH)" : "");
+		}
+#endif
 	}
 	cdp->cpu_stat.irq_ex_cnt_wake = 0;
 	cdp->cpu_stat.ipi_cnt_wake = 0;

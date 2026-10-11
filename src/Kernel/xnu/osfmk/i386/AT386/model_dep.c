@@ -91,6 +91,7 @@
 #include <kern/iotrace.h>
 #include <kern/kern_stackshot.h>
 #include <i386/postcode.h>
+#include <i386/pal_routines.h>
 #include <i386/mp_desc.h>
 #include <i386/misc_protos.h>
 #include <i386/panic_notify.h>
@@ -459,7 +460,8 @@ efi_init(void)
 				    (void *) vm_addr,
 				    (void *) vm_size);
 				pmap_map_bd(vm_addr, phys_addr, phys_addr + round_page(vm_size),
-				    (mptr->Type == kEfiRuntimeServicesCode) ? VM_PROT_READ | VM_PROT_EXECUTE : VM_PROT_READ | VM_PROT_WRITE,
+				    // PC firmware lists a runtime driver's whole image as code, its globals included
+				    (mptr->Type == kEfiRuntimeServicesCode) ? VM_PROT_ALL : VM_PROT_READ | VM_PROT_WRITE,
 				    (mptr->Type == EfiMemoryMappedIO)       ? VM_WIMG_IO   : VM_WIMG_USE_DEFAULT);
 			}
 		}
@@ -559,7 +561,8 @@ hibernate_newruntime_map(void * map, vm_size_t map_size, uint32_t system_table_o
 				kprintf("mapping[%u] %qx @ %lx, %llu\n", mptr->Type, phys_addr, (unsigned long)vm_addr, mptr->NumberOfPages);
 
 				pmap_map(vm_addr, phys_addr, phys_addr + round_page(vm_size),
-				    (mptr->Type == kEfiRuntimeServicesCode) ? VM_PROT_READ | VM_PROT_EXECUTE : VM_PROT_READ | VM_PROT_WRITE,
+				    // PC firmware lists a runtime driver's whole image as code, its globals included
+				    (mptr->Type == kEfiRuntimeServicesCode) ? VM_PROT_ALL : VM_PROT_READ | VM_PROT_WRITE,
 				    (mptr->Type == EfiMemoryMappedIO)       ? VM_WIMG_IO   : VM_WIMG_USE_DEFAULT);
 			}
 		}
@@ -857,6 +860,8 @@ RecordPanicStackshot()
 	return;
 }
 
+static void pd_panic_save_efi(void);
+
 void
 SavePanicInfo(
 	__unused const char *message, void *panic_data, uint64_t panic_options, __unused const char* panic_initiator)
@@ -948,6 +953,7 @@ SavePanicInfo(
 
 	/* Flush the panic log */
 	paniclog_flush_internal(kPaniclogFlushBase);
+	pd_panic_save_efi();
 
 	/* Try to take a panic stackshot */
 	RecordPanicStackshot();
@@ -959,6 +965,48 @@ SavePanicInfo(
 	 * from when we tried to capture it.
 	 */
 	paniclog_flush_internal(kPaniclogFlushStackshot);
+}
+
+// the panic log's tail goes into an EFI variable for the loader to save as a file on the next boot,
+// which needs nothing but the firmware's runtime services, so it works for early hardware panics
+#define PD_PANIC_EFI_MAX (16 * 1024)
+
+static void
+pd_panic_save_efi(void)
+{
+	static const uint16_t name[] = { 'P', 'D', 'P', 'a', 'n', 'i', 'c', 'L', 'o', 'g', 0 };
+	// 0f1e4b6a-7c3d-4e2f-9a5b-504450414e49, PureDarwin's own vendor GUID
+	static const uint8_t guid[16] = { 0x6a, 0x4b, 0x1e, 0x0f, 0x3d, 0x7c, 0x2f, 0x4e,
+		                          0x9a, 0x5b, 0x50, 0x44, 0x50, 0x41, 0x4e, 0x49 };
+	EFI_RUNTIME_SERVICES_64 *rt = (EFI_RUNTIME_SERVICES_64 *)gPEEFIRuntimeServices;
+	struct pal_efi_registers regs = {};
+	uint64_t stack[6] = {};
+	uint64_t status = 0;
+	const char *log;
+	uint32_t len;
+	static boolean_t done;
+
+	if (done || rt == NULL || rt->SetVariable == 0 || panic_info->mph_panic_log_len == 0)
+		return;
+	done = TRUE;
+
+	log = (const char *)panic_info + panic_info->mph_panic_log_offset;
+	len = panic_info->mph_panic_log_len;
+	if (len > PD_PANIC_EFI_MAX) {
+		log += len - PD_PANIC_EFI_MAX;
+		len = PD_PANIC_EFI_MAX;
+	}
+
+	// SetVariable(name, guid, NV | BS | RT, size, data), the fifth argument after the 32-byte shadow space
+	regs.rcx = (uint64_t)(uintptr_t)name;
+	regs.rdx = (uint64_t)(uintptr_t)guid;
+	regs.r8 = 7;
+	regs.r9 = len;
+	stack[4] = (uint64_t)(uintptr_t)log;
+	if (pal_efi_call_in_64bit_mode(rt->SetVariable, &regs, stack, sizeof(stack), &status) != KERN_SUCCESS || status != 0)
+		kdb_printf("panic log: EFI SetVariable failed (0x%llx)\n", status);
+	else
+		kdb_printf("panic log: %u bytes saved to EFI variable PDPanicLog\n", len);
 }
 
 void

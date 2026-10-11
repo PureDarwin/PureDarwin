@@ -8913,6 +8913,12 @@ IOReturn IOFramebuffer::open( void )
             err = kIOReturnNotOpen;
             continue;
         }
+        // a framebuffer whose driver gave way to another one has no provider left to configure
+        if (!getProvider() || isInactive())
+        {
+            err = kIOReturnNotAttached;
+            continue;
+        }
 
         if (!gIOFBServerInit) IOFramebuffer::initialize();
 

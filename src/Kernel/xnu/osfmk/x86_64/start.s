@@ -87,6 +87,9 @@
 
 	testl	%edi, %edi
 	jz	90f
+	// a graphical boot (no -v) keeps the logo screen clean
+	cmpl	$1, BA_VIDEO_DISPLAY(%edi)
+	je	90f
 	cmpl	$32, BA_VIDEO_DEPTH(%edi)
 	jne	90f
 	cmpl	$0, (BA_VIDEO_BASEADDR + 4)(%edi)

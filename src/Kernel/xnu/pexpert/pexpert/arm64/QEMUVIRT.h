@@ -2,7 +2,9 @@
 #define _PEXPERT_ARM_QEMUVIRT_H
 
 #define NO_MONITOR 1
+#ifndef PD_VIRT_AMP
 #define NO_ECORE 1
+#endif
 
 #define QEMUVIRT
 #define QEMUVIRT_BRINGUP

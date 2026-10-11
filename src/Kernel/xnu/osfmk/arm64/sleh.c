@@ -26,6 +26,7 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
+#include <kern/thread_call.h>
 #include <arm/caches_internal.h>
 #include <arm/cpu_data.h>
 #include <arm/cpu_data_internal.h>
@@ -2041,6 +2042,34 @@ pd_fault_dump(arm_saved_state_t *state, uint64_t esr, vm_offset_t fault_addr, ke
 static int pd_stack_regs;
 static void pd_stack_dump_regs(vm_map_t map, arm_saved_state_t *st);
 
+// a blocked thread's kernel frames from its switch context, unslid, to look up in the kernel's symbols
+static void
+pd_stack_kernel(thread_t thread)
+{
+	arm_kernel_saved_state_t *ks = &thread_get_kernel_state(thread)->machine.ss;
+	uintptr_t lo = thread->kernel_stack, hi = lo + kernel_stack_size, fp = ks->fp;
+	uint64_t pcs[PD_STACK_FRAMES];
+	char line[8 * 20 + 1];
+	int n = 0;
+
+	pcs[n++] = VM_KERNEL_UNSLIDE(ks->lr);
+	while (n < PD_STACK_FRAMES && fp >= lo && fp + 16 <= hi && (fp & 7) == 0) {
+		uintptr_t next = ((uintptr_t *)fp)[0], lr = ((uintptr_t *)fp)[1];
+
+		pcs[n++] = VM_KERNEL_UNSLIDE(lr);
+		if (next <= fp) break;
+		fp = next;
+	}
+	for (int i = 0; i < n; i += 8) {
+		int len = 0;
+
+		line[0] = 0;
+		for (int j = i; j < n && j < i + 8; j++)
+			len += snprintf(line + len, sizeof(line) - len, " %llu", (unsigned long long)pcs[j]);
+		IOLog("PD-stack:   kernel%s\n", line);
+	}
+}
+
 static void
 pd_stack_thread(task_t task, thread_t thread)
 {
@@ -2060,7 +2089,13 @@ pd_stack_thread(task_t task, thread_t thread)
 		if (frame[0] <= fp) break;
 		fp = frame[0];
 	}
-	IOLog("PD-stack:  tid 0x%llx state 0x%x frames %d\n", (unsigned long long)thread_tid(thread), thread->state, n);
+	// x16 is the syscall number of a thread waiting in the kernel (negative for mach traps), the block hint says on what kind of primitive,
+	// and cpu is the processor the thread last ran on
+	IOLog("PD-stack:  tid 0x%llx state 0x%x frames %d x16 %lld hint %d cpu %d\n", (unsigned long long)thread_tid(thread),
+	    thread->state, n, (long long)get_saved_state_reg(st, 16), (int)thread->block_hint,
+	    thread->last_processor != PROCESSOR_NULL ? thread->last_processor->cpu_id : -1);
+	if (thread != current_thread() && (thread->state & TH_WAIT) && thread->kernel_stack && thread->machine.kpcb == NULL)
+		pd_stack_kernel(thread);
 	for (int i = 0; i < n; i += 8) {
 		int len = 0;
 
@@ -2118,6 +2153,12 @@ pd_stack_task(task_t task)
 	}
 	task_unlock(task);
 
+	// from the timer the task may have exited since it was picked
+	if (get_bsdtask_info(task) == NULL) {
+		for (int i = 0; i < n; i++)
+			thread_deallocate(threads[i]);
+		return;
+	}
 	IOLog("PD-stack: %s[%d] %d threads, shared cache slide 0x%x\n", proc_best_name(get_bsdtask_info(task)),
 	    task_pid(task), total, task->task_shared_region_slide);
 	for (int i = 0; i < n; i++) {
@@ -2143,6 +2184,17 @@ pd_stack_name_wanted(const char *name, const char *want)
 	return false;
 }
 
+static thread_call_t pd_stack_tc;
+static uint64_t pd_stack_period;
+
+// samples from a thread call too, so tasks are still dumped once nothing makes syscalls (shutdown)
+static void
+pd_stack_timer(thread_call_param_t p0 __unused, thread_call_param_t p1 __unused)
+{
+	pd_stack_check();
+	thread_call_enter_delayed(pd_stack_tc, mach_absolute_time() + pd_stack_period);
+}
+
 void
 pd_stack_check(void)
 {
@@ -2162,6 +2214,11 @@ pd_stack_check(void)
 			nanoseconds_to_absolutetime((uint64_t)(secs > 0 ? secs : 60) * NSEC_PER_SEC, &period);
 			deadline = mach_absolute_time() + period;
 			state = 1;
+			pd_stack_period = period;
+			pd_stack_tc = thread_call_allocate_with_options(pd_stack_timer, NULL, THREAD_CALL_PRIORITY_KERNEL,
+			    THREAD_CALL_OPTIONS_ONCE);
+			if (pd_stack_tc != NULL)
+				thread_call_enter_delayed(pd_stack_tc, mach_absolute_time() + period);
 		}
 		return;
 	}

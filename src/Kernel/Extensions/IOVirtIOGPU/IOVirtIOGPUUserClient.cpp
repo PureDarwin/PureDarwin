@@ -366,6 +366,30 @@ IOVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArgumen
             return fOwner->getCurrentDisplayMode(
                 (IODisplayModeID *)&args->scalarOutput[0],
                 (IOIndex *)&args->scalarOutput[1]);
+        // IOFramebuffer's own numbers: 4 set mode, 5 mode information, 6 mode count, 7 the modes
+        case 4:
+            if (args->scalarInputCount < 2)
+                return kIOReturnBadArgument;
+            return fOwner->setDisplayMode((IODisplayModeID)args->scalarInput[0], (IOIndex)args->scalarInput[1]);
+        case 5:
+            if (args->scalarInputCount < 1 || !args->structureOutput ||
+                args->structureOutputSize < sizeof(IODisplayModeInformation))
+                return kIOReturnBadArgument;
+            return fOwner->getInformationForDisplayMode((IODisplayModeID)args->scalarInput[0],
+                                                        (IODisplayModeInformation *)args->structureOutput);
+        case 6:
+            if (args->scalarOutputCount < 1)
+                return kIOReturnBadArgument;
+            args->scalarOutput[0] = fOwner->getDisplayModeCount();
+            return kIOReturnSuccess;
+        case 7: {
+            IOItemCount count = fOwner->getDisplayModeCount();
+
+            if (!args->structureOutput || args->structureOutputSize < count * sizeof(IODisplayModeID))
+                return kIOReturnBadArgument;
+            args->structureOutputSize = count * sizeof(IODisplayModeID);
+            return fOwner->getDisplayModes((IODisplayModeID *)args->structureOutput);
+        }
         case kPDGPU_Present:
             if (!args->structureInput ||
                 args->structureInputSize < sizeof(uint32_t) * 4)

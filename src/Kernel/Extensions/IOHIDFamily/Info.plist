@@ -202,8 +202,6 @@
 			<string></string>
 			<key>IOClass</key>
 			<string>IOHIDEventDriver</string>
-			<key>IOMatchDefer</key>
-			<true/>
 			<key>IOProviderClass</key>
 			<string>IOHIDInterface</string>
 		</dict>

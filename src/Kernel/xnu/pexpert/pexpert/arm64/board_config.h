@@ -266,7 +266,13 @@
 
 #define MAX_L2_CLINE                   6
 #define MAX_CPUS                       32
+#ifdef PD_VIRT_AMP
+// an E and a P cluster, typed by the loader's cluster-type tags
+#define MAX_CPU_CLUSTERS               2
+#define __ARM_AMP__                    1
+#else
 #define MAX_CPU_CLUSTERS               1
+#endif
 
 #define CORE_NCTRS                     8 /* Placeholder; KPC is not enabled for this target */
 #endif  /* ARM64_BOARD_CONFIG_VIRT */

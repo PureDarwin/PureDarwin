@@ -593,6 +593,19 @@ x86_filter_TLB_coherency_interrupts(boolean_t dofilter)
  *	insert this page into the given map NOW.
  */
 
+
+// a page outside managed RAM (a PCI BAR) is uncached unless the mapping asks for copyback. virtio-gpu's host-visible window
+// is ordinary host memory behind a BAR, and mapped uncached every CPU access to it went at a few MB/s.
+static pt_entry_t
+pmap_enter_cache_attributes(pmap_paddr_t pa, unsigned int flags, boolean_t is_ept)
+{
+	if (last_managed_page != 0 && !IS_MANAGED_PAGE(ppn_to_pai(pa_index(pa))) &&
+	    (flags & (VM_WIMG_USE_DEFAULT | VM_WIMG_MASK)) == VM_WIMG_COPYBACK) {
+		return is_ept ? INTEL_EPT_WB : 0;
+	}
+	return pmap_get_cache_attributes(pa_index(pa), is_ept);
+}
+
 kern_return_t
 pmap_enter(
 	pmap_t          pmap,
@@ -843,7 +856,7 @@ Retry:
 			template |= INTEL_EPT_IPAT;
 		}
 
-		template |= pmap_get_cache_attributes(pa_index(pa), is_ept);
+		template |= pmap_enter_cache_attributes(pa, flags, is_ept);
 
 		/*
 		 * We don't support passing VM_MEM_NOT_CACHEABLE flags for EPT PTEs
@@ -1200,7 +1213,7 @@ dont_update_pte:
 	 * from the existing physical page attributes.
 	 */
 
-	template |= pmap_get_cache_attributes(pa_index(pa), is_ept);
+	template |= pmap_enter_cache_attributes(pa, flags, is_ept);
 
 	/*
 	 * We don't support passing VM_MEM_NOT_CACHEABLE flags for EPT PTEs

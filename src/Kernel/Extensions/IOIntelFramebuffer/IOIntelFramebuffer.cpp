@@ -2,6 +2,8 @@
 
 #include <IOKit/IODeviceMemory.h>
 #include <IOKit/IOLib.h>
+#include <IOKit/IOMemoryDescriptor.h>
+#include <pexpert/pexpert.h>
 
 extern "C" {
 #include <lil/intel.h>
@@ -110,6 +112,36 @@ IOIntelFramebuffer::mapScanoutGtt(void)
     return true;
 }
 
+// carries the firmware picture (the boot logo) over, centred, so the modeset doesn't blank it
+static void
+copyFirmwareScreen(uint8_t *dst, uint32_t width, uint32_t height, uint32_t pitch)
+{
+    PE_Video fw;
+
+    bzero(&fw, sizeof(fw));
+    if (PE_current_console(&fw) != 0 || !fw.v_baseAddr || fw.v_depth != 32 || !fw.v_width || !fw.v_height)
+        return;
+
+    uint64_t phys = fw.v_baseAddr & ~1ULL;
+    IOMemoryDescriptor *md = IOMemoryDescriptor::withPhysicalAddress(phys, fw.v_rowBytes * fw.v_height, kIODirectionIn);
+    IOMemoryMap *map = md ? md->map() : NULL;
+
+    if (map) {
+        uint8_t *src = (uint8_t *)map->getVirtualAddress();
+        uint32_t w = fw.v_width < width ? fw.v_width : width;
+        uint32_t h = fw.v_height < height ? fw.v_height : height;
+        uint32_t dx = (width - w) / 2, dy = (height - h) / 2;
+        uint32_t sx = (fw.v_width - w) / 2, sy = (fw.v_height - h) / 2;
+
+        for (uint32_t y = 0; y < h; y++)
+            memcpy(dst + (dy + y) * pitch + dx * 4, src + (sy + y) * fw.v_rowBytes + sx * 4, w * 4);
+        DEBUG("carried the %ux%u firmware screen over\n", (unsigned)fw.v_width, (unsigned)fw.v_height);
+        map->release();
+    }
+    if (md)
+        md->release();
+}
+
 bool
 IOIntelFramebuffer::lilBringup(void)
 {
@@ -166,6 +198,8 @@ IOIntelFramebuffer::lilBringup(void)
         DEBUG("scanout GTT mapping failed\n");
         return false;
     }
+
+    copyFirmwareScreen(fFbBase, fWidth, fHeight, fPitch);
 
     // Point the primary plane at the GTT address we mapped the scanout to.
     if (crtc->num_planes && crtc->planes) {
@@ -237,8 +271,9 @@ IOIntelFramebuffer::start(IOService *provider)
             // Without this the vc console stays in graphics-boot mode (only the
             // progress meter draws, text is suppressed). Switch to the on-screen
             // text console so the boot log appears on the panel. gopconsole=1
-            // forces it; default on for gen9 bringup so there's visible output.
-            bool wantConsole = true;
+            // forces it.
+            // verbose boots get text, the rest keep the logo and progress bar
+            bool wantConsole = PE_parse_boot_argn("-v", NULL, 0);
             PE_parse_boot_argn("gopconsole", &wantConsole, sizeof(wantConsole));
             if (wantConsole) {
                 switch_to_video_console();

@@ -134,6 +134,10 @@
 				<string>NetBSD</string>
 				<key>0xAB</key>
 				<string>Apple_Boot</string>
+				<key>0xAC</key>
+				<string>69646961-6700-11AA-AA11-00306543ECAC</string>
+				<key>0xAD</key>
+				<string>7C3457EF-0000-11AA-AA11-00306543ECAC</string>
 				<key>0xAE</key>
 				<string>Apple_Encrypted</string>
 				<key>0xAF</key>
