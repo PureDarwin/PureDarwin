@@ -328,6 +328,14 @@ wl_connection_create(int fd, size_t max_buffer_size)
 	wl_connection_set_max_buffer_size(connection, max_buffer_size);
 
 	connection->fd = fd;
+#ifdef SO_NOSIGPIPE
+	// Darwin has no MSG_NOSIGNAL, a peer that went away would otherwise kill us with SIGPIPE
+	{
+		int on = 1;
+
+		setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on));
+	}
+#endif
 
 	return connection;
 }

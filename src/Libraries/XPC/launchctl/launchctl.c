@@ -2269,6 +2269,21 @@ init_data_protection(void)
 }
 #endif
 
+// the kernel meter fills the first half of the boot bar, the bootstrap steps drive the rest
+// the desktop session finishes it at 1024 and hands the screen over
+static void
+boot_progress(int value)
+{
+	static bool user;
+	int on = 1;
+
+	if (!user) {
+		user = true;
+		(void)sysctlbyname("kern.progressmeterenable", NULL, NULL, &on, sizeof(on));
+	}
+	(void)sysctlbyname("kern.progressmeter", NULL, NULL, &value, sizeof(value));
+}
+
 static void
 system_specific_bootstrap(bool sflag)
 {
@@ -2280,6 +2295,7 @@ system_specific_bootstrap(bool sflag)
 #endif
 
 	handle_system_bootstrapper_crashes_separately();
+	boot_progress(576);
 
 	// Disable Libinfo lookups to mdns and ds while bootstrapping (8698260)
 	si_search_module_set_flags("mdns", 1);
@@ -2415,6 +2431,7 @@ system_specific_bootstrap(bool sflag)
 		}
 	}
 
+	boot_progress(640);
 	empty_dir(_PATH_VARRUN, NULL);
 	empty_dir(_PATH_TMP, NULL);
 	(void)remove(_PATH_NOLOGIN);
@@ -2458,13 +2475,16 @@ system_specific_bootstrap(bool sflag)
 		load_launchd_items[2] = "system";
 	}
 
+	boot_progress(704);
 	(void)posix_assumes_zero(load_and_unload_cmd(load_launchd_items_cnt, load_launchd_items));
+	boot_progress(832);
 
 	/* See <rdar://problem/5066316>. */
 	if (!_launchctl_apple_internal) {
 		mach_timespec_t w = { 5, 0 };
 		IOKitWaitQuiet(kIOMasterPortDefault, &w);
 	}
+	boot_progress(896);
 
 	do_BootCache_magic(BOOTCACHE_TAG);
 

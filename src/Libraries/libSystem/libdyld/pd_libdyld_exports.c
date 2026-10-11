@@ -93,6 +93,26 @@ _availability_version_check(uint32_t count, pd_dyld_build_version_t versions[])
 	return false;
 }
 
+// libsystem_darwin SPI, the Swift runtime's #available reads the OS version here
+struct os_system_version_s {
+	unsigned int major;
+	unsigned int minor;
+	unsigned int patch;
+};
+
+int
+os_system_version_get_current_version(struct os_system_version_s *v)
+{
+	uint32_t os = pd_os_version();
+
+	if (v == NULL)
+		return -1;
+	v->major = os >> 16;
+	v->minor = (os >> 8) & 0xff;
+	v->patch = os & 0xff;
+	return 0;
+}
+
 /* launchd's vproc API is not present in the first PureDarwin userland. */
 int
 vproc_swap_integer(void *vp, int key, int64_t *inval, int64_t *outval)

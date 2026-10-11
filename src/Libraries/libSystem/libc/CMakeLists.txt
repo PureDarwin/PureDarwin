@@ -264,6 +264,7 @@ target_sources(libc_static PRIVATE
     stdtime/FreeBSD/asctime.c    # _asctime
     stdtime/timezone_unix03.c    # _st_get_timezone / _st_set_timezone (strftime %z)
     libm/pd_libm_sincos_stret.c  # __sincos*_stret / __sincospi*_stret (Apple-only wrappers, not in openlibm; -fno-builtin below)
+    libm/pd_libm_simd.c  # <simd/matrix.h> inverses and identity matrices
     libm/pd_libm_exp10.c         # __exp10 / __exp10f (Apple-only base-10 exp, not in openlibm)
     libm/pd_libm_errhandling.c   # __math_errhandling (math.h's math_errhandling macro)
     libm/pd_libm_nexttowardl.c   # nexttowardl (openlibm's alias emits nothing on Mach-O)
@@ -378,6 +379,7 @@ target_sources(libc_static PRIVATE
     gen/FreeBSD/termios.c        # _tcgetattr
     gen/setlogin.c               # _setlogin
     gen/crypt.c                  # _crypt/_setkey/_encrypt (real Apple Libc DES crypt, what passwd(1) and sshd both call)
+    gen/crypt_sha512.c           # the $6$ SHA-512 scheme crypt() hands off to, over corecrypto
     gen/FreeBSD/readpassphrase.c # _readpassphrase/_getpass (passwd(1) prompts with it)
     string/FreeBSD/strnstr.c     # _strnstr
     os/pd_assumes.c               # os_assumes/os_assert real-contract impl (see file comment: real os/assumes.c needs firehose/os_log private ABI logd doesn't back here)

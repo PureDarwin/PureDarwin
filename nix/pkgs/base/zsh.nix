@@ -59,6 +59,10 @@ stdenv.mkDerivation {
       --prefix=$out \
       --bindir=$out/bin \
       --enable-etcdir=/etc \
+      --enable-fndir=/usr/share/zsh/${zsh.version}/functions \
+      --enable-site-fndir=/usr/share/zsh/site-functions \
+      --enable-scriptdir=/usr/share/zsh/${zsh.version}/scripts \
+      --disable-site-scriptdir \
       --disable-dynamic \
       --disable-gdbm \
       --disable-pcre \
@@ -75,9 +79,6 @@ stdenv.mkDerivation {
       -e 's/^#define HAVE__MKTEMP .*/#undef HAVE__MKTEMP/' \
       config.h
 
-    substituteInPlace Src/init.c \
-      --replace-fail 'opts[MONITOR] = 2;   /* may be unset in init_io() */' \
-                     'opts[MONITOR] = 0;   /* PureDarwin: tty pgrp support is incomplete */'
     substituteInPlace Src/signals.c \
       --replace-fail '/* Array describing the state of each signal: an element contains *' \
                      '/**/
@@ -105,6 +106,16 @@ void wait_for_processes(void);
   installPhase = ''
     runHook preInstall
     make install.bin install.modules
+    # compinit and the completers, flat in one fpath directory under /usr/share/zsh
+    make install.fns DESTDIR=$out
+    # the only two GPL-licensed completers
+    rm -f $out/usr/share/zsh/${zsh.version}/functions/{_composer,_darcs}
+    # the completion dump compinit would otherwise spend half a minute writing on first start, the
+    # build machine's zsh is the same version, and compinit rebuilds a copy whose file count is stale
+    share=$out/usr/share/zsh
+    ${zsh}/bin/zsh -f -c "zmodload zsh/zle; fpath=($share/${zsh.version}/functions $share/site-functions); \
+      autoload -Uz compinit; compinit -u -d $share/${zsh.version}/zcompdump"
+    test -s $share/${zsh.version}/zcompdump
     runHook postInstall
   '';
 

@@ -40,6 +40,10 @@
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
 #endif
+// strict POSIX headers hide it, the value is fixed in xnu's sys/socket.h
+#if defined(__APPLE__) && !defined(SO_NOSIGPIPE)
+#define SO_NOSIGPIPE 0x1022
+#endif
 #ifndef SOCK_CLOEXEC
 #define SOCK_CLOEXEC 0
 #endif

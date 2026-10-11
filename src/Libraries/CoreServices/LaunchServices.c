@@ -386,16 +386,10 @@ static OSStatus spawnApplication(CFURLRef appURL, CFArrayRef itemURLs)
         return kLSApplicationNotFoundErr;
     }
 
-    CFStringRef executablePath = CFURLCopyFileSystemPath(executableURL, kCFURLPOSIXPathStyle);
-    CFRelease(executableURL);
-    if (executablePath == NULL) {
-        return kLSApplicationNotFoundErr;
-    }
-
+    // CFBundle hands back the executable relative to the bundle's MacOS folder, so resolve it against that base
     char executable[PATH_MAX];
-    Boolean ok = CFStringGetCString(executablePath, executable, sizeof(executable),
-                                     kCFStringEncodingUTF8);
-    CFRelease(executablePath);
+    Boolean ok = CFURLGetFileSystemRepresentation(executableURL, true, (UInt8 *)executable, sizeof(executable));
+    CFRelease(executableURL);
     if (!ok) {
         return kLSDataErr;
     }
@@ -411,16 +405,10 @@ static OSStatus spawnApplication(CFURLRef appURL, CFArrayRef itemURLs)
     int argc = 1;
     for (CFIndex i = 0; i < itemCount; i++) {
         CFURLRef item = CFArrayGetValueAtIndex(itemURLs, i);
-        CFStringRef itemPath = CFURLCopyFileSystemPath(item, kCFURLPOSIXPathStyle);
-        if (itemPath == NULL) {
-            continue;
-        }
-
         char buffer[PATH_MAX];
-        if (CFStringGetCString(itemPath, buffer, sizeof(buffer), kCFStringEncodingUTF8)) {
+        if (CFURLGetFileSystemRepresentation(item, true, (UInt8 *)buffer, sizeof(buffer))) {
             argv[argc++] = strdup(buffer);
         }
-        CFRelease(itemPath);
     }
     argv[argc] = NULL;
 

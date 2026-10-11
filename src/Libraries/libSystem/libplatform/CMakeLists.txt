@@ -73,6 +73,10 @@ else()
         src/setjmp/x86_64/_setjmp.s
         src/setjmp/x86_64/_sigtramp.s
         src/setjmp/generic/sigtramp.c)
+    # memmove/memcpy, memset, bzero and memset_pattern* in SSE2 and rep movsb/stosb
+    set(_libplatform_string src/string/x86_64/pd_string.c)
+    # the static archive builds without -O, the vector loops need it to be worth having
+    set_source_files_properties(src/string/x86_64/pd_string.c PROPERTIES COMPILE_OPTIONS -O2)
     # x86 needs nothing here: its instruction cache is coherent, compiler-rt
     # does not build __clear_cache for it, and generic/cache.c only defines the
     # sys_cache_control dispatcher - which would reference the two primitives
@@ -123,6 +127,7 @@ target_sources(libplatform_static PRIVATE
     ${_libplatform_atomics}
     ${_libplatform_cachecontrol}
     ${_libplatform_ucontext}
+    ${_libplatform_string}
 )
 # VARIANT_STATIC: emit the plain C names (memcpy/memmove/strlen/strcmp/...) as
 # real symbols, not just the __platform_* internals -- this is the static-archive

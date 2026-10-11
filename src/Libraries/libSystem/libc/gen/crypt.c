@@ -531,6 +531,8 @@ static char	cryptresult[1+4+4+11+1];	/* encrypted result */
  * Return a pointer to static data consisting of the "setting"
  * followed by an encryption produced by the "key" and "setting".
  */
+char *__crypt_sha512(const char *key, const char *setting);
+
 char *
 crypt(key, setting)
 	register const char *key;
@@ -542,6 +544,10 @@ crypt(key, setting)
 	long salt;
 	int num_iter, salt_size;
 	C_block keyblock, rsltblock;
+
+	/* PureDarwin: "$6$" settings are SHA-512 crypt, everything else stays DES */
+	if (setting[0] == '$' && setting[1] == '6' && setting[2] == '$')
+		return (__crypt_sha512(key, setting));
 
 	for (i = 0; i < 8; i++) {
 		if ((t = 2*(unsigned char)(*key)) != 0)

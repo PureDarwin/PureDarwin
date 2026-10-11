@@ -93,7 +93,7 @@ if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32 OR PUREDARWIN_RISCV64)
     endif()
     # The rest of openlibm's long double surface (math.h and complex.h *l)
     list(FILTER _libsystem_export_lines EXCLUDE REGEX
-        "^_(acoshl|acosl|asinhl|asinl|atan2l|atanhl|atanl|cbrtl|ceill|copysignl|coshl|cosl|erfcl|erfl|exp2l|expl|expm1l|fabsl|fmal|fmaxl|fminl|fmodl|hypotl|ilogbl|lgammal|llrintl|log10l|log1pl|log2l|logbl|logl|lrintl|modfl|nearbyintl|nextafterl|nexttowardl|powl|remainderl|remquol|rintl|scalblnl|sinhl|sinl|sqrtl|tanhl|tanl|tgammal|truncl)$")
+        "^_(acoshl|acosl|asinhl|asinl|atan2l|atanhl|atanl|cbrtl|ceill|copysignl|coshl|cosl|erfcl|erfl|exp2l|expl|expm1l|fabsl|fmal|fmaxl|fminl|fmodl|hypotl|ilogbl|lgammal|lgammal_r|llrintl|log10l|log1pl|log2l|logbl|logl|lrintl|modfl|nearbyintl|nextafterl|nexttowardl|powl|remainderl|remquol|rintl|scalblnl|sinhl|sinl|sqrtl|tanhl|tanl|tgammal|truncl)$")
     list(FILTER _libsystem_export_lines EXCLUDE REGEX
         "^_(cabsl|cacoshl|cacosl|cargl|casinhl|casinl|catanhl|catanl|ccoshl|ccosl|cexpl|cimagl|clogl|conjl|cpowl|cprojl|creall|csinhl|csinl|csqrtl|ctanhl|ctanl)$")
     # openlibm's fenv is the x86 SSE/x87 one, riscv64 has its own fcsr fenv
@@ -308,6 +308,8 @@ target_link_options(libSystem_B_stub PRIVATE
     ${_libsystem_u_flags}
     ${_libsystem_objc_u_flags}
     -Wl,-order_file,${LIBDISPATCH_ORDER}
+    # libdispatch.aliases: the munmap destructor is the vm_deallocate one under mach
+    -Wl,-alias,__dispatch_data_destructor_vm_deallocate,__dispatch_data_destructor_munmap
     -Wl,-dead_strip
     -Wl,-fixup_chains
     -Wl,-exported_symbols_list,${_libsystem_exports_for_link})

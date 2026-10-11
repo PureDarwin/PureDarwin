@@ -157,6 +157,50 @@ SCNetworkReachabilityCreateWithOptions(CFAllocatorRef allocator,
 	return (SCNetworkReachabilityRef)target;
 }
 
+// the all-zeros address asks whether there is a network at all, which is a default route
+// that is judged by a route lookup to a TEST-NET-2 address (RFC 5737)
+SCNetworkReachabilityRef
+SCNetworkReachabilityCreateWithAddress(CFAllocatorRef allocator,
+				       const struct sockaddr *address)
+{
+	struct sockaddr_in	probe;
+	CFDataRef		data;
+	CFStringRef		key;
+	CFDictionaryRef		options;
+	SCNetworkReachabilityRef target;
+
+	if ((address == NULL) || (address->sa_len < sizeof(struct sockaddr)) ||
+	    (address->sa_len > sizeof(struct sockaddr_storage))) {
+		return NULL;
+	}
+
+	if ((address->sa_family == AF_INET) &&
+	    (((const struct sockaddr_in *)address)->sin_addr.s_addr == INADDR_ANY)) {
+		memset(&probe, 0, sizeof(probe));
+		probe.sin_len = sizeof(probe);
+		probe.sin_family = AF_INET;
+		probe.sin_addr.s_addr = htonl(0xc6336401);	// 198.51.100.1
+		address = (const struct sockaddr *)&probe;
+	}
+
+	data = CFDataCreate(allocator, (const UInt8 *)address, address->sa_len);
+	if (data == NULL) {
+		return NULL;
+	}
+	key = kSCNetworkReachabilityOptionRemoteAddress;
+	options = CFDictionaryCreate(allocator, (const void **)&key,
+				     (const void **)&data, 1,
+				     &kCFTypeDictionaryKeyCallBacks,
+				     &kCFTypeDictionaryValueCallBacks);
+	CFRelease(data);
+	if (options == NULL) {
+		return NULL;
+	}
+	target = SCNetworkReachabilityCreateWithOptions(allocator, options);
+	CFRelease(options);
+	return target;
+}
+
 Boolean
 SCNetworkReachabilityGetFlags(SCNetworkReachabilityRef target,
 			      SCNetworkReachabilityFlags *flags)
