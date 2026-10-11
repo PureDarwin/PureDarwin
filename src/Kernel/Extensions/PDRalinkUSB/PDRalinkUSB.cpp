@@ -18,6 +18,8 @@
 
 extern "C" {
 void pd80211_lock(void);
+int pd80211_locked(void);
+int tsleep_nsec(const volatile void *, int, const char *, uint64_t);
 void pd80211_unlock(void);
 }
 
@@ -32,6 +34,8 @@ struct usbd_pipe {
     IOUSBPipe *pipe;
     uint8_t addr;
     bool in;
+    volatile SInt32 inflight;
+    volatile bool aborting;
 };
 
 struct usbd_interface {
@@ -205,10 +209,24 @@ usbd_status usbd_open_pipe(struct usbd_interface *ui, uint8_t addr, uint8_t flag
     return USBD_INVAL;
 }
 
+// openbsd frees the xfers right after this returns, so wait for every completion to land first
 void usbd_abort_pipe(struct usbd_pipe *p)
 {
-    if (p && p->pipe)
-        p->pipe->Abort();
+    if (p == NULL || p->pipe == NULL)
+        return;
+    p->aborting = true;
+    p->pipe->Abort();
+
+    // the bus thread may be blocked on the stack lock with the cancelled xfers queued behind it, so let go while waiting
+    for (int i = 0; i < 1000 && p->inflight > 0; i++) {
+        if (pd80211_locked())
+            tsleep_nsec(p, 0, "runabort", 1000000);
+        else
+            IOSleep(1);
+    }
+    p->aborting = false;
+    if (p->inflight > 0)
+        kprintf("PDRalinkUSB: pipe 0x%02x still has %d transfers after abort\n", p->addr, (int)p->inflight);
 }
 
 void usbd_close_pipe(struct usbd_pipe *p)
@@ -280,11 +298,14 @@ static void xferDone(void *target, void *parameter, IOReturn status, UInt32 rema
         x->status = USBD_TIMEOUT;
     else
         x->status = USBD_IOERROR;
-    if (x->cb == NULL)
-        return;
-    pd80211_lock();
-    x->cb(x, x->priv, x->status);
-    pd80211_unlock();
+
+    // an abort holds the stack lock while it waits on inflight, so nothing finishing then may take it
+    if (x->cb && x->status != USBD_CANCELLED && !x->pipe->aborting) {
+        pd80211_lock();
+        x->cb(x, x->priv, x->status);
+        pd80211_unlock();
+    }
+    OSDecrementAtomic(&x->pipe->inflight);
 }
 
 usbd_status usbd_transfer(struct usbd_xfer *x)
@@ -296,11 +317,16 @@ usbd_status usbd_transfer(struct usbd_xfer *x)
     x->completion.target = x;
     x->completion.action = &xferDone;
     x->completion.parameter = NULL;
+    OSIncrementAtomic(&x->pipe->inflight);
     if (x->pipe->in)
         ret = x->pipe->pipe->Read(x->mem, 0, 0, x->len, &x->completion);
     else
         ret = x->pipe->pipe->Write(x->mem, 0, x->timeout, x->len, &x->completion);
-    return ret == kIOReturnSuccess ? USBD_IN_PROGRESS : USBD_IOERROR;
+    if (ret != kIOReturnSuccess) {
+        OSDecrementAtomic(&x->pipe->inflight);
+        return USBD_IOERROR;
+    }
+    return USBD_IN_PROGRESS;
 }
 
 void usbd_get_xfer_status(struct usbd_xfer *x, void **priv, void **buf, uint32_t *count, usbd_status *status)
