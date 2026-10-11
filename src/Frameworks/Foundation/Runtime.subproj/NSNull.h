@@ -12,7 +12,7 @@
 #import <Foundation/NSObject.h>
 #import <Foundation/NSObjCRuntime.h>
 
-@interface NSNull : NSObject
+@interface NSNull : NSObject <NSCopying, NSSecureCoding>
 
 + (NSNull *)null;
 

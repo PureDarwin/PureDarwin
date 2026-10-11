@@ -25,6 +25,23 @@
     return (NSString *)CFSTR("<null>");
 }
 
+- (id)copyWithZone:(void *)zone {
+    return [self retain];
+}
+
+// NSNull archives as nothing and decodes back to the singleton, so identity checks survive a round trip
++ (BOOL)supportsSecureCoding {
+    return YES;
+}
+
+- (void)encodeWithCoder:(id)coder {
+}
+
+- (id)initWithCoder:(id)coder {
+    [self release];
+    return [[NSNull null] retain];
+}
+
 @end
 
 @interface __NSCFBoolean : NSObject
