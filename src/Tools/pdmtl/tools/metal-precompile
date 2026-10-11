@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+# metal-precompile: metallibs for PureDarwin, which has no Metal compiler, built by Apple's metal and metallib
+# on a Mac over ssh and kept in a cache keyed by content.
+#
+#   metal-precompile [opts] A.metal B.metal ...            one metallib per file, keyed like newLibraryWithSource:
+#                                                         (SHA-256 of the source, plus the -D macros), for
+#                                                         $MTL_PD_LIBRARY_CACHE, Resources/MetalLibraryCache or
+#                                                         /usr/local/share/metal-pd/library-cache
+#   metal-precompile --default [opts] A.metal B.metal ...  all files linked into one library (an app's
+#                                                         default.metallib), keyed by --key
+#   metal-precompile --key [opts] A.metal B.metal ...      print the default library's key and stop (no Mac)
+#   metal-precompile --missing DIR [opts]                  every source newLibraryWithSource: saved in DIR
+#                                                         (a guest's /var/tmp/metal-pd-missing)
+#
+# opts: -o DIR      cache directory (default ./metallib-cache)
+#       -I DIR      header search path; its *.h count toward the default key
+#       -D N[=V]    preprocessor macro
+#       --std STD   language standard (default macos-metal2.3)
+#       --host H    the Mac (default vali@10.0.0.39, or $MTL_PD_MAC)
+#       --developer-dir D   Xcode developer dir on the Mac (default Xcode-13, or $MTL_PD_DEVELOPER_DIR)
+set -euo pipefail
+
+mode=source out=./metallib-cache std=macos-metal2.3 missing= fastmath=1 mathmode= fpfuncs=
+host=${MTL_PD_MAC:-vali@10.0.0.39}
+devdir=${MTL_PD_DEVELOPER_DIR:-/Applications/Xcode-13.app/Contents/Developer}
+incs=() defs=() files=()
+
+while [ $# -gt 0 ]; do
+  case $1 in
+    --default) mode=default ;;
+    --key) mode=key ;;
+    --missing) mode=missing missing=$2; shift ;;
+    -o) out=$2; shift ;;
+    -I) incs+=("$2"); shift ;;
+    -I*) incs+=("${1#-I}") ;;
+    -D) defs+=("$2"); shift ;;
+    -D*) defs+=("${1#-D}") ;;
+    --std) std=$2; shift ;;
+    --host) host=$2; shift ;;
+    --developer-dir) devdir=$2; shift ;;
+    -h|--help) sed -n '2,/^set -e/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
+    -*) echo "metal-precompile: unknown option $1" >&2; exit 2 ;;
+    *) files+=("$1") ;;
+  esac
+  shift
+done
+
+sha() { sha256sum | cut -d' ' -f1; }
+
+# macros as newLibraryWithSource: hashes them: NAME=VALUE per line in name order (VALUE 1 when not given)
+macro_lines() {
+  local d
+  for d in ${defs[@]+"${defs[@]}"}; do
+    case $d in *=*) echo "$d" ;; *) echo "$d=1" ;; esac
+  done | LC_ALL=C sort -t '=' -k1,1
+}
+
+source_key() {
+  if [ ${#defs[@]} -eq 0 ]; then
+    sha < "$1"
+  else
+    { cat "$1"; printf '\0'; macro_lines; } | sha
+  fi
+}
+
+# headers next to the sources and in the -I dirs
+headers() {
+  local d
+  { for f in "${files[@]}"; do dirname "$f"; done; for d in ${incs[@]+"${incs[@]}"}; do echo "$d"; done; } |
+    sort -u | while read -r d; do find "$d" -maxdepth 1 -name '*.h' -type f; done | sort -u
+}
+
+# the default library's key: the toolchain, standard and macros, then the hash and name of every source and
+# header, in order; paths don't count, so the same tree hashes the same anywhere
+default_key() {
+  local f
+  {
+    echo "toolchain $(basename "$(dirname "$(dirname "$devdir")")")"
+    echo "std $std"
+    macro_lines
+    for f in "${files[@]}" $(headers); do echo "$(sha < "$f") $(basename "$f")"; done | LC_ALL=C sort
+  } | sha
+}
+
+# copies the sources and headers to the Mac under their paths relative to the deepest common directory, so
+# relative includes keep working, and compiles them into one metallib there; prints the remote path
+build_on_mac() {
+  local key=$1; shift
+  local all=("$@" $(headers)) root rel=() f inc_rel=() d r="mtl-build/pd-$key"
+
+  root=$(dirname "$(realpath "${all[0]}")")
+  for f in "${all[@]}" ${incs[@]+"${incs[@]}"}; do
+    f=$(realpath "$f")
+    while [ "${f#"$root"/}" = "$f" ] && [ "$f" != "$root" ]; do root=$(dirname "$root"); done
+  done
+  for f in "${all[@]}"; do rel+=("$(realpath --relative-to="$root" "$f")"); done
+  for d in ${incs[@]+"${incs[@]}"}; do inc_rel+=("-I$(realpath --relative-to="$root" "$d")"); done
+  local srcs=() dflags=()
+  for f in "$@"; do srcs+=("$(realpath --relative-to="$root" "$f")"); done
+  while read -r d; do [ -n "$d" ] && dflags+=("-D$d"); done < <(macro_lines)
+
+  ssh -o BatchMode=yes "$host" "rm -rf $r && mkdir -p $r" >&2
+  tar -C "$root" -cf - "${rel[@]}" | ssh -o BatchMode=yes "$host" "tar -C $r -xf -" >&2
+  # the Mac's login shell may be zsh: no word splitting relied on there
+  local cmds="" s
+  for s in "${srcs[@]}"; do
+    cmds="$cmds xcrun -sdk macosx metal -std=$std $([ -n "$mathmode" ] && echo -fmetal-math-mode=$mathmode || { [ "$fastmath" = 0 ] && echo -fno-fast-math; }) $([ -n "$fpfuncs" ] && echo -fmetal-math-fp32-functions=$fpfuncs) ${dflags[*]+${dflags[*]}} ${inc_rel[*]+${inc_rel[*]}} -c '$s' -o air/$(echo "$s" | tr / _).air &&"
+  done
+  ssh -o BatchMode=yes "$host" "cd $r && export DEVELOPER_DIR=$devdir && mkdir air && $cmds
+    xcrun -sdk macosx metallib air/*.air -o out.metallib && xcrun -sdk macosx metal --version 2>&1 | head -1 > ver.txt" >&2
+  echo "$r"
+}
+
+fetch() {
+  local r=$1 key=$2 what=$3
+  mkdir -p "$out"
+  scp -q "$host:$r/out.metallib" "$out/$key.metallib.tmp" && mv "$out/$key.metallib.tmp" "$out/$key.metallib"
+  {
+    echo "$what"
+    echo "std $std"
+    [ -n "$mathmode" ] && echo "math mode $mathmode"
+    [ -n "$fpfuncs" ] && echo "fp32 functions $fpfuncs"
+    [ -z "$mathmode" ] && [ "$fastmath" = 0 ] && echo "fast math off"
+    macro_lines | sed 's/^/macro /'
+    echo "compiler $(ssh -o BatchMode=yes "$host" cat "$r/ver.txt") ($devdir on $host)"
+    echo "built $(TZ=America/New_York date '+%F %T %Z')"
+  } > "$out/$key.meta"
+  echo "$out/$key.metallib"
+}
+
+case $mode in
+  key)
+    [ ${#files[@]} -gt 0 ] || { echo "metal-precompile: no sources" >&2; exit 2; }
+    default_key ;;
+  default)
+    [ ${#files[@]} -gt 0 ] || { echo "metal-precompile: no sources" >&2; exit 2; }
+    key=$(default_key)
+    if [ -f "$out/$key.metallib" ]; then echo "$out/$key.metallib"; exit 0; fi
+    r=$(build_on_mac "$key" "${files[@]}")
+    fetch "$r" "$key" "default library: $(for f in "${files[@]}"; do basename "$f"; done | tr '\n' ' ')" ;;
+  source)
+    [ ${#files[@]} -gt 0 ] || { echo "metal-precompile: no sources" >&2; exit 2; }
+    all=("${files[@]}")
+    for f in "${all[@]}"; do
+      key=$(source_key "$f")
+      if [ -f "$out/$key.metallib" ]; then echo "$out/$key.metallib"; continue; fi
+      files=("$f")
+      r=$(build_on_mac "$key" "$f")
+      fetch "$r" "$key" "source $(basename "$f")"
+    done ;;
+  missing)
+    # NAME.macros holds the macro lines when the app passed preprocessorMacros; NAME.options the language
+    # version (major << 16 | minor), fast math, math mode and floating-point functions it asked for
+    std0=$std devdir0=$devdir
+    for f in "$missing"/*.metal; do
+      [ -e "$f" ] || continue
+      std=$std0 devdir=$devdir0 fastmath=1 mathmode= fpfuncs=
+      if [ -f "${f%.metal}.options" ]; then
+        case $(awk '/^mathMode/{print $2}' "${f%.metal}.options") in
+          0) mathmode=safe ;; 1) mathmode=relaxed ;; 2) mathmode=fast ;;
+        esac
+        case $(awk '/^mathFloatingPointFunctions/{print $2}' "${f%.metal}.options") in
+          0) fpfuncs=fast ;; 1) fpfuncs=precise ;;
+        esac
+        lv=$(awk '/^languageVersion/{print $2}' "${f%.metal}.options")
+        fastmath=$(awk '/^fastMath/{print $2}' "${f%.metal}.options")
+        if [ -n "$lv" ] && [ "$lv" != 0 ]; then
+          major=$((lv >> 16)) minor=$((lv & 0xffff))
+          if [ "$major" -ge 3 ]; then
+            # Metal 3 needs a newer toolchain than the default Xcode 13
+            std=metal$major.$minor devdir=${MTL_PD_DEVELOPER_DIR3:-/Applications/Xcode.app/Contents/Developer}
+          else
+            std=macos-metal$major.$minor
+          fi
+        fi
+      fi
+      k=${f%.metal}.macros defs=()
+      if [ -f "$k" ]; then
+        while IFS= read -r line; do [ -n "$line" ] && defs+=("$line"); done < "$k"
+      fi
+      key=$(source_key "$f")
+      [ "$key" = "$(basename "${f%.metal}")" ] || { echo "metal-precompile: $f hashes to $key, skipped" >&2; continue; }
+      if [ -f "$out/$key.metallib" ]; then echo "$out/$key.metallib"; continue; fi
+      files=("$f")
+      r=$(build_on_mac "$key" "$f")
+      fetch "$r" "$key" "source $(basename "$f") (saved by newLibraryWithSource:)"
+    done ;;
+esac

@@ -1,0 +1,3152 @@
+# Modifications for PureDarwin to darling-metal (MPL-2.0) files; these hunks stay MPL-2.0, see LICENSES/MPL-2.0.txt upstream
+--- a/include/Metal/Metal.h
++++ b/include/Metal/Metal.h
+@@ -4,6 +4,7 @@
+ #ifndef _METAL_METAL_H_
+ #define _METAL_METAL_H_
+ 
++#import <Metal/MTLBlitCommandEncoder.h>
+ #import <Metal/MTLBuffer.h>
+ #import <Metal/MTLCommandBuffer.h>
+ #import <Metal/MTLCommandEncoder.h>
+--- a/include/Metal/MTLBlitCommandEncoder.h
++++ b/include/Metal/MTLBlitCommandEncoder.h
+@@ -0,0 +1,91 @@
++// SPDX-FileCopyrightText: 2026 Darling Developers
++// SPDX-License-Identifier: MPL-2.0
++
++#ifndef _METAL_MTLBLITCOMMANDENCODER_H_
++#define _METAL_MTLBLITCOMMANDENCODER_H_
++
++#import <Foundation/Foundation.h>
++
++#import <Metal/MTLDefines.h>
++#import <Metal/MTLCommandEncoder.h>
++#import <Metal/MTLTypes.h>
++
++@protocol MTLBuffer;
++@protocol MTLTexture;
++@protocol MTLResource;
++
++typedef NS_OPTIONS(NSUInteger, MTLBlitOption) {
++	MTLBlitOptionNone = 0,
++	MTLBlitOptionDepthFromDepthStencil = 1 << 0,
++	MTLBlitOptionStencilFromDepthStencil = 1 << 1,
++	MTLBlitOptionRowLinearPVRTC = 1 << 2,
++};
++
++@protocol MTLBlitCommandEncoder <MTLCommandEncoder>
++
++- (void)copyFromBuffer: (id<MTLBuffer>)sourceBuffer
++          sourceOffset: (NSUInteger)sourceOffset
++              toBuffer: (id<MTLBuffer>)destinationBuffer
++     destinationOffset: (NSUInteger)destinationOffset
++                  size: (NSUInteger)size;
++
++- (void)copyFromBuffer: (id<MTLBuffer>)sourceBuffer
++          sourceOffset: (NSUInteger)sourceOffset
++     sourceBytesPerRow: (NSUInteger)sourceBytesPerRow
++   sourceBytesPerImage: (NSUInteger)sourceBytesPerImage
++            sourceSize: (MTLSize)sourceSize
++             toTexture: (id<MTLTexture>)destinationTexture
++      destinationSlice: (NSUInteger)destinationSlice
++      destinationLevel: (NSUInteger)destinationLevel
++     destinationOrigin: (MTLOrigin)destinationOrigin;
++
++- (void)copyFromTexture: (id<MTLTexture>)sourceTexture
++            sourceSlice: (NSUInteger)sourceSlice
++            sourceLevel: (NSUInteger)sourceLevel
++           sourceOrigin: (MTLOrigin)sourceOrigin
++             sourceSize: (MTLSize)sourceSize
++               toBuffer: (id<MTLBuffer>)destinationBuffer
++      destinationOffset: (NSUInteger)destinationOffset
++ destinationBytesPerRow: (NSUInteger)destinationBytesPerRow
++destinationBytesPerImage: (NSUInteger)destinationBytesPerImage;
++
++- (void)copyFromTexture: (id<MTLTexture>)sourceTexture
++            sourceSlice: (NSUInteger)sourceSlice
++            sourceLevel: (NSUInteger)sourceLevel
++           sourceOrigin: (MTLOrigin)sourceOrigin
++             sourceSize: (MTLSize)sourceSize
++               toBuffer: (id<MTLBuffer>)destinationBuffer
++      destinationOffset: (NSUInteger)destinationOffset
++ destinationBytesPerRow: (NSUInteger)destinationBytesPerRow
++destinationBytesPerImage: (NSUInteger)destinationBytesPerImage
++                options: (MTLBlitOption)options;
++
++- (void)copyFromTexture: (id<MTLTexture>)sourceTexture
++            sourceSlice: (NSUInteger)sourceSlice
++            sourceLevel: (NSUInteger)sourceLevel
++           sourceOrigin: (MTLOrigin)sourceOrigin
++             sourceSize: (MTLSize)sourceSize
++              toTexture: (id<MTLTexture>)destinationTexture
++       destinationSlice: (NSUInteger)destinationSlice
++       destinationLevel: (NSUInteger)destinationLevel
++      destinationOrigin: (MTLOrigin)destinationOrigin;
++
++- (void)copyFromTexture: (id<MTLTexture>)sourceTexture
++              toTexture: (id<MTLTexture>)destinationTexture;
++
++- (void)fillBuffer: (id<MTLBuffer>)buffer
++             range: (NSRange)range
++             value: (uint8_t)value;
++
++- (void)generateMipmapsForTexture: (id<MTLTexture>)texture;
++
++// managed resources are always coherent here: these only order the encoder
++- (void)synchronizeResource: (id<MTLResource>)resource;
++
++- (void)synchronizeTexture: (id<MTLTexture>)texture
++                     slice: (NSUInteger)slice
++                     level: (NSUInteger)level;
++
++@end
++
++#endif // _METAL_MTLBLITCOMMANDENCODER_H_
+--- a/include/Metal/MTLCommandBuffer.h
++++ b/include/Metal/MTLCommandBuffer.h
+@@ -20,6 +20,17 @@
+ @class MTLComputePassDescriptor;
+ @class MTLRenderPassDescriptor;
+ 
++typedef NS_ENUM(NSUInteger, MTLCommandBufferStatus) {
++	MTLCommandBufferStatusNotEnqueued = 0,
++	MTLCommandBufferStatusEnqueued = 1,
++	MTLCommandBufferStatusCommitted = 2,
++	MTLCommandBufferStatusScheduled = 3,
++	MTLCommandBufferStatusCompleted = 4,
++	MTLCommandBufferStatusError = 5,
++};
++
++@protocol MTLBlitCommandEncoder;
++
+ typedef NS_ENUM(NSUInteger, MTLDispatchType) {
+ 	MTLDispatchTypeSerial = 0,
+ 	MTLDispatchTypeConcurrent = 1,
+@@ -38,6 +49,10 @@
+ - (id<MTLComputeCommandEncoder>)computeCommandEncoder;
+ 
+ - (id<MTLRenderCommandEncoder>)renderCommandEncoderWithDescriptor: (MTLRenderPassDescriptor*)renderPassDescriptor;
++- (id<MTLBlitCommandEncoder>)blitCommandEncoder;
++
++@property(readonly) MTLCommandBufferStatus status;
++@property(nullable, readonly) NSError* error;
+ 
+ - (void)addCompletedHandler: (MTLCommandBufferHandler)block;
+ - (void)waitUntilCompleted;
+--- a/include/Metal/MTLCompileOptions.h
++++ b/include/Metal/MTLCompileOptions.h
+@@ -5,8 +5,47 @@
+ #define _METAL_MTLCOMPILEOPTIONS_H_
+ 
+ #import <Foundation/Foundation.h>
++#import <Metal/MTLLibrary.h>
++
++typedef NS_ENUM(NSUInteger, MTLLanguageVersion) {
++	MTLLanguageVersion1_0 = (1 << 16),
++	MTLLanguageVersion1_1 = (1 << 16) + 1,
++	MTLLanguageVersion1_2 = (1 << 16) + 2,
++	MTLLanguageVersion2_0 = (2 << 16),
++	MTLLanguageVersion2_1 = (2 << 16) + 1,
++	MTLLanguageVersion2_2 = (2 << 16) + 2,
++	MTLLanguageVersion2_3 = (2 << 16) + 3,
++	MTLLanguageVersion2_4 = (2 << 16) + 4,
++	MTLLanguageVersion3_0 = (3 << 16),
++	MTLLanguageVersion3_1 = (3 << 16) + 1,
++	MTLLanguageVersion3_2 = (3 << 16) + 2,
++};
++
++typedef NS_ENUM(NSInteger, MTLLibraryOptimizationLevel) {
++	MTLLibraryOptimizationLevelDefault = 0,
++	MTLLibraryOptimizationLevelSize = 1,
++};
++
++typedef NS_ENUM(NSInteger, MTLMathMode) {
++	MTLMathModeSafe = 0,
++	MTLMathModeRelaxed = 1,
++	MTLMathModeFast = 2,
++};
++
++// PureDarwin has no Metal compiler: newLibraryWithSource: looks the source up in a cache of metallibs built
++// on a Mac, so these options only take part through preprocessorMacros (part of the cache key)
++@interface MTLCompileOptions : NSObject <NSCopying>
++
++@property(copy) NSDictionary<NSString*, NSObject*>* preprocessorMacros;
++@property BOOL fastMathEnabled;
++@property MTLMathMode mathMode;
++@property MTLLanguageVersion languageVersion;
++@property MTLLibraryType libraryType;
++@property(copy) NSString* installName;
++@property(copy) NSArray* libraries;
++@property BOOL preserveInvariance;
++@property MTLLibraryOptimizationLevel optimizationLevel;
+ 
+-@interface MTLCompileOptions : NSObject
+ @end
+ 
+ #endif // _METAL_MTLCOMPILEOPTIONS_H_
+--- a/include/Metal/MTLComputeCommandEncoder.h
++++ b/include/Metal/MTLComputeCommandEncoder.h
+@@ -7,6 +7,8 @@
+ #import <Metal/MTLCommandEncoder.h>
+ #import <Metal/MTLComputePipeline.h>
+ #import <Metal/MTLDefines.h>
++#import <Metal/MTLSamplerDescriptor.h>
++#import <Metal/MTLTexture.h>
+ 
+ METAL_DECLARATIONS_BEGIN
+ 
+@@ -70,6 +72,15 @@
+           length: (NSUInteger)length
+          atIndex: (NSUInteger)index;
+ 
++- (void)setTexture: (id<MTLTexture>)texture
++           atIndex: (NSUInteger)index;
++
++- (void)setSamplerState: (id<MTLSamplerState>)sampler
++                atIndex: (NSUInteger)index;
++
++- (void)setThreadgroupMemoryLength: (NSUInteger)length
++                           atIndex: (NSUInteger)index;
++
+ - (void)dispatchThreadgroups: (MTLSize)threadgroupsPerGrid
+        threadsPerThreadgroup: (MTLSize)threadsPerThreadgroup;
+ 
+--- a/include/Metal/MTLDepthStencilDescriptor.h
++++ b/include/Metal/MTLDepthStencilDescriptor.h
+@@ -6,7 +6,27 @@
+ 
+ #import <Foundation/Foundation.h>
+ 
+-@interface MTLDepthStencilDescriptor : NSObject
++#import <Metal/MTLDefines.h>
++#import <Metal/MTLStencilDescriptor.h>
++
++@protocol MTLDevice;
++
++MTL_EXPORT
++@interface MTLDepthStencilDescriptor : NSObject <NSCopying>
++
++@property(nonatomic) MTLCompareFunction depthCompareFunction;
++@property(nonatomic, getter=isDepthWriteEnabled) BOOL depthWriteEnabled;
++@property(copy, nonatomic, null_resettable) MTLStencilDescriptor* frontFaceStencil;
++@property(copy, nonatomic, null_resettable) MTLStencilDescriptor* backFaceStencil;
++@property(nullable, copy, nonatomic) NSString* label;
++
++@end
++
++@protocol MTLDepthStencilState <NSObject>
++
++@property(nullable, readonly) NSString* label;
++@property(readonly) id<MTLDevice> device;
++
+ @end
+ 
+ #endif // _METAL_MTLDEPTHSTENCILDESCRIPTOR_H_
+--- a/include/Metal/MTLDevice.h
++++ b/include/Metal/MTLDevice.h
+@@ -22,6 +22,34 @@
+ @class MTLComputePipelineDescriptor;
+ @class MTLAutoreleasedComputePipelineReflection;
+ @class MTLRenderPipelineDescriptor;
++@class MTLTextureDescriptor;
++@class MTLTileRenderPipelineDescriptor;
++@class MTLSamplerDescriptor;
++@class MTLDepthStencilDescriptor;
++@class MTLCompileOptions;
++@protocol MTLTexture;
++@protocol MTLSamplerState;
++@protocol MTLDepthStencilState;
++
++typedef void (^MTLNewLibraryCompletionHandler)(id<MTLLibrary> library, NSError* error);
++
++typedef NS_ENUM(NSInteger, MTLGPUFamily) {
++	MTLGPUFamilyApple1 = 1001,
++	MTLGPUFamilyApple2 = 1002,
++	MTLGPUFamilyApple3 = 1003,
++	MTLGPUFamilyApple4 = 1004,
++	MTLGPUFamilyApple5 = 1005,
++	MTLGPUFamilyApple6 = 1006,
++	MTLGPUFamilyApple7 = 1007,
++	MTLGPUFamilyApple8 = 1008,
++	MTLGPUFamilyApple9 = 1009,
++	MTLGPUFamilyMac1 = 2001,
++	MTLGPUFamilyMac2 = 2002,
++	MTLGPUFamilyCommon1 = 3001,
++	MTLGPUFamilyCommon2 = 3002,
++	MTLGPUFamilyCommon3 = 3003,
++	MTLGPUFamilyMetal3 = 5001,
++};
+ 
+ typedef NS_OPTIONS(NSUInteger, MTLPipelineOption) {
+ 	MTLPipelineOptionNone = 0,
+@@ -44,6 +72,12 @@
+ 
+ @protocol MTLDevice <NSObject>
+ 
++@property(readonly) NSString* name;
++
++// a desktop-class GPU that also has the Apple1-4 features PureDarwin's executor emulates (framebuffer fetch,
++// tile shading); nothing past Apple4
++- (BOOL)supportsFamily: (MTLGPUFamily)gpuFamily;
++
+ - (id<MTLComputePipelineState>)newComputePipelineStateWithDescriptor: (MTLComputePipelineDescriptor*)descriptor
+                                                              options: (MTLPipelineOption)options
+                                                           reflection: (MTLAutoreleasedComputePipelineReflection*)reflection
+@@ -69,6 +103,18 @@
+                              length: (NSUInteger)length
+                             options: (MTLResourceOptions)options;
+ 
++- (id<MTLTexture>)newTextureWithDescriptor: (MTLTextureDescriptor*)descriptor;
++
++// PureDarwin's executor runs tile functions as compute over 32x32 tiles of the pass's colour attachments
++- (id<MTLRenderPipelineState>)newRenderPipelineStateWithTileDescriptor: (MTLTileRenderPipelineDescriptor*)descriptor
++                                                               options: (MTLPipelineOption)options
++                                                            reflection: (id*)reflection
++                                                                 error: (NSError**)error;
++
++- (id<MTLSamplerState>)newSamplerStateWithDescriptor: (MTLSamplerDescriptor*)descriptor;
++
++- (id<MTLDepthStencilState>)newDepthStencilStateWithDescriptor: (MTLDepthStencilDescriptor*)descriptor;
++
+ - (id<MTLLibrary>)newDefaultLibrary;
+ 
+ - (id<MTLLibrary>)newDefaultLibraryWithBundle: (NSBundle*)bundle
+@@ -80,6 +126,16 @@
+ - (id<MTLLibrary>)newLibraryWithData: (dispatch_data_t)data
+                                error: (NSError**)error;
+ 
++// PureDarwin: no Metal compiler, the source's metallib comes from a cache built on a Mac (keyed by the
++// source's SHA-256), see metal-precompile; a miss is an MTLLibraryErrorCompileFailure naming the key
++- (id<MTLLibrary>)newLibraryWithSource: (NSString*)source
++                               options: (MTLCompileOptions*)options
++                                 error: (NSError**)error;
++
++- (void)newLibraryWithSource: (NSString*)source
++                     options: (MTLCompileOptions*)options
++           completionHandler: (MTLNewLibraryCompletionHandler)completionHandler;
++
+ // TODO: other methods and properties
+ 
+ @end
+--- a/include/Metal/MTLDrawable.h
++++ b/include/Metal/MTLDrawable.h
+@@ -5,6 +5,7 @@
+ #define _METAL_MTLDRAWABLE_H_
+ 
+ #import <Foundation/Foundation.h>
++#import <CoreFoundation/CoreFoundation.h>
+ 
+ #import <Metal/MTLDefines.h>
+ 
+--- a/include/Metal/MTLLibrary.h
++++ b/include/Metal/MTLLibrary.h
+@@ -48,6 +48,17 @@
+ 	MTLLibraryTypeDynamic = 1,
+ };
+ 
++MTL_EXTERN NSString* const MTLLibraryErrorDomain;
++
++typedef NS_ENUM(NSUInteger, MTLLibraryError) {
++	MTLLibraryErrorUnsupported = 1,
++	MTLLibraryErrorInternal = 2,
++	MTLLibraryErrorCompileFailure = 3,
++	MTLLibraryErrorCompileWarning = 4,
++	MTLLibraryErrorFunctionNotFound = 5,
++	MTLLibraryErrorFileNotFound = 6,
++};
++
+ @protocol MTLFunction <NSObject>
+ 
+ @property(readonly) id<MTLDevice> device;
+--- a/include/Metal/MTLRenderCommandEncoder.h
++++ b/include/Metal/MTLRenderCommandEncoder.h
+@@ -8,6 +8,9 @@
+ #import <Foundation/Foundation.h>
+ #import <Metal/MTLCommandEncoder.h>
+ #import <Metal/MTLRenderPipeline.h>
++#import <Metal/MTLDepthStencilDescriptor.h>
++#import <Metal/MTLSamplerDescriptor.h>
++#import <Metal/MTLTexture.h>
+ 
+ METAL_DECLARATIONS_BEGIN
+ 
+@@ -57,6 +60,11 @@
+ 	MTLMultisampleStencilResolveFilterDepthResolvedSample = 1,
+ };
+ 
++typedef NS_ENUM(NSUInteger, MTLDepthClipMode) {
++	MTLDepthClipModeClip = 0,
++	MTLDepthClipModeClamp = 1,
++};
++
+ typedef NS_ENUM(NSUInteger, MTLTriangleFillMode) {
+ 	MTLTriangleFillModeFill = 0,
+ 	MTLTriangleFillModeLines = 1,
+@@ -98,10 +106,10 @@
+ } MTLViewport;
+ 
+ typedef struct MTLScissorRect {
+-	size_t height;
+-	size_t width;
+-	size_t x;
+-	size_t y;
++	NSUInteger x;
++	NSUInteger y;
++	NSUInteger width;
++	NSUInteger height;
+ } MTLScissorRect;
+ 
+ NS_INLINE
+@@ -194,6 +202,17 @@
+ - (void)setTriangleFillMode: (MTLTriangleFillMode)fillMode;
+ - (void)setFrontFacingWinding: (MTLWinding)frontFacingWinding;
+ - (void)setCullMode: (MTLCullMode)cullMode;
++
++- (void)setDepthClipMode: (MTLDepthClipMode)depthClipMode;
++
++- (void)setDepthBias: (float)depthBias
++          slopeScale: (float)slopeScale
++               clamp: (float)clamp;
++
++- (void)setBlendColorRed: (float)red
++                   green: (float)green
++                    blue: (float)blue
++                   alpha: (float)alpha;
+ - (void)setViewport: (MTLViewport)viewport;
+ - (void)setViewports: (const MTLViewport*)viewports
+                count: (NSUInteger)count;
+@@ -229,6 +248,49 @@
+                   length: (NSUInteger)length
+                  atIndex: (NSUInteger)index;
+ 
++- (void)setVertexTexture: (id<MTLTexture>)texture
++                 atIndex: (NSUInteger)index;
++
++- (void)setFragmentTexture: (id<MTLTexture>)texture
++                   atIndex: (NSUInteger)index;
++
++- (void)setVertexSamplerState: (id<MTLSamplerState>)sampler
++                      atIndex: (NSUInteger)index;
++
++- (void)setFragmentSamplerState: (id<MTLSamplerState>)sampler
++                        atIndex: (NSUInteger)index;
++
++- (void)setDepthStencilState: (id<MTLDepthStencilState>)depthStencilState;
++
++// tile shading: a tile pipeline set with setRenderPipelineState:, bound like a compute kernel
++@property(readonly) NSUInteger tileWidth;
++@property(readonly) NSUInteger tileHeight;
++
++- (void)setTileBuffer: (id<MTLBuffer>)buffer
++               offset: (NSUInteger)offset
++              atIndex: (NSUInteger)index;
++
++- (void)setTileBytes: (const void*)bytes
++              length: (NSUInteger)length
++             atIndex: (NSUInteger)index;
++
++- (void)setTileTexture: (id<MTLTexture>)texture
++               atIndex: (NSUInteger)index;
++
++- (void)setTileSamplerState: (id<MTLSamplerState>)sampler
++                    atIndex: (NSUInteger)index;
++
++- (void)setThreadgroupMemoryLength: (NSUInteger)length
++                            offset: (NSUInteger)offset
++                           atIndex: (NSUInteger)index;
++
++- (void)dispatchThreadsPerTile: (MTLSize)threadsPerTile;
++
++- (void)setStencilReferenceValue: (uint32_t)referenceValue;
++
++- (void)setStencilFrontReferenceValue: (uint32_t)frontReferenceValue
++                   backReferenceValue: (uint32_t)backReferenceValue;
++
+ - (void)drawPrimitives: (MTLPrimitiveType)primitiveType
+            vertexStart: (NSUInteger)vertexStart
+            vertexCount: (NSUInteger)vertexCount
+--- a/include/Metal/MTLRenderPipeline.h
++++ b/include/Metal/MTLRenderPipeline.h
+@@ -167,6 +167,28 @@
+ 
+ @end
+ 
++MTL_EXPORT
++@interface MTLTileRenderPipelineColorAttachmentDescriptor : NSObject <NSCopying>
++@property(nonatomic) MTLPixelFormat pixelFormat;
++@end
++
++MTL_EXPORT
++@interface MTLTileRenderPipelineColorAttachmentDescriptorArray : NSObject
++- (MTLTileRenderPipelineColorAttachmentDescriptor*)objectAtIndexedSubscript: (NSUInteger)attachmentIndex;
++- (void)setObject: (MTLTileRenderPipelineColorAttachmentDescriptor*)attachment atIndexedSubscript: (NSUInteger)attachmentIndex;
++@end
++
++MTL_EXPORT
++@interface MTLTileRenderPipelineDescriptor : NSObject <NSCopying>
++@property(nullable, copy, nonatomic) NSString* label;
++@property(readwrite, nonatomic, strong) id<MTLFunction> tileFunction;
++@property(readwrite, nonatomic) NSUInteger rasterSampleCount;
++@property(readonly) MTLTileRenderPipelineColorAttachmentDescriptorArray* colorAttachments;
++@property(readwrite, nonatomic) BOOL threadgroupSizeMatchesTileSize;
++@property(readwrite, nonatomic) NSUInteger maxTotalThreadsPerThreadgroup;
++- (void)reset;
++@end
++
+ METAL_DECLARATIONS_END
+ 
+ #endif // _METAL_MTLRENDERPIPELINE_H_
+--- a/include/Metal/MTLSamplerDescriptor.h
++++ b/include/Metal/MTLSamplerDescriptor.h
+@@ -6,7 +6,63 @@
+ 
+ #import <Foundation/Foundation.h>
+ 
+-@interface MTLSamplerDescriptor : NSObject
++#import <Metal/MTLDefines.h>
++#import <Metal/MTLStencilDescriptor.h>
++
++@protocol MTLDevice;
++
++typedef NS_ENUM(NSUInteger, MTLSamplerMinMagFilter) {
++	MTLSamplerMinMagFilterNearest = 0,
++	MTLSamplerMinMagFilterLinear = 1,
++};
++
++typedef NS_ENUM(NSUInteger, MTLSamplerMipFilter) {
++	MTLSamplerMipFilterNotMipmapped = 0,
++	MTLSamplerMipFilterNearest = 1,
++	MTLSamplerMipFilterLinear = 2,
++};
++
++typedef NS_ENUM(NSUInteger, MTLSamplerAddressMode) {
++	MTLSamplerAddressModeClampToEdge = 0,
++	MTLSamplerAddressModeMirrorClampToEdge = 1,
++	MTLSamplerAddressModeRepeat = 2,
++	MTLSamplerAddressModeMirrorRepeat = 3,
++	MTLSamplerAddressModeClampToZero = 4,
++	MTLSamplerAddressModeClampToBorderColor = 5,
++};
++
++typedef NS_ENUM(NSUInteger, MTLSamplerBorderColor) {
++	MTLSamplerBorderColorTransparentBlack = 0,
++	MTLSamplerBorderColorOpaqueBlack = 1,
++	MTLSamplerBorderColorOpaqueWhite = 2,
++};
++
++MTL_EXPORT
++@interface MTLSamplerDescriptor : NSObject <NSCopying>
++
++@property(nonatomic) MTLSamplerMinMagFilter minFilter;
++@property(nonatomic) MTLSamplerMinMagFilter magFilter;
++@property(nonatomic) MTLSamplerMipFilter mipFilter;
++@property(nonatomic) NSUInteger maxAnisotropy;
++@property(nonatomic) MTLSamplerAddressMode sAddressMode;
++@property(nonatomic) MTLSamplerAddressMode tAddressMode;
++@property(nonatomic) MTLSamplerAddressMode rAddressMode;
++@property(nonatomic) MTLSamplerBorderColor borderColor;
++@property(nonatomic) BOOL normalizedCoordinates;
++@property(nonatomic) float lodMinClamp;
++@property(nonatomic) float lodMaxClamp;
++@property(nonatomic) BOOL lodAverage;
++@property(nonatomic) MTLCompareFunction compareFunction;
++@property(nonatomic) BOOL supportArgumentBuffers;
++@property(nullable, copy, nonatomic) NSString* label;
++
++@end
++
++@protocol MTLSamplerState <NSObject>
++
++@property(nullable, readonly) NSString* label;
++@property(readonly) id<MTLDevice> device;
++
+ @end
+ 
+ #endif // _METAL_MTLSAMPLERDESCRIPTOR_H_
+--- a/include/Metal/MTLStencilDescriptor.h
++++ b/include/Metal/MTLStencilDescriptor.h
+@@ -6,7 +6,40 @@
+ 
+ #import <Foundation/Foundation.h>
+ 
+-@interface MTLStencilDescriptor : NSObject
++#import <Metal/MTLDefines.h>
++
++typedef NS_ENUM(NSUInteger, MTLCompareFunction) {
++	MTLCompareFunctionNever = 0,
++	MTLCompareFunctionLess = 1,
++	MTLCompareFunctionEqual = 2,
++	MTLCompareFunctionLessEqual = 3,
++	MTLCompareFunctionGreater = 4,
++	MTLCompareFunctionNotEqual = 5,
++	MTLCompareFunctionGreaterEqual = 6,
++	MTLCompareFunctionAlways = 7,
++};
++
++typedef NS_ENUM(NSUInteger, MTLStencilOperation) {
++	MTLStencilOperationKeep = 0,
++	MTLStencilOperationZero = 1,
++	MTLStencilOperationReplace = 2,
++	MTLStencilOperationIncrementClamp = 3,
++	MTLStencilOperationDecrementClamp = 4,
++	MTLStencilOperationInvert = 5,
++	MTLStencilOperationIncrementWrap = 6,
++	MTLStencilOperationDecrementWrap = 7,
++};
++
++MTL_EXPORT
++@interface MTLStencilDescriptor : NSObject <NSCopying>
++
++@property(nonatomic) MTLCompareFunction stencilCompareFunction;
++@property(nonatomic) MTLStencilOperation stencilFailureOperation;
++@property(nonatomic) MTLStencilOperation depthFailureOperation;
++@property(nonatomic) MTLStencilOperation depthStencilPassOperation;
++@property(nonatomic) uint32_t readMask;
++@property(nonatomic) uint32_t writeMask;
++
+ @end
+ 
+ #endif // _METAL_MTLSTENCILDESCRIPTOR_H_
+--- a/include/Metal/MTLTextureDescriptor.h
++++ b/include/Metal/MTLTextureDescriptor.h
+@@ -6,7 +6,39 @@
+ 
+ #import <Foundation/Foundation.h>
+ 
+-@interface MTLTextureDescriptor : NSObject
++#import <Metal/MTLDefines.h>
++#import <Metal/MTLPixelFormat.h>
++#import <Metal/MTLResource.h>
++#import <Metal/MTLTexture.h>
++
++MTL_EXPORT
++@interface MTLTextureDescriptor : NSObject <NSCopying>
++
+++ (MTLTextureDescriptor*)texture2DDescriptorWithPixelFormat: (MTLPixelFormat)pixelFormat
++                                                      width: (NSUInteger)width
++                                                     height: (NSUInteger)height
++                                                  mipmapped: (BOOL)mipmapped;
++
+++ (MTLTextureDescriptor*)textureCubeDescriptorWithPixelFormat: (MTLPixelFormat)pixelFormat
++                                                         size: (NSUInteger)size
++                                                    mipmapped: (BOOL)mipmapped;
++
++@property(nonatomic) MTLTextureType textureType;
++@property(nonatomic) MTLPixelFormat pixelFormat;
++@property(nonatomic) NSUInteger width;
++@property(nonatomic) NSUInteger height;
++@property(nonatomic) NSUInteger depth;
++@property(nonatomic) NSUInteger mipmapLevelCount;
++@property(nonatomic) NSUInteger sampleCount;
++@property(nonatomic) NSUInteger arrayLength;
++@property(nonatomic) MTLResourceOptions resourceOptions;
++@property(nonatomic) MTLCPUCacheMode cpuCacheMode;
++@property(nonatomic) MTLStorageMode storageMode;
++@property(nonatomic) MTLHazardTrackingMode hazardTrackingMode;
++@property(nonatomic) BOOL allowGPUOptimizedContents;
++@property(nonatomic) MTLTextureUsage usage;
++@property(nonatomic) MTLTextureSwizzleChannels swizzle;
++
+ @end
+ 
+ #endif // _METAL_MTLTEXTUREDESCRIPTOR_H_
+--- a/include/Metal/MTLTexture.h
++++ b/include/Metal/MTLTexture.h
+@@ -24,7 +24,7 @@
+ 	MTLTextureTypeTextureBuffer = 9,
+ };
+ 
+-typedef NS_ENUM(uint8, MTLTextureSwizzle) {
++typedef NS_ENUM(uint8_t, MTLTextureSwizzle) {
+ 	MTLTextureSwizzleZero = 0,
+ 	MTLTextureSwizzleOne = 1,
+ 	MTLTextureSwizzleRed = 2,
+--- a/include/Metal/MTLVertexDescriptor.h
++++ b/include/Metal/MTLVertexDescriptor.h
+@@ -6,7 +6,105 @@
+ 
+ #import <Foundation/Foundation.h>
+ 
+-@interface MTLVertexDescriptor : NSObject
++#import <Metal/MTLDefines.h>
++
++typedef NS_ENUM(NSUInteger, MTLVertexFormat) {
++	MTLVertexFormatInvalid = 0,
++	MTLVertexFormatUChar2 = 1,
++	MTLVertexFormatUChar3 = 2,
++	MTLVertexFormatUChar4 = 3,
++	MTLVertexFormatChar2 = 4,
++	MTLVertexFormatChar3 = 5,
++	MTLVertexFormatChar4 = 6,
++	MTLVertexFormatUChar2Normalized = 7,
++	MTLVertexFormatUChar3Normalized = 8,
++	MTLVertexFormatUChar4Normalized = 9,
++	MTLVertexFormatChar2Normalized = 10,
++	MTLVertexFormatChar3Normalized = 11,
++	MTLVertexFormatChar4Normalized = 12,
++	MTLVertexFormatUShort2 = 13,
++	MTLVertexFormatUShort3 = 14,
++	MTLVertexFormatUShort4 = 15,
++	MTLVertexFormatShort2 = 16,
++	MTLVertexFormatShort3 = 17,
++	MTLVertexFormatShort4 = 18,
++	MTLVertexFormatUShort2Normalized = 19,
++	MTLVertexFormatUShort3Normalized = 20,
++	MTLVertexFormatUShort4Normalized = 21,
++	MTLVertexFormatShort2Normalized = 22,
++	MTLVertexFormatShort3Normalized = 23,
++	MTLVertexFormatShort4Normalized = 24,
++	MTLVertexFormatHalf2 = 25,
++	MTLVertexFormatHalf3 = 26,
++	MTLVertexFormatHalf4 = 27,
++	MTLVertexFormatFloat = 28,
++	MTLVertexFormatFloat2 = 29,
++	MTLVertexFormatFloat3 = 30,
++	MTLVertexFormatFloat4 = 31,
++	MTLVertexFormatInt = 32,
++	MTLVertexFormatInt2 = 33,
++	MTLVertexFormatInt3 = 34,
++	MTLVertexFormatInt4 = 35,
++	MTLVertexFormatUInt = 36,
++	MTLVertexFormatUInt2 = 37,
++	MTLVertexFormatUInt3 = 38,
++	MTLVertexFormatUInt4 = 39,
++	MTLVertexFormatInt1010102Normalized = 40,
++	MTLVertexFormatUInt1010102Normalized = 41,
++	MTLVertexFormatUChar4Normalized_BGRA = 42,
++	MTLVertexFormatUChar = 45,
++	MTLVertexFormatChar = 46,
++	MTLVertexFormatUCharNormalized = 47,
++	MTLVertexFormatCharNormalized = 48,
++	MTLVertexFormatUShort = 49,
++	MTLVertexFormatShort = 50,
++	MTLVertexFormatUShortNormalized = 51,
++	MTLVertexFormatShortNormalized = 52,
++	MTLVertexFormatHalf = 53,
++};
++
++typedef NS_ENUM(NSUInteger, MTLVertexStepFunction) {
++	MTLVertexStepFunctionConstant = 0,
++	MTLVertexStepFunctionPerVertex = 1,
++	MTLVertexStepFunctionPerInstance = 2,
++	MTLVertexStepFunctionPerPatch = 3,
++	MTLVertexStepFunctionPerPatchControlPoint = 4,
++};
++
++static const NSUInteger MTLBufferLayoutStrideDynamic = NSUIntegerMax;
++
++MTL_EXPORT
++@interface MTLVertexBufferLayoutDescriptor : NSObject <NSCopying>
++@property(assign, nonatomic) NSUInteger stride;
++@property(assign, nonatomic) MTLVertexStepFunction stepFunction;
++@property(assign, nonatomic) NSUInteger stepRate;
++@end
++
++MTL_EXPORT
++@interface MTLVertexBufferLayoutDescriptorArray : NSObject
++- (MTLVertexBufferLayoutDescriptor*)objectAtIndexedSubscript: (NSUInteger)index;
++- (void)setObject: (MTLVertexBufferLayoutDescriptor*)descriptor atIndexedSubscript: (NSUInteger)index;
++@end
++
++MTL_EXPORT
++@interface MTLVertexAttributeDescriptor : NSObject <NSCopying>
++@property(assign, nonatomic) MTLVertexFormat format;
++@property(assign, nonatomic) NSUInteger offset;
++@property(assign, nonatomic) NSUInteger bufferIndex;
++@end
++
++MTL_EXPORT
++@interface MTLVertexAttributeDescriptorArray : NSObject
++- (MTLVertexAttributeDescriptor*)objectAtIndexedSubscript: (NSUInteger)index;
++- (void)setObject: (MTLVertexAttributeDescriptor*)descriptor atIndexedSubscript: (NSUInteger)index;
++@end
++
++MTL_EXPORT
++@interface MTLVertexDescriptor : NSObject <NSCopying>
+++ (MTLVertexDescriptor*)vertexDescriptor;
++@property(readonly) MTLVertexBufferLayoutDescriptorArray* layouts;
++@property(readonly) MTLVertexAttributeDescriptorArray* attributes;
++- (void)reset;
+ @end
+ 
+ #endif // _METAL_MTLVERTEXDESCRIPTOR_H_
+--- a/private-include/Metal/MTLBlitCommandEncoderInternal.h
++++ b/private-include/Metal/MTLBlitCommandEncoderInternal.h
+@@ -0,0 +1,22 @@
++// SPDX-FileCopyrightText: 2026 Darling Developers
++// SPDX-License-Identifier: MPL-2.0
++
++#ifndef _METAL_MTLBLITCOMMANDENCODERINTERNAL_H_
++#define _METAL_MTLBLITCOMMANDENCODERINTERNAL_H_
++
++#import <Metal/MTLBlitCommandEncoder.h>
++
++#if DARLING_METAL_ENABLED
++#include <indium/indium.hpp>
++#endif
++
++@interface MTLBlitCommandEncoderInternal : NSObject <MTLBlitCommandEncoder>
++
++#if DARLING_METAL_ENABLED
++- (instancetype)initWithEncoder: (std::shared_ptr<Indium::BlitCommandEncoder>)encoder
++                         device: (id<MTLDevice>)device;
++#endif
++
++@end
++
++#endif // _METAL_MTLBLITCOMMANDENCODERINTERNAL_H_
+--- a/private-include/Metal/MTLDescriptorsInternal.h
++++ b/private-include/Metal/MTLDescriptorsInternal.h
+@@ -0,0 +1,65 @@
++// SPDX-FileCopyrightText: 2026 Darling Developers
++// SPDX-License-Identifier: MPL-2.0
++
++#ifndef _METAL_MTLDESCRIPTORSINTERNAL_H_
++#define _METAL_MTLDESCRIPTORSINTERNAL_H_
++
++#import <Metal/MTLDepthStencilDescriptor.h>
++#import <Metal/MTLSamplerDescriptor.h>
++#import <Metal/MTLStencilDescriptor.h>
++#import <Metal/MTLTextureDescriptor.h>
++#import <Metal/MTLVertexDescriptor.h>
++
++#if DARLING_METAL_ENABLED
++#include <indium/indium.hpp>
++#endif
++
++@interface MTLTextureDescriptor (Internal)
++#if DARLING_METAL_ENABLED
++- (Indium::TextureDescriptor)asIndiumDescriptor;
++#endif
++@end
++
++@interface MTLSamplerDescriptor (Internal)
++#if DARLING_METAL_ENABLED
++- (Indium::SamplerDescriptor)asIndiumDescriptor;
++#endif
++@end
++
++@interface MTLStencilDescriptor (Internal)
++#if DARLING_METAL_ENABLED
++- (Indium::StencilDescriptor)asIndiumDescriptor;
++#endif
++@end
++
++@interface MTLDepthStencilDescriptor (Internal)
++#if DARLING_METAL_ENABLED
++- (Indium::DepthStencilDescriptor)asIndiumDescriptor;
++#endif
++@end
++
++@interface MTLVertexDescriptor (Internal)
++#if DARLING_METAL_ENABLED
++- (Indium::VertexDescriptor)asIndiumDescriptor;
++#endif
++@end
++
++@interface MTLSamplerStateInternal : NSObject <MTLSamplerState>
++#if DARLING_METAL_ENABLED
++@property(readonly) std::shared_ptr<Indium::SamplerState> state;
++- (instancetype)initWithState: (std::shared_ptr<Indium::SamplerState>)state
++                       device: (id<MTLDevice>)device
++                        label: (NSString*)label;
++#endif
++@end
++
++@interface MTLDepthStencilStateInternal : NSObject <MTLDepthStencilState>
++#if DARLING_METAL_ENABLED
++@property(readonly) std::shared_ptr<Indium::DepthStencilState> state;
++- (instancetype)initWithState: (std::shared_ptr<Indium::DepthStencilState>)state
++                       device: (id<MTLDevice>)device
++                        label: (NSString*)label;
++#endif
++@end
++
++#endif // _METAL_MTLDESCRIPTORSINTERNAL_H_
+--- a/private-include/Metal/MTLRenderPipelineInternal.h
++++ b/private-include/Metal/MTLRenderPipelineInternal.h
+@@ -48,6 +48,18 @@
+ 
+ @end
+ 
++@interface MTLTileRenderPipelineStateInternal : NSObject <MTLRenderPipelineState>
++
++#if DARLING_METAL_ENABLED
++@property(readonly) std::shared_ptr<Indium::Function> tileFunction;
++
++- (instancetype)initWithFunction: (std::shared_ptr<Indium::Function>)function
++                          device: (id<MTLDevice>)device
++                           label: (NSString*)label;
++#endif
++
++@end
++
+ METAL_DECLARATIONS_END
+ 
+ #endif // _METAL_MTLRENDERPIPELINEINTERNAL_H_
+--- a/src/Metal/Metal.mm
++++ b/src/Metal/Metal.mm
+@@ -17,9 +17,11 @@
+ // use MetalKit. TODO: find some way to avoid hardcoding these extensions.
+ static const char* additionalExtensions[] = {
+ 	// we don't render to these directly; see CAMetalDrawable.mm (in Cocotron's QuartzCore) for more details
+-	//"VK_KHR_xlib_surface",
+-	//"VK_KHR_surface",
+-	//"VK_KHR_swapchain",
++	// PureDarwin: CAMetalLayer presents X11 and Wayland windows from the executor's own device (indium-pd adds VK_KHR_swapchain)
++	"VK_KHR_surface",
++	"VK_KHR_xcb_surface",
++	"VK_KHR_xlib_surface",
++	"VK_KHR_wayland_surface",
+ };
+ 
+ __attribute__((constructor))
+--- a/src/Metal/MTLBlitCommandEncoder.mm
++++ b/src/Metal/MTLBlitCommandEncoder.mm
+@@ -0,0 +1,157 @@
++// SPDX-FileCopyrightText: 2026 Darling Developers
++// SPDX-License-Identifier: MPL-2.0
++
++#import <Metal/MTLBlitCommandEncoderInternal.h>
++#import <Metal/MTLBufferInternal.h>
++#import <Metal/MTLDevice.h>
++#import <Metal/MTLTextureInternal.h>
++#import <Metal/MTLTypesInternal.h>
++#import <Metal/stubs.h>
++
++#if DARLING_METAL_ENABLED
++NS_INLINE
++Indium::Origin MTLOriginToIndium(MTLOrigin origin) {
++	return Indium::Origin { origin.x, origin.y, origin.z };
++};
++#endif
++
++@implementation MTLBlitCommandEncoderInternal
++
++#if DARLING_METAL_ENABLED
++
++{
++	std::shared_ptr<Indium::BlitCommandEncoder> _encoder;
++}
++
++@synthesize device = _device;
++@synthesize label = _label;
++
++- (instancetype)initWithEncoder: (std::shared_ptr<Indium::BlitCommandEncoder>)encoder
++                         device: (id<MTLDevice>)device
++{
++	self = [super init];
++	if (self != nil) {
++		_encoder = encoder;
++		_device = [device retain];
++	}
++	return self;
++}
++
++- (void)dealloc
++{
++	[_device release];
++	[_label release];
++	[super dealloc];
++}
++
++- (void)endEncoding
++{
++	_encoder->endEncoding();
++}
++
++- (void)copyFromBuffer: (id<MTLBuffer>)sourceBuffer
++          sourceOffset: (NSUInteger)sourceOffset
++              toBuffer: (id<MTLBuffer>)destinationBuffer
++     destinationOffset: (NSUInteger)destinationOffset
++                  size: (NSUInteger)size
++{
++	_encoder->copy(((MTLBufferInternal*)sourceBuffer).buffer, sourceOffset, ((MTLBufferInternal*)destinationBuffer).buffer, destinationOffset, size);
++}
++
++- (void)copyFromBuffer: (id<MTLBuffer>)sourceBuffer
++          sourceOffset: (NSUInteger)sourceOffset
++     sourceBytesPerRow: (NSUInteger)sourceBytesPerRow
++   sourceBytesPerImage: (NSUInteger)sourceBytesPerImage
++            sourceSize: (MTLSize)sourceSize
++             toTexture: (id<MTLTexture>)destinationTexture
++      destinationSlice: (NSUInteger)destinationSlice
++      destinationLevel: (NSUInteger)destinationLevel
++     destinationOrigin: (MTLOrigin)destinationOrigin
++{
++	_encoder->copy(((MTLBufferInternal*)sourceBuffer).buffer, sourceOffset, sourceBytesPerRow, sourceBytesPerImage, MTLSizeToIndium(sourceSize),
++	               ((MTLTextureInternal*)destinationTexture).texture, destinationSlice, destinationLevel, MTLOriginToIndium(destinationOrigin));
++}
++
++- (void)copyFromTexture: (id<MTLTexture>)sourceTexture
++            sourceSlice: (NSUInteger)sourceSlice
++            sourceLevel: (NSUInteger)sourceLevel
++           sourceOrigin: (MTLOrigin)sourceOrigin
++             sourceSize: (MTLSize)sourceSize
++               toBuffer: (id<MTLBuffer>)destinationBuffer
++      destinationOffset: (NSUInteger)destinationOffset
++ destinationBytesPerRow: (NSUInteger)destinationBytesPerRow
++destinationBytesPerImage: (NSUInteger)destinationBytesPerImage
++{
++	[self copyFromTexture: sourceTexture sourceSlice: sourceSlice sourceLevel: sourceLevel sourceOrigin: sourceOrigin
++	           sourceSize: sourceSize toBuffer: destinationBuffer destinationOffset: destinationOffset
++	destinationBytesPerRow: destinationBytesPerRow destinationBytesPerImage: destinationBytesPerImage options: MTLBlitOptionNone];
++}
++
++- (void)copyFromTexture: (id<MTLTexture>)sourceTexture
++            sourceSlice: (NSUInteger)sourceSlice
++            sourceLevel: (NSUInteger)sourceLevel
++           sourceOrigin: (MTLOrigin)sourceOrigin
++             sourceSize: (MTLSize)sourceSize
++               toBuffer: (id<MTLBuffer>)destinationBuffer
++      destinationOffset: (NSUInteger)destinationOffset
++ destinationBytesPerRow: (NSUInteger)destinationBytesPerRow
++destinationBytesPerImage: (NSUInteger)destinationBytesPerImage
++                options: (MTLBlitOption)options
++{
++	_encoder->copy(((MTLTextureInternal*)sourceTexture).texture, sourceSlice, sourceLevel, MTLOriginToIndium(sourceOrigin), MTLSizeToIndium(sourceSize),
++	               ((MTLBufferInternal*)destinationBuffer).buffer, destinationOffset, destinationBytesPerRow, destinationBytesPerImage,
++	               static_cast<Indium::BlitOption>(options));
++}
++
++- (void)copyFromTexture: (id<MTLTexture>)sourceTexture
++            sourceSlice: (NSUInteger)sourceSlice
++            sourceLevel: (NSUInteger)sourceLevel
++           sourceOrigin: (MTLOrigin)sourceOrigin
++             sourceSize: (MTLSize)sourceSize
++              toTexture: (id<MTLTexture>)destinationTexture
++       destinationSlice: (NSUInteger)destinationSlice
++       destinationLevel: (NSUInteger)destinationLevel
++      destinationOrigin: (MTLOrigin)destinationOrigin
++{
++	_encoder->copy(((MTLTextureInternal*)sourceTexture).texture, sourceSlice, sourceLevel, MTLOriginToIndium(sourceOrigin), MTLSizeToIndium(sourceSize),
++	               ((MTLTextureInternal*)destinationTexture).texture, destinationSlice, destinationLevel, MTLOriginToIndium(destinationOrigin));
++}
++
++- (void)copyFromTexture: (id<MTLTexture>)sourceTexture
++              toTexture: (id<MTLTexture>)destinationTexture
++{
++	_encoder->copy(((MTLTextureInternal*)sourceTexture).texture, ((MTLTextureInternal*)destinationTexture).texture);
++}
++
++- (void)fillBuffer: (id<MTLBuffer>)buffer
++             range: (NSRange)range
++             value: (uint8_t)value
++{
++	_encoder->fillBuffer(((MTLBufferInternal*)buffer).buffer, NSRangeToIndium(range), value);
++}
++
++- (void)generateMipmapsForTexture: (id<MTLTexture>)texture
++{
++	_encoder->generateMipmapsForTexture(((MTLTextureInternal*)texture).texture);
++}
++
++- (void)synchronizeResource: (id<MTLResource>)resource
++{
++}
++
++- (void)synchronizeTexture: (id<MTLTexture>)texture
++                     slice: (NSUInteger)slice
++                     level: (NSUInteger)level
++{
++}
++
++#else
++
++@dynamic device;
++@dynamic label;
++
++MTL_UNSUPPORTED_CLASS
++
++#endif
++
++@end
+--- a/src/Metal/MTLCommandBuffer.mm
++++ b/src/Metal/MTLCommandBuffer.mm
+@@ -8,8 +8,13 @@
+ #import <Metal/MTLDrawableInternal.h>
+ #import <Metal/stubs.h>
+ #import <Metal/MTLRenderCommandEncoderInternal.h>
++#import <Metal/MTLBlitCommandEncoderInternal.h>
+ 
+ #if DARLING_METAL_ENABLED
++@interface MTLCommandBufferInternal (Status)
++- (void)_setCompleted;
++@end
++
+ // used to take care of RR while passing the block around in C++ code
+ struct MTLCommandBufferHandlerWrapper {
+ 	MTLCommandBufferHandler handler = nil;
+@@ -41,7 +46,10 @@
+ 	void operator()(std::shared_ptr<Indium::CommandBuffer> ignored) {
+ 		// we assume that the Indium command buffer given as an argument refers to the same command buffer
+ 		// as the one that created this wrapper (which is a currently always true).
+-		handler(commandBuffer);
++		[(MTLCommandBufferInternal*)commandBuffer _setCompleted];
++		if (handler) {
++			handler(commandBuffer);
++		}
+ 	};
+ };
+ #endif
+@@ -52,6 +60,7 @@
+ 
+ {
+ 	std::shared_ptr<Indium::CommandBuffer> _commandBuffer;
++	volatile MTLCommandBufferStatus _status;
+ }
+ 
+ @synthesize device = _device;
+@@ -65,7 +74,7 @@
+ 	if (self != nil) {
+ 		_commandBuffer = commandBuffer;
+ 		_device = [commandQueue.device retain];
+-		_commandQueue = [_commandQueue retain];
++		_commandQueue = [commandQueue retain];
+ 	}
+ 	return self;
+ }
+@@ -114,6 +123,30 @@
+ 	return [[[MTLRenderCommandEncoderInternal alloc] initWithEncoder: encoder device: _device] autorelease];
+ }
+ 
++- (id<MTLBlitCommandEncoder>)blitCommandEncoder
++{
++	auto encoder = _commandBuffer->blitCommandEncoder();
++	if (!encoder) {
++		return nil;
++	}
++	return [[[MTLBlitCommandEncoderInternal alloc] initWithEncoder: encoder device: _device] autorelease];
++}
++
++- (MTLCommandBufferStatus)status
++{
++	return _status;
++}
++
++- (NSError*)error
++{
++	return nil;
++}
++
++- (void)_setCompleted
++{
++	_status = MTLCommandBufferStatusCompleted;
++}
++
+ - (void)addCompletedHandler: (MTLCommandBufferHandler)block
+ {
+ 	_commandBuffer->addCompletedHandler(MTLCommandBufferHandlerWrapper(block, self));
+@@ -122,6 +155,7 @@
+ - (void)waitUntilCompleted
+ {
+ 	_commandBuffer->waitUntilCompleted();
++	_status = MTLCommandBufferStatusCompleted;
+ }
+ 
+ - (void)presentDrawable: (id<MTLDrawable>)drawable
+@@ -131,6 +165,9 @@
+ 
+ - (void)commit
+ {
++	// status follows the buffer: the wrapper holds it until the device thread is done with it
++	_commandBuffer->addCompletedHandler(MTLCommandBufferHandlerWrapper(nil, self));
++	_status = MTLCommandBufferStatusCommitted;
+ 	_commandBuffer->commit();
+ }
+ 
+--- a/src/Metal/MTLCompileOptions.mm
++++ b/src/Metal/MTLCompileOptions.mm
+@@ -2,23 +2,45 @@
+ // SPDX-License-Identifier: MPL-2.0
+ 
+ #import <Metal/MTLCompileOptions.h>
+-#import <Foundation/NSMethodSignature.h>
+-#import <Foundation/NSInvocation.h>
+ 
+ @implementation MTLCompileOptions
+ 
+-#if DARLING_METAL_ENABLED
++@synthesize preprocessorMacros = _preprocessorMacros, fastMathEnabled = _fastMathEnabled, mathMode = _mathMode;
++@synthesize languageVersion = _languageVersion, libraryType = _libraryType, installName = _installName;
++@synthesize libraries = _libraries, preserveInvariance = _preserveInvariance, optimizationLevel = _optimizationLevel;
+ 
+-- (NSMethodSignature *)methodSignatureForSelector:(SEL)aSelector
++- (instancetype)init
+ {
+-    return [NSMethodSignature signatureWithObjCTypes: "v@:"];
++	self = [super init];
++	if (self) {
++		_fastMathEnabled = YES;
++		_mathMode = MTLMathModeFast;
++		_languageVersion = MTLLanguageVersion2_3;
++	}
++	return self;
+ }
+ 
+-- (void)forwardInvocation:(NSInvocation *)anInvocation
++- (void)dealloc
+ {
+-    NSLog(@"Stub called: %@ in %@", NSStringFromSelector([anInvocation selector]), [self class]);
++	[_preprocessorMacros release];
++	[_installName release];
++	[_libraries release];
++	[super dealloc];
+ }
+ 
+-#endif
++- (id)copyWithZone: (NSZone*)zone
++{
++	MTLCompileOptions* copy = [[MTLCompileOptions allocWithZone: zone] init];
++	copy.preprocessorMacros = _preprocessorMacros;
++	copy.fastMathEnabled = _fastMathEnabled;
++	copy.mathMode = _mathMode;
++	copy.languageVersion = _languageVersion;
++	copy.libraryType = _libraryType;
++	copy.installName = _installName;
++	copy.libraries = _libraries;
++	copy.preserveInvariance = _preserveInvariance;
++	copy.optimizationLevel = _optimizationLevel;
++	return copy;
++}
+ 
+ @end
+--- a/src/Metal/MTLComputeCommandEncoder.mm
++++ b/src/Metal/MTLComputeCommandEncoder.mm
+@@ -6,6 +6,8 @@
+ #import <Metal/MTLTypesInternal.h>
+ #import <Metal/MTLComputePipelineInternal.h>
+ #import <Metal/MTLBufferInternal.h>
++#import <Metal/MTLTextureInternal.h>
++#import <Metal/MTLDescriptorsInternal.h>
+ #import <Metal/stubs.h>
+ 
+ @implementation MTLComputePassSampleBufferAttachmentDescriptor
+@@ -246,6 +248,24 @@
+ 	_encoder->setBytes(bytes, length, index);
+ }
+ 
++- (void)setTexture: (id<MTLTexture>)texture
++           atIndex: (NSUInteger)index
++{
++	_encoder->setTexture(texture ? ((MTLTextureInternal*)texture).texture : nullptr, index);
++}
++
++- (void)setSamplerState: (id<MTLSamplerState>)sampler
++                atIndex: (NSUInteger)index
++{
++	_encoder->setSamplerState(sampler ? ((MTLSamplerStateInternal*)sampler).state : nullptr, index);
++}
++
++- (void)setThreadgroupMemoryLength: (NSUInteger)length
++                           atIndex: (NSUInteger)index
++{
++	_encoder->setThreadgroupMemoryLength(length, index);
++}
++
+ - (void)dispatchThreadgroups: (MTLSize)threadgroupsPerGrid
+        threadsPerThreadgroup: (MTLSize)threadsPerThreadgroup
+ {
+--- a/src/Metal/MTLDepthStencilDescriptor.mm
++++ b/src/Metal/MTLDepthStencilDescriptor.mm
+@@ -2,23 +2,142 @@
+ // SPDX-License-Identifier: MPL-2.0
+ 
+ #import <Metal/MTLDepthStencilDescriptor.h>
+-#import <Foundation/NSMethodSignature.h>
+-#import <Foundation/NSInvocation.h>
++#import <Metal/MTLDescriptorsInternal.h>
++#import <Metal/stubs.h>
+ 
+-@implementation MTLDepthStencilDescriptor
++@implementation MTLDepthStencilDescriptor {
++	MTLStencilDescriptor* _frontFaceStencil;
++	MTLStencilDescriptor* _backFaceStencil;
++	BOOL _frontStencilSet;
++	BOOL _backStencilSet;
++}
++
++#if DARLING_METAL_ENABLED
++
++@synthesize depthCompareFunction = _depthCompareFunction;
++@synthesize depthWriteEnabled = _depthWriteEnabled;
++@synthesize label = _label;
++
++- (instancetype)init
++{
++	self = [super init];
++	if (self != nil) {
++		_depthCompareFunction = MTLCompareFunctionAlways;
++	}
++	return self;
++}
++
++- (void)dealloc
++{
++	[_frontFaceStencil release];
++	[_backFaceStencil release];
++	[_label release];
++	[super dealloc];
++}
++
++// null_resettable: nil goes back to a default descriptor
++- (MTLStencilDescriptor*)frontFaceStencil
++{
++	if (_frontFaceStencil == nil) {
++		_frontFaceStencil = [[MTLStencilDescriptor alloc] init];
++	}
++	return _frontFaceStencil;
++}
++
++- (void)setFrontFaceStencil: (MTLStencilDescriptor*)stencil
++{
++	[_frontFaceStencil release];
++	_frontFaceStencil = [stencil copy];
++	_frontStencilSet = stencil != nil;
++}
++
++- (MTLStencilDescriptor*)backFaceStencil
++{
++	if (_backFaceStencil == nil) {
++		_backFaceStencil = [[MTLStencilDescriptor alloc] init];
++	}
++	return _backFaceStencil;
++}
++
++- (void)setBackFaceStencil: (MTLStencilDescriptor*)stencil
++{
++	[_backFaceStencil release];
++	_backFaceStencil = [stencil copy];
++	_backStencilSet = stencil != nil;
++}
++
++- (id)copyWithZone: (NSZone*)zone
++{
++	MTLDepthStencilDescriptor* copy = [[MTLDepthStencilDescriptor alloc] init];
++
++	copy.depthCompareFunction = _depthCompareFunction;
++	copy.depthWriteEnabled = _depthWriteEnabled;
++	if (_frontStencilSet) {
++		copy.frontFaceStencil = _frontFaceStencil;
++	}
++	if (_backStencilSet) {
++		copy.backFaceStencil = _backFaceStencil;
++	}
++	copy.label = _label;
++	return copy;
++}
++
++- (Indium::DepthStencilDescriptor)asIndiumDescriptor
++{
++	Indium::DepthStencilDescriptor desc {};
++
++	desc.depthCompareFunction = static_cast<Indium::CompareFunction>(_depthCompareFunction);
++	desc.depthWriteEnabled = _depthWriteEnabled;
++	// stencil testing is on once a face's descriptor has been set
++	if (_frontStencilSet) {
++		desc.frontFaceStencil = [_frontFaceStencil asIndiumDescriptor];
++	}
++	if (_backStencilSet) {
++		desc.backFaceStencil = [_backFaceStencil asIndiumDescriptor];
++	}
++	return desc;
++}
++
++#else
++
++MTL_UNSUPPORTED_CLASS
++
++#endif
++
++@end
++
++@implementation MTLDepthStencilStateInternal
+ 
+ #if DARLING_METAL_ENABLED
+ 
+-- (NSMethodSignature *)methodSignatureForSelector:(SEL)aSelector
++@synthesize state = _state;
++@synthesize device = _device;
++@synthesize label = _label;
++
++- (instancetype)initWithState: (std::shared_ptr<Indium::DepthStencilState>)state
++                       device: (id<MTLDevice>)device
++                        label: (NSString*)label
+ {
+-    return [NSMethodSignature signatureWithObjCTypes: "v@:"];
++	self = [super init];
++	if (self != nil) {
++		_state = state;
++		_device = [device retain];
++		_label = [label copy];
++	}
++	return self;
+ }
+ 
+-- (void)forwardInvocation:(NSInvocation *)anInvocation
++- (void)dealloc
+ {
+-    NSLog(@"Stub called: %@ in %@", NSStringFromSelector([anInvocation selector]), [self class]);
++	[_device release];
++	[_label release];
++	[super dealloc];
+ }
+ 
++#else
++
++MTL_UNSUPPORTED_CLASS
++
+ #endif
+ 
+ @end
+--- a/src/Metal/MTLDevice.mm
++++ b/src/Metal/MTLDevice.mm
+@@ -10,6 +10,13 @@
+ #import <Metal/MTLLibraryInternal.h>
+ #import <Metal/stubs.h>
+ #import <Metal/MTLRenderPipelineInternal.h>
++#import <Metal/MTLDescriptorsInternal.h>
++#import <Metal/MTLTextureInternal.h>
++#import <Metal/MTLCompileOptions.h>
++
++#include <stdlib.h>
++#include <string.h>
++#include <sys/stat.h>
+ 
+ MTL_EXTERN const MTLDeviceNotificationName MTLDeviceWasAddedNotification = @"MTLDeviceWasAdded";
+ MTL_EXTERN const MTLDeviceNotificationName MTLDeviceRemovalRequestedNotification = @"MTLDeviceRemovalRequested";
+@@ -17,6 +24,96 @@
+ 
+ #if DARLING_METAL_ENABLED
+ 
++// SHA-256 (FIPS 180-4), for the source cache key
++static void sha256(const uint8_t* data, size_t len, uint8_t out[32]) {
++	static const uint32_t k[64] = {
++		0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
++		0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
++		0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
++		0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
++		0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
++		0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
++		0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
++		0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
++	};
++	uint32_t h[8] = { 0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19 };
++	size_t total = ((len + 8) / 64 + 1) * 64;
++	uint8_t* m = (uint8_t*)calloc(total, 1);
++
++	memcpy(m, data, len);
++	m[len] = 0x80;
++	for (int i = 0; i < 8; i++)
++		m[total - 1 - i] = (uint8_t)((uint64_t)len * 8 >> (8 * i));
++#define ROR(x, n) (((x) >> (n)) | ((x) << (32 - (n))))
++	for (size_t off = 0; off < total; off += 64) {
++		uint32_t w[64], a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
++
++		for (int i = 0; i < 16; i++)
++			w[i] = (uint32_t)m[off + 4 * i] << 24 | (uint32_t)m[off + 4 * i + 1] << 16 | (uint32_t)m[off + 4 * i + 2] << 8 | m[off + 4 * i + 3];
++		for (int i = 16; i < 64; i++)
++			w[i] = w[i - 16] + (ROR(w[i - 15], 7) ^ ROR(w[i - 15], 18) ^ (w[i - 15] >> 3)) + w[i - 7] +
++			       (ROR(w[i - 2], 17) ^ ROR(w[i - 2], 19) ^ (w[i - 2] >> 10));
++		for (int i = 0; i < 64; i++) {
++			uint32_t t1 = hh + (ROR(e, 6) ^ ROR(e, 11) ^ ROR(e, 25)) + ((e & f) ^ (~e & g)) + k[i] + w[i];
++			uint32_t t2 = (ROR(a, 2) ^ ROR(a, 13) ^ ROR(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
++
++			hh = g, g = f, f = e, e = d + t1, d = c, c = b, b = a, a = t1 + t2;
++		}
++		h[0] += a, h[1] += b, h[2] += c, h[3] += d, h[4] += e, h[5] += f, h[6] += g, h[7] += hh;
++	}
++#undef ROR
++	free(m);
++	for (int i = 0; i < 32; i++)
++		out[i] = (uint8_t)(h[i / 4] >> (24 - 8 * (i % 4)));
++}
++
++// the cache key: SHA-256 of the UTF-8 source, then, with macros, a NUL and "NAME=VALUE\n" per macro in name order
++static NSData* sourceKeyBytes(NSString* source, MTLCompileOptions* options) {
++	NSMutableData* bytes = [NSMutableData dataWithData: [source dataUsingEncoding: NSUTF8StringEncoding]];
++	NSDictionary* macros = options.preprocessorMacros;
++
++	if (macros.count) {
++		[bytes appendBytes: "" length: 1];
++		for (NSString* name in [[macros allKeys] sortedArrayUsingSelector: @selector(compare:)]) {
++			id value = [macros objectForKey: name];
++			NSString* text = [value isKindOfClass: [NSString class]] ? value :
++			                 [value respondsToSelector: @selector(stringValue)] ? [value stringValue] : [value description];
++			NSString* line = [NSString stringWithFormat: @"%@=%@\n", name, text];
++			[bytes appendData: [line dataUsingEncoding: NSUTF8StringEncoding]];
++		}
++	}
++	return bytes;
++}
++
++static NSString* sourceKey(NSData* bytes) {
++	uint8_t digest[32];
++	char hex[65];
++
++	sha256((const uint8_t*)bytes.bytes, bytes.length, digest);
++	for (int i = 0; i < 32; i++)
++		snprintf(hex + 2 * i, 3, "%02x", digest[i]);
++	return [NSString stringWithUTF8String: hex];
++}
++
++// where cached metallibs are looked for: $MTL_PD_LIBRARY_CACHE (colon separated), the app's
++// Resources/MetalLibraryCache, then the system cache
++static NSArray<NSString*>* sourceCacheDirectories(void) {
++	NSMutableArray* dirs = [NSMutableArray array];
++	const char* env = getenv("MTL_PD_LIBRARY_CACHE");
++	NSString* resources = [[NSBundle mainBundle] resourcePath];
++
++	if (env)
++		[dirs addObjectsFromArray: [[NSString stringWithUTF8String: env] componentsSeparatedByString: @":"]];
++	if (resources)
++		[dirs addObject: [resources stringByAppendingPathComponent: @"MetalLibraryCache"]];
++	[dirs addObject: @"/usr/local/share/metal-pd/library-cache"];
++	return dirs;
++}
++
++#endif
++
++#if DARLING_METAL_ENABLED
++
+ static NSMutableArray<MTLDeviceInternal*>* devices = nil;
+ static dispatch_once_t devicesInitToken = 0;
+ static MTLDeviceInternal* systemDefaultDevice = nil;
+@@ -238,6 +335,75 @@
+ 	return [[MTLBufferInternal alloc] initWithBuffer: buf device: self resourceOptions: options];
+ }
+ 
++- (NSString*)name
++{
++	return [NSString stringWithUTF8String: _device->name().c_str()];
++}
++
++- (BOOL)supportsFamily: (MTLGPUFamily)gpuFamily
++{
++	// Apple1-4: framebuffer fetch and tile shading, which PureDarwin's executor emulates
++	switch (gpuFamily) {
++		case MTLGPUFamilyApple1:
++		case MTLGPUFamilyApple2:
++		case MTLGPUFamilyApple3:
++		case MTLGPUFamilyApple4:
++		case MTLGPUFamilyMac1:
++		case MTLGPUFamilyMac2:
++		case MTLGPUFamilyCommon1:
++		case MTLGPUFamilyCommon2:
++		case MTLGPUFamilyCommon3:
++			return YES;
++		default:
++			return NO;
++	}
++}
++
++- (id<MTLTexture>)newTextureWithDescriptor: (MTLTextureDescriptor*)descriptor
++{
++	auto texture = _device->newTexture([descriptor asIndiumDescriptor]);
++	if (!texture) {
++		return nil;
++	}
++	return [[MTLTextureInternal alloc] initWithTexture: texture device: self resourceOptions: descriptor.resourceOptions];
++}
++
++- (id<MTLRenderPipelineState>)newRenderPipelineStateWithTileDescriptor: (MTLTileRenderPipelineDescriptor*)descriptor
++                                                               options: (MTLPipelineOption)options
++                                                            reflection: (id*)reflection
++                                                                 error: (NSError**)error
++{
++	auto function = ((MTLFunctionInternal*)descriptor.tileFunction).function;
++	if (!function) {
++		if (error) {
++			*error = [NSError errorWithDomain: NSPOSIXErrorDomain code: EINVAL userInfo: nil];
++		}
++		return nil;
++	}
++	if (reflection) {
++		*reflection = nil;
++	}
++	return [[MTLTileRenderPipelineStateInternal alloc] initWithFunction: function device: self label: descriptor.label];
++}
++
++- (id<MTLSamplerState>)newSamplerStateWithDescriptor: (MTLSamplerDescriptor*)descriptor
++{
++	auto state = _device->newSamplerState([descriptor asIndiumDescriptor]);
++	if (!state) {
++		return nil;
++	}
++	return [[MTLSamplerStateInternal alloc] initWithState: state device: self label: descriptor.label];
++}
++
++- (id<MTLDepthStencilState>)newDepthStencilStateWithDescriptor: (MTLDepthStencilDescriptor*)descriptor
++{
++	auto state = _device->newDepthStencilState([descriptor asIndiumDescriptor]);
++	if (!state) {
++		return nil;
++	}
++	return [[MTLDepthStencilStateInternal alloc] initWithState: state device: self label: descriptor.label];
++}
++
+ - (id<MTLLibrary>)newDefaultLibrary
+ {
+ 	return [self newDefaultLibraryWithBundle: [NSBundle mainBundle] error: nil];
+@@ -283,6 +449,60 @@
+ 	return [[MTLLibraryInternal alloc] initWithLibrary: lib device: self];
+ }
+ 
++- (id<MTLLibrary>)newLibraryWithSource: (NSString*)source
++                               options: (MTLCompileOptions*)options
++                                 error: (NSError**)error
++{
++	NSData* bytes = sourceKeyBytes(source ?: @"", options);
++	NSString* key = sourceKey(bytes);
++	NSString* name = [key stringByAppendingPathExtension: @"metallib"];
++	NSFileManager* fm = [NSFileManager defaultManager];
++	NSString* missing = @"/var/tmp/metal-pd-missing";
++
++	for (NSString* dir in sourceCacheDirectories()) {
++		NSString* path = [dir stringByAppendingPathComponent: name];
++		if ([fm fileExistsAtPath: path])
++			return [self newLibraryWithURL: [NSURL fileURLWithPath: path] error: error];
++	}
++
++	// keep the source (and its macros) where metal-precompile can pick it up
++	mkdir(missing.fileSystemRepresentation, 0777);
++	[[source dataUsingEncoding: NSUTF8StringEncoding] writeToFile: [missing stringByAppendingPathComponent: [key stringByAppendingPathExtension: @"metal"]] atomically: YES];
++	if (options.preprocessorMacros.count) {
++		NSUInteger sourceLength = [[source dataUsingEncoding: NSUTF8StringEncoding] length];
++		NSData* tail = [bytes subdataWithRange: NSMakeRange(sourceLength + 1, bytes.length - sourceLength - 1)];
++		[tail writeToFile: [missing stringByAppendingPathComponent: [key stringByAppendingPathExtension: @"macros"]] atomically: YES];
++	}
++	// the compile settings the metallib has to match: language version (major << 16 | minor) and fast math
++	{
++		NSString* opts = [NSString stringWithFormat: @"languageVersion %lu\nfastMath %d\n",
++			(unsigned long)(options ? options.languageVersion : 0), options ? (int)options.fastMathEnabled : 1];
++		[[opts dataUsingEncoding: NSUTF8StringEncoding] writeToFile: [missing stringByAppendingPathComponent: [key stringByAppendingPathExtension: @"options"]] atomically: YES];
++	}
++	fprintf(stderr, "metal-pd: no precompiled metallib for key %s; source saved as %s/%s.metal (metal-precompile --missing %s)\n",
++		key.UTF8String, missing.UTF8String, key.UTF8String, missing.UTF8String);
++	if (error) {
++		NSString* text = [NSString stringWithFormat: @"PureDarwin has no Metal compiler and no precompiled metallib for this source "
++			"(key %@). The source was saved as %@/%@.metal: build it on a Mac with metal-precompile and install the result "
++			"as %@ in one of: %@", key, missing, key, name, [sourceCacheDirectories() componentsJoinedByString: @", "]];
++		*error = [NSError errorWithDomain: MTLLibraryErrorDomain
++		                             code: MTLLibraryErrorCompileFailure
++		                         userInfo: @{ NSLocalizedDescriptionKey: text, @"MTLPDLibraryCacheKey": key }];
++	}
++	return nil;
++}
++
++- (void)newLibraryWithSource: (NSString*)source
++                     options: (MTLCompileOptions*)options
++           completionHandler: (MTLNewLibraryCompletionHandler)completionHandler
++{
++	NSError* error = nil;
++	id<MTLLibrary> library = [self newLibraryWithSource: source options: options error: &error];
++
++	completionHandler(library, error);
++	[library release];
++}
++
+ #else
+ 
+ MTL_UNSUPPORTED_CLASS
+--- a/src/Metal/MTLLibrary.mm
++++ b/src/Metal/MTLLibrary.mm
+@@ -5,6 +5,8 @@
+ #import <Metal/MTLDevice.h>
+ #import <Metal/stubs.h>
+ 
++MTL_EXTERN NSString* const MTLLibraryErrorDomain = @"MTLLibraryErrorDomain";
++
+ @implementation MTLFunctionInternal
+ 
+ #if DARLING_METAL_ENABLED
+--- a/src/Metal/MTLRenderCommandEncoder.mm
++++ b/src/Metal/MTLRenderCommandEncoder.mm
+@@ -8,6 +8,8 @@
+ #import <Metal/MTLDevice.h>
+ #import <Metal/MTLRenderPipelineInternal.h>
+ #import <Metal/MTLTypesInternal.h>
++#import <Metal/MTLDescriptorsInternal.h>
++#include <indium/pd-tile.hpp>
+ 
+ #include <map>
+ 
+@@ -354,7 +356,7 @@
+ 	std::unordered_map<size_t, Indium::RenderPassColorAttachmentDescriptor> result;
+ 
+ 	for (NSNumber* index in _dict) {
+-		result[[index unsignedIntegerValue]] = [_dict[index] asIndiumDescriptor];
++		result[[index unsignedIntegerValue]] = [(MTLRenderPassColorAttachmentDescriptor*)_dict[index] asIndiumDescriptor];
+ 	}
+ 
+ 	return result;
+@@ -404,6 +406,9 @@
+ - (void)_doInit
+ {
+ 	_colorAttachments = [MTLRenderPassColorAttachmentDescriptorArray new];
++	// Metal hands out depth and stencil attachment descriptors up front, so `pass.depthAttachment.texture = t` works
++	_depthAttachment = [MTLRenderPassDepthAttachmentDescriptor new];
++	_stencilAttachment = [MTLRenderPassStencilAttachmentDescriptor new];
+ }
+ 
+ - (void)_doDealloc
+@@ -502,8 +507,8 @@
+ {
+ 	return Indium::RenderPassDescriptor {
+ 		[_colorAttachments asContiguousIndiumDescriptors],
+-		(_depthAttachment == nil) ? std::nullopt : std::make_optional([_depthAttachment asIndiumDescriptor]),
+-		(_stencilAttachment == nil) ? std::nullopt : std::make_optional([_stencilAttachment asIndiumDescriptor]),
++		(_depthAttachment.texture == nil) ? std::nullopt : std::make_optional([_depthAttachment asIndiumDescriptor]),
++		(_stencilAttachment.texture == nil) ? std::nullopt : std::make_optional([_stencilAttachment asIndiumDescriptor]),
+ 		((MTLBufferInternal*)_visibilityResultBuffer).buffer,
+ 		_renderTargetArrayLength,
+ 		_imageblockSampleLength,
+@@ -564,9 +569,62 @@
+ 
+ - (void)setRenderPipelineState: (id<MTLRenderPipelineState>)pipelineState
+ {
++	// a tile pipeline only changes what dispatchThreadsPerTile: runs
++	if ([(id)pipelineState isKindOfClass: [MTLTileRenderPipelineStateInternal class]]) {
++		IndiumPD::setTileFunction(_encoder, ((MTLTileRenderPipelineStateInternal*)pipelineState).tileFunction);
++		return;
++	}
+ 	_encoder->setRenderPipelineState(((MTLRenderPipelineStateInternal*)pipelineState).state);
+ }
+ 
++- (NSUInteger)tileWidth
++{
++	return IndiumPD::tileSize;
++}
++
++- (NSUInteger)tileHeight
++{
++	return IndiumPD::tileSize;
++}
++
++- (void)setTileBuffer: (id<MTLBuffer>)buffer
++               offset: (NSUInteger)offset
++              atIndex: (NSUInteger)index
++{
++	IndiumPD::setTileBuffer(_encoder, buffer ? ((MTLBufferInternal*)buffer).buffer : nullptr, offset, index);
++}
++
++- (void)setTileBytes: (const void*)bytes
++              length: (NSUInteger)length
++             atIndex: (NSUInteger)index
++{
++	IndiumPD::setTileBytes(_encoder, bytes, length, index);
++}
++
++- (void)setTileTexture: (id<MTLTexture>)texture
++               atIndex: (NSUInteger)index
++{
++	IndiumPD::setTileTexture(_encoder, texture ? ((MTLTextureInternal*)texture).texture : nullptr, index);
++}
++
++- (void)setTileSamplerState: (id<MTLSamplerState>)sampler
++                    atIndex: (NSUInteger)index
++{
++	IndiumPD::setTileSamplerState(_encoder, sampler ? ((MTLSamplerStateInternal*)sampler).state : nullptr, index);
++}
++
++- (void)setThreadgroupMemoryLength: (NSUInteger)length
++                            offset: (NSUInteger)offset
++                           atIndex: (NSUInteger)index
++{
++	IndiumPD::setTileThreadgroupMemoryLength(_encoder, length, index);
++}
++
++- (void)dispatchThreadsPerTile: (MTLSize)threadsPerTile
++{
++	IndiumPD::dispatchThreadsPerTile(_encoder, MTLSizeToIndium(threadsPerTile));
++}
++
+ - (void)setTriangleFillMode: (MTLTriangleFillMode)fillMode
+ {
+ 	_encoder->setTriangleFillMode(static_cast<Indium::TriangleFillMode>(fillMode));
+@@ -597,6 +655,26 @@
+ 	_encoder->setViewports(tmp);
+ }
+ 
++- (void)setDepthClipMode: (MTLDepthClipMode)depthClipMode
++{
++	_encoder->setDepthClipMode(static_cast<Indium::DepthClipMode>(depthClipMode));
++}
++
++- (void)setDepthBias: (float)depthBias
++          slopeScale: (float)slopeScale
++               clamp: (float)clamp
++{
++	_encoder->setDepthBias(depthBias, slopeScale, clamp);
++}
++
++- (void)setBlendColorRed: (float)red
++                   green: (float)green
++                    blue: (float)blue
++                   alpha: (float)alpha
++{
++	_encoder->setBlendColor(red, green, blue, alpha);
++}
++
+ - (void)setScissorRect: (MTLScissorRect)rect
+ {
+ 	_encoder->setScissorRect(MTLScissorRectToIndium(rect));
+@@ -676,6 +754,46 @@
+ 	_encoder->setFragmentBytes(bytes, length, index);
+ }
+ 
++- (void)setVertexTexture: (id<MTLTexture>)texture
++                 atIndex: (NSUInteger)index
++{
++	_encoder->setVertexTexture(texture ? ((MTLTextureInternal*)texture).texture : nullptr, index);
++}
++
++- (void)setFragmentTexture: (id<MTLTexture>)texture
++                   atIndex: (NSUInteger)index
++{
++	_encoder->setFragmentTexture(texture ? ((MTLTextureInternal*)texture).texture : nullptr, index);
++}
++
++- (void)setVertexSamplerState: (id<MTLSamplerState>)sampler
++                      atIndex: (NSUInteger)index
++{
++	_encoder->setVertexSamplerState(sampler ? ((MTLSamplerStateInternal*)sampler).state : nullptr, index);
++}
++
++- (void)setFragmentSamplerState: (id<MTLSamplerState>)sampler
++                        atIndex: (NSUInteger)index
++{
++	_encoder->setFragmentSamplerState(sampler ? ((MTLSamplerStateInternal*)sampler).state : nullptr, index);
++}
++
++- (void)setDepthStencilState: (id<MTLDepthStencilState>)depthStencilState
++{
++	_encoder->setDepthStencilState(depthStencilState ? ((MTLDepthStencilStateInternal*)depthStencilState).state : nullptr);
++}
++
++- (void)setStencilReferenceValue: (uint32_t)referenceValue
++{
++	_encoder->setStencilReferenceValue(referenceValue);
++}
++
++- (void)setStencilFrontReferenceValue: (uint32_t)frontReferenceValue
++                   backReferenceValue: (uint32_t)backReferenceValue
++{
++	_encoder->setStencilReferenceValue(frontReferenceValue, backReferenceValue);
++}
++
+ - (void)drawPrimitives: (MTLPrimitiveType)primitiveType
+            vertexStart: (NSUInteger)vertexStart
+            vertexCount: (NSUInteger)vertexCount
+--- a/src/Metal/MTLRenderPipeline.mm
++++ b/src/Metal/MTLRenderPipeline.mm
+@@ -1,6 +1,7 @@
+ // SPDX-FileCopyrightText: 2026 Darling Developers
+ // SPDX-License-Identifier: MPL-2.0
+ 
++#import <Metal/MTLDescriptorsInternal.h>
+ #import <Metal/MTLRenderPipelineInternal.h>
+ #import <Metal/stubs.h>
+ #import <Metal/MTLLibraryInternal.h>
+@@ -204,7 +205,7 @@
+ 		((MTLFunctionInternal*)_fragmentFunction).function,
+ 		_maxVertexCallStackDepth,
+ 		_maxFragmentCallStackDepth,
+-		std::nullopt, // TODO
++		_vertexDescriptor ? std::optional<Indium::VertexDescriptor>([_vertexDescriptor asIndiumDescriptor]) : std::nullopt,
+ 		[_vertexBuffers asIndiumDescriptors],
+ 		[_fragmentBuffers asIndiumDescriptors],
+ 		[_colorAttachments asContiguousIndiumDescriptors],
+@@ -304,7 +305,7 @@
+ 	std::unordered_map<size_t, Indium::RenderPipelineColorAttachmentDescriptor> result;
+ 
+ 	for (NSNumber* index in _dict) {
+-		result[[index unsignedIntegerValue]] = [_dict[index] asIndiumDescriptor];
++		result[[index unsignedIntegerValue]] = [(MTLRenderPipelineColorAttachmentDescriptor*)_dict[index] asIndiumDescriptor];
+ 	}
+ 
+ 	return result;
+@@ -450,6 +451,182 @@
+ 
+ MTL_UNSUPPORTED_CLASS
+ 
++#endif
++
++@end
++
++@implementation MTLTileRenderPipelineColorAttachmentDescriptor
++
++#if DARLING_METAL_ENABLED
++
++@synthesize pixelFormat = _pixelFormat;
++
++- (id)copyWithZone: (NSZone*)zone
++{
++	MTLTileRenderPipelineColorAttachmentDescriptor* copy = [[MTLTileRenderPipelineColorAttachmentDescriptor alloc] init];
++
++	copy.pixelFormat = _pixelFormat;
++	return copy;
++}
++
++#else
++
++MTL_UNSUPPORTED_CLASS
++
++#endif
++
++@end
++
++@implementation MTLTileRenderPipelineColorAttachmentDescriptorArray
++
++#if DARLING_METAL_ENABLED
++
++{
++@public
++	NSMutableDictionary<NSNumber*, MTLTileRenderPipelineColorAttachmentDescriptor*>* _dict;
++}
++
++- (instancetype)init
++{
++	self = [super init];
++	if (self != nil) {
++		_dict = [NSMutableDictionary new];
++	}
++	return self;
++}
++
++- (void)dealloc
++{
++	[_dict release];
++	[super dealloc];
++}
++
++- (MTLTileRenderPipelineColorAttachmentDescriptor*)objectAtIndexedSubscript: (NSUInteger)attachmentIndex
++{
++	MTLTileRenderPipelineColorAttachmentDescriptor* desc = _dict[@(attachmentIndex)];
++
++	if (desc == nil) {
++		desc = [[MTLTileRenderPipelineColorAttachmentDescriptor alloc] init];
++		_dict[@(attachmentIndex)] = desc;
++		[desc release];
++	}
++	return desc;
++}
++
++- (void)setObject: (MTLTileRenderPipelineColorAttachmentDescriptor*)attachment atIndexedSubscript: (NSUInteger)attachmentIndex
++{
++	MTLTileRenderPipelineColorAttachmentDescriptor* copy = [attachment copy];
++
++	if (copy != nil) {
++		_dict[@(attachmentIndex)] = copy;
++	} else {
++		[_dict removeObjectForKey: @(attachmentIndex)];
++	}
++	[copy release];
++}
++
++#else
++
++MTL_UNSUPPORTED_CLASS
++
++#endif
++
++@end
++
++@implementation MTLTileRenderPipelineDescriptor
++
++#if DARLING_METAL_ENABLED
++
++@synthesize label = _label;
++@synthesize tileFunction = _tileFunction;
++@synthesize rasterSampleCount = _rasterSampleCount;
++@synthesize colorAttachments = _colorAttachments;
++@synthesize threadgroupSizeMatchesTileSize = _threadgroupSizeMatchesTileSize;
++@synthesize maxTotalThreadsPerThreadgroup = _maxTotalThreadsPerThreadgroup;
++
++- (instancetype)init
++{
++	self = [super init];
++	if (self != nil) {
++		_colorAttachments = [MTLTileRenderPipelineColorAttachmentDescriptorArray new];
++		_rasterSampleCount = 1;
++	}
++	return self;
++}
++
++- (void)dealloc
++{
++	[_label release];
++	[_tileFunction release];
++	[_colorAttachments release];
++	[super dealloc];
++}
++
++- (void)reset
++{
++	self.label = nil;
++	self.tileFunction = nil;
++	[_colorAttachments->_dict removeAllObjects];
++	_rasterSampleCount = 1;
++	_threadgroupSizeMatchesTileSize = NO;
++	_maxTotalThreadsPerThreadgroup = 0;
++}
++
++- (id)copyWithZone: (NSZone*)zone
++{
++	MTLTileRenderPipelineDescriptor* copy = [[MTLTileRenderPipelineDescriptor alloc] init];
++
++	copy.label = _label;
++	copy.tileFunction = _tileFunction;
++	copy.rasterSampleCount = _rasterSampleCount;
++	copy.threadgroupSizeMatchesTileSize = _threadgroupSizeMatchesTileSize;
++	copy.maxTotalThreadsPerThreadgroup = _maxTotalThreadsPerThreadgroup;
++	for (NSNumber* index in _colorAttachments->_dict) {
++		copy.colorAttachments[index.unsignedIntegerValue] = _colorAttachments->_dict[index];
++	}
++	return copy;
++}
++
++#else
++
++MTL_UNSUPPORTED_CLASS
++
++#endif
++
++@end
++
++@implementation MTLTileRenderPipelineStateInternal
++
++#if DARLING_METAL_ENABLED
++
++@synthesize tileFunction = _tileFunction;
++@synthesize device = _device;
++@synthesize label = _label;
++
++- (instancetype)initWithFunction: (std::shared_ptr<Indium::Function>)function
++                          device: (id<MTLDevice>)device
++                           label: (NSString*)label
++{
++	self = [super init];
++	if (self != nil) {
++		_tileFunction = function;
++		_device = [device retain];
++		_label = [label copy];
++	}
++	return self;
++}
++
++- (void)dealloc
++{
++	[_device release];
++	[_label release];
++	[super dealloc];
++}
++
++#else
++
++MTL_UNSUPPORTED_CLASS
++
+ #endif
+ 
+ @end
+--- a/src/Metal/MTLSamplerDescriptor.mm
++++ b/src/Metal/MTLSamplerDescriptor.mm
+@@ -2,23 +2,131 @@
+ // SPDX-License-Identifier: MPL-2.0
+ 
+ #import <Metal/MTLSamplerDescriptor.h>
+-#import <Foundation/NSMethodSignature.h>
+-#import <Foundation/NSInvocation.h>
++#import <Metal/MTLDescriptorsInternal.h>
++#import <Metal/stubs.h>
++
++#include <float.h>
+ 
+ @implementation MTLSamplerDescriptor
+ 
+ #if DARLING_METAL_ENABLED
+ 
+-- (NSMethodSignature *)methodSignatureForSelector:(SEL)aSelector
++@synthesize minFilter = _minFilter;
++@synthesize magFilter = _magFilter;
++@synthesize mipFilter = _mipFilter;
++@synthesize maxAnisotropy = _maxAnisotropy;
++@synthesize sAddressMode = _sAddressMode;
++@synthesize tAddressMode = _tAddressMode;
++@synthesize rAddressMode = _rAddressMode;
++@synthesize borderColor = _borderColor;
++@synthesize normalizedCoordinates = _normalizedCoordinates;
++@synthesize lodMinClamp = _lodMinClamp;
++@synthesize lodMaxClamp = _lodMaxClamp;
++@synthesize lodAverage = _lodAverage;
++@synthesize compareFunction = _compareFunction;
++@synthesize supportArgumentBuffers = _supportArgumentBuffers;
++@synthesize label = _label;
++
++- (instancetype)init
++{
++	self = [super init];
++	if (self != nil) {
++		_maxAnisotropy = 1;
++		_normalizedCoordinates = YES;
++		_lodMaxClamp = FLT_MAX;
++		_compareFunction = MTLCompareFunctionNever;
++	}
++	return self;
++}
++
++- (void)dealloc
++{
++	[_label release];
++	[super dealloc];
++}
++
++- (id)copyWithZone: (NSZone*)zone
++{
++	MTLSamplerDescriptor* copy = [[MTLSamplerDescriptor alloc] init];
++
++	copy.minFilter = _minFilter;
++	copy.magFilter = _magFilter;
++	copy.mipFilter = _mipFilter;
++	copy.maxAnisotropy = _maxAnisotropy;
++	copy.sAddressMode = _sAddressMode;
++	copy.tAddressMode = _tAddressMode;
++	copy.rAddressMode = _rAddressMode;
++	copy.borderColor = _borderColor;
++	copy.normalizedCoordinates = _normalizedCoordinates;
++	copy.lodMinClamp = _lodMinClamp;
++	copy.lodMaxClamp = _lodMaxClamp;
++	copy.lodAverage = _lodAverage;
++	copy.compareFunction = _compareFunction;
++	copy.supportArgumentBuffers = _supportArgumentBuffers;
++	copy.label = _label;
++	return copy;
++}
++
++- (Indium::SamplerDescriptor)asIndiumDescriptor
++{
++	Indium::SamplerDescriptor desc {};
++
++	desc.minFilter = static_cast<Indium::SamplerMinMagFilter>(_minFilter);
++	desc.magFilter = static_cast<Indium::SamplerMinMagFilter>(_magFilter);
++	desc.mipFilter = static_cast<Indium::SamplerMipFilter>(_mipFilter);
++	desc.maxAnisotropy = _maxAnisotropy;
++	desc.sAddressMode = static_cast<Indium::SamplerAddressMode>(_sAddressMode);
++	desc.tAddressMode = static_cast<Indium::SamplerAddressMode>(_tAddressMode);
++	desc.rAddressMode = static_cast<Indium::SamplerAddressMode>(_rAddressMode);
++	desc.borderColor = static_cast<Indium::SamplerBorderColor>(_borderColor);
++	desc.normalizedCoordinates = _normalizedCoordinates;
++	desc.lodMinClamp = _lodMinClamp;
++	desc.lodMaxClamp = _lodMaxClamp;
++	desc.supportArgumentBuffers = _supportArgumentBuffers;
++	desc.compareFunction = static_cast<Indium::CompareFunction>(_compareFunction);
++	return desc;
++}
++
++#else
++
++MTL_UNSUPPORTED_CLASS
++
++#endif
++
++@end
++
++@implementation MTLSamplerStateInternal
++
++#if DARLING_METAL_ENABLED
++
++@synthesize state = _state;
++@synthesize device = _device;
++@synthesize label = _label;
++
++- (instancetype)initWithState: (std::shared_ptr<Indium::SamplerState>)state
++                       device: (id<MTLDevice>)device
++                        label: (NSString*)label
+ {
+-    return [NSMethodSignature signatureWithObjCTypes: "v@:"];
++	self = [super init];
++	if (self != nil) {
++		_state = state;
++		_device = [device retain];
++		_label = [label copy];
++	}
++	return self;
+ }
+ 
+-- (void)forwardInvocation:(NSInvocation *)anInvocation
++- (void)dealloc
+ {
+-    NSLog(@"Stub called: %@ in %@", NSStringFromSelector([anInvocation selector]), [self class]);
++	[_device release];
++	[_label release];
++	[super dealloc];
+ }
+ 
++#else
++
++MTL_UNSUPPORTED_CLASS
++
+ #endif
+ 
+ @end
+--- a/src/Metal/MTLStencilDescriptor.mm
++++ b/src/Metal/MTLStencilDescriptor.mm
+@@ -2,23 +2,60 @@
+ // SPDX-License-Identifier: MPL-2.0
+ 
+ #import <Metal/MTLStencilDescriptor.h>
+-#import <Foundation/NSMethodSignature.h>
+-#import <Foundation/NSInvocation.h>
++#import <Metal/MTLDescriptorsInternal.h>
++#import <Metal/stubs.h>
+ 
+ @implementation MTLStencilDescriptor
+ 
+ #if DARLING_METAL_ENABLED
+ 
+-- (NSMethodSignature *)methodSignatureForSelector:(SEL)aSelector
++@synthesize stencilCompareFunction = _stencilCompareFunction;
++@synthesize stencilFailureOperation = _stencilFailureOperation;
++@synthesize depthFailureOperation = _depthFailureOperation;
++@synthesize depthStencilPassOperation = _depthStencilPassOperation;
++@synthesize readMask = _readMask;
++@synthesize writeMask = _writeMask;
++
++- (instancetype)init
++{
++	self = [super init];
++	if (self != nil) {
++		_stencilCompareFunction = MTLCompareFunctionAlways;
++		_readMask = _writeMask = UINT32_MAX;
++	}
++	return self;
++}
++
++- (id)copyWithZone: (NSZone*)zone
+ {
+-    return [NSMethodSignature signatureWithObjCTypes: "v@:"];
++	MTLStencilDescriptor* copy = [[MTLStencilDescriptor alloc] init];
++
++	copy.stencilCompareFunction = _stencilCompareFunction;
++	copy.stencilFailureOperation = _stencilFailureOperation;
++	copy.depthFailureOperation = _depthFailureOperation;
++	copy.depthStencilPassOperation = _depthStencilPassOperation;
++	copy.readMask = _readMask;
++	copy.writeMask = _writeMask;
++	return copy;
+ }
+ 
+-- (void)forwardInvocation:(NSInvocation *)anInvocation
++- (Indium::StencilDescriptor)asIndiumDescriptor
+ {
+-    NSLog(@"Stub called: %@ in %@", NSStringFromSelector([anInvocation selector]), [self class]);
++	Indium::StencilDescriptor desc {};
++
++	desc.stencilCompareFunction = static_cast<Indium::CompareFunction>(_stencilCompareFunction);
++	desc.stencilFailureOperation = static_cast<Indium::StencilOperation>(_stencilFailureOperation);
++	desc.depthFailureOperation = static_cast<Indium::StencilOperation>(_depthFailureOperation);
++	desc.depthStencilPassOperation = static_cast<Indium::StencilOperation>(_depthStencilPassOperation);
++	desc.readMask = _readMask;
++	desc.writeMask = _writeMask;
++	return desc;
+ }
+ 
++#else
++
++MTL_UNSUPPORTED_CLASS
++
+ #endif
+ 
+ @end
+--- a/src/Metal/MTLTextureDescriptor.mm
++++ b/src/Metal/MTLTextureDescriptor.mm
+@@ -2,23 +2,155 @@
+ // SPDX-License-Identifier: MPL-2.0
+ 
+ #import <Metal/MTLTextureDescriptor.h>
+-#import <Foundation/NSMethodSignature.h>
+-#import <Foundation/NSInvocation.h>
++#import <Metal/MTLDescriptorsInternal.h>
++#import <Metal/MTLTextureInternal.h>
++#import <Metal/stubs.h>
+ 
+ @implementation MTLTextureDescriptor
+ 
+ #if DARLING_METAL_ENABLED
+ 
+-- (NSMethodSignature *)methodSignatureForSelector:(SEL)aSelector
++@synthesize textureType = _textureType;
++@synthesize pixelFormat = _pixelFormat;
++@synthesize width = _width;
++@synthesize height = _height;
++@synthesize depth = _depth;
++@synthesize mipmapLevelCount = _mipmapLevelCount;
++@synthesize sampleCount = _sampleCount;
++@synthesize arrayLength = _arrayLength;
++@synthesize allowGPUOptimizedContents = _allowGPUOptimizedContents;
++@synthesize usage = _usage;
++@synthesize swizzle = _swizzle;
++@synthesize resourceOptions = _resourceOptions;
++
+++ (MTLTextureDescriptor*)texture2DDescriptorWithPixelFormat: (MTLPixelFormat)pixelFormat
++                                                      width: (NSUInteger)width
++                                                     height: (NSUInteger)height
++                                                  mipmapped: (BOOL)mipmapped
+ {
+-    return [NSMethodSignature signatureWithObjCTypes: "v@:"];
++	MTLTextureDescriptor* desc = [[[MTLTextureDescriptor alloc] init] autorelease];
++	NSUInteger levels = 1;
++
++	desc.pixelFormat = pixelFormat;
++	desc.width = width;
++	desc.height = height;
++	if (mipmapped) {
++		for (NSUInteger size = MAX(width, height); size > 1; size >>= 1) {
++			++levels;
++		}
++	}
++	desc.mipmapLevelCount = levels;
++	return desc;
++}
++
+++ (MTLTextureDescriptor*)textureCubeDescriptorWithPixelFormat: (MTLPixelFormat)pixelFormat
++                                                         size: (NSUInteger)size
++                                                    mipmapped: (BOOL)mipmapped
++{
++	MTLTextureDescriptor* desc = [self texture2DDescriptorWithPixelFormat: pixelFormat width: size height: size mipmapped: mipmapped];
++
++	desc.textureType = MTLTextureTypeCube;
++	return desc;
++}
++
++- (instancetype)init
++{
++	self = [super init];
++	if (self != nil) {
++		_textureType = MTLTextureType2D;
++		_pixelFormat = MTLPixelFormatRGBA8Unorm;
++		_width = _height = _depth = 1;
++		_mipmapLevelCount = _sampleCount = _arrayLength = 1;
++		_resourceOptions = MTLResourceCPUCacheModeDefaultCache | MTLResourceStorageModeManaged | MTLResourceHazardTrackingModeDefault;
++		_allowGPUOptimizedContents = YES;
++		_usage = MTLTextureUsageShaderRead;
++		_swizzle = MTLTextureSwizzleChannelsDefault;
++	}
++	return self;
++}
++
++- (id)copyWithZone: (NSZone*)zone
++{
++	MTLTextureDescriptor* copy = [[MTLTextureDescriptor alloc] init];
++
++	copy.textureType = _textureType;
++	copy.pixelFormat = _pixelFormat;
++	copy.width = _width;
++	copy.height = _height;
++	copy.depth = _depth;
++	copy.mipmapLevelCount = _mipmapLevelCount;
++	copy.sampleCount = _sampleCount;
++	copy.arrayLength = _arrayLength;
++	copy.resourceOptions = _resourceOptions;
++	copy.allowGPUOptimizedContents = _allowGPUOptimizedContents;
++	copy.usage = _usage;
++	copy.swizzle = _swizzle;
++	return copy;
++}
++
++- (MTLResourceOptions)resourceOptions
++{
++	return _resourceOptions;
+ }
+ 
+-- (void)forwardInvocation:(NSInvocation *)anInvocation
++- (void)setResourceOptions: (MTLResourceOptions)options
+ {
+-    NSLog(@"Stub called: %@ in %@", NSStringFromSelector([anInvocation selector]), [self class]);
++	_resourceOptions = options;
+ }
+ 
++- (MTLCPUCacheMode)cpuCacheMode
++{
++	return (MTLCPUCacheMode)((_resourceOptions >> MTLResourceCPUCacheModeShift) & 0xf);
++}
++
++- (void)setCpuCacheMode: (MTLCPUCacheMode)mode
++{
++	_resourceOptions = (_resourceOptions & ~((MTLResourceOptions)0xf << MTLResourceCPUCacheModeShift)) | ((MTLResourceOptions)mode << MTLResourceCPUCacheModeShift);
++}
++
++- (MTLStorageMode)storageMode
++{
++	return (MTLStorageMode)((_resourceOptions >> MTLResourceStorageModeShift) & 0xf);
++}
++
++- (void)setStorageMode: (MTLStorageMode)mode
++{
++	_resourceOptions = (_resourceOptions & ~((MTLResourceOptions)0xf << MTLResourceStorageModeShift)) | ((MTLResourceOptions)mode << MTLResourceStorageModeShift);
++}
++
++- (MTLHazardTrackingMode)hazardTrackingMode
++{
++	return (MTLHazardTrackingMode)((_resourceOptions >> MTLResourceHazardTrackingModeShift) & 0x3);
++}
++
++- (void)setHazardTrackingMode: (MTLHazardTrackingMode)mode
++{
++	_resourceOptions = (_resourceOptions & ~((MTLResourceOptions)0x3 << MTLResourceHazardTrackingModeShift)) | ((MTLResourceOptions)mode << MTLResourceHazardTrackingModeShift);
++}
++
++- (Indium::TextureDescriptor)asIndiumDescriptor
++{
++	Indium::TextureDescriptor desc {};
++
++	desc.textureType = static_cast<Indium::TextureType>(_textureType);
++	desc.pixelFormat = static_cast<Indium::PixelFormat>(_pixelFormat);
++	desc.width = _width;
++	desc.height = _height;
++	desc.depth = _depth;
++	desc.mipmapLevelCount = _mipmapLevelCount;
++	desc.sampleCount = _sampleCount;
++	desc.arrayLength = _arrayLength;
++	desc.resourceOptions = static_cast<Indium::ResourceOptions>(_resourceOptions);
++	desc.allowGPUOptimizedContents = _allowGPUOptimizedContents;
++	desc.usage = static_cast<Indium::TextureUsage>(_usage);
++	desc.swizzle = MTLTextureSwizzleChannelsToIndium(_swizzle);
++	return desc;
++}
++
++#else
++
++MTL_UNSUPPORTED_CLASS
++
+ #endif
+ 
+ @end
+--- a/src/Metal/MTLTexture.mm
++++ b/src/Metal/MTLTexture.mm
+@@ -1,6 +1,7 @@
+ // SPDX-FileCopyrightText: 2026 Darling Developers
+ // SPDX-License-Identifier: MPL-2.0
+ 
++#import <Metal/MTLDeviceInternal.h>
+ #import <Metal/MTLTextureInternal.h>
+ #import <Metal/MTLDevice.h>
+ #import <Metal/stubs.h>
+@@ -182,8 +183,7 @@
+       fromRegion: (MTLRegion)region
+      mipmapLevel: (NSUInteger)level
+ {
+-	NSLog(@"STUB: getBytes:bytesPerRow:fromRegion:mipmapLevel:");
+-	abort();
++	[self getBytes: pixelBytes bytesPerRow: bytesPerRow bytesPerImage: bytesPerRow * region.size.height fromRegion: region mipmapLevel: level slice: 0];
+ }
+ 
+ - (void)getBytes: (void*)pixelBytes
+@@ -193,8 +193,24 @@
+      mipmapLevel: (NSUInteger)level
+            slice: (NSUInteger)slice
+ {
+-	NSLog(@"STUB: getBytes:bytesPerRow:bytesPerImage:fromRegion:mipmapLevel:slice:");
+-	abort();
++	// Indium textures have no read-back of their own: a blit into a shared buffer, waited for
++	auto device = ((MTLDeviceInternal*)_device).device;
++	// bytesPerImage is 0 for anything but 3D textures
++	if (bytesPerImage == 0) {
++		bytesPerImage = bytesPerRow * region.size.height;
++	}
++	size_t size = bytesPerImage * (region.size.depth ? region.size.depth : 1);
++	auto buffer = device->newBuffer(size, Indium::ResourceOptions::StorageModeShared);
++	auto queue = device->newCommandQueue();
++	auto cmd = queue->commandBuffer();
++	auto blit = cmd->blitCommandEncoder();
++
++	blit->copy(_texture, slice, level, Indium::Origin { region.origin.x, region.origin.y, region.origin.z },
++	           Indium::Size { region.size.width, region.size.height, region.size.depth }, buffer, 0, bytesPerRow, bytesPerImage);
++	blit->endEncoding();
++	cmd->commit();
++	cmd->waitUntilCompleted();
++	memcpy(pixelBytes, buffer->contents(), size);
+ }
+ 
+ #else
+--- a/src/Metal/MTLVertexDescriptor.mm
++++ b/src/Metal/MTLVertexDescriptor.mm
+@@ -2,23 +2,265 @@
+ // SPDX-License-Identifier: MPL-2.0
+ 
+ #import <Metal/MTLVertexDescriptor.h>
+-#import <Foundation/NSMethodSignature.h>
+-#import <Foundation/NSInvocation.h>
++#import <Metal/MTLDescriptorsInternal.h>
++#import <Metal/stubs.h>
++
++@implementation MTLVertexBufferLayoutDescriptor
++
++#if DARLING_METAL_ENABLED
++
++@synthesize stride = _stride;
++@synthesize stepFunction = _stepFunction;
++@synthesize stepRate = _stepRate;
++
++- (instancetype)init
++{
++	self = [super init];
++	if (self != nil) {
++		_stepFunction = MTLVertexStepFunctionPerVertex;
++		_stepRate = 1;
++	}
++	return self;
++}
++
++- (id)copyWithZone: (NSZone*)zone
++{
++	MTLVertexBufferLayoutDescriptor* copy = [[MTLVertexBufferLayoutDescriptor alloc] init];
++
++	copy.stride = _stride;
++	copy.stepFunction = _stepFunction;
++	copy.stepRate = _stepRate;
++	return copy;
++}
++
++#else
++
++MTL_UNSUPPORTED_CLASS
++
++#endif
++
++@end
++
++@implementation MTLVertexAttributeDescriptor
++
++#if DARLING_METAL_ENABLED
++
++@synthesize format = _format;
++@synthesize offset = _offset;
++@synthesize bufferIndex = _bufferIndex;
++
++- (id)copyWithZone: (NSZone*)zone
++{
++	MTLVertexAttributeDescriptor* copy = [[MTLVertexAttributeDescriptor alloc] init];
++
++	copy.format = _format;
++	copy.offset = _offset;
++	copy.bufferIndex = _bufferIndex;
++	return copy;
++}
++
++#else
++
++MTL_UNSUPPORTED_CLASS
++
++#endif
++
++@end
++
++// both arrays hand out a descriptor per index on first use, as Metal's do, so `a[i].x = y` works
++@implementation MTLVertexBufferLayoutDescriptorArray
++
++#if DARLING_METAL_ENABLED
++
++{
++@public
++	NSMutableDictionary<NSNumber*, MTLVertexBufferLayoutDescriptor*>* _dict;
++}
++
++- (instancetype)init
++{
++	self = [super init];
++	if (self != nil) {
++		_dict = [NSMutableDictionary new];
++	}
++	return self;
++}
++
++- (void)dealloc
++{
++	[_dict release];
++	[super dealloc];
++}
++
++- (MTLVertexBufferLayoutDescriptor*)objectAtIndexedSubscript: (NSUInteger)index
++{
++	MTLVertexBufferLayoutDescriptor* desc = _dict[@(index)];
++
++	if (desc == nil) {
++		desc = [[MTLVertexBufferLayoutDescriptor alloc] init];
++		_dict[@(index)] = desc;
++		[desc release];
++	}
++	return desc;
++}
++
++- (void)setObject: (MTLVertexBufferLayoutDescriptor*)descriptor atIndexedSubscript: (NSUInteger)index
++{
++	MTLVertexBufferLayoutDescriptor* copy = [descriptor copy];
++
++	if (copy != nil) {
++		_dict[@(index)] = copy;
++	} else {
++		[_dict removeObjectForKey: @(index)];
++	}
++	[copy release];
++}
++
++#else
++
++MTL_UNSUPPORTED_CLASS
++
++#endif
++
++@end
++
++@implementation MTLVertexAttributeDescriptorArray
++
++#if DARLING_METAL_ENABLED
++
++{
++@public
++	NSMutableDictionary<NSNumber*, MTLVertexAttributeDescriptor*>* _dict;
++}
++
++- (instancetype)init
++{
++	self = [super init];
++	if (self != nil) {
++		_dict = [NSMutableDictionary new];
++	}
++	return self;
++}
++
++- (void)dealloc
++{
++	[_dict release];
++	[super dealloc];
++}
++
++- (MTLVertexAttributeDescriptor*)objectAtIndexedSubscript: (NSUInteger)index
++{
++	MTLVertexAttributeDescriptor* desc = _dict[@(index)];
++
++	if (desc == nil) {
++		desc = [[MTLVertexAttributeDescriptor alloc] init];
++		_dict[@(index)] = desc;
++		[desc release];
++	}
++	return desc;
++}
++
++- (void)setObject: (MTLVertexAttributeDescriptor*)descriptor atIndexedSubscript: (NSUInteger)index
++{
++	MTLVertexAttributeDescriptor* copy = [descriptor copy];
++
++	if (copy != nil) {
++		_dict[@(index)] = copy;
++	} else {
++		[_dict removeObjectForKey: @(index)];
++	}
++	[copy release];
++}
++
++#else
++
++MTL_UNSUPPORTED_CLASS
++
++#endif
++
++@end
+ 
+ @implementation MTLVertexDescriptor
+ 
+ #if DARLING_METAL_ENABLED
+ 
+-- (NSMethodSignature *)methodSignatureForSelector:(SEL)aSelector
++@synthesize layouts = _layouts;
++@synthesize attributes = _attributes;
++
+++ (MTLVertexDescriptor*)vertexDescriptor
++{
++	return [[[MTLVertexDescriptor alloc] init] autorelease];
++}
++
++- (instancetype)init
++{
++	self = [super init];
++	if (self != nil) {
++		_layouts = [MTLVertexBufferLayoutDescriptorArray new];
++		_attributes = [MTLVertexAttributeDescriptorArray new];
++	}
++	return self;
++}
++
++- (void)dealloc
+ {
+-    return [NSMethodSignature signatureWithObjCTypes: "v@:"];
++	[_layouts release];
++	[_attributes release];
++	[super dealloc];
+ }
+ 
+-- (void)forwardInvocation:(NSInvocation *)anInvocation
++- (void)reset
+ {
+-    NSLog(@"Stub called: %@ in %@", NSStringFromSelector([anInvocation selector]), [self class]);
++	[_layouts->_dict removeAllObjects];
++	[_attributes->_dict removeAllObjects];
+ }
+ 
++- (id)copyWithZone: (NSZone*)zone
++{
++	MTLVertexDescriptor* copy = [[MTLVertexDescriptor alloc] init];
++
++	for (NSNumber* index in _layouts->_dict) {
++		copy.layouts[index.unsignedIntegerValue] = _layouts->_dict[index];
++	}
++	for (NSNumber* index in _attributes->_dict) {
++		copy.attributes[index.unsignedIntegerValue] = _attributes->_dict[index];
++	}
++	return copy;
++}
++
++- (Indium::VertexDescriptor)asIndiumDescriptor
++{
++	Indium::VertexDescriptor desc;
++
++	for (NSNumber* index in _layouts->_dict) {
++		MTLVertexBufferLayoutDescriptor* l = _layouts->_dict[index];
++		Indium::VertexBufferLayoutDescriptor out;
++
++		out.stride = l.stride;
++		out.stepFunction = static_cast<Indium::VertexStepFunction>(l.stepFunction);
++		out.stepRate = l.stepRate;
++		desc.layouts[index.unsignedIntegerValue] = out;
++	}
++	for (NSNumber* index in _attributes->_dict) {
++		MTLVertexAttributeDescriptor* a = _attributes->_dict[index];
++		Indium::VertexAttributeDescriptor out;
++
++		// an attribute never given a format is not declared
++		if (a.format == MTLVertexFormatInvalid) {
++			continue;
++		}
++		out.format = static_cast<Indium::VertexFormat>(a.format);
++		out.offset = a.offset;
++		out.bufferIndex = a.bufferIndex;
++		desc.attributes[index.unsignedIntegerValue] = out;
++	}
++	return desc;
++}
++
++#else
++
++MTL_UNSUPPORTED_CLASS
++
+ #endif
+ 
+ @end
+--- a/private-include/Metal/MTLCommandBufferInternal.h
++++ b/private-include/Metal/MTLCommandBufferInternal.h
+@@ -12,6 +12,9 @@
+ #if DARLING_METAL_ENABLED
+ - (instancetype)initWithCommandBuffer: (std::shared_ptr<Indium::CommandBuffer>)commandBuffer
+                          commandQueue: (id<MTLCommandQueue>)commandQueue;
++
++// the Indium command buffer, for work PureDarwin encodes outside darling-metal's encoders (events)
++- (std::shared_ptr<Indium::CommandBuffer>)indiumCommandBuffer;
+ #endif
+ 
+ @end
+--- a/src/Metal/MTLCommandBuffer.mm
++++ b/src/Metal/MTLCommandBuffer.mm
+@@ -163,6 +163,11 @@
+ 	_commandBuffer->presentDrawable(((id<MTLDrawableInternal>)drawable).drawable);
+ }
+ 
++- (std::shared_ptr<Indium::CommandBuffer>)indiumCommandBuffer
++{
++	return _commandBuffer;
++}
++
+ - (void)commit
+ {
+ 	// status follows the buffer: the wrapper holds it until the device thread is done with it
+--- a/include/Metal/MTLCompileOptions.h
++++ b/include/Metal/MTLCompileOptions.h
+@@ -32,6 +32,11 @@
+ 	MTLMathModeFast = 2,
+ };
+ 
++typedef NS_ENUM(NSInteger, MTLMathFloatingPointFunctions) {
++	MTLMathFloatingPointFunctionsFast = 0,
++	MTLMathFloatingPointFunctionsPrecise = 1,
++};
++
+ // PureDarwin has no Metal compiler: newLibraryWithSource: looks the source up in a cache of metallibs built
+ // on a Mac, so these options only take part through preprocessorMacros (part of the cache key)
+ @interface MTLCompileOptions : NSObject <NSCopying>
+@@ -39,6 +44,7 @@
+ @property(copy) NSDictionary<NSString*, NSObject*>* preprocessorMacros;
+ @property BOOL fastMathEnabled;
+ @property MTLMathMode mathMode;
++@property MTLMathFloatingPointFunctions mathFloatingPointFunctions;
+ @property MTLLanguageVersion languageVersion;
+ @property MTLLibraryType libraryType;
+ @property(copy) NSString* installName;
+--- a/src/Metal/MTLCompileOptions.mm
++++ b/src/Metal/MTLCompileOptions.mm
+@@ -8,6 +8,7 @@
+ @synthesize preprocessorMacros = _preprocessorMacros, fastMathEnabled = _fastMathEnabled, mathMode = _mathMode;
+ @synthesize languageVersion = _languageVersion, libraryType = _libraryType, installName = _installName;
+ @synthesize libraries = _libraries, preserveInvariance = _preserveInvariance, optimizationLevel = _optimizationLevel;
++@synthesize mathFloatingPointFunctions = _mathFloatingPointFunctions;
+ 
+ - (instancetype)init
+ {
+@@ -34,6 +35,7 @@
+ 	copy.preprocessorMacros = _preprocessorMacros;
+ 	copy.fastMathEnabled = _fastMathEnabled;
+ 	copy.mathMode = _mathMode;
++	copy.mathFloatingPointFunctions = _mathFloatingPointFunctions;
+ 	copy.languageVersion = _languageVersion;
+ 	copy.libraryType = _libraryType;
+ 	copy.installName = _installName;
+--- a/src/Metal/MTLDevice.mm
++++ b/src/Metal/MTLDevice.mm
+@@ -473,10 +473,12 @@
+ 		NSData* tail = [bytes subdataWithRange: NSMakeRange(sourceLength + 1, bytes.length - sourceLength - 1)];
+ 		[tail writeToFile: [missing stringByAppendingPathComponent: [key stringByAppendingPathExtension: @"macros"]] atomically: YES];
+ 	}
+-	// the compile settings the metallib has to match: language version (major << 16 | minor) and fast math
++	// the compile settings the metallib has to match: language version (major << 16 | minor), fast math, the
++	// math mode and the floating-point functions
+ 	{
+-		NSString* opts = [NSString stringWithFormat: @"languageVersion %lu\nfastMath %d\n",
+-			(unsigned long)(options ? options.languageVersion : 0), options ? (int)options.fastMathEnabled : 1];
++		NSString* opts = [NSString stringWithFormat: @"languageVersion %lu\nfastMath %d\nmathMode %ld\nmathFloatingPointFunctions %ld\n",
++			(unsigned long)(options ? options.languageVersion : 0), options ? (int)options.fastMathEnabled : 1,
++			(long)(options ? options.mathMode : MTLMathModeFast), (long)(options ? options.mathFloatingPointFunctions : MTLMathFloatingPointFunctionsFast)];
+ 		[[opts dataUsingEncoding: NSUTF8StringEncoding] writeToFile: [missing stringByAppendingPathComponent: [key stringByAppendingPathExtension: @"options"]] atomically: YES];
+ 	}
+ 	fprintf(stderr, "metal-pd: no precompiled metallib for key %s; source saved as %s/%s.metal (metal-precompile --missing %s)\n",
+--- a/private-include/Metal/MTLTextureInternal.h
++++ b/private-include/Metal/MTLTextureInternal.h
+@@ -44,6 +44,18 @@
+                 resourceOptions: (MTLResourceOptions)options;
+ #endif
+ 
++// where a texture's bytes come from: the texture it views, the buffer or the heap it was made in
++@property(readonly) id<MTLTexture> parentTexture;
++@property(readonly) NSUInteger parentRelativeLevel, parentRelativeSlice;
++@property(readonly) id<MTLBuffer> buffer;
++@property(readonly) NSUInteger bufferOffset, bufferBytesPerRow;
++@property(readonly) id heap;
++@property(readonly) NSUInteger heapOffset;
++
++- (void)setParentTexture: (id<MTLTexture>)parent level: (NSUInteger)level slice: (NSUInteger)slice;
++- (void)setBuffer: (id<MTLBuffer>)buffer offset: (NSUInteger)offset bytesPerRow: (NSUInteger)bytesPerRow;
++- (void)setHeap: (id)heap offset: (NSUInteger)offset;
++
+ @end
+ 
+ #endif // _METAL_MTLTEXTUREINTERNAL_H_
+--- a/src/Metal/MTLTexture.mm
++++ b/src/Metal/MTLTexture.mm
+@@ -16,6 +16,9 @@
+ @synthesize device = _device;
+ @synthesize resourceOptions = _resourceOptions;
+ @synthesize label = _label;
++@synthesize parentTexture = _parentTexture, parentRelativeLevel = _parentRelativeLevel, parentRelativeSlice = _parentRelativeSlice;
++@synthesize buffer = _buffer, bufferOffset = _bufferOffset, bufferBytesPerRow = _bufferBytesPerRow;
++@synthesize heap = _heap, heapOffset = _heapOffset;
+ 
+ - (instancetype)initWithTexture: (std::shared_ptr<Indium::Texture>)texture
+                          device: (id<MTLDevice>)device
+@@ -34,9 +37,38 @@
+ {
+ 	[_device release];
+ 	[_label release];
++	[_parentTexture release];
++	[_buffer release];
++	[_heap release];
+ 	[super dealloc];
+ }
+ 
++- (void)setParentTexture: (id<MTLTexture>)parent level: (NSUInteger)level slice: (NSUInteger)slice
++{
++	[parent retain];
++	[_parentTexture release];
++	_parentTexture = parent;
++	_parentRelativeLevel = level;
++	_parentRelativeSlice = slice;
++}
++
++- (void)setBuffer: (id<MTLBuffer>)buffer offset: (NSUInteger)offset bytesPerRow: (NSUInteger)bytesPerRow
++{
++	[buffer retain];
++	[_buffer release];
++	_buffer = buffer;
++	_bufferOffset = offset;
++	_bufferBytesPerRow = bytesPerRow;
++}
++
++- (void)setHeap: (id)heap offset: (NSUInteger)offset
++{
++	[heap retain];
++	[_heap release];
++	_heap = heap;
++	_heapOffset = offset;
++}
++
+ //
+ // properties
+ //
+@@ -132,7 +164,9 @@
+ 	if (!tex) {
+ 		return nil;
+ 	}
+-	return [[MTLTextureInternal alloc] initWithTexture: tex device: _device resourceOptions: _resourceOptions];
++	MTLTextureInternal* view = [[MTLTextureInternal alloc] initWithTexture: tex device: _device resourceOptions: _resourceOptions];
++	[view setParentTexture: self level: 0 slice: 0];
++	return view;
+ }
+ 
+ - (id<MTLTexture>)newTextureViewWithPixelFormat: (MTLPixelFormat)pixelFormat
+@@ -144,7 +178,9 @@
+ 	if (!tex) {
+ 		return nil;
+ 	}
+-	return [[MTLTextureInternal alloc] initWithTexture: tex device: _device resourceOptions: _resourceOptions];
++	MTLTextureInternal* view = [[MTLTextureInternal alloc] initWithTexture: tex device: _device resourceOptions: _resourceOptions];
++	[view setParentTexture: self level: levelRange.location slice: sliceRange.location];
++	return view;
+ }
+ 
+ - (id<MTLTexture>)newTextureViewWithPixelFormat: (MTLPixelFormat)pixelFormat
+@@ -157,7 +193,9 @@
+ 	if (!tex) {
+ 		return nil;
+ 	}
+-	return [[MTLTextureInternal alloc] initWithTexture: tex device: _device resourceOptions: _resourceOptions];
++	MTLTextureInternal* view = [[MTLTextureInternal alloc] initWithTexture: tex device: _device resourceOptions: _resourceOptions];
++	[view setParentTexture: self level: levelRange.location slice: sliceRange.location];
++	return view;
+ }
+ 
+ - (void)replaceRegion: (MTLRegion)region
+--- a/private-include/Metal/MTLTextureInternal.h
++++ b/private-include/Metal/MTLTextureInternal.h
+@@ -32,6 +32,8 @@
+ };
+ #endif
+ 
++@protocol MTLBuffer;
++
+ // private export
+ MTL_EXPORT
+ @interface MTLTextureInternal : NSObject <MTLTexture>
+--- a/private-include/Metal/MTLDrawableInternal.h
++++ b/private-include/Metal/MTLDrawableInternal.h
+@@ -24,6 +24,9 @@
+ - (instancetype)initWithDrawable: (std::shared_ptr<Indium::Drawable>)drawable;
+ #endif
+ 
++// the drawable reached the screen: records the time and runs the presented handlers once
++- (void)didPresent;
++
+ @end
+ 
+ #endif // _METAL_MTLDRAWABLEINTERNAL_H_
+--- a/src/Metal/MTLDrawable.mm
++++ b/src/Metal/MTLDrawable.mm
+@@ -3,55 +3,101 @@
+ 
+ #import <Metal/MTLDrawableInternal.h>
+ #import <Metal/stubs.h>
++#include <mach/mach_time.h>
+ 
+ @implementation MTLDrawableInternal
+ 
+ #if DARLING_METAL_ENABLED
+ 
++{
++	NSMutableArray* _presentedHandlers;
++	CFTimeInterval _presentedTime;
++	NSUInteger _drawableID;
++	BOOL _presented;
++}
++
+ @synthesize drawable = _drawable;
+ 
+ - (instancetype)initWithDrawable: (std::shared_ptr<Indium::Drawable>)drawable
+ {
++	static NSUInteger nextID;
++
+ 	self = [super init];
+ 	if (self != nil) {
+ 		_drawable = drawable;
++		_presentedHandlers = [NSMutableArray new];
++		_drawableID = __atomic_fetch_add(&nextID, 1, __ATOMIC_RELAXED);
+ 	}
+ 	return self;
+ }
+ 
++- (void)dealloc
++{
++	[_presentedHandlers release];
++	[super dealloc];
++}
++
+ - (NSUInteger)drawableID
+ {
+-	NSLog(@"STUB: drawableID");
+-	return 0;
++	return _drawableID;
+ }
+ 
++// 0 until presented, then host time in seconds (CACurrentMediaTime's clock)
+ - (CFTimeInterval)presentedTime
+ {
+-	NSLog(@"STUB: presentedTime");
+-	return 0;
++	return _presentedTime;
++}
++
++- (void)didPresent
++{
++	NSArray* handlers;
++	mach_timebase_info_data_t tb;
++
++	mach_timebase_info(&tb);
++	@synchronized (self) {
++		if (_presented)
++			return;
++		_presented = YES;
++		_presentedTime = (double)mach_absolute_time() * tb.numer / tb.denom / 1e9;
++		handlers = [_presentedHandlers copy];
++		[_presentedHandlers removeAllObjects];
++	}
++	for (MTLDrawablePresentedHandler h in handlers)
++		h(self);
++	[handlers release];
+ }
+ 
+ - (void)present
+ {
+ 	_drawable->present();
++	[self didPresent];
+ }
+ 
++// presented as soon as possible: the swapchain shows each image in order
+ - (void)presentAfterMinimumDuration: (CFTimeInterval)duration
+ {
+-	NSLog(@"STUB: presentAfterMinimumDuration");
+-	abort();
++	[self present];
+ }
+ 
+ - (void)presentAtTime: (CFTimeInterval)presentationTime
+ {
+-	NSLog(@"STUB: presentAtTime");
+-	abort();
++	[self present];
+ }
+ 
+ - (void)addPresentedHandler: (MTLDrawablePresentedHandler)block
+ {
+-	NSLog(@"STUB: addPresentedHandler");
+-	abort();
++	BOOL now;
++
++	@synchronized (self) {
++		now = _presented;
++		if (!now) {
++			MTLDrawablePresentedHandler copy = [block copy];
++			[_presentedHandlers addObject: copy];
++			[copy release];
++		}
++	}
++	if (now)
++		block(self);
+ }
+ 
+ #else
+--- a/src/Metal/MTLCommandBuffer.mm
++++ b/src/Metal/MTLCommandBuffer.mm
+@@ -161,6 +161,22 @@
+ - (void)presentDrawable: (id<MTLDrawable>)drawable
+ {
+ 	_commandBuffer->presentDrawable(((id<MTLDrawableInternal>)drawable).drawable);
++	// the device thread presents before it runs completed handlers
++	MTLDrawableInternal* d = [(MTLDrawableInternal*)drawable retain];
++	_commandBuffer->addCompletedHandler([d](std::shared_ptr<Indium::CommandBuffer>) {
++		[d didPresent];
++		[d release];
++	});
++}
++
++- (void)presentDrawable: (id<MTLDrawable>)drawable atTime: (CFTimeInterval)presentationTime
++{
++	[self presentDrawable: drawable];
++}
++
++- (void)presentDrawable: (id<MTLDrawable>)drawable afterMinimumDuration: (CFTimeInterval)duration
++{
++	[self presentDrawable: drawable];
+ }
+ 
+ - (std::shared_ptr<Indium::CommandBuffer>)indiumCommandBuffer
+--- a/src/Metal/MTLBlitCommandEncoder.mm
++++ b/src/Metal/MTLBlitCommandEncoder.mm
+@@ -123,6 +123,35 @@
+ 	_encoder->copy(((MTLTextureInternal*)sourceTexture).texture, ((MTLTextureInternal*)destinationTexture).texture);
+ }
+ 
++- (void)copyFromTexture: (id<MTLTexture>)sourceTexture
++            sourceSlice: (NSUInteger)sourceSlice
++            sourceLevel: (NSUInteger)sourceLevel
++              toTexture: (id<MTLTexture>)destinationTexture
++       destinationSlice: (NSUInteger)destinationSlice
++       destinationLevel: (NSUInteger)destinationLevel
++             sliceCount: (NSUInteger)sliceCount
++             levelCount: (NSUInteger)levelCount
++{
++	_encoder->copy(((MTLTextureInternal*)sourceTexture).texture, sourceSlice, sourceLevel, ((MTLTextureInternal*)destinationTexture).texture,
++	               destinationSlice, destinationLevel, sliceCount, levelCount);
++}
++
++- (void)copyFromBuffer: (id<MTLBuffer>)sourceBuffer
++          sourceOffset: (NSUInteger)sourceOffset
++     sourceBytesPerRow: (NSUInteger)sourceBytesPerRow
++   sourceBytesPerImage: (NSUInteger)sourceBytesPerImage
++            sourceSize: (MTLSize)sourceSize
++             toTexture: (id<MTLTexture>)destinationTexture
++      destinationSlice: (NSUInteger)destinationSlice
++      destinationLevel: (NSUInteger)destinationLevel
++     destinationOrigin: (MTLOrigin)destinationOrigin
++               options: (MTLBlitOption)options
++{
++	_encoder->copy(((MTLBufferInternal*)sourceBuffer).buffer, sourceOffset, sourceBytesPerRow, sourceBytesPerImage, MTLSizeToIndium(sourceSize),
++	               ((MTLTextureInternal*)destinationTexture).texture, destinationSlice, destinationLevel, MTLOriginToIndium(destinationOrigin),
++	               static_cast<Indium::BlitOption>(options));
++}
++
+ - (void)fillBuffer: (id<MTLBuffer>)buffer
+              range: (NSRange)range
+              value: (uint8_t)value
+--- a/src/Metal/MTLRenderPipeline.mm
++++ b/src/Metal/MTLRenderPipeline.mm
+@@ -102,6 +102,14 @@
+ 	[super dealloc];
+ }
+ 
++// like macOS, an empty descriptor to fill in when none was set (MoltenVK describes its vertex input that way)
++- (MTLVertexDescriptor*)vertexDescriptor
++{
++	if (!_vertexDescriptor)
++		_vertexDescriptor = [MTLVertexDescriptor new];
++	return _vertexDescriptor;
++}
++
+ - (instancetype)copyWithZone: (NSZone*)zone
+ {
+ 	MTLRenderPipelineDescriptor* copy = [MTLRenderPipelineDescriptor new];

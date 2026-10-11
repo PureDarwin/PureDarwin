@@ -41,4 +41,7 @@ struct air_math_op {
 // op is the name between "air.[fast_]" and the type suffix
 const struct air_math_op *air_math_find(const char *op, unsigned arity);
 
+// the table's entry i, 0 past the end
+const struct air_math_op *air_math_at(unsigned i);
+
 #endif

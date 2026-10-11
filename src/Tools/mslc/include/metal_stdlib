@@ -1,0 +1,651 @@
+// metal_stdlib for mslc: PD's own, written from the public Metal Shading Language Specification.
+// clang parses MSL as C++ for OpenCL; calls to air.* are declared by name and become AIR intrinsics
+#ifndef PD_METAL_STDLIB
+#define PD_METAL_STDLIB
+
+#pragma OPENCL EXTENSION cl_khr_fp16 : enable
+#pragma clang diagnostic ignored "-Wduplicate-decl-specifier"
+
+// address spaces: constant is __generic so copies and references from it work (OpenCL keeps __constant out of
+// __generic); airify moves constant buffers and program scope constants to AIR's space 2
+#define device __global
+#define constant __generic __attribute__((msl_constant))
+#define threadgroup __local __attribute__((msl_threadgroup))
+#define thread __private
+#define vertex __attribute__((msl_vertex))
+#define fragment __attribute__((msl_fragment))
+#define kernel __attribute__((msl_kernel))
+// an OpenCL access qualifier keyword otherwise
+#define read_write __pd_read_write
+
+typedef unsigned char uchar;
+typedef unsigned short ushort;
+typedef unsigned int uint;
+typedef unsigned long ulong;
+typedef __SIZE_TYPE__ size_t;
+typedef signed char int8_t;
+typedef unsigned char uint8_t;
+typedef short int16_t;
+typedef unsigned short uint16_t;
+typedef int int32_t;
+typedef unsigned int uint32_t;
+typedef long int64_t;
+typedef unsigned long uint64_t;
+typedef __PTRDIFF_TYPE__ ptrdiff_t;
+
+#define PD_VEC(T)                                                                                                   \
+  typedef T T##2 __attribute__((ext_vector_type(2)));                                                               \
+  typedef T T##3 __attribute__((ext_vector_type(3)));                                                               \
+  typedef T T##4 __attribute__((ext_vector_type(4)));
+
+PD_VEC(float)
+PD_VEC(half)
+PD_VEC(int)
+PD_VEC(uint)
+PD_VEC(short)
+PD_VEC(ushort)
+PD_VEC(char)
+PD_VEC(uchar)
+PD_VEC(long)
+PD_VEC(ulong)
+// OpenCL has no bool vectors and its vector compares give 0/-1 integer lanes: boolN stand in as intN masks,
+// any/all/select test lanes for nonzero
+typedef int bool2 __attribute__((ext_vector_type(2)));
+typedef int bool3 __attribute__((ext_vector_type(3)));
+typedef int bool4 __attribute__((ext_vector_type(4)));
+
+namespace metal {
+
+template <class T, int N> using vec = T __attribute__((ext_vector_type(N)));
+
+// element type and lane count (0 for scalars)
+template <class T> struct __pd_info {
+  typedef T elem;
+  static constexpr int lanes = 0;
+};
+template <class T, int N> struct __pd_info<T __attribute__((ext_vector_type(N)))> {
+  typedef T elem;
+  static constexpr int lanes = N;
+};
+
+template <class A, class B> struct is_same {
+  static constexpr bool value = false;
+};
+template <class A> struct is_same<A, A> {
+  static constexpr bool value = true;
+};
+
+template <class V, class A> inline void __pd_put(__private V &v, __private int &i, A a) {
+  typedef typename __pd_info<V>::elem E;
+
+  if constexpr (__pd_info<A>::lanes == 0)
+    v[i++] = (E)a;
+  else {
+    for (int j = 0; j < __pd_info<A>::lanes; j++) {
+      v[i++] = (E)a[j];
+    }
+  }
+}
+
+template <class A> inline A __pd_one(A a) {
+  return a;
+}
+
+template <class... A> struct __pd_first_lanes {
+  static constexpr int value = -1;
+  static constexpr bool is_class = false;
+};
+template <class A> struct __pd_first_lanes<A> {
+  static constexpr int value = __pd_info<A>::lanes;
+  static constexpr bool is_class = __is_class(A);
+};
+
+// T(...) for a vector type T: splat, conversion or concatenation, as MSL's vector constructors
+template <class V, class... A> inline V __pd_make(A... a) {
+  typedef typename __pd_info<V>::elem E;
+
+  if constexpr (sizeof...(A) == 0)
+    return (V)(E)0;
+  else if constexpr (__pd_first_lanes<A...>::is_class)
+    return (V)__pd_one(a...);
+  else if constexpr (__pd_first_lanes<A...>::value == 0)
+    return (V)(E)__pd_one(a...);
+  else if constexpr (__pd_first_lanes<A...>::value == __pd_info<V>::lanes)
+    return __builtin_convertvector(__pd_one(a...), V);
+  else {
+    V v;
+    int i = 0;
+    (__pd_put(v, i, a), ...);
+    return v;
+  }
+}
+
+template <class T, class U> inline T as_type(U u) {
+  return __builtin_bit_cast(T, u);
+}
+
+// math: metal:: and metal::fast:: use AIR's fast variants (fast math is Metal's default), precise:: the
+// exact ones
+#define PD_ATTR __attribute__((const, nothrow))
+#define PD_F1(n, a)                                                                                                 \
+  PD_ATTR float n(float) __asm__("air." a ".f32");                                                                  \
+  PD_ATTR float2 n(float2) __asm__("air." a ".v2f32");                                                              \
+  PD_ATTR float3 n(float3) __asm__("air." a ".v3f32");                                                              \
+  PD_ATTR float4 n(float4) __asm__("air." a ".v4f32");                                                              \
+  PD_ATTR half n(half) __asm__("air." a ".f16");                                                                    \
+  PD_ATTR half2 n(half2) __asm__("air." a ".v2f16");                                                                \
+  PD_ATTR half3 n(half3) __asm__("air." a ".v3f16");                                                                \
+  PD_ATTR half4 n(half4) __asm__("air." a ".v4f16");
+#define PD_F2(n, a)                                                                                                 \
+  PD_ATTR float n(float, float) __asm__("air." a ".f32");                                                           \
+  PD_ATTR float2 n(float2, float2) __asm__("air." a ".v2f32");                                                      \
+  PD_ATTR float3 n(float3, float3) __asm__("air." a ".v3f32");                                                      \
+  PD_ATTR float4 n(float4, float4) __asm__("air." a ".v4f32");                                                       \
+  PD_ATTR half n(half, half) __asm__("air." a ".f16");                                                              \
+  PD_ATTR half2 n(half2, half2) __asm__("air." a ".v2f16");                                                         \
+  PD_ATTR half3 n(half3, half3) __asm__("air." a ".v3f16");                                                         \
+  PD_ATTR half4 n(half4, half4) __asm__("air." a ".v4f16");
+#define PD_F3(n, a)                                                                                                 \
+  PD_ATTR float n(float, float, float) __asm__("air." a ".f32");                                                    \
+  PD_ATTR float2 n(float2, float2, float2) __asm__("air." a ".v2f32");                                              \
+  PD_ATTR float3 n(float3, float3, float3) __asm__("air." a ".v3f32");                                              \
+  PD_ATTR float4 n(float4, float4, float4) __asm__("air." a ".v4f32");                                              \
+  PD_ATTR half n(half, half, half) __asm__("air." a ".f16");                                                        \
+  PD_ATTR half2 n(half2, half2, half2) __asm__("air." a ".v2f16");                                                  \
+  PD_ATTR half3 n(half3, half3, half3) __asm__("air." a ".v3f16");                                                  \
+  PD_ATTR half4 n(half4, half4, half4) __asm__("air." a ".v4f16");
+
+// each function three times: fast::, precise:: and metal:: (= fast)
+#define PD_M1(n, a)                                                                                                 \
+  namespace fast {                                                                                                  \
+  PD_F1(n, "fast_" a)                                                                                               \
+  }                                                                                                                 \
+  namespace precise {                                                                                               \
+  PD_F1(n, a)                                                                                                       \
+  }                                                                                                                 \
+  PD_F1(n, "fast_" a)
+#define PD_M2(n, a)                                                                                                 \
+  namespace fast {                                                                                                  \
+  PD_F2(n, "fast_" a)                                                                                               \
+  }                                                                                                                 \
+  namespace precise {                                                                                               \
+  PD_F2(n, a)                                                                                                       \
+  }                                                                                                                 \
+  PD_F2(n, "fast_" a)
+#define PD_M3(n, a)                                                                                                 \
+  namespace fast {                                                                                                  \
+  PD_F3(n, "fast_" a)                                                                                               \
+  }                                                                                                                 \
+  namespace precise {                                                                                               \
+  PD_F3(n, a)                                                                                                       \
+  }                                                                                                                 \
+  PD_F3(n, "fast_" a)
+
+PD_M1(sqrt, "sqrt")
+PD_M1(rsqrt, "rsqrt")
+PD_M1(fabs, "fabs")
+PD_M1(abs, "fabs")
+PD_M1(floor, "floor")
+PD_M1(ceil, "ceil")
+PD_M1(trunc, "trunc")
+PD_M1(round, "round")
+PD_M1(rint, "rint")
+PD_M1(fract, "fract")
+PD_M1(sin, "sin")
+PD_M1(cos, "cos")
+PD_M1(tan, "tan")
+PD_M1(asin, "asin")
+PD_M1(acos, "acos")
+PD_M1(atan, "atan")
+PD_M1(sinh, "sinh")
+PD_M1(cosh, "cosh")
+PD_M1(tanh, "tanh")
+PD_M1(exp, "exp")
+PD_M1(exp2, "exp2")
+PD_M1(exp10, "exp10")
+PD_M1(log, "log")
+PD_M1(log2, "log2")
+PD_M1(log10, "log10")
+PD_M1(saturate, "saturate")
+PD_M1(sign, "sign")
+PD_M2(pow, "pow")
+PD_M2(powr, "powr")
+PD_M2(fmin, "fmin")
+PD_M2(fmax, "fmax")
+PD_M2(min, "fmin")
+PD_M2(max, "fmax")
+PD_M2(atan2, "atan2")
+PD_M2(fmod, "fmod")
+PD_M2(step, "step")
+PD_M3(clamp, "clamp")
+namespace fast {
+PD_F3(mix, "mix")
+}
+namespace precise {
+PD_F3(mix, "mix")
+}
+PD_F3(mix, "mix")
+PD_M3(smoothstep, "smoothstep")
+PD_F3(fma, "fma")
+
+// integer min, max, clamp and abs: air.<op>.<s|u>.<type>
+#define PD_I2(n, s, T, t)                                                                                           \
+  PD_ATTR T n(T, T) __asm__("air." #n "." s "." t);                                                                 \
+  PD_ATTR T##2 n(T##2, T##2) __asm__("air." #n "." s ".v2" t);                                                      \
+  PD_ATTR T##3 n(T##3, T##3) __asm__("air." #n "." s ".v3" t);                                                      \
+  PD_ATTR T##4 n(T##4, T##4) __asm__("air." #n "." s ".v4" t);
+#define PD_I3(n, s, T, t)                                                                                           \
+  PD_ATTR T n(T, T, T) __asm__("air." #n "." s "." t);                                                              \
+  PD_ATTR T##2 n(T##2, T##2, T##2) __asm__("air." #n "." s ".v2" t);                                                \
+  PD_ATTR T##3 n(T##3, T##3, T##3) __asm__("air." #n "." s ".v3" t);                                                \
+  PD_ATTR T##4 n(T##4, T##4, T##4) __asm__("air." #n "." s ".v4" t);
+#define PD_I1(n, s, T, t)                                                                                           \
+  PD_ATTR T n(T) __asm__("air." #n "." s "." t);                                                                    \
+  PD_ATTR T##2 n(T##2) __asm__("air." #n "." s ".v2" t);                                                            \
+  PD_ATTR T##3 n(T##3) __asm__("air." #n "." s ".v3" t);                                                            \
+  PD_ATTR T##4 n(T##4) __asm__("air." #n "." s ".v4" t);
+#define PD_INTS(T, s, t)                                                                                            \
+  PD_I2(min, s, T, t)                                                                                               \
+  PD_I2(max, s, T, t)                                                                                               \
+  PD_I3(clamp, s, T, t)
+
+PD_INTS(int, "s", "i32")
+PD_INTS(uint, "u", "i32")
+PD_INTS(short, "s", "i16")
+PD_INTS(ushort, "u", "i16")
+PD_I1(abs, "s", int, "i32")
+PD_I1(abs, "s", short, "i16")
+
+// dot and the derivatives have no fast variant
+#define PD_DOT(T, t)                                                                                                \
+  PD_ATTR T dot(T##2, T##2) __asm__("air.dot.v2" t);                                                                \
+  PD_ATTR T dot(T##3, T##3) __asm__("air.dot.v3" t);                                                                \
+  PD_ATTR T dot(T##4, T##4) __asm__("air.dot.v4" t);
+PD_DOT(float, "f32")
+PD_DOT(half, "f16")
+
+#define PD_DERIV __attribute__((convergent, const, nothrow))
+#define PD_D(n)                                                                                                     \
+  PD_DERIV float n(float) __asm__("air." #n ".f32");                                                                \
+  PD_DERIV float2 n(float2) __asm__("air." #n ".v2f32");                                                            \
+  PD_DERIV float3 n(float3) __asm__("air." #n ".v3f32");                                                            \
+  PD_DERIV float4 n(float4) __asm__("air." #n ".v4f32");                                                            \
+  PD_DERIV half n(half) __asm__("air." #n ".f16");                                                                  \
+  PD_DERIV half2 n(half2) __asm__("air." #n ".v2f16");                                                              \
+  PD_DERIV half3 n(half3) __asm__("air." #n ".v3f16");                                                              \
+  PD_DERIV half4 n(half4) __asm__("air." #n ".v4f16");
+PD_D(dfdx)
+PD_D(dfdy)
+PD_D(fwidth)
+
+// geometric functions in plain arithmetic, as the AIR reference does
+template <class V> inline V cross(V a, V b) {
+  return a.yzx * b.zxy - a.zxy * b.yzx;
+}
+template <class V> inline typename __pd_info<V>::elem length(V v) {
+  return sqrt(dot(v, v));
+}
+template <class V> inline typename __pd_info<V>::elem length_squared(V v) {
+  return dot(v, v);
+}
+template <class V> inline typename __pd_info<V>::elem distance(V a, V b) {
+  return length(a - b);
+}
+template <class V> inline V normalize(V v) {
+  return v * rsqrt(dot(v, v));
+}
+template <class V> inline V reflect(V i, V n) {
+  return i - 2 * dot(n, i) * n;
+}
+template <class V> inline V faceforward(V n, V i, V nref) {
+  return dot(nref, i) < 0 ? n : -n;
+}
+namespace fast {
+using metal::cross;
+using metal::distance;
+using metal::length;
+using metal::normalize;
+}
+namespace precise {
+template <class V> inline V normalize(V v) {
+  return v / sqrt(dot(v, v));
+}
+template <class V> inline typename __pd_info<V>::elem length(V v) {
+  return sqrt(dot(v, v));
+}
+}
+
+template <class T> inline T select(T a, T b, bool c) {
+  return c ? b : a;
+}
+template <class T, int N> inline vec<T, N> select(vec<T, N> a, vec<T, N> b, vec<int, N> c) {
+  vec<T, N> r;
+  for (int i = 0; i < N; i++) {
+    r[i] = c[i] ? b[i] : a[i];
+  }
+  return r;
+}
+template <int N> inline bool any(vec<int, N> c) {
+  for (int i = 0; i < N; i++) {
+    if (c[i])
+      return true;
+  }
+  return false;
+}
+template <int N> inline bool all(vec<int, N> c) {
+  for (int i = 0; i < N; i++) {
+    if (!c[i])
+      return false;
+  }
+  return true;
+}
+inline bool any(bool c) {
+  return c;
+}
+inline bool all(bool c) {
+  return c;
+}
+
+// packed vectors: element aligned, converted to and from the vector types
+template <class T, int N> struct packed_vec {
+  T e[N];
+
+  packed_vec() = default;
+  packed_vec(vec<T, N> v) {
+    for (int i = 0; i < N; i++) {
+      e[i] = v[i];
+    }
+  }
+  operator vec<T, N>() const {
+    vec<T, N> v;
+    for (int i = 0; i < N; i++) {
+      v[i] = e[i];
+    }
+    return v;
+  }
+  T &operator[](int i) {
+    return e[i];
+  }
+  const T &operator[](int i) const {
+    return e[i];
+  }
+};
+#define PD_PACKED(T)                                                                                                \
+  typedef packed_vec<T, 2> packed_##T##2;                                                                           \
+  typedef packed_vec<T, 3> packed_##T##3;                                                                           \
+  typedef packed_vec<T, 4> packed_##T##4;
+PD_PACKED(float)
+PD_PACKED(half)
+PD_PACKED(int)
+PD_PACKED(uint)
+
+// metal::array: a fixed array with bounds-free indexing
+template <class T, size_t N> struct array {
+  T e[N ? N : 1];
+
+  T &operator[](size_t i) {
+    return e[i];
+  }
+  const T &operator[](size_t i) const {
+    return e[i];
+  }
+  constexpr size_t size() const {
+    return N;
+  }
+};
+
+// matrices: C columns of R rows, column major
+template <class T, int C, int R> struct matrix {
+  vec<T, R> columns[C];
+
+  matrix() = default;
+  explicit matrix(T d) {
+    for (int c = 0; c < C; c++) {
+      columns[c] = (vec<T, R>)(T)0;
+      if (c < R)
+        columns[c][c] = d;
+    }
+  }
+  matrix(vec<T, R> c0, vec<T, R> c1) : columns{ c0, c1 } {}
+  matrix(vec<T, R> c0, vec<T, R> c1, vec<T, R> c2) : columns{ c0, c1, c2 } {}
+  matrix(vec<T, R> c0, vec<T, R> c1, vec<T, R> c2, vec<T, R> c3) : columns{ c0, c1, c2, c3 } {}
+
+  vec<T, R> &operator[](int i) {
+    return columns[i];
+  }
+  const vec<T, R> &operator[](int i) const {
+    return columns[i];
+  }
+};
+
+template <class T, int C, int R> inline vec<T, R> operator*(const matrix<T, C, R> &m, vec<T, C> v) {
+  vec<T, R> r = m.columns[0] * v[0];
+  for (int c = 1; c < C; c++) {
+    r += m.columns[c] * v[c];
+  }
+  return r;
+}
+template <class T, int C, int R> inline vec<T, C> operator*(vec<T, R> v, const matrix<T, C, R> &m) {
+  vec<T, C> r;
+  for (int c = 0; c < C; c++) {
+    r[c] = dot(v, m.columns[c]);
+  }
+  return r;
+}
+template <class T, int K, int C, int R>
+inline matrix<T, C, R> operator*(const matrix<T, K, R> &a, const matrix<T, C, K> &b) {
+  matrix<T, C, R> r;
+  for (int c = 0; c < C; c++) {
+    r.columns[c] = a * b.columns[c];
+  }
+  return r;
+}
+template <class T, int C, int R> inline matrix<T, C, R> operator*(const matrix<T, C, R> &m, T s) {
+  matrix<T, C, R> r;
+  for (int c = 0; c < C; c++) {
+    r.columns[c] = m.columns[c] * s;
+  }
+  return r;
+}
+template <class T, int C, int R> inline matrix<T, C, R> operator+(const matrix<T, C, R> &a, const matrix<T, C, R> &b) {
+  matrix<T, C, R> r;
+  for (int c = 0; c < C; c++) {
+    r.columns[c] = a.columns[c] + b.columns[c];
+  }
+  return r;
+}
+template <class T, int C, int R> inline matrix<T, R, C> transpose(const matrix<T, C, R> &m) {
+  matrix<T, R, C> r;
+  for (int c = 0; c < C; c++) {
+    for (int k = 0; k < R; k++) {
+      r.columns[k][c] = m.columns[c][k];
+    }
+  }
+  return r;
+}
+
+#define PD_MAT(T)                                                                                                   \
+  typedef matrix<T, 2, 2> T##2x2;                                                                                   \
+  typedef matrix<T, 2, 3> T##2x3;                                                                                   \
+  typedef matrix<T, 2, 4> T##2x4;                                                                                   \
+  typedef matrix<T, 3, 2> T##3x2;                                                                                   \
+  typedef matrix<T, 3, 3> T##3x3;                                                                                   \
+  typedef matrix<T, 3, 4> T##3x4;                                                                                   \
+  typedef matrix<T, 4, 2> T##4x2;                                                                                   \
+  typedef matrix<T, 4, 3> T##4x3;                                                                                   \
+  typedef matrix<T, 4, 4> T##4x4;
+PD_MAT(float)
+PD_MAT(half)
+
+// synchronization
+enum class mem_flags : uint { mem_none = 0, mem_device = 1, mem_threadgroup = 2, mem_texture = 4 };
+inline mem_flags operator|(mem_flags a, mem_flags b) {
+  return (mem_flags)((uint)a | (uint)b);
+}
+__attribute__((convergent, nothrow)) void __pd_wg_barrier(uint, uint) __asm__("air.wg.barrier");
+__attribute__((convergent, nothrow)) void __pd_simd_barrier(uint, uint) __asm__("air.simdgroup.barrier");
+inline void threadgroup_barrier(mem_flags f) {
+  __pd_wg_barrier((uint)f, 1);
+}
+inline void simdgroup_barrier(mem_flags f) {
+  __pd_simd_barrier((uint)f, 1);
+}
+
+__attribute__((nothrow)) void discard_fragment() __asm__("air.discard_fragment");
+
+// simdgroup reductions and votes
+#define PD_SIMD_RED(n)                                                                                              \
+  __attribute__((convergent, nothrow)) uint n(uint) __asm__("air." #n ".u.i32");                                    \
+  __attribute__((convergent, nothrow)) int n(int) __asm__("air." #n ".s.i32");                                      \
+  __attribute__((convergent, nothrow)) float n(float) __asm__("air." #n ".f32");
+PD_SIMD_RED(simd_sum)
+PD_SIMD_RED(simd_product)
+PD_SIMD_RED(simd_min)
+PD_SIMD_RED(simd_max)
+PD_SIMD_RED(simd_broadcast_first)
+__attribute__((convergent, nothrow)) bool simd_is_first() __asm__("air.simd_is_first");
+__attribute__((convergent, nothrow)) bool simd_all(bool) __asm__("air.simd_all");
+__attribute__((convergent, nothrow)) bool simd_any(bool) __asm__("air.simd_any");
+
+// atomics: air.atomic.<global|local>.<op>.<s|u>.i32(ptr, value, order, scope, volatile)
+enum memory_order { memory_order_relaxed = 0 };
+// atomic_int and atomic_uint are clang's OpenCL _Atomic types, same layout
+
+#define PD_ATOMIC(fn, op)                                                                                               \
+  __attribute__((nothrow)) uint __pd_atomic_g_##fn##_u(__global uint *, uint, int, int, bool) __asm__(             \
+      "air.atomic.global." op ".u.i32");                                                                           \
+  __attribute__((nothrow)) int __pd_atomic_g_##fn##_s(__global int *, int, int, int, bool) __asm__(                \
+      "air.atomic.global." op ".s.i32");                                                                           \
+  __attribute__((nothrow)) uint __pd_atomic_l_##fn##_u(__local uint *, uint, int, int, bool) __asm__(              \
+      "air.atomic.local." op ".u.i32");                                                                            \
+  __attribute__((nothrow)) int __pd_atomic_l_##fn##_s(__local int *, int, int, int, bool) __asm__(                 \
+      "air.atomic.local." op ".s.i32");                                                                            \
+  inline uint atomic_##fn##_explicit(device atomic_uint *a, uint v, memory_order o) {                        \
+    return __pd_atomic_g_##fn##_u((__global uint *)a, v, o, 2, true);                                        \
+  }                                                                                                                 \
+  inline int atomic_##fn##_explicit(device atomic_int *a, int v, memory_order o) {                           \
+    return __pd_atomic_g_##fn##_s((__global int *)a, v, o, 2, true);                                         \
+  }                                                                                                                 \
+  inline uint atomic_##fn##_explicit(__local atomic_uint *a, uint v, memory_order o) {                       \
+    return __pd_atomic_l_##fn##_u((__local uint *)a, v, o, 1, true);                                         \
+  }                                                                                                                 \
+  inline int atomic_##fn##_explicit(__local atomic_int *a, int v, memory_order o) {                          \
+    return __pd_atomic_l_##fn##_s((__local int *)a, v, o, 1, true);                                          \
+  }
+PD_ATOMIC(fetch_add, "add")
+PD_ATOMIC(fetch_sub, "sub")
+PD_ATOMIC(fetch_min, "min")
+PD_ATOMIC(fetch_max, "max")
+PD_ATOMIC(fetch_and, "and")
+PD_ATOMIC(fetch_or, "or")
+PD_ATOMIC(fetch_xor, "xor")
+
+// textures and samplers: opaque handles in device (textures) and constant (samplers) memory
+enum class access { sample, read, write, read_write };
+struct _texture_2d_t;
+struct _sampler_t;
+
+struct sampler {
+  __constant _sampler_t *__h;
+};
+
+struct level {
+  float lod;
+  explicit level(float l) : lod(l) {}
+};
+struct bias {
+  float value;
+  explicit bias(float b) : value(b) {}
+};
+
+// calls named pd.sret.air.* return AIR's { texel, i8 } pair: airify restores the pair
+template <class T> struct __pd_tex2d;
+#define PD_TEX2D(T, t)                                                                                              \
+  __attribute__((pure, convergent, nothrow)) vec<T, 4> __pd_sample_2d_##T(__global _texture_2d_t *,                    \
+                                                                      __constant _sampler_t *, float2, bool, int2, \
+                                                                      bool, float, float, int) __asm__(            \
+      "pd.sret.air.sample_texture_2d.v4" t);                                                                        \
+  __attribute__((pure, nothrow)) vec<T, 4> __pd_read_2d_##T(__global _texture_2d_t *, uint2, uint, int) __asm__(        \
+      "pd.sret.air.read_texture_2d.v4" t);                                                                          \
+  __attribute__((nothrow)) void __pd_write_2d_##T(__global _texture_2d_t *, uint2, vec<T, 4>, uint, int) __asm__(      \
+      "air.write_texture_2d.v4" t);                                                                         \
+  template <> struct __pd_tex2d<T> {                                                                                \
+    static vec<T, 4> sample(__global _texture_2d_t *h, __constant _sampler_t *s, float2 c, int2 off, bool lod,     \
+                            float v) {                                                                              \
+      return __pd_sample_2d_##T(h, s, c, true, off, lod, v, 0.0f, 0);                                               \
+    }                                                                                                               \
+    static vec<T, 4> read(__global _texture_2d_t *h, uint2 c, uint lod, int a) {                                   \
+      return __pd_read_2d_##T(h, c, lod, a);                                                                        \
+    }                                                                                                               \
+    static void write(__global _texture_2d_t *h, uint2 c, vec<T, 4> v, uint lod, int a) {                          \
+      __pd_write_2d_##T(h, c, v, lod, a);                                                                           \
+    }                                                                                                               \
+  };
+
+PD_TEX2D(float, "f32")
+PD_TEX2D(half, "f16")
+PD_TEX2D(int, "i32")
+PD_TEX2D(uint, "i32")
+
+__attribute__((pure, nothrow)) uint __pd_width_2d(__global _texture_2d_t *, uint) __asm__("air.get_width_texture_2d");
+__attribute__((pure, nothrow)) uint __pd_height_2d(__global _texture_2d_t *, uint) __asm__("air.get_height_texture_2d");
+
+template <class T, access A = access::sample> struct texture2d {
+  __global _texture_2d_t *__h;
+
+  vec<T, 4> sample(sampler s, float2 c, int2 off = (int2)0) const {
+    return __pd_tex2d<T>::sample(__h, s.__h, c, off, false, 0.0f);
+  }
+  vec<T, 4> sample(sampler s, float2 c, level l, int2 off = (int2)0) const {
+    return __pd_tex2d<T>::sample(__h, s.__h, c, off, true, l.lod);
+  }
+  vec<T, 4> sample(sampler s, float2 c, bias b, int2 off = (int2)0) const {
+    return __pd_tex2d<T>::sample(__h, s.__h, c, off, false, b.value);
+  }
+  vec<T, 4> read(int2 c, uint lod = 0) const {
+    return __pd_tex2d<T>::read(__h, as_type<uint2>(c), lod, (int)A);
+  }
+  vec<T, 4> read(uint2 c, uint lod = 0) const {
+    return __pd_tex2d<T>::read(__h, c, lod, (int)A);
+  }
+  void write(vec<T, 4> v, uint2 c, uint lod = 0) const {
+    __pd_tex2d<T>::write(__h, c, v, lod, (int)A);
+  }
+  uint get_width(uint lod = 0) const {
+    return __pd_width_2d(__h, lod);
+  }
+  uint get_height(uint lod = 0) const {
+    return __pd_height_2d(__h, lod);
+  }
+};
+
+} // namespace metal
+
+using metal::matrix;
+using metal::vec;
+using namespace metal;
+
+// MSL's vector constructors T(a, b, ...): a function-like macro leaves the type name alone elsewhere
+#define float2(...) ::metal::__pd_make<::float2>(__VA_ARGS__)
+#define float3(...) ::metal::__pd_make<::float3>(__VA_ARGS__)
+#define float4(...) ::metal::__pd_make<::float4>(__VA_ARGS__)
+#define half2(...) ::metal::__pd_make<::half2>(__VA_ARGS__)
+#define half3(...) ::metal::__pd_make<::half3>(__VA_ARGS__)
+#define half4(...) ::metal::__pd_make<::half4>(__VA_ARGS__)
+#define int2(...) ::metal::__pd_make<::int2>(__VA_ARGS__)
+#define int3(...) ::metal::__pd_make<::int3>(__VA_ARGS__)
+#define int4(...) ::metal::__pd_make<::int4>(__VA_ARGS__)
+#define uint2(...) ::metal::__pd_make<::uint2>(__VA_ARGS__)
+#define uint3(...) ::metal::__pd_make<::uint3>(__VA_ARGS__)
+#define uint4(...) ::metal::__pd_make<::uint4>(__VA_ARGS__)
+#define short2(...) ::metal::__pd_make<::short2>(__VA_ARGS__)
+#define short3(...) ::metal::__pd_make<::short3>(__VA_ARGS__)
+#define short4(...) ::metal::__pd_make<::short4>(__VA_ARGS__)
+#define ushort2(...) ::metal::__pd_make<::ushort2>(__VA_ARGS__)
+#define ushort3(...) ::metal::__pd_make<::ushort3>(__VA_ARGS__)
+#define ushort4(...) ::metal::__pd_make<::ushort4>(__VA_ARGS__)
+#define bool2(...) (-::metal::__pd_make<::bool2>(__VA_ARGS__) != 0)
+#define bool3(...) (-::metal::__pd_make<::bool3>(__VA_ARGS__) != 0)
+#define bool4(...) (-::metal::__pd_make<::bool4>(__VA_ARGS__) != 0)
+
+#endif

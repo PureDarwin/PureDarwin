@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>org.puredarwin.pddisplay</string>
+	<key>Disabled</key>
+	<true/>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/sh</string>
+		<string>/usr/local/bin/pddisplay-demo</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PVR_I_WANT_A_BROKEN_VULKAN_DRIVER</key>
+		<string>1</string>
+		<key>VK_DRIVER_FILES</key>
+		<string>/usr/share/vulkan/icd.d/powervr_mesa_icd.arm64.json</string>
+		<key>VK_LOADER_DEBUG</key>
+		<string>error,warn</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/dev/console</string>
+	<key>StandardErrorPath</key>
+	<string>/dev/console</string>
+</dict>
+</plist>

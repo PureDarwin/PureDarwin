@@ -34,7 +34,14 @@ enum {
   PD_BF_DST_ALPHA = 8,
   PD_BF_ONE_MINUS_DST_ALPHA = 9,
   PD_BF_SRC_ALPHA_SATURATED = 10,
+  PD_BF_BLEND_COLOR = 11,
+  PD_BF_ONE_MINUS_BLEND_COLOR = 12,
+  PD_BF_BLEND_ALPHA = 13,
+  PD_BF_ONE_MINUS_BLEND_ALPHA = 14,
 };
+
+// the draw's setBlendColor, which the blend colour factors read
+extern float pd_blend_constant[4];
 
 // MTLBlendOperation
 enum {

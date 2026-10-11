@@ -1,19 +1,88 @@
 // IOSurfaceRoot and its user client: surfaces, scanout, traps and the external method table
 
 #include "PDIOSurface.h"
+#include "../PDSun60iDisplay/pd_display.h"
 
 
 
-OSData *sShaders[256];		// every function ever registered, by a global key
+OSData *sShaders[PD_MAX_SHADERS];	// every function ever registered, by a global key
+static uint32_t sShaderHash[PD_MAX_SHADERS];
+static IOLock *sShaderLock;
 uint32_t sShaderN;
+
+// the key (+ 1) of a function's metallib, adding it when no client registered the same bytes before,
+// 0 when the table is full. Language Chooser, WindowServer and Setup Assistant share Core Animation's shaders
+uint32_t
+pdShaderRegister(const uint8_t *b, uint32_t len)
+{
+	uint32_t hash = 2166136261u, key = 0;
+	static bool told;
+
+	for (uint32_t i = 0; i < len; i++) {
+		hash = (hash ^ b[i]) * 16777619u;
+	}
+	if (sShaderLock == NULL) {
+		IOLock *l = IOLockAlloc();
+
+		if (!OSCompareAndSwapPtr(NULL, l, (void * volatile *)&sShaderLock))
+			IOLockFree(l);
+	}
+	IOLockLock(sShaderLock);
+	for (uint32_t k = 0; k < sShaderN; k++) {
+		if (sShaderHash[k] == hash && sShaders[k]->getLength() == len && memcmp(sShaders[k]->getBytesNoCopy(), b, len) == 0) {
+			key = k + 1;
+			break;
+		}
+	}
+	if (key == 0 && sShaderN < PD_MAX_SHADERS) {
+		OSData *copy = OSData::withBytes(b, len);
+
+		if (copy != NULL) {
+			sShaders[sShaderN] = copy;
+			sShaderHash[sShaderN] = hash;
+			key = ++sShaderN;
+			// the table used to stop at 256: every 256 more says how far past that a boot gets
+			if ((sShaderN & 0xff) == 0)
+				IOLog("PDIOSurface: shader table holds %u functions\n", sShaderN);
+		}
+	} else if (key == 0 && !told) {
+		told = true;
+		IOLog("PDIOSurface: shader table full (%u functions), new functions are dropped\n", sShaderN);
+	}
+	IOLockUnlock(sShaderLock);
+	return key;
+}
 
 OSDefineMetaClassAndStructors(IOSurfaceRoot, IOService);
 OSDefineMetaClassAndStructors(IOSurfaceRootUserClient, IOUserClient);
+
+// a notification queue that can announce entries enqueued before its port was registered:
+// the stock queue only messages on empty to non-empty, so those entries were never announced
+class PDNotifyQueue : public IOSharedDataQueue {
+	OSDeclareDefaultStructors(PDNotifyQueue);
+public:
+	void notify(void) { sendDataAvailableNotification(); }
+};
+OSDefineMetaClassAndStructors(PDNotifyQueue, IOSharedDataQueue);
+
+// this lock protects completed scanout pixels and both back buffers, and GPU work stays outside it.
+static IOLock *sScanoutLock;
+static thread_call_t sCursorCall;
+static void pdCursorPresent(thread_call_param_t, thread_call_param_t);
 
 bool
 IOSurfaceRoot::start(IOService *provider)
 {
 	if (!IOService::start(provider)) {
+		return false;
+	}
+	sScanoutLock = IOLockAlloc();
+	sCursorCall = thread_call_allocate(&pdCursorPresent, NULL);
+	if (!sScanoutLock || !sCursorCall) {
+		if (sScanoutLock) IOLockFree(sScanoutLock);
+		if (sCursorCall) thread_call_free(sCursorCall);
+		sScanoutLock = NULL;
+		sCursorCall = NULL;
 		return false;
 	}
 	// IONameMatch compares the registry name,
@@ -44,8 +113,6 @@ enum {
 // supportsCPUBuffers 52 (the plugin's APVFeatures string)
 static const uint64_t kAPVFeatureMask = 0x0FFFFFFFF001FFFDULL;
 
-// Type 6 clients follow the type 5 open they belong to, so they share its variant
-static uint32_t sVariant;
 // WindowServer registers its notification ports on one framebuffer client and submits
 // swaps on another, so the ports are shared across the framebuffer's clients by type
 static mach_port_t sFBNotifyPorts[8];
@@ -62,6 +129,8 @@ static OSData *sGammaTable;		// set by sel 17, read back by sel 27
 static uint64_t sPendingSwap;		// submitted at sel 5, not yet reported done
 static uint64_t sPresentedSwap;		// last swap shown at a vblank
 static uint32_t sSwapsDone;
+static uint32_t sSurfaceNext = 16;	// ids start where Apple's did on the reference machine
+static uint32_t sSurfaceLive;
 enum { kPDVsyncHz = 60 };
 
 // Reports a swap done on the type 1 frame port, through its own sel 72 callback, in six words
@@ -108,18 +177,31 @@ vsyncFired(thread_call_param_t unused0, thread_call_param_t unused1)
 
 	// the vblank keeps running with or without a client: swaps are paced by it, not by port 3
 	IOSurfaceRootUserClient::sendFrameNotification(3, words, 6);
-	pdFireDueListeners(sFBFrames);
-	// A swap submitted at sel 5 with no sel 6 completes at the next vblank, as a real display
-	// does. WindowServer's first swap on the real-shaped display stops at sel 5
-	if (sPendingSwap != 0) {
-		uint64_t id = sPendingSwap;
-
-		sPendingSwap = 0;
-		sPresentedSwap = id;
-		IOSurfaceRootUserClient::completeSwap(id);
-	}
+	// releasing a drawable while work is pending permits producer reuse mid-frame.
+	if (sPendingSwap == 0 && pdAsyncIdle())
+		pdFireDueListeners(sFBFrames);
+	// a heartbeat every 10 s: whether WindowServer still swaps while the screen looks frozen
+	if (sFBFrames % (10 * kPDVsyncHz) == 0)
+		IOLog("PDIOSurface: vblank %llu swaps done %u last id %u presented %llu pending %llu surfaces %u\n",
+		    (unsigned long long)sFBFrames, sSwapsDone, sSwapID, (unsigned long long)sPresentedSwap,
+		    (unsigned long long)sPendingSwap, sSurfaceLive);
 	clock_interval_to_deadline(1000000 / kPDVsyncHz, kMicrosecondScale, &deadline);
 	thread_call_enter_delayed(sFBVsync, deadline);
+}
+
+// pdgputrace=NAME logs every selector and trap of processes whose name starts with NAME
+static char sGpuTraceName[17];
+static int sGpuTraceState;
+
+static bool
+pdGpuTraced(char *name)
+{
+	if (sGpuTraceState == 0)
+		sGpuTraceState = PE_parse_boot_argn("pdgputrace", sGpuTraceName, sizeof(sGpuTraceName)) ? 2 : 1;
+	if (sGpuTraceState != 2)
+		return false;
+	proc_selfname(name, 17);
+	return strncmp(name, sGpuTraceName, strlen(sGpuTraceName)) == 0;
 }
 
 IOReturn
@@ -132,17 +214,14 @@ IOSurfaceRootUserClient::open(IOService *provider, task_t owningTask, void *secu
 		OSSafeReleaseNULL(uc);
 		return kIOReturnNoMemory;
 	}
+	char name[17];
+
 	uc->fTag = provider->getName();
 	uc->fType = type;
+	uc->fTraced = pdGpuTraced(name);
 	uc->fTask = owningTask;
 	uc->fPendLock = IOLockAlloc();
 	uc->fSubmitLock = IOLockAlloc();
-	// Metal retries after each abort, so walk the reply shapes one client at a time
-	if (type == 5) {
-		static uint32_t sAcceleratorOpens;
-		sVariant = sAcceleratorOpens++ % 3;
-	}
-	uc->fVariant = sVariant;
 	if (!uc->attach(provider)) {
 		uc->release();
 		return kIOReturnError;
@@ -197,14 +276,20 @@ IOSurfaceRootUserClient::trap(void *p1, void *p2, void *p3, void *p4, void *p5, 
 IOReturn
 IOSurfaceRootUserClient::trapDispatch(UInt32 trapIndex, void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
+	char name[17];
 	IOReturn ret;
 
 	if (trapIndex != 0 || fSubmitLock == NULL) {
-		return trapIndexed(trapIndex, p1, p2, p3, p4, p5, p6);
+		ret = trapIndexed(trapIndex, p1, p2, p3, p4, p5, p6);
+	} else {
+		IOLockLock(fSubmitLock);
+		ret = trapIndexed(trapIndex, p1, p2, p3, p4, p5, p6);
+		IOLockUnlock(fSubmitLock);
 	}
-	IOLockLock(fSubmitLock);
-	ret = trapIndexed(trapIndex, p1, p2, p3, p4, p5, p6);
-	IOLockUnlock(fSubmitLock);
+	if (pdGpuTraced(name))
+		IOLog("PD-gputrace: %s[%d] %s trap %u (0x%llx 0x%llx 0x%llx) -> 0x%x\n", name, proc_selfpid(), fTag,
+		    trapIndex, (unsigned long long)(uintptr_t)p1, (unsigned long long)(uintptr_t)p2,
+		    (unsigned long long)(uintptr_t)p3, ret);
 	return ret;
 }
 #define PD_SURF_REGION   0x200000
@@ -228,7 +313,6 @@ pdSurfBpr(uint32_t sid)
 {
 	return sid < PD_SURF_MAX && sSurfaces[sid].md != NULL ? sSurfaces[sid].bytesPerRow : 0;
 }
-static uint32_t sSurfaceCount = 16;	// ids start where Apple's did on the reference machine
 static uint32_t sSurfaceSeed = 0x17;
 static IOBufferMemoryDescriptor *sSurfRegion;
 
@@ -323,11 +407,27 @@ pdSurfCreate(const uint8_t *in, uint32_t inSize, uint32_t *idOut)
 		OSSafeReleaseNULL(err);
 		return kIOReturnBadArgument;
 	}
-	if (sSurfaceCount >= PD_SURF_MAX) {
+	// a free slot, round robin so a just released id is not handed out again at once
+	id = 0;
+	for (uint32_t n = 0; n < PD_SURF_MAX - 16; n++) {
+		uint32_t at = 16 + (sSurfaceNext - 16 + n) % (PD_SURF_MAX - 16);
+
+		if (sSurfaces[at].md == NULL && sSurfaces[at].refs == 0) {
+			id = at;
+			break;
+		}
+	}
+	if (id == 0) {
+		static bool sFullLogged;
+
+		if (!sFullLogged) {
+			sFullLogged = true;
+			IOLog("PDIOSurface: surface table full, %u live, creates now fail\n", sSurfaceLive);
+		}
 		obj->release();
 		return kIOReturnNoResources;
 	}
-	id = sSurfaceCount++;
+	sSurfaceNext = id + 1;
 	sf = &sSurfaces[id];
 	sf->width = pdDictNumber(d, "IOSurfaceWidth", 0);
 	sf->height = pdDictNumber(d, "IOSurfaceHeight", 0);
@@ -361,12 +461,32 @@ pdSurfCreate(const uint8_t *in, uint32_t inSize, uint32_t *idOut)
 	sf->values = OSDictionary::withCapacity(4);
 	obj->release();
 	if (sf->md == NULL) {
-		sSurfaceCount--;
+		OSSafeReleaseNULL(sf->props);
+		OSSafeReleaseNULL(sf->values);
 		return kIOReturnNoMemory;
 	}
 	bzero(sf->md->getBytesNoCopy(), sf->allocSize);
+	sf->refs = 1;
+	sSurfaceLive++;
 	*idOut = id;
 	return kIOReturnSuccess;
+}
+
+// one holder lets go (trap 5): the last one frees the memory. Client mappings hold their
+// own reference to it, so a task still mapped keeps its pages
+static void
+pdSurfRelease(uint32_t id)
+{
+	PDSurface *sf = &sSurfaces[id];
+
+	if (id < 16 || id >= PD_SURF_MAX || sf->md == NULL || sf->refs == 0) return;
+	if (--sf->refs != 0) return;
+
+	OSSafeReleaseNULL(sf->md);
+	OSSafeReleaseNULL(sf->props);
+	OSSafeReleaseNULL(sf->values);
+	sf->width = sf->height = sf->bytesPerRow = sf->allocSize = 0;
+	sSurfaceLive--;
 }
 
 // copy_all_values (sel 10): {u32 id, u64 0, u8 0} in, out through a descriptor:
@@ -423,6 +543,22 @@ pdSurfCopyValues(uint32_t id, IOMemoryDescriptor *outDesc, uint32_t *outSize)
 static uint8_t *sScanBase;
 static uint32_t sScanW, sScanH, sScanStride, sScanDepth;
 static IOMemoryMap *sScanMap;
+static IOService *sScanDisplay;
+static IOBufferMemoryDescriptor *sScanBuffers[2];
+static uint32_t sScanBack;
+static uint8_t *sScanTarget, *sScanBasePixels;
+
+static IOReturn
+pdScanDisplayCall(const char *fn, void *p1, void *p2, void *p3)
+{
+	const OSSymbol *sym = OSSymbol::withCString(fn);
+	if (!sym)
+		return kIOReturnNoMemory;
+	IOReturn ret = sScanDisplay->callPlatformFunction(sym, true, p1, p2, p3, NULL);
+	sym->release();
+	return ret;
+}
+
 
 static bool
 pdScanoutOpen(void)
@@ -430,7 +566,7 @@ pdScanoutOpen(void)
 	PE_Video console;
 
 	if (sScanBase != NULL) {
-		return true;
+		return sScanBasePixels != NULL && (!sScanDisplay || (sScanBuffers[0] && sScanBuffers[1]));
 	}
 	if (IOService::getPlatform()->getConsoleInfo(&console) != kIOReturnSuccess || console.v_baseAddr == 0 ||
 	    console.v_width == 0 || console.v_height == 0) {
@@ -450,7 +586,48 @@ pdScanoutOpen(void)
 		OSSafeReleaseNULL(md);
 		sScanBase = sScanMap ? (uint8_t *)sScanMap->getVirtualAddress() : NULL;
 	}
-	return sScanBase != NULL;
+	if (sScanBase == NULL)
+		return false;
+	sScanBasePixels = (uint8_t *)IOMalloc((size_t)sScanStride * sScanH);
+	if (sScanBasePixels == NULL)
+		return false;
+	memcpy(sScanBasePixels, sScanBase, (size_t)sScanStride * sScanH);
+	OSDictionary *match = IOService::serviceMatching(PD_DISPLAY_CLASS);
+	sScanDisplay = match ? IOService::copyMatchingService(match) : NULL;
+	OSSafeReleaseNULL(match);
+	if (sScanDisplay) {
+		for (uint32_t i = 0; i < 2; i++) {
+			sScanBuffers[i] = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+			    kIODirectionInOut | kIOMemoryPhysicallyContiguous,
+			    (size_t)sScanStride * sScanH, 0x00000000ffffc000ULL);
+			if (!sScanBuffers[i] || sScanBuffers[i]->prepare() != kIOReturnSuccess) {
+				IOLog("PDIOSurface: cannot allocate scanout back buffers\n");
+				return false;
+			}
+		}
+		IOLog("PDIOSurface: complete-frame scanout with hardware page flips\n");
+	}
+	return true;
+}
+
+// a sel 9 texture request ends in a descriptor laid out as the heap query's (u8 type 0x42, u16 pixel
+// format, u32 usage, u32 width, u32 height): the pixel format of the one whose size matches, 0 if none
+static uint16_t
+pdDescFormat(const uint8_t *in, uint32_t len, uint32_t w, uint32_t h)
+{
+	for (uint32_t at = len >= 0x40 ? len - 0x40 : 0; at + 0xf <= len; at++) {
+		uint32_t dw, dh;
+		uint16_t pf;
+
+		if (in[at] != 0x42)
+			continue;
+		memcpy(&dw, in + at + 7, 4);
+		memcpy(&dh, in + at + 0xb, 4);
+		memcpy(&pf, in + at + 1, 2);
+		if (dw == w && dh == h && pf != 0)
+			return pf;
+	}
+	return 0;
 }
 
 // fp16 to a clamped 8 bit channel, enough for scanout
@@ -476,20 +653,19 @@ pdHalfToByte(uint16_t h)
 // Copy a surface to the top left of the console as BGRA8, clipped. WindowServer's
 // framebuffer is 'RGhA' (64 bit RGBA half), converted per pixel
 static void
-pdScanoutSurface(uint32_t id)
+pdScanoutSurface(const PDSurface *sf)
 {
-	PDSurface *sf = &sSurfaces[id];
 	uint32_t w, h;
 	const uint8_t *src;
 
-	if (id >= PD_SURF_MAX || sf->md == NULL || !pdScanoutOpen() || sScanDepth != 32) {
+	if (sf->md == NULL || !pdScanoutOpen() || sScanDepth != 32) {
 		return;
 	}
 	w = (uint32_t)(sf->width < sScanW ? sf->width : sScanW);
 	h = (uint32_t)(sf->height < sScanH ? sf->height : sScanH);
 	src = (const uint8_t *)sf->md->getBytesNoCopy();
 	for (uint32_t y = 0; y < h; y++) {
-		uint8_t *dst = sScanBase + y * sScanStride;
+		uint8_t *dst = sScanTarget + y * sScanStride;
 		const uint8_t *row = src + y * sf->bytesPerRow;
 
 		if (sf->format == 0x52476841 && sf->bytesPerElement == 8) {
@@ -511,13 +687,12 @@ pdScanoutSurface(uint32_t id)
 // Upper layers blend premultiplied "over" what is already on the console, at their
 // destination origin (dx, dy), clipped to the screen
 static void
-pdScanoutLayerOver(uint32_t id, uint32_t dx, uint32_t dy)
+pdScanoutLayerOver(const PDSurface *sf, uint32_t dx, uint32_t dy)
 {
-	PDSurface *sf = &sSurfaces[id];
 	uint32_t w, h;
 	const uint8_t *src;
 
-	if (id >= PD_SURF_MAX || sf->md == NULL || !pdScanoutOpen() || sScanDepth != 32 ||
+	if (sf->md == NULL || !pdScanoutOpen() || sScanDepth != 32 ||
 	    dx >= sScanW || dy >= sScanH) {
 		return;
 	}
@@ -525,7 +700,7 @@ pdScanoutLayerOver(uint32_t id, uint32_t dx, uint32_t dy)
 	h = (uint32_t)(sf->height < sScanH - dy ? sf->height : sScanH - dy);
 	src = (const uint8_t *)sf->md->getBytesNoCopy();
 	for (uint32_t y = 0; y < h; y++) {
-		uint8_t *dst = sScanBase + (dy + y) * sScanStride + dx * 4;
+		uint8_t *dst = sScanTarget + (dy + y) * sScanStride + dx * 4;
 		const uint8_t *row = src + y * sf->bytesPerRow;
 
 		for (uint32_t x = 0; x < w; x++) {
@@ -560,45 +735,170 @@ pdScanoutLayerOver(uint32_t id, uint32_t dx, uint32_t dy)
 	}
 }
 
-// Layers per swap (from a VZ guest's WindowServer): +0x9c the framebuffer, +0xa0 the cursor with
-// its destination at +0x11c/+0x120, 0 leaves a layer as it was. A pointer move names only the cursor
-static void
-pdScanoutSwap(const uint8_t *desc, uint32_t len)
-{
-	static uint32_t sBase, sUp, sUpX, sUpY;
-	uint32_t best = 0, up = 0;
+// only the render FIFO updates these immutable snapshots. A cursor-position
+// update may show them independently without reading a GPU's mutable surface.
+static PDSurface sScanCursor;
+static uint32_t sScanCursorX, sScanCursorY;
+static uint64_t sCursorPositionGeneration, sCursorDisplayedGeneration;
 
-	pdAsyncDrain(3000);
-	if (desc == NULL) {
-		return;
-	}
-	if (len >= 0xa0) {
-		memcpy(&best, desc + 0x9c, 4);
-		if (best >= PD_SURF_MAX || sSurfaces[best].md == NULL) {
-			best = 0;
-		}
-	}
-	if (len >= 0xa4) {
-		memcpy(&up, desc + 0xa0, 4);
-		if (up > 1 && up < PD_SURF_MAX && sSurfaces[up].md != NULL && up != best) {
-			sUp = up;
-			if (len >= 0x124) {
-				memcpy(&sUpX, desc + 0x11c, 4);
-				memcpy(&sUpY, desc + 0x120, 4);
-			}
+static bool
+pdScanoutFrame(void)
+{
+	IOBufferMemoryDescriptor *back = sScanDisplay ? sScanBuffers[sScanBack] : NULL;
+	sScanTarget = back ? (uint8_t *)back->getBytesNoCopy() : sScanBase;
+	memcpy(sScanTarget, sScanBasePixels, (size_t)sScanStride * sScanH);
+	if (sScanCursor.md)
+		pdScanoutLayerOver(&sScanCursor, sScanCursorX, sScanCursorY);
+	if (back) {
+		for (size_t off = 0; off < (size_t)sScanStride * sScanH; off += 64)
+			__asm__ volatile ("dc cvac, %0" :: "r"(sScanTarget + off) : "memory");
+		__asm__ volatile ("dsb sy" ::: "memory");
+		IOByteCount span = 0;
+		uint64_t phys = back->getPhysicalSegment(0, &span, kIOMemoryMapperNone);
+		pd_display_flip flip = {};
+		IOReturn ret = pdScanDisplayCall(PD_DISPLAY_FN_FLIP, (void *)(uintptr_t)phys,
+		    (void *)(uintptr_t)sScanStride, &flip);
+		if (ret == kIOReturnSuccess) {
+			sScanBack ^= 1;
 		} else {
-			up = 0;
+			IOLog("PDIOSurface: presentation flip failed 0x%x\n", ret);
+			return false;
 		}
 	}
-	if (best != 0) {
-		sBase = best;
-	} else if (up == 0 || sBase == 0 || sSurfaces[sBase].md == NULL) {
-		return;
+	sCursorDisplayedGeneration = sCursorPositionGeneration;
+	return true;
+}
+
+static void
+pdCursorPresent(thread_call_param_t unused0, thread_call_param_t unused1)
+{
+	(void)unused0;
+	(void)unused1;
+	bool retry = false;
+	IOLockLock(sScanoutLock);
+	if (sCursorDisplayedGeneration != sCursorPositionGeneration && sScanBasePixels &&
+	    sScanCursor.md && sScanCursor.width <= 256 && sScanCursor.height <= 256) {
+		// normal ordered presents draw the latest position. Only long GPU work
+		// needs this independent visual update, it never acknowledges a swap.
+		if (pdAsyncRenderingSlow())
+			retry = !pdScanoutFrame();
+		else
+			retry = true;
 	}
-	pdScanoutSurface(sBase);
-	if (sUp != 0 && sUp != sBase && sSurfaces[sUp].md != NULL) {
-		pdScanoutLayerOver(sUp, sUpX, sUpY);
+	IOLockUnlock(sScanoutLock);
+	if (retry) {
+		uint64_t deadline;
+		clock_interval_to_deadline(10000, kMicrosecondScale, &deadline);
+		thread_call_enter_delayed(sCursorCall, deadline);
 	}
+}
+
+// a present stays ordered behind its rendering, including its completion ack.
+struct PDPresentJob {
+	OSData *desc;
+	uint64_t id;
+	PDSurface layers[2];
+};
+
+static void
+pdScanoutSwap(void *argument)
+{
+	PDPresentJob *job = (PDPresentJob *)argument;
+	const uint8_t *desc = (const uint8_t *)job->desc->getBytesNoCopy();
+	uint32_t len = job->desc->getLength();
+	IOLockLock(sScanoutLock);
+	bool ready = pdScanoutOpen();
+	if (ready && job->layers[0].md) {
+		sScanTarget = sScanBasePixels;
+		pdScanoutSurface(&job->layers[0]);
+	}
+	if (job->layers[1].md) {
+		// retaining the producer's descriptor does not make its bytes immutable.
+		// Save the completed cursor pixels before a later GPU job can reuse them.
+		IOBufferMemoryDescriptor *copy = IOBufferMemoryDescriptor::withBytes(
+		    job->layers[1].md->getBytesNoCopy(), job->layers[1].md->getLength(), kIODirectionNone);
+		if (copy) {
+			OSSafeReleaseNULL(sScanCursor.md);
+			sScanCursor = job->layers[1];
+			sScanCursor.md = copy;
+		} else {
+			ready = false;
+		}
+		if ((job->layers[1].width > 256 || job->layers[1].height > 256) && len >= 0x124) {
+			memcpy(&sScanCursorX, desc + 0x11c, 4);
+			memcpy(&sScanCursorY, desc + 0x120, 4);
+		}
+	}
+	if (ready)
+		ready = pdScanoutFrame();
+	if (ready) {
+		sPresentedSwap = job->id;
+		if (sPendingSwap == job->id)
+			sPendingSwap = 0;
+	}
+	IOLockUnlock(sScanoutLock);
+	if (ready)
+		IOSurfaceRootUserClient::completeSwap(job->id);
+	for (uint32_t i = 0; i < 2; i++)
+		OSSafeReleaseNULL(job->layers[i].md);
+	job->desc->release();
+	IOFree(job, sizeof(*job));
+}
+
+static bool
+pdQueueSwap(const uint8_t *desc, uint32_t len, uint64_t id)
+{
+	PDPresentJob *job = (PDPresentJob *)IOMallocZero(sizeof(*job));
+	if (!job)
+		return false;
+	job->desc = OSData::withBytes(desc, len);
+	job->id = id;
+	if (!job->desc) {
+		IOFree(job, sizeof(*job));
+		return false;
+	}
+	for (uint32_t i = 0; i < 2 && len >= 0xa0 + i * 4; i++) {
+		uint32_t surface;
+		memcpy(&surface, desc + 0x9c + i * 4, 4);
+		if (surface >= 16 && surface < PD_SURF_MAX && sSurfaces[surface].md) {
+			job->layers[i] = sSurfaces[surface];
+			job->layers[i].md->retain();
+		}
+	}
+	uint32_t x = 0, y = 0;
+	bool position = len >= 0x124 && job->layers[1].md &&
+	    job->layers[1].width <= 256 && job->layers[1].height <= 256;
+	if (position) {
+		memcpy(&x, desc + 0x11c, 4);
+		memcpy(&y, desc + 0x120, 4);
+	}
+	IOLockLock(sScanoutLock);
+	uint64_t previous = sPendingSwap, oldGeneration = sCursorPositionGeneration;
+	uint32_t oldX = sScanCursorX, oldY = sScanCursorY;
+	sPendingSwap = id;
+	if (position && (x != oldX || y != oldY)) {
+		sScanCursorX = x;
+		sScanCursorY = y;
+		sCursorPositionGeneration++;
+	}
+	// publish the position before the worker can run this job. Both lock orders
+	// are scanout then async, the render worker drops its queue lock first.
+	if (pdAsyncPerform(pdScanoutSwap, job)) {
+		IOLockUnlock(sScanoutLock);
+		if (position)
+			thread_call_enter(sCursorCall);
+		return true;
+	}
+	sPendingSwap = previous;
+	sScanCursorX = oldX;
+	sScanCursorY = oldY;
+	sCursorPositionGeneration = oldGeneration;
+	IOLockUnlock(sScanoutLock);
+	for (uint32_t i = 0; i < 2; i++)
+		OSSafeReleaseNULL(job->layers[i].md);
+	job->desc->release();
+	IOFree(job, sizeof(*job));
+	return false;
 }
 
 // Buffers are shared with the executor, so ring entries need no copy: consuming them
@@ -619,36 +919,47 @@ IOSurfaceRootUserClient::drainDirty(void)
 	}
 }
 
+// one command buffer's record, from trap 0 or a sel 29 batch: {u32 list shmem id, u32 header shmem id, u64 0, u64 block0, u64 block1, 0, 0}.
+// its two callback blocks belong to THIS submission, since posting an older pair had WindowServer call a freed block
+void
+IOSurfaceRootUserClient::submitRecord(uint32_t queue, const uint8_t *rec)
+{
+	uint32_t ids[2];
+	uint64_t blocks[2];
+
+	memcpy(ids, rec, sizeof(ids));
+	memcpy(blocks, rec + 0x10, sizeof(blocks));
+	// without its blocks a command buffer never hears it completed
+	if (blocks[0] == 0 && strcmp(fTag, "AppleParavirtGPU") == 0)
+		IOLog("PDIOSurface: %s submit on queue %u has no completion blocks\n", fTag, queue);
+	fSubmitBlocks[0] = blocks[0];
+	fSubmitBlocks[1] = blocks[1];
+	fSubList = fSubHdr = 0;
+	if (ids[0] < kShmemIds && ids[1] < kShmemIds && fShmemById[ids[0]] != NULL && fShmemById[ids[1]] != NULL) {
+		fSubList = ids[0];
+		fSubHdr = ids[1];
+	}
+	submitAsync(queue);
+}
+
 IOReturn
 IOSurfaceRootUserClient::trapIndexed(UInt32 trapIndex, void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
 	drainDirty();
 
-	// Trap 0 submits: p2 bytes at p3 describe it, {2, 1, 0, block, block}. The two callback
-	// blocks belong to THIS submission, posting an older pair had WindowServer call a freed block
-	if (trapIndex == 0 && (uintptr_t)p2 > 0 && (uintptr_t)p2 <= 0x400) {
-		IOMemoryDescriptor *rd = IOMemoryDescriptor::withAddressRange(
-		    (mach_vm_address_t)(uintptr_t)p3, 0x30, kIODirectionOut, fTask);
-		uint64_t rec[6] = {};
-
-		if (rd != NULL && rd->prepare() == kIOReturnSuccess) {
-			rd->readBytes(0, rec, sizeof(rec));
-			rd->complete();
-		}
-		OSSafeReleaseNULL(rd);
-		fSubmitBlocks[0] = rec[2];
-		fSubmitBlocks[1] = rec[3];
-	}
+	// IOSurfaceRoot traps 4 then 5 {id} come once per holder's release, 5 drops the reference
+	if (trapIndex == 5 && strcmp(fTag, "IOSurfaceRoot") == 0)
+		pdSurfRelease((uint32_t)(uintptr_t)p1);
 	// Trap 3 is setPurgeableState {resource id, state, u32 *old}: *old gets the state before the
 	// call. Resources start NonVolatile (2), KeepCurrent (1) only queries
 	if (trapIndex == 3 && strcmp(fTag, "AppleParavirtGPU") == 0 && p3 != NULL) {
 		uint32_t rid = (uint32_t)(uintptr_t)p1, want = (uint32_t)(uintptr_t)p2, old = 2;
 
-		if (rid < PD_MAX_OBJ) {
-			old = fPurgeable[rid] ? fPurgeable[rid] : 2;
-			if (want >= 2 && want <= 4) {
-				fPurgeable[rid] = (uint8_t)want;
-			}
+		uint32_t rs = idSlot(kIdRid, rid);
+
+		old = fRidMap.at(rs) ? fRidMap.at(rs) : 2;
+		if (want >= 2 && want <= 4 && (rs = idSlotNew(kIdRid, rid)) != 0) {
+			fRidMap.at(rs) = (uint8_t)want;
 		}
 		IOMemoryDescriptor *od = IOMemoryDescriptor::withAddressRange((mach_vm_address_t)(uintptr_t)p3, 4,
 		    kIODirectionIn, fTask);
@@ -717,6 +1028,10 @@ IOSurfaceRootUserClient::trapIndexed(UInt32 trapIndex, void *p1, void *p2, void 
 			uint32_t locked = trapIndex == 2 ? 1 : 0;
 			uint64_t seed;
 
+			// a CPU lock waits for the queued GPU work using the surface (only its writers for a read-only
+			// lock), as IOSurfaceLock does unless asked to avoid the sync: a CPU redraw raced queued reads
+			if (trapIndex == 2 && !((uint32_t)(uintptr_t)p2 & 2))
+				pdAsyncDrainSurface(id, 3000, ((uint32_t)(uintptr_t)p2 & 1) != 0);
 			memcpy(&seed, ro + 0x10, 8);
 			if (trapIndex == 3) {
 				seed++;
@@ -746,17 +1061,16 @@ IOSurfaceRootUserClient::trapIndexed(UInt32 trapIndex, void *p1, void *p2, void 
 		releaseResource((uint32_t)(uintptr_t)p1);
 		resUnlock();
 	}
-	// the submission names its command buffer: {u32 list shmem id, u32 header shmem id} at p3
+	// trap 0 submits one command buffer: p2 bytes at p3 are its 0x30-byte record
 	if (trapIndex == 0) {
-		uint32_t ids[2] = {};
+		uint8_t rec[0x30] = {};
+		int err = p3 != NULL && (uintptr_t)p2 > 0 && (uintptr_t)p2 <= 0x400 ?
+		    copyin((user_addr_t)(uintptr_t)p3, rec, sizeof(rec)) : EINVAL;
 
-		fSubList = fSubHdr = 0;
-		if (p3 != NULL && copyin((user_addr_t)(uintptr_t)p3, ids, sizeof(ids)) == 0 && ids[0] < kShmemIds &&
-		    ids[1] < kShmemIds && fShmemById[ids[0]] != NULL && fShmemById[ids[1]] != NULL) {
-			fSubList = ids[0];
-			fSubHdr = ids[1];
-		}
-		submitAsync((uint32_t)(uintptr_t)p1);
+		if (err != 0 && strcmp(fTag, "AppleParavirtGPU") == 0)
+			IOLog("PDIOSurface: %s submit on queue %llu unreadable (copyin %d)\n", fTag,
+			    (unsigned long long)(uintptr_t)p1, err);
+		submitRecord((uint32_t)(uintptr_t)p1, rec);
 	}
 	return kIOReturnSuccess;
 }
@@ -769,14 +1083,32 @@ IOSurfaceRootUserClient::registerNotificationPort(mach_port_t port, UInt32 type,
 		sFBNotifyPorts[type] = port;
 		sFBOwner = this;
 	}
-	if (fQueues != NULL) {
+	if (fTraced)
+		IOLog("PD-gputrace: %s port type %u ref %llu\n", fTag, type, (unsigned long long)refCon);
+	{
 		char key[24];
-		IOSharedDataQueue *q;
+		IOSharedDataQueue *q = NULL;
 
 		snprintf(key, sizeof(key), "%llu", (unsigned long long)refCon);
-		q = OSDynamicCast(IOSharedDataQueue, fQueues->getObject(key));
+		if (fQueues != NULL)
+			q = OSDynamicCast(IOSharedDataQueue, fQueues->getObject(key));
+		// no queue yet: keep the port for when sel 16 makes it
+		if (q == NULL && refCon != 0) {
+			for (uint32_t i = 0; i < 4; i++) {
+				if (fEarlyRef[i] == 0 || fEarlyRef[i] == refCon) {
+					fEarlyRef[i] = refCon;
+					fEarlyPort[i] = port;
+					break;
+				}
+			}
+		}
 		if (q != NULL) {
 			q->setNotificationPort(port);
+			// completions that landed before the port: announce them now
+			if (q->peek() != NULL && OSDynamicCast(PDNotifyQueue, q) != NULL) {
+				IOLog("PDIOSurface: %s queue %s had entries before its port\n", fTag, key);
+				((PDNotifyQueue *)q)->notify();
+			}
 		}
 	}
 	return kIOReturnSuccess;
@@ -850,6 +1182,44 @@ IOSurfaceRootUserClient::lookupBuffer(const char *key)
 	return md;
 }
 
+// a view of a heap or buffer texture aliases that texture: follow the chain to the memory's
+// owner (its record's off already holds the offset into it)
+IOBufferMemoryDescriptor *
+IOSurfaceRootUserClient::texMemory(uint32_t id, uint64_t *off)
+{
+	uint32_t m = id, o = texSlot(id);
+	char key[16];
+
+	*off = 0;
+	if (id == 0)
+		return NULL;
+	if (texInfo(o).alias == 0 && texInfo(o).surf != 0 && sSurfaces[texInfo(o).surf].md != NULL)
+		return sSurfaces[texInfo(o).surf].md;
+	for (uint32_t i = 0; i < 4 && texInfo(texSlot(m)).alias != 0; i++) {
+		m = texInfo(texSlot(m)).alias;
+	}
+	if (texInfo(o).alias != 0)
+		*off = texInfo(o).off;
+	snprintf(key, sizeof(key), "%u", m);
+	return lookupBuffer(key);
+}
+
+void
+IOSurfaceRootUserClient::answerQuery(uint32_t buffer, uint64_t off, const void *data, uint32_t len)
+{
+	IOBufferMemoryDescriptor *md;
+	char key[16];
+
+	snprintf(key, sizeof(key), "%u", buffer);
+	md = lookupBuffer(key);
+	if (md == NULL || off > md->getLength() || len > md->getLength() - off) {
+		IOLog("PDIOSurface: %s query answer to buffer %u+0x%llx has nowhere to go\n", fTag, buffer,
+		    (unsigned long long)off);
+		return;
+	}
+	memcpy((uint8_t *)md->getBytesNoCopy() + off, data, len);
+}
+
 void
 IOSurfaceRootUserClient::resLock(void)
 {
@@ -876,8 +1246,9 @@ IOSurfaceRootUserClient::resUnlock(void)
 IOReturn
 IOSurfaceRootUserClient::clientClose(void)
 {
-	// A completion post still pending holds a reference on us
-	if (fCompletionCall != NULL && thread_call_cancel(fCompletionCall)) {
+	// a completion post still pending holds a reference on us. One already running
+	// iterates fQueues, so wait for it before anything below is released
+	if (fCompletionCall != NULL && thread_call_cancel_wait(fCompletionCall)) {
 		release();
 	}
 	// The notification ports belong to the client that registered them. Once it is gone
@@ -949,6 +1320,7 @@ IOReturn
 IOSurfaceRootUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments *args,
     IOExternalMethodDispatch *dispatch, OSObject *target, void *reference)
 {
+	char name[17];
 	// sel 9 creates resources: serialised against trap 1 releasing them
 	bool create = selector == 9 && strcmp(fTag, "AppleParavirtGPU") == 0;
 
@@ -959,6 +1331,10 @@ IOSurfaceRootUserClient::externalMethod(uint32_t selector, IOExternalMethodArgum
 	if (create) {
 		resUnlock();
 	}
+	if (pdGpuTraced(name))
+		IOLog("PD-gputrace: %s[%d] %s sel %u in %u/%u out %u/%u%s -> 0x%x\n", name, proc_selfpid(), fTag,
+		    selector, args->scalarInputCount, args->structureInputSize, args->scalarOutputCount,
+		    args->structureOutputSize, args->asyncWakePort != MACH_PORT_NULL ? " async" : "", ret);
 	return ret;
 }
 
@@ -968,6 +1344,43 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 {
 	if ((selector == PD_BRIDGE_SEL_WAIT_JOB || selector == PD_BRIDGE_SEL_DONE) && strcmp(fTag, "PDShaderBridge") == 0)
 		return pdBridgeDoorbell(selector);
+	// sel 29 submits several command buffers at once (IOGPU's batch when more than one is ready on a queue): scalars {queue id, 0, count, record size 0x30},
+	// the records back to back as trap 0's. Left unanswered, those command buffers never ran and their waiters slept for good
+	if (selector == 29 && strcmp(fTag, "AppleParavirtGPU") == 0 && args->scalarInputCount >= 4) {
+		uint32_t queue = (uint32_t)args->scalarInput[0], n = (uint32_t)args->scalarInput[2];
+		uint32_t sz = (uint32_t)args->scalarInput[3];
+		uint8_t rec[0x30];
+
+		if (sz < 0x20 || sz > 0x400 || n == 0 || n > 64)
+			return kIOReturnBadArgument;
+		drainDirty();
+		if (fSubmitLock != NULL)
+			IOLockLock(fSubmitLock);
+		for (uint32_t i = 0; i < n; i++) {
+			bzero(rec, sizeof(rec));
+			if (args->structureInputDescriptor != NULL)
+				args->structureInputDescriptor->readBytes((IOByteCount)i * sz, rec, min(sz, (uint32_t)sizeof(rec)));
+			else if (args->structureInput != NULL && (uint64_t)(i + 1) * sz <= args->structureInputSize)
+				memcpy(rec, (const uint8_t *)args->structureInput + (size_t)i * sz, min(sz, (uint32_t)sizeof(rec)));
+			submitRecord(queue, rec);
+		}
+		if (fSubmitLock != NULL)
+			IOLockUnlock(fSubmitLock);
+		if (args->scalarOutputCount >= 1)
+			args->scalarOutput[0] = 0;
+		return kIOReturnSuccess;
+	}
+	if (selector == PD_BRIDGE_SEL_LOG && strcmp(fTag, "PDShaderBridge") == 0) {
+		const char *s = (const char *)args->structureInput;
+		uint32_t n = args->structureInputSize;
+
+		if (s == NULL || n == 0 || n > PD_BRIDGE_LOG_MAX)
+			return kIOReturnBadArgument;
+		while (n > 0 && (s[n - 1] == '\n' || s[n - 1] == '\0'))
+			n--;
+		IOLog("airjitd: %.*s\n", (int)n, s);
+		return kIOReturnSuccess;
+	}
 
 	drainDirty();
 
@@ -1002,12 +1415,14 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 					fn[m[pos]] = v;
 				}
 			}
-			if (id < PD_MAX_OBJ) {
-				fRenderVertexFn[id] = fn[1];
-				fRenderFragmentFn[id] = fn[2];
-				fPipeBlend[id] = pdParseBlend(m, args->structureInputSize);
+			uint32_t ps = idSlotNew(kIdPipe, id);
+			if (ps != 0) {
+				pipeInfo(ps).tileFn = 0;
+				pipeInfo(ps).vertexFn = fn[1];
+				pipeInfo(ps).fragmentFn = fn[2];
+				pipeInfo(ps).blend = pdParseBlend(m, args->structureInputSize);
 				for (uint32_t a = 1; a < 4; a++) {
-					fPipeBlendRT[id][a] = pdParseBlend(m, args->structureInputSize, a);
+					pipeInfo(ps).blendRT[a] = pdParseBlend(m, args->structureInputSize, a);
 				}
 			}
 			// The daemon introspects each new function's interface once
@@ -1015,7 +1430,7 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 				uint32_t f = fn[k];
 				PDBridgeGuard bridgeGuard;
 
-				if (f == 0 || f >= PD_MAX_OBJ || shader(f) == NULL || sIntrospected[shaderKey(f)] || sBridge == NULL) {
+				if (f == 0 || shader(f) == NULL || sIntrospected[shaderKey(f)] || sBridge == NULL) {
 					continue;
 				}
 				PDBridgeHeader *h = (PDBridgeHeader *)sBridge->getBytesNoCopy();
@@ -1032,8 +1447,28 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 				pdBridgeRing(h);
 				pdBridgeWait(h, 30000);
 				__sync_synchronize();
-				h->state = 0;
-				h->kind = 0;
+				pdBridgeRelease(h);
+			}
+		}
+		// type 0x33 is a tile pipeline: {id, 0x33, len, id, len, count, [tag][04][u32]...}, tag 1 the tile
+		// kernel, then its label and colour attachment formats
+		if (w1 == 0x33 && args->structureInputSize >= 0x15) {
+			const uint8_t *m = (const uint8_t *)args->structureInput;
+			uint32_t pid = 0, n = m[0x14], at = 0x15;
+
+			memcpy(&pid, m, 4);
+			uint32_t ps = idSlotNew(kIdPipe, pid);
+			if (ps != 0) {
+				pipeInfo(ps).tileFn = 0;
+				pipeInfo(ps).vertexFn = 0;
+				pipeInfo(ps).fragmentFn = 0;
+			}
+			for (uint32_t e = 0; e < n && at + 6 <= args->structureInputSize && m[at + 1] == 4; e++, at += 6) {
+				uint32_t v;
+
+				memcpy(&v, m + at + 2, 4);
+				if (m[at] == 1 && ps != 0)
+					pipeInfo(ps).tileFn = v;
 			}
 		}
 		// type 0xb is a compute pipeline: {id, 0xb, len, id, len, count, [tag][04][u32]...}, tag 0 the kernel
@@ -1042,13 +1477,19 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 			uint32_t pid = 0, n = m[0x14], at = 0x15;
 
 			memcpy(&pid, m, 4);
+			uint32_t ps = idSlotNew(kIdPipe, pid);
+			if (ps != 0)
+				pipeInfo(ps).maxThreads = 0;
 			for (uint32_t e = 0; e < n && at + 6 <= args->structureInputSize; e++, at += 6) {
 				uint32_t v;
 
 				memcpy(&v, m + at + 2, 4);
-				if (m[at] == 0 && m[at + 1] == 4 && pid < PD_MAX_OBJ && v < PD_MAX_OBJ) {
-					fPipelineFunction[pid] = v;
+				if (m[at] == 0 && m[at + 1] == 4 && ps != 0) {
+					pipeInfo(ps).fn = v;
 				}
+				// tag 8: the descriptor's maxTotalThreadsPerThreadgroup
+				if (m[at] == 8 && m[at + 1] == 4 && ps != 0 && v <= 1024)
+					pipeInfo(ps).maxThreads = v;
 			}
 		}
 		// a sampler: {id, 3, 0x24, {id, flags, 0, 0, FLT_MAX, 0, 0}}
@@ -1057,8 +1498,31 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 
 			memcpy(&sid, args->structureInput, 4);
 			memcpy(&sflags, (const uint8_t *)args->structureInput + 0x10, 4);
-			if (sid < PD_MAX_OBJ)
-				fSampFlags[sid] = sflags;
+			// the valid bit tells airjitd a nearest/clamp/pixel sampler (all flags clear) from an unknown one
+			uint32_t ss = idSlotNew(kIdSamp, sid);
+			if (ss != 0)
+				fSampMap.at(ss) = sflags | 0x40000000u;
+		}
+	}
+
+	// sel 259 destroys a host object: {id, 0, kind, 0xc, id}. kind 0x3eb a sampler, 0x3ed a function,
+	// 0x3ee a pipeline, 0x3ea a depth stencil state (kept nowhere). others are logged under pdobjmap=1
+	if (selector == 259 && args->structureInput != NULL && args->structureInputSize >= 12) {
+		static uint32_t logged;
+		uint32_t id, kind;
+
+		memcpy(&id, args->structureInput, 4);
+		memcpy(&kind, (const uint8_t *)args->structureInput + 8, 4);
+		if (kind == 0x3eb) {
+			idDrop(kIdSamp, id);
+		} else if (kind == 0x3ed) {
+			idDrop(kIdFn, id);
+		} else if (kind == 0x3ee) {
+			idDrop(kIdPipe, id);
+		} else if (kind != 0x3ea && pdObjMapLog() && logged < 32) {
+			logged++;
+			IOLog("PDIOSurface: %s sel 259 destroys id %u kind 0x%x (%u bytes)\n", fTag, id, kind,
+			    (uint32_t)args->structureInputSize);
 		}
 	}
 
@@ -1366,8 +1830,13 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 				}
 				OSSafeReleaseNULL(obj);
 			}
-			return pdSurfReply(this, fTask, &fSurfRegion, &fMaps, id,
+			// a lookup is one more holder, it releases on its own
+			IOReturn kr = pdSurfReply(this, fTask, &fSurfRegion, &fMaps, id,
 			    (uint8_t *)args->structureOutput, args->structureOutputSize);
+
+			if (kr == kIOReturnSuccess && id < PD_SURF_MAX && sSurfaces[id].md != NULL)
+				sSurfaces[id].refs++;
+			return kr;
 		}
 		// sel 35 {id, 0} -> scalar port name: IOSurfaceCreateMachPort, how an app hands its
 		// window's surface to WindowServer. The port names an OSNumber of the id
@@ -1411,14 +1880,6 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 			uint8_t *shmem = (uint8_t *)md->getBytesNoCopy();
 
 			bzero(shmem, md->getLength());
-			if (fVariant == 1) {
-				memset(shmem, 0xff, md->getLength());
-			} else if (fVariant == 2) {
-				for (uint32_t w = 0; w < md->getLength() / 4; w++) {
-					uint32_t v = w;
-					memcpy(shmem + 4 * w, &v, sizeof(v));
-				}
-			}
 			if (fMaps == NULL) {
 				fMaps = OSArray::withCapacity(4);
 			}
@@ -1546,10 +2007,12 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 				memcpy(out + w, &id, sizeof(id));
 			}
 			// sel 16 makes a notification queue of scalar0 entries of scalar1 bytes, which is
-			// IODataQueue::withEntries' signature: a stock shared queue, {address, id} back
+			// IODataQueue::withEntries' signature: a PDNotifyQueue, {address, id} back
 			if (selector == 16 && args->scalarInputCount >= 2 && args->structureOutputSize >= 16) {
-				IOSharedDataQueue *q = IOSharedDataQueue::withEntries((UInt32)args->scalarInput[0],
-				    (UInt32)args->scalarInput[1]);
+				IOSharedDataQueue *q = OSTypeAlloc(PDNotifyQueue);
+
+				if (q != NULL && !q->initWithEntries((UInt32)args->scalarInput[0], (UInt32)args->scalarInput[1]))
+					OSSafeReleaseNULL(q);
 				IOMemoryDescriptor *qmd = q ? q->getMemoryDescriptor() : NULL;
 				IOMemoryMap *qmap = qmd ? qmd->createMappingInTask(fTask, 0, kIOMapAnywhere) : NULL;
 
@@ -1565,6 +2028,12 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 					}
 					if (fMaps == NULL) {
 						fMaps = OSArray::withCapacity(16);
+					}
+					for (uint32_t i = 0; i < 4; i++) {
+						if (fEarlyRef[i] == id) {
+							q->setNotificationPort(fEarlyPort[i]);
+							fEarlyRef[i] = 0;
+						}
 					}
 					if (fQueues != NULL) {
 						fQueues->setObject(key, q);
@@ -1607,14 +2076,17 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 			memcpy(&tw, (const uint8_t *)args->structureInput + 0x08, 2);
 			memcpy(&th, (const uint8_t *)args->structureInput + 0x0a, 2);
 			memcpy(&objid, (const uint8_t *)args->structureInput + 0x5c, 4);
-			if (objid != 0 && objid < PD_MAX_OBJ) {
-				fTexW[objid] = tw;
-				fTexH[objid] = th;
-				fTexSurf[objid] = (uint16_t)sid168;
-				// MTLPixelFormatRGBA16Float for RGhA, BGRA8Unorm otherwise
-				fTexPf[objid] = sSurfaces[sid168].format == 0x52476841 ? 115 : 80;
-				fTexBpr[objid] = 0;
-				fTexAlias[objid] = 0;
+			uint32_t o = idSlotNew(kIdObj, objid);
+			if (o != 0) {
+				texInfo(o).w = tw;
+				texInfo(o).h = th;
+				texInfo(o).surf = (uint16_t)sid168;
+				// the request's own descriptor, else RGBA16Float for RGhA and BGRA8Unorm otherwise
+				texInfo(o).pf = pdDescFormat((const uint8_t *)args->structureInput, 168, tw, th);
+				if (texInfo(o).pf == 0)
+					texInfo(o).pf = sSurfaces[sid168].format == 0x52476841 ? 115 : 80;
+				texInfo(o).bpr = 0;
+				texInfo(o).alias = 0;
 			}
 			md = sSurfaces[sid168].md;
 			md->retain();
@@ -1628,13 +2100,15 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 			memcpy(&th, (const uint8_t *)args->structureInput + 0x0a, 2);
 			memcpy(&objid, (const uint8_t *)args->structureInput + 0x5c, 4);
 			len = ((uint64_t)tw * th * 8 + 0x3fff) & ~0x3fffULL;
-			if (objid != 0 && objid < PD_MAX_OBJ) {
-				fTexW[objid] = tw;
-				fTexH[objid] = th;
-				fTexSurf[objid] = 0;
-				// ids are reused: a pitch or alias left from the previous texture would stick
-				fTexBpr[objid] = 0;
-				fTexAlias[objid] = 0;
+			uint32_t o = idSlotNew(kIdObj, objid);
+			if (o != 0) {
+				texInfo(o).w = tw;
+				texInfo(o).h = th;
+				texInfo(o).surf = 0;
+				// ids are reused: a pitch, alias or format left from the previous texture would stick
+				texInfo(o).bpr = 0;
+				texInfo(o).alias = 0;
+				texInfo(o).pf = pdDescFormat((const uint8_t *)args->structureInput, 168, tw, th);
 			}
 		}
 		// A 160 byte request is a texture on an IOSurface: the surface id at +0x38, the object id at
@@ -1646,13 +2120,16 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 			memcpy(&objid, (const uint8_t *)args->structureInput + 0x5c, 4);
 			// Size, format and surface even when the surface's memory is not known yet: a draw
 			// that binds the texture then reads the surface directly
-			if (objid != 0 && objid < PD_MAX_OBJ) {
-				memcpy(&fTexW[objid], (const uint8_t *)args->structureInput + 0x80, 4);
-				memcpy(&fTexH[objid], (const uint8_t *)args->structureInput + 0x84, 4);
-				memcpy(&fTexPf[objid], (const uint8_t *)args->structureInput + 0x7e, 2);
-				fTexSurf[objid] = sid < PD_SURF_MAX ? (uint16_t)sid : 0;
-				fTexBpr[objid] = 0;
-				fTexAlias[objid] = 0;
+			uint32_t o = idSlotNew(kIdObj, objid);
+			if (o != 0) {
+				memcpy(&texInfo(o).w, (const uint8_t *)args->structureInput + 0x80, 4);
+				memcpy(&texInfo(o).h, (const uint8_t *)args->structureInput + 0x84, 4);
+				texInfo(o).pf = pdDescFormat((const uint8_t *)args->structureInput, 160, texInfo(o).w, texInfo(o).h);
+				if (texInfo(o).pf == 0)
+					memcpy(&texInfo(o).pf, (const uint8_t *)args->structureInput + 0x7e, 2);
+				texInfo(o).surf = sid < PD_SURF_MAX ? (uint16_t)sid : 0;
+				texInfo(o).bpr = 0;
+				texInfo(o).alias = 0;
 			}
 			if (sid < PD_SURF_MAX && sSurfaces[sid].md != NULL) {
 				md = sSurfaces[sid].md;
@@ -1798,6 +2275,7 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 				char key[16];
 
 				memcpy(&objid, (const uint8_t *)args->structureInput + 0x5c, sizeof(objid));
+				uint32_t o = idSlotNew(kIdObj, objid);
 				// trap 1 releases by the resourceID the reply gave (+0x24), not by this object id
 				{
 					uint32_t rid = 0;
@@ -1805,11 +2283,11 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 					if (args->structureOutput != NULL && args->structureOutputSize >= 0x28) {
 						memcpy(&rid, (const uint8_t *)args->structureOutput + 0x24, sizeof(rid));
 					}
-					if (objid != 0 && objid < PD_MAX_OBJ && rid != 0) {
+					if (o != 0 && rid != 0) {
 						char rkey[16];
 						OSNumber *num = OSNumber::withNumber(objid, 32);
 
-						fObjRes[objid] = rid;
+						texInfo(o).res = rid;
 						if (fResObj == NULL) {
 							fResObj = OSDictionary::withCapacity(64);
 						}
@@ -1821,24 +2299,25 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 					}
 				}
 				// a 168 byte private texture carries its size at +0x08 and was set above: +0xa0 is not it
-				if (objid != 0 && objid < PD_MAX_OBJ && args->structureInputSize >= 0xa8 && args->structureInputSize != 168) {
-					memcpy(&fTexW[objid], (const uint8_t *)args->structureInput + 0xa0, 4);
-					memcpy(&fTexH[objid], (const uint8_t *)args->structureInput + 0xa4, 4);
-					fTexPf[objid] = 0;
-					fTexSurf[objid] = 0;
-					fTexBpr[objid] = 0;
-					fTexAlias[objid] = 0;
-					if (args->structureInputSize >= 0xbc) {
-						memcpy(&fTexPf[objid], (const uint8_t *)args->structureInput + 0xba, 2);
-					}
-				} else if (objid != 0 && objid < PD_MAX_OBJ && args->structureInputSize != 160 &&
+				if (o != 0 && args->structureInputSize >= 0xa8 && args->structureInputSize != 168) {
+					memcpy(&texInfo(o).w, (const uint8_t *)args->structureInput + 0xa0, 4);
+					memcpy(&texInfo(o).h, (const uint8_t *)args->structureInput + 0xa4, 4);
+					texInfo(o).pf = 0;
+					texInfo(o).surf = 0;
+					texInfo(o).bpr = 0;
+					texInfo(o).alias = 0;
+					// +0xb8 in the 224 byte form, +0x1b4 in the 476 byte one with mip levels
+					texInfo(o).pf = pdDescFormat((const uint8_t *)args->structureInput, (uint32_t)args->structureInputSize,
+					    texInfo(o).w, texInfo(o).h);
+				} else if (o != 0 && args->structureInputSize != 160 &&
 				    args->structureInputSize != 168) {
-					// A plain buffer reusing a texture's id must not keep its size (160 and 168
-					// byte requests are surface and private textures, set above)
-					fTexW[objid] = 0;
-					fTexH[objid] = 0;
-					fTexPf[objid] = 0;
-					fTexSurf[objid] = 0;
+					// a plain buffer reusing a texture's id drops the texture's size and alias
+					// (160 and 168 byte requests are surface and private textures, set above)
+					texInfo(o).w = 0;
+					texInfo(o).h = 0;
+					texInfo(o).pf = 0;
+					texInfo(o).surf = 0;
+					texInfo(o).alias = 0;
 				}
 				if (objid != 0) {
 					if (fBuffers == NULL) {
@@ -1985,6 +2464,10 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 		memcpy(&id, args->structureInput, 4);
 		memcpy(&foff, (const uint8_t *)args->structureInput + 8, 8);
 		memcpy(&fsize, (const uint8_t *)args->structureInput + 16, 8);
+		// ids are reused: a function that fails to register must not run the id's previous one
+		uint32_t fs = idSlotNew(kIdFn, id);
+		if (fs != 0)
+			fFnMap.at(fs) = 0;
 		// Word 1 names the storage resource: a client with several 1 MB resources
 		// (WindowServer) got zeros from the wrong one when every candidate was scanned
 		{
@@ -1996,15 +2479,8 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 			snprintf(key, sizeof(key), "%u", sid);
 			named = fResources ? OSDynamicCast(IOBufferMemoryDescriptor, fResources->getObject(key)) : NULL;
 			if (named != NULL && foff <= named->getLength() && fsize <= named->getLength() - foff &&
-			    id < PD_MAX_OBJ && fsize <= PD_MAX_SHADER_BYTES) {
-				OSData *copy = OSData::withBytes((const uint8_t *)named->getBytesNoCopy() + foff, (unsigned)fsize);
-
-				if (copy != NULL && sShaderN < 256) {
-					sShaders[sShaderN] = copy;
-					fShaderKey[id] = ++sShaderN;
-				} else {
-					OSSafeReleaseNULL(copy);
-				}
+			    fs != 0 && fsize <= PD_MAX_SHADER_BYTES) {
+				fFnMap.at(fs) = pdShaderRegister((const uint8_t *)named->getBytesNoCopy() + foff, (uint32_t)fsize);
 			}
 		}
 		for (uint32_t e = 0; fEncoders != NULL && e < fEncoders->getCount(); e++) {
@@ -2016,20 +2492,14 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 			const uint8_t *b = (const uint8_t *)md->getBytesNoCopy() + foff;
 
 			// Only a Metal library: the named resource can be missing and this storage hold vertices
-			if (id < PD_MAX_OBJ && fsize <= PD_MAX_SHADER_BYTES && shader(id) == NULL && sShaderN < 256 &&
-			    fsize >= 4 && memcmp(b, "MTLB", 4) == 0) {
-				OSData *copy = OSData::withBytes(b, (unsigned)fsize);
-
-				if (copy != NULL) {
-					sShaders[sShaderN] = copy;
-					fShaderKey[id] = ++sShaderN;
-				}
-			}
+			if (fs != 0 && fsize <= PD_MAX_SHADER_BYTES && shader(id) == NULL &&
+			    fsize >= 4 && memcmp(b, "MTLB", 4) == 0)
+				fFnMap.at(fs) = pdShaderRegister(b, (uint32_t)fsize);
 			break;
 		}
 	}
 	// sel 261 makes a texture on existing memory: {?, new id, kind, bytes after this word, new id,
-	// +0x14 source, ...}. Kind 0x1b is a view, 9 and 0x37 linear textures on a buffer
+	// +0x14 source, ...}. Kind 0x1b is a view, 9 and 0x37 linear textures on a buffer, 0x38 a heap texture
 	if (selector == 261 && strcmp(fTag, "AppleParavirtGPU") == 0 && args->structureInput != NULL &&
 	    args->structureInputSize >= 0x1c) {
 		const uint8_t *in = (const uint8_t *)args->structureInput;
@@ -2038,33 +2508,50 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 		memcpy(&kind, in + 8, 4);
 		memcpy(&nid, in + 4, 4);
 		memcpy(&src, in + 0x14, 4);
-		if (nid != 0 && nid < PD_MAX_OBJ && src < PD_MAX_OBJ) {
+		uint32_t no = idSlotNew(kIdObj, nid), so = texSlot(src);
+
+		if (no != 0) {
 			if (kind == 0x1b) {
 				// a view: +0x18 u16 pixel format
-				fTexW[nid] = fTexW[src];
-				fTexH[nid] = fTexH[src];
-				memcpy(&fTexPf[nid], in + 0x18, 2);
-				fTexSurf[nid] = fTexSurf[src];
-				fTexAlias[nid] = src;
-				fTexBpr[nid] = fTexBpr[src];
-				fTexOff[nid] = fTexAlias[src] != 0 ? fTexOff[src] : 0;
+				texInfo(no).w = texInfo(so).w;
+				texInfo(no).h = texInfo(so).h;
+				memcpy(&texInfo(no).pf, in + 0x18, 2);
+				texInfo(no).surf = texInfo(so).surf;
+				texInfo(no).alias = src;
+				texInfo(no).bpr = texInfo(so).bpr;
+				texInfo(no).off = texInfo(so).alias != 0 ? texInfo(so).off : 0;
 			} else if (kind == 9 && args->structureInputSize >= 0x34) {
 				// WindowServer's glyph and gradient textures on buffers (72 bytes): +0x20 bytes
 				// per row, +0x2a u8 pixel format (A8Unorm glyphs), +0x2c width, +0x30 height
-				memcpy(&fTexBpr[nid], in + 0x20, 4);
-				fTexPf[nid] = in[0x2a];
-				memcpy(&fTexW[nid], in + 0x2c, 4);
-				memcpy(&fTexH[nid], in + 0x30, 4);
-				fTexSurf[nid] = 0;
-				fTexAlias[nid] = src;
+				memcpy(&texInfo(no).bpr, in + 0x20, 4);
+				texInfo(no).pf = in[0x2a];
+				memcpy(&texInfo(no).w, in + 0x2c, 4);
+				memcpy(&texInfo(no).h, in + 0x30, 4);
+				texInfo(no).surf = 0;
+				texInfo(no).alias = src;
+			} else if (kind == 0x38 && args->structureInputSize >= 0x4c) {
+				// a heap texture (76 bytes): +0x14 heap, +0x18 the 0x1d5 query's descriptor (u16 format
+				// +0x19, u32 width +0x1f, height +0x23), +0x44 u64 offset into the heap
+				uint64_t hoff = 0;
+				uint16_t pf = 0;
+
+				memcpy(&pf, in + 0x19, 2);
+				memcpy(&texInfo(no).w, in + 0x1f, 4);
+				memcpy(&texInfo(no).h, in + 0x23, 4);
+				memcpy(&hoff, in + 0x44, 8);
+				texInfo(no).pf = pf;
+				texInfo(no).surf = 0;
+				texInfo(no).alias = src;
+				texInfo(no).off = hoff < 0x40000000ULL ? (uint32_t)hoff : 0;
+				texInfo(no).bpr = texInfo(no).w * pdMtlBpp(pf);
 			} else if (kind == 0x37 && args->structureInputSize >= 0x37) {
 				// +0x20 bytes per row, +0x29 u8 pixel format, +0x2f width, +0x33 height
-				memcpy(&fTexBpr[nid], in + 0x20, 4);
-				fTexPf[nid] = in[0x29];
-				memcpy(&fTexW[nid], in + 0x2f, 4);
-				memcpy(&fTexH[nid], in + 0x33, 4);
-				fTexSurf[nid] = 0;
-				fTexAlias[nid] = src;
+				memcpy(&texInfo(no).bpr, in + 0x20, 4);
+				texInfo(no).pf = in[0x29];
+				memcpy(&texInfo(no).w, in + 0x2f, 4);
+				memcpy(&texInfo(no).h, in + 0x33, 4);
+				texInfo(no).surf = 0;
+				texInfo(no).alias = src;
 			}
 			// newTextureWithDescriptor:offset:bytesPerRow: keeps the offset before the pitch. A glyph
 			// run's texture starts 0x100 into its buffer: read from 0 its tail wrapped to the next row
@@ -2072,7 +2559,27 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 				uint64_t boff = 0;
 
 				memcpy(&boff, in + 0x18, 8);
-				fTexOff[nid] = boff < 0x40000000ULL ? (uint32_t)boff : 0;
+				texInfo(no).off = boff < 0x40000000ULL ? (uint32_t)boff : 0;
+			}
+			// a texture past the end of the memory it was made on: its request, to find the field misread
+			{
+				static uint32_t sOverLogs;
+				uint64_t moff = 0;
+				IOBufferMemoryDescriptor *mmd = texMemory(nid, &moff);
+				uint32_t bpr = texInfo(no).bpr ? texInfo(no).bpr : texInfo(no).w * pdMtlBpp(texInfo(no).pf);
+
+				if (mmd != NULL && moff + (uint64_t)bpr * texInfo(no).h > mmd->getLength() && sOverLogs < 32) {
+					uint32_t w[20] = { 0 };
+
+					sOverLogs++;
+					memcpy(w, in, args->structureInputSize < sizeof(w) ? args->structureInputSize : sizeof(w));
+					IOLog("PDIOSurface: sel 261 kind 0x%x texture %u (%ux%u pf %u bpr %u) on %u at 0x%llx past 0x%llx (%u bytes): "
+					    "%08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x\n",
+					    kind, nid, texInfo(no).w, texInfo(no).h, texInfo(no).pf, bpr, src, (unsigned long long)moff,
+					    (unsigned long long)mmd->getLength(), (uint32_t)args->structureInputSize, w[0], w[1], w[2], w[3],
+					    w[4], w[5], w[6], w[7], w[8], w[9], w[10], w[11], w[12], w[13], w[14], w[15], w[16], w[17], w[18],
+					    w[19]);
+				}
 			}
 		}
 		return kIOReturnSuccess;
@@ -2084,11 +2591,13 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 
 		memcpy(&pipeline, (const uint8_t *)args->structureInput + 0x14, 4);
 		memcpy(&function, (const uint8_t *)args->structureInput + 0x10, 4);
-		if (pipeline < PD_MAX_OBJ && function < PD_MAX_OBJ) {
-			fPipelineFunction[pipeline] = function;
+		uint32_t ps = idSlotNew(kIdPipe, pipeline);
+
+		if (ps != 0) {
+			pipeInfo(ps).fn = function;
 			// Smoke path from before the Apple encoder ran: the daemon runs the kernel over
 			// buffer 1 at +2048 when the pipeline is registered
-			if (sBridge != NULL && function < PD_MAX_OBJ && shader(function) != NULL &&
+			if (sBridge != NULL && shader(function) != NULL &&
 			    fBuffers != NULL) {
 				PDBridgeGuard bridgeGuard;
 				IOBufferMemoryDescriptor *buf = OSDynamicCast(IOBufferMemoryDescriptor,
@@ -2118,7 +2627,7 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 						IOLog("PDIOSurface: pipeline smoke serial %u failed, state %u: %s\n",
 						    h->serial, h->state, h->error);
 					}
-					h->state = 0;
+					pdBridgeRelease(h);
 				}
 			}
 		}
@@ -2145,15 +2654,18 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 	}
 	// WindowServer asks the framebuffer for its size in two scalars before enabling it
 	if (selector == 8 && args->scalarOutputCount == 2 && strcmp(fTag, "IOMobileFramebuffer") == 0) {
-		args->scalarOutput[0] = 800;
-		args->scalarOutput[1] = 600;
+		uint32_t w, h;
+		pdDisplayGeometry(&w, &h);
+		args->scalarOutput[0] = w;
+		args->scalarOutput[1] = h;
 	}
 	// sel 83 {layer} -> port name of the layer's default surface: display sized RGhA, 8 bytes a
 	// pixel (a 26.6.2 VM hands back one that WindowServer then opens with IOSurfaceRoot sel 34)
 	if (selector == 83 && args->scalarInputCount >= 1 && args->scalarOutputCount >= 1 &&
 	    args->scalarInput[0] == 0 && strcmp(fTag, "IOMobileFramebuffer") == 0) {
 		static uint32_t sDefaultSurface;
-		uint32_t w = 800, h = 600;
+		uint32_t w, h;
+		pdDisplayGeometry(&w, &h);
 		mach_port_name_t name = 0;
 		IOReturn kr = kIOReturnSuccess;
 
@@ -2209,28 +2721,16 @@ IOSurfaceRootUserClient::externalMethodImpl(uint32_t selector, IOExternalMethodA
 			thread_call_enter_delayed(sFBVsync, deadline);
 		}
 	}
-	// A swap descriptor (sel 5): the layer's surface id is at +0x9c, its size at +0xb4.
-	// Scanned out here and again at sel 6, since a client's own swap may stop at sel 5
+	// enqueue presentation behind the work that produces this frame. Polling
+	// observes completion only, it must never rescan a reused surface.
 	if (selector == 5 && strcmp(fTag, "IOMobileFramebuffer") == 0 && args->structureInput != NULL) {
-		OSSafeReleaseNULL(fSwapDesc);
-		fSwapDesc = OSData::withBytes(args->structureInput, args->structureInputSize);
-		pdScanoutSwap((const uint8_t *)args->structureInput, args->structureInputSize);
-		sPendingSwap = sSwapID;
+		return pdQueueSwap((const uint8_t *)args->structureInput, args->structureInputSize, sSwapID)
+		    ? kIOReturnSuccess : kIOReturnNoMemory;
 	}
-	if (selector == 6 && strcmp(fTag, "IOMobileFramebuffer") == 0 && fSwapDesc != NULL) {
-		pdScanoutSwap((const uint8_t *)fSwapDesc->getBytesNoCopy(), fSwapDesc->getLength());
-	}
-	// sel 6 {id, flags} polls a swap, as on the 26.6.2 reference: busy until the vblank that shows
-	// it, then done. Answering done at once let WindowServer spin at ~480 frames a second
+	// poll only the last completed present, an unfinished frame is always busy.
 	if (selector == 6 && strcmp(fTag, "IOMobileFramebuffer") == 0) {
-		if (sFBVsync != NULL && args->scalarInputCount > 0) {
-			if (args->scalarInput[0] <= sPresentedSwap) {
-				return kIOReturnSuccess;
-			}
-			return kIOReturnBusy;
-		}
-		sPendingSwap = 0;
-		completeSwap(args->scalarInputCount > 0 ? args->scalarInput[0] : sSwapsDone + 1);
+		return args->scalarInputCount > 0 && args->scalarInput[0] <= sPresentedSwap
+		    ? kIOReturnSuccess : kIOReturnBusy;
 	}
 	// sel 78 sets the ICC curve and matrix (656 and 64 byte payloads). A real
 	// AppleParavirtDisplay answers unsupported and CoreAnimation carries on

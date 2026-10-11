@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <mach/port.h>
 
 #define PD_ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
 
@@ -38,11 +39,18 @@ void logmsg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 // per-job and per-draw detail, only with -v: every line reaches a serial console
 extern int pd_log_verbose;
+// a pixel whose fragment inputs and outputs are logged, -1 for none (ajreplay's AJPX)
+extern int pd_watch_x, pd_watch_y;
+void pd_log_attach(mach_port_t conn);
+int pd_log_bootarg_verbose(void);
 void pd_job_blame(uint32_t id);
 void logv(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 // monotonic microseconds, for timing jobs
 uint64_t pd_now_us(void);
+
+// how many cores the worker pools spread over
+unsigned pd_cpus(void);
 
 // the console is often unwritable (getty holds it): failures also travel back in the bridge
 void pd_note(const char *fmt, ...) __attribute__((format(printf, 1, 2)));

@@ -23,6 +23,9 @@
 #define PD_AB_MAX_TARGET 128
 #define PD_AB_MAX_DRAWS 40
 
+// triangles logged per draw
+#define PD_TRI_MAX_LOGS 8
+
 // sampled texture summaries, per boot
 #define PD_TEX_MAX_LOGS 40000
 
@@ -35,6 +38,8 @@ struct pd_probe {
   int bx, by, ab;
   // a raster worker's copy: counts pixels without logging the first one
   int quiet;
+  // triangles logged: instanced draws would log every instance's
+  unsigned tris;
   // bounds and colour sum of what the draw wrote, for the kext's display-buffer trace
   int x0, y0, x1, y1;
   float sum[4];

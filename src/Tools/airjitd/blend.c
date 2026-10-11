@@ -1,5 +1,7 @@
 #include "blend.h"
 
+float pd_blend_constant[4];
+
 static float blend_factor(unsigned f, const float *s, const float *d, int c) {
   switch (f) {
   case PD_BF_ZERO:
@@ -24,6 +26,14 @@ static float blend_factor(unsigned f, const float *s, const float *d, int c) {
     return 1 - d[3];
   case PD_BF_SRC_ALPHA_SATURATED:
     return c == 3 ? 1 : (s[3] < 1 - d[3] ? s[3] : 1 - d[3]);
+  case PD_BF_BLEND_COLOR:
+    return pd_blend_constant[c];
+  case PD_BF_ONE_MINUS_BLEND_COLOR:
+    return 1 - pd_blend_constant[c];
+  case PD_BF_BLEND_ALPHA:
+    return pd_blend_constant[3];
+  case PD_BF_ONE_MINUS_BLEND_ALPHA:
+    return 1 - pd_blend_constant[3];
   default:
     return 1;
   }

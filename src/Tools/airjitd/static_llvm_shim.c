@@ -17,6 +17,8 @@
 #include <llvm-c/Target.h>
 typedef void *ref;
 
+// the Vulkan executor dlopens its driver, so that build keeps libSystem's dl calls
+#ifndef AIRJITD_VULKAN
 void *dlopen(const char *path, int mode) {
   (void)path;
   (void)mode;
@@ -50,3 +52,4 @@ void *dlsym(void *handle, const char *name) {
   MAP(LLVMGetErrorMessage);
   return 0;
 }
+#endif

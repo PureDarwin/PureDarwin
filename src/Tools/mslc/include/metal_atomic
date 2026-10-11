@@ -1,0 +1,2 @@
+// metal_atomic for mslc: the atomics live in metal_stdlib
+#include <metal_stdlib>

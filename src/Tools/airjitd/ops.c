@@ -103,6 +103,10 @@ static const struct air_math_op math_ops[] = {
   OP1("tanpi", AIR_CALL, air_tanpi),
 };
 
+const struct air_math_op *air_math_at(unsigned i) {
+  return i < PD_ARRAY_LEN(math_ops) ? &math_ops[i] : 0;
+}
+
 const struct air_math_op *air_math_find(const char *op, unsigned arity) {
   unsigned i;
 

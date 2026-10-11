@@ -5,12 +5,18 @@
 #include <llvm-c/LLJIT.h>
 #include <llvm-c/Orc.h>
 #include <llvm-c/Target.h>
+#include <llvm-c/Transforms/PassBuilder.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#endif
 
 #include "../airjitd.h"
 #include "../backend.h"
 #include "air.h"
+#include "cache.h"
 
 extern const uint32_t init_start[] __asm("section$start$__TEXT$__init_offsets");
 extern const uint32_t init_end[] __asm("section$end$__TEXT$__init_offsets");
@@ -67,6 +73,17 @@ static const char *md_string(LLVMValueRef v) {
   return v ? LLVMGetMDString(v, &len) : 0;
 }
 
+// FNV-1a of a varying's name, never 0
+static uint32_t var_hash(const char *s) {
+  uint32_t h = 2166136261u;
+
+  while (*s) {
+    h = (h ^ (uint8_t)*s++) * 16777619u;
+  }
+
+  return h ? h : 1;
+}
+
 static int md_uint(LLVMValueRef v, unsigned *out) {
   if (!v || !LLVMIsAConstantInt(v))
     return 0;
@@ -90,17 +107,134 @@ static int parse_module(const struct pd_metallib *lib, LLVMContextRef *ctx, LLVM
   return 0;
 }
 
-// JITs the module and looks sym up. The JIT stays alive for the life of the daemon
-static int jit_module(LLVMContextRef ctx, LLVMModuleRef mod, const char *sym, uint64_t *addr) {
+// the object file the JIT made from a module, kept for the stage cache
+struct pd_object {
+  uint8_t *data;
+  size_t len;
+};
+
+static LLVMErrorRef keep_object(void *ctx, LLVMMemoryBufferRef *obj) {
+  struct pd_object *o = ctx;
+  size_t n = LLVMGetBufferSize(*obj);
+
+  free(o->data);
+  o->len = 0;
+  if ((o->data = malloc(n)) != NULL) {
+    memcpy(o->data, LLVMGetBufferStart(*obj), n);
+    o->len = n;
+  }
+
+  return 0;
+}
+
+// llvm on apple reads cpuid itself and assumes the kernel saves avx-512 state, but xnu leaves it off
+// on amd and under a hypervisor (boot-arg avx512=1): its first use is then an illegal instruction
+static int host_avx512(void) {
+#ifdef __APPLE__
+  int on = 0;
+  size_t len = sizeof(on);
+
+  return sysctlbyname("hw.optional.avx512f", &on, &len, NULL, 0) == 0 && on;
+#else
+  return 1;
+#endif
+}
+
+void pd_jit_host(const char **cpu, const char **features) {
+  static char *host_cpu, *host_features;
+  char *f, *p;
+
+  if (!host_cpu) {
+    host_cpu = LLVMGetHostCPUName();
+    f = LLVMGetHostCPUFeatures();
+    if (!host_avx512()) {
+      for (p = f; (p = strchr(p, '+')) != NULL; p++) {
+        if (!strncmp(p + 1, "avx512", 6) || !strncmp(p + 1, "evex512", 7) || !strncmp(p + 1, "avx10", 5))
+          *p = '-';
+      }
+    }
+    host_features = f;
+  }
+
+  *cpu = host_cpu, *features = host_features;
+}
+
+// a JIT whose main library already holds the runtime functions shader code calls by name
+static int new_jit(LLVMOrcLLJITRef *jit) {
+  LLVMOrcCSymbolMapPair syms[128];
+  LLVMOrcLLJITBuilderRef builder;
+  LLVMTargetMachineRef tm;
+  LLVMTargetRef target;
+  LLVMErrorRef err;
+  const char *cpu, *features;
+  char *triple, *msg = NULL;
+  char name[64];
+  void *impl;
+  unsigned n = 0;
+
+  pd_jit_host(&cpu, &features);
+  triple = LLVMGetDefaultTargetTriple();
+  if (LLVMGetTargetFromTriple(triple, &target, &msg)) {
+    logmsg("AIRJITD: no target for %s: %s", triple, msg ? msg : "?");
+    LLVMDisposeMessage(msg);
+    LLVMDisposeMessage(triple);
+    return PD_ERR_JIT_CREATE;
+  }
+  tm = LLVMCreateTargetMachine(target, triple, cpu, features, LLVMCodeGenLevelDefault, LLVMRelocDefault,
+                               LLVMCodeModelJITDefault);
+  LLVMDisposeMessage(triple);
+  builder = LLVMOrcCreateLLJITBuilder();
+  LLVMOrcLLJITBuilderSetJITTargetMachineBuilder(builder, LLVMOrcJITTargetMachineBuilderCreateFromTargetMachine(tm));
+
+  if ((err = LLVMOrcCreateLLJIT(jit, builder)) != 0) {
+    logmsg("AIRJITD: create JIT failed: %s", LLVMGetErrorMessage(err));
+    return PD_ERR_JIT_CREATE;
+  }
+
+  while (n < PD_ARRAY_LEN(syms) && air_runtime(n, name, sizeof(name), &impl)) {
+    syms[n].Name = LLVMOrcLLJITMangleAndIntern(*jit, name);
+    syms[n].Sym.Address = (LLVMOrcExecutorAddress)(uintptr_t)impl;
+    syms[n].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported | LLVMJITSymbolGenericFlagsCallable;
+    syms[n].Sym.Flags.TargetFlags = 0;
+    n++;
+  }
+
+  if ((err = LLVMOrcJITDylibDefine(LLVMOrcLLJITGetMainJITDylib(*jit), LLVMOrcAbsoluteSymbols(syms, n))) != 0) {
+    logmsg("AIRJITD: runtime symbols failed: %s", LLVMGetErrorMessage(err));
+    return PD_ERR_JIT_CREATE;
+  }
+
+  return 0;
+}
+
+static int jit_lookup(LLVMOrcLLJITRef jit, const char *sym, uint64_t *addr) {
+  LLVMErrorRef err;
+
+  if ((err = LLVMOrcLLJITLookup(jit, addr, sym)) != 0) {
+    char *m = LLVMGetErrorMessage(err);
+    logmsg("AIRJITD: lookup %s failed: %s", sym, m);
+    pd_note(" %s: %s", sym, m);
+    return PD_ERR_JIT_LOOKUP;
+  }
+
+  return 0;
+}
+
+// compiles the module with the JIT and looks sym up, keeping the object when keep is set.
+// the JIT stays alive for the life of the daemon
+static int jit_module(LLVMContextRef ctx, LLVMModuleRef mod, const char *sym, uint64_t *addr,
+                      struct pd_object *keep) {
   LLVMOrcLLJITRef jit = 0;
   LLVMOrcThreadSafeContextRef tsctx;
   LLVMOrcThreadSafeModuleRef tsm;
   LLVMErrorRef err;
+  int rc;
 
-  if ((err = LLVMOrcCreateLLJIT(&jit, 0)) != 0) {
-    logmsg("AIRJITD: create JIT failed: %s", LLVMGetErrorMessage(err));
-    return PD_ERR_JIT_CREATE;
-  }
+  if ((rc = new_jit(&jit)))
+    return rc;
+
+  if (keep)
+    LLVMOrcObjectTransformLayerSetTransform(LLVMOrcLLJITGetObjTransformLayer(jit), keep_object, keep);
 
   LLVMSetTarget(mod, LLVMOrcLLJITGetTripleString(jit));
   LLVMSetDataLayout(mod, LLVMOrcLLJITGetDataLayoutStr(jit));
@@ -112,14 +246,26 @@ static int jit_module(LLVMContextRef ctx, LLVMModuleRef mod, const char *sym, ui
     return PD_ERR_JIT_ADD;
   }
 
-  if ((err = LLVMOrcLLJITLookup(jit, addr, sym)) != 0) {
-    char *m = LLVMGetErrorMessage(err);
-    logmsg("AIRJITD: lookup %s failed: %s", sym, m);
-    pd_note(" %s: %s", sym, m);
-    return PD_ERR_JIT_LOOKUP;
+  return jit_lookup(jit, sym, addr);
+}
+
+// links an object the cache kept, the same way the JIT links one it just compiled
+static int jit_object(const uint8_t *obj, size_t len, const char *sym, uint64_t *addr) {
+  LLVMOrcLLJITRef jit = 0;
+  LLVMMemoryBufferRef buf;
+  LLVMErrorRef err;
+  int rc;
+
+  if ((rc = new_jit(&jit)))
+    return rc;
+
+  buf = LLVMCreateMemoryBufferWithMemoryRangeCopy((const char *)obj, len, "airjitd-stage");
+  if ((err = LLVMOrcLLJITAddObjectFile(jit, LLVMOrcLLJITGetMainJITDylib(jit), buf)) != 0) {
+    logmsg("AIRJITD: add object failed: %s", LLVMGetErrorMessage(err));
+    return PD_ERR_JIT_ADD;
   }
 
-  return 0;
+  return jit_lookup(jit, sym, addr);
 }
 
 // result layout: a packed struct of vectors, or one vector
@@ -148,7 +294,8 @@ static int result_layout(struct StageInfo *si, LLVMTypeRef retty) {
 
     si->elemCount[i] = cnt;
     si->elemHalf[i] = LLVMGetTypeKind(et) == LLVMHalfTypeKind;
-    si->elemBytes[i] = cnt * (si->elemHalf[i] ? 2 : 4);
+    si->elemInt[i] = LLVMGetTypeKind(et) == LLVMIntegerTypeKind ? (LLVMGetIntTypeWidth(et) + 7) / 8 : 0;
+    si->elemBytes[i] = cnt * (si->elemInt[i] ? si->elemInt[i] : si->elemHalf[i] ? 2 : 4);
     si->outBytes += si->elemBytes[i];
   }
 
@@ -183,6 +330,7 @@ static void param_layout(struct StageInfo *si, LLVMValueRef fn) {
 
     si->pcount[i] = cnt;
     si->pwidth[i] = scalar_bytes(pt);
+    si->pint[i] = LLVMGetTypeKind(pt) == LLVMIntegerTypeKind;
   }
 }
 
@@ -196,14 +344,20 @@ static void mark_varyings(struct StageInfo *si, LLVMValueRef outputs) {
     int nf = md_ops(outs[o], f, 16), j, keep = 0;
 
     for (j = 0; j < nf; j++) {
-      const char *sv = md_string(f[j]);
+      const char *sv = md_string(f[j]), *nv;
+
       if (sv && (!strcmp(sv, "air.position") || !strcmp(sv, "air.vertex_output")))
         keep = 1;
+      if (sv && !strcmp(sv, "air.position"))
+        si->elemPos = (unsigned)o;
+
+      if (sv && !strcmp(sv, "air.vertex_output") && j + 1 < nf && (nv = md_string(f[j + 1])))
+        si->elemVar[o] = var_hash(nv);
     }
 
     si->elemSkip[o] = nf > 0 && !keep;
     if (si->elemSkip[o])
-      logmsg("AIRJITD:   output %d is not a varying, skipped", o);
+      logv("AIRJITD:   output %d is not a varying, skipped", o);
   }
 }
 
@@ -217,10 +371,14 @@ static void mark_targets(struct StageInfo *si, LLVMValueRef outputs) {
     int nf = md_ops(outs[o], f, 16), j;
     unsigned v;
 
-    for (j = 0; j + 1 < nf; j++) {
+    for (j = 0; j < nf; j++) {
       const char *sv = md_string(f[j]);
 
-      if (sv && !strcmp(sv, "air.render_target") && md_uint(f[j + 1], &v)) {
+      if (sv && !strcmp(sv, "air.depth")) {
+        si->elemRT[o] = PD_RT_DEPTH, si->writesDepth = 1;
+        break;
+      }
+      if (j + 1 < nf && sv && !strcmp(sv, "air.render_target") && md_uint(f[j + 1], &v)) {
         si->elemRT[o] = v;
         break;
       }
@@ -248,6 +406,12 @@ static void bind_param(struct StageInfo *si, LLVMValueRef desc, int stage_kind) 
 
     if (kind != PK_NONE) {
       si->pkind[pi] = kind;
+      if (kind == PK_STAGE_IN && j + 1 < nf && md_string(f[j + 1]))
+        si->pvar[pi] = var_hash(md_string(f[j + 1]));
+    } else if (!strcmp(sv, "air.flat")) {
+      si->pinterp[pi] = PD_INTERP_FLAT;
+    } else if (!strcmp(sv, "air.no_perspective")) {
+      si->pinterp[pi] = PD_INTERP_LINEAR;
     } else if (!strcmp(sv, "air.address_space") && j + 1 < nf && md_uint(f[j + 1], &v) && v == 3) {
       // threadgroup memory is an air.buffer in address space 3
       si->pkind[pi] = PK_TG_MEM;
@@ -290,10 +454,19 @@ static void bind_params(struct StageInfo *si, LLVMModuleRef mod, LLVMValueRef fn
   }
 
   for (i = 0; i < si->nparams; i++) {
-    logmsg("AIRJITD:   param %u kind %u location %u", i, si->pkind[i], si->ploc[i]);
+    logv("AIRJITD:   param %u kind %u location %u", i, si->pkind[i], si->ploc[i]);
     if (si->pkind[i] == PK_DEST)
       si->readsDest = 1;
   }
+}
+
+// a lowered air.* body is inlined into its callers and then dropped, so a shader pays no call per operation
+static void inline_air(LLVMModuleRef mod, LLVMValueRef f) {
+  LLVMContextRef ctx = LLVMGetModuleContext(mod);
+  unsigned kind = LLVMGetEnumAttributeKindForName("alwaysinline", 12);
+
+  LLVMAddAttributeAtIndex(f, LLVMAttributeFunctionIndex, LLVMCreateEnumAttribute(ctx, kind, 0));
+  LLVMSetLinkage(f, LLVMInternalLinkage);
 }
 
 // gives every air.* declaration a body, returning the lowering flags
@@ -320,15 +493,17 @@ static unsigned define_air(LLVMModuleRef mod) {
       LLVMDisposeMessage(ty);
       pd_note("%s%s", pd_note_text()[0] ? "," : "no runtime:", nm);
     } else {
-      logmsg("AIRJITD: defined %s", nm);
+      logv("AIRJITD: defined %s", nm);
+      inline_air(mod, f);
     }
   }
 
   return flags;
 }
 
-// void pd_wrap(ptr args, ptr out) { *out = fn(load slot 0, load slot 1, ...) }
-static void build_wrapper(LLVMContextRef ctx, LLVMModuleRef mod, LLVMValueRef fn, unsigned np) {
+// void pd_wrap(ptr args, ptr out) { *out = fn(load slot 0, load slot 1, ...) }, a struct result element by
+// element at unpack_result's packed offsets: a whole store would pad float3 members to 16 bytes
+static void build_wrapper(LLVMContextRef ctx, LLVMModuleRef mod, LLVMValueRef fn, unsigned np, const struct StageInfo *si) {
   LLVMTypeRef ptr = LLVMPointerTypeInContext(ctx, 0), pts[2] = { ptr, ptr };
   LLVMTypeRef fnty = LLVMGlobalGetValueType(fn), i8 = LLVMInt8TypeInContext(ctx), i64 = LLVMInt64TypeInContext(ctx);
   LLVMValueRef wrap = LLVMAddFunction(mod, "pd_wrap", LLVMFunctionType(LLVMVoidTypeInContext(ctx), pts, 2, 0));
@@ -347,19 +522,64 @@ static void build_wrapper(LLVMContextRef ctx, LLVMModuleRef mod, LLVMValueRef fn
   call = LLVMBuildCall2(b, fnty, fn, args, np, "");
 
   // kernels return void
-  if (LLVMGetTypeKind(LLVMGetReturnType(fnty)) != LLVMVoidTypeKind)
+  if (LLVMGetTypeKind(LLVMGetReturnType(fnty)) == LLVMStructTypeKind) {
+    unsigned off = 0;
+
+    for (i = 0; i < si->nelems; i++) {
+      LLVMValueRef idx = LLVMConstInt(i64, off, 0);
+      LLVMValueRef at = LLVMBuildInBoundsGEP2(b, i8, LLVMGetParam(wrap, 1), &idx, 1, "");
+
+      // packed offsets: no alignment to assume
+      LLVMSetAlignment(LLVMBuildStore(b, LLVMBuildExtractValue(b, call, i, ""), at), 1);
+      off += si->elemBytes[i];
+    }
+  } else if (LLVMGetTypeKind(LLVMGetReturnType(fnty)) != LLVMVoidTypeKind) {
     LLVMBuildStore(b, call, LLVMGetParam(wrap, 1));
+  }
 
   LLVMBuildRetVoid(b);
   LLVMDisposeBuilder(b);
 }
 
+// the stage from the cache: its object linked and its info as compiled, 0 on success
+static int load_cached(uint32_t id, const char *key, struct StageInfo *si) {
+  struct StageInfo info;
+  uint8_t *obj;
+  size_t len;
+  uint64_t addr = 0;
+  int rc;
+
+  if (pd_cache_load(key, &info, &obj, &len))
+    return -1;
+
+  rc = jit_object(obj, len, "pd_wrap", &addr);
+  free(obj);
+
+  if (rc) {
+    logmsg("AIRJITD: stage %u '%s' cached object did not link, compiling", id, info.name);
+    pd_note_clear();
+    return -1;
+  }
+
+  *si = info;
+  si->entry = (pd_stage_entry)(uintptr_t)addr;
+  logmsg("AIRJITD: stage %u '%s' from cache at 0x%llx, %u params, %u result bytes", id, si->name,
+         (unsigned long long)addr, si->nparams, si->outBytes);
+  return 0;
+}
+
 static int llvm_compile_stage(uint32_t id, const struct pd_metallib *lib, struct StageInfo *si) {
+  struct pd_object obj = { 0 };
+  char key[PD_CACHE_KEY];
   LLVMContextRef ctx;
   LLVMModuleRef mod;
   LLVMValueRef fn;
   uint64_t addr = 0;
-  int rc;
+  unsigned flags;
+  int rc, cache = pd_cache_key(lib, key) == 0;
+
+  if (cache && load_cached(id, key, si) == 0)
+    return 0;
 
   if ((rc = parse_module(lib, &ctx, &mod)))
     return rc;
@@ -370,6 +590,7 @@ static int llvm_compile_stage(uint32_t id, const struct pd_metallib *lib, struct
     return PD_ERR_NO_ENTRY;
 
   memset(si, 0, sizeof(*si));
+  snprintf(si->name, sizeof(si->name), "%s", lib->entry);
   si->nparams = LLVMCountParams(fn);
 
   if (si->nparams > PD_MAX_PARAMS)
@@ -380,15 +601,38 @@ static int llvm_compile_stage(uint32_t id, const struct pd_metallib *lib, struct
 
   param_layout(si, fn);
   bind_params(si, mod, fn);
-  si->usesDeriv = (define_air(mod) & AIR_USES_DERIV) != 0;
-  build_wrapper(ctx, mod, fn, si->nparams);
+  air_const_samplers(mod);
+  flags = define_air(mod);
+  si->usesDeriv = (flags & AIR_USES_DERIV) != 0;
+  si->usesLod = (flags & AIR_USES_LOD) != 0;
+  si->usesQuad = (flags & AIR_USES_QUAD) != 0;
+  si->usesBarrier = (flags & AIR_USES_BARRIER) != 0;
+  build_wrapper(ctx, mod, fn, si->nparams, si);
 
-  if ((rc = jit_module(ctx, mod, "pd_wrap", &addr))) {
+  // only inlining: no pass that could change a floating point result
+  {
+    LLVMPassBuilderOptionsRef o = LLVMCreatePassBuilderOptions();
+    LLVMErrorRef err = LLVMRunPasses(mod, "always-inline", 0, o);
+
+    LLVMDisposePassBuilderOptions(o);
+    if (err) {
+      char *m = LLVMGetErrorMessage(err);
+      logmsg("AIRJITD: inlining failed: %s", m);
+      LLVMDisposeErrorMessage(m);
+    }
+  }
+
+  // a stage that calls through this run's addresses would not link in the next
+  if ((rc = jit_module(ctx, mod, "pd_wrap", &addr, cache && !(flags & AIR_ABSOLUTE) ? &obj : 0))) {
+    free(obj.data);
     pd_note(" (%s)", lib->entry);
     return rc;
   }
 
   si->entry = (pd_stage_entry)(uintptr_t)addr;
+  if (obj.data)
+    pd_cache_store(key, si, obj.data, obj.len);
+  free(obj.data);
   logmsg("AIRJITD: stage %u '%s' wrapped at 0x%llx, %u params, %u result bytes", id, lib->entry,
          (unsigned long long)addr, si->nparams, si->outBytes);
   return 0;
@@ -451,6 +695,10 @@ static int llvm_introspect(uint32_t id, const struct pd_metallib *lib) {
 
   logmsg("AIRJITD: function %u '%s' bitcode %u bytes", id, lib->entry, lib->bitcode_len);
 
+  // the rest is a page of log lines per function, each a serial console write
+  if (!pd_log_verbose)
+    return 0;
+
   if ((rc = parse_module(lib, &ctx, &mod)))
     return rc;
 
@@ -501,7 +749,7 @@ static int llvm_compile_legacy(uint32_t id, const struct pd_metallib *lib, pd_le
   if ((rc = parse_module(lib, &ctx, &mod)))
     return rc;
 
-  if ((rc = jit_module(ctx, mod, lib->entry, &addr)))
+  if ((rc = jit_module(ctx, mod, lib->entry, &addr, 0)))
     return rc;
 
   *entry = (pd_legacy_entry)(uintptr_t)addr;

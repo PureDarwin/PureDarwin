@@ -28,7 +28,7 @@ PDAccelerator::newUserClient(task_t owningTask, void *securityID, UInt32 type,
 {
 	return IOSurfaceRootUserClient::open(this, owningTask, securityID, type, handler);
 }
-uint8_t sIntrospected[256];
+uint8_t sIntrospected[PD_MAX_SHADERS];
 // A draw for the daemon (kind 2): both stage metallibs, the buffers bound by index, the
 // indices and the target, all copied into the bridge. The target comes back
 struct PDDrawBuffer { uint32_t id, off, size, pad; };
@@ -53,18 +53,98 @@ enum { PD_CS_BUFS = 31 };
 struct PDComputeRequest {
 	uint32_t fn, mOff, mSize, threads;
 	uint64_t grid[3], tpg[3];
-	uint32_t tgmem[4], pad[4];
+	uint32_t tgmem[4];
+	uint32_t imageblock[2], pad[2];	// setImageblockWidth:height:, 0 = the threadgroup's (not decoded yet)
 	PDDrawBuffer buf[PD_CS_BUFS];
 	PDDrawTex tex[16];
 	uint32_t samp[16];
 };
 static_assert(PD_DRAW_REQ + sizeof(PDComputeRequest) <= PD_DRAW_DATA, "compute request overlaps its data");
+// a tile dispatch (kind 4): the tile kernel, threads per tile and the tile grid, what is bound to
+// the tile stage, and the pass's colour attachments (its implicit imageblock). All come back after
+enum { PD_TILE_SIZE = 32 };
+struct PDTileRequest {
+	uint32_t fn, mOff, mSize, pad0;
+	uint32_t tpt[3], tilesX, tilesY, pad1;
+	uint32_t tgmem[4];
+	PDDrawBuffer buf[PD_CS_BUFS];
+	PDDrawTex tex[16];
+	uint32_t samp[16];
+	PDDrawTex rt[4];
+};
+static_assert(PD_DRAW_REQ + sizeof(PDTileRequest) <= PD_DRAW_DATA, "tile request overlaps its data");
 IOBufferMemoryDescriptor *sBridge;
 // Bytes a pixel of each daemon texture format takes (see texFmt)
 static uint32_t
 pdTexBpp(uint32_t fmt)
 {
-	return fmt == 1 ? 8 : (fmt == 2 || fmt == 3) ? 1 : fmt == 5 ? 2 : 4;
+	static const uint8_t bpp[] = { 4, 8, 1, 1, 4, 2, 4, 4, 8, 8, 2, 4, 2, 4, 4, 8, 16, 4, 4, 4, 4, 2, 4, 8 };
+
+	return fmt < sizeof(bpp) ? bpp[fmt] : 4;
+}
+
+// heap texture size and alignment from the 0x1d5 / sel 261 kind 0x38 descriptor: u8 type +0, u16 format +1,
+// u32 usage +3, width +7, height +0xb, depth +0xf, u16 mips +0x13, samples +0x15, array length +0x17
+static void
+pdHeapTexSize(const uint8_t *d, uint64_t *ans)
+{
+	uint32_t w, h, depth, type = d[0] & 0x3f, bpp, faces;
+	uint16_t pf, mips, samples, slices;
+	uint64_t size = 0;
+	bool bc;
+
+	memcpy(&pf, d + 1, 2);
+	memcpy(&w, d + 7, 4);
+	memcpy(&h, d + 0xb, 4);
+	memcpy(&depth, d + 0xf, 4);
+	memcpy(&mips, d + 0x13, 2);
+	memcpy(&samples, d + 0x15, 2);
+	memcpy(&slices, d + 0x17, 2);
+	bpp = pdMtlBpp(pf);
+	bc = pf >= 130 && pf < 250;
+	faces = type == 5 || type == 6 ? 6 : 1;
+	for (uint32_t l = 0; l < (mips ? mips : 1) && l < 16; l++) {
+		uint64_t lw = w >> l ? w >> l : 1, lh = h >> l ? h >> l : 1, ld = depth >> l ? depth >> l : 1;
+
+		if (bc) {
+			lw = (lw + 3) / 4;
+			lh = (lh + 3) / 4;
+		}
+		size += lw * bpp * lh * ld;
+	}
+	size *= (uint64_t)(samples ? samples : 1) * (slices ? slices : 1) * faces;
+	ans[0] = size == 0 ? 0x80 : (size + 0x7f) & ~0x7fULL;
+	// a real host aligns arrays and cubes to 16 KB, everything else to 128 bytes
+	ans[1] = faces > 1 || slices > 1 ? 0x4000 : 0x80;
+}
+
+// protected by sBridgeLock. A timeout does not cancel the daemon's access to
+// the shared request, reclaim it only after the daemon publishes completion.
+static bool sBridgeAbandoned;
+#define PD_BRIDGE_ABANDON_MS 900000
+
+void
+pdBridgeReclaim(void)
+{
+	if (!sBridgeAbandoned || sBridge == NULL) return;
+	volatile PDBridgeHeader *h = (volatile PDBridgeHeader *)sBridge->getBytesNoCopy();
+	if (h->state != 2 && h->state != 3) return;
+	__sync_synchronize();
+	h->kind = 0;
+	h->state = 0;
+	sBridgeAbandoned = false;
+}
+
+void
+pdBridgeRelease(PDBridgeHeader *h)
+{
+	__sync_synchronize();
+	if (h->state == 1) {
+		sBridgeAbandoned = true;
+		return;
+	}
+	h->kind = 0;
+	h->state = 0;
 }
 
 // The daemon takes one job at a time: a draw arriving while it introspects a new shader
@@ -75,11 +155,17 @@ pdBridgeIdle(uint32_t ms)
 	volatile PDBridgeHeader *h = (volatile PDBridgeHeader *)sBridge->getBytesNoCopy();
 
 	for (uint32_t n = 0; n <= ms; n++) {
+		pdBridgeReclaim();
 		if (h->status == 0x44525652 && h->state == 0) {
 			return true;
 		}
 		if (h->status != 0x44525652) {
 			return false;
+		}
+		// a timed-out job still runs (cpu draws can take minutes): wait it out, dropping draws loses layers
+		if (sBridgeAbandoned && n == ms && ms < PD_BRIDGE_ABANDON_MS) {
+			IOLog("PDIOSurface: shader daemon still on a timed-out job, waiting\n");
+			ms = PD_BRIDGE_ABANDON_MS;
 		}
 		IOSleep(1);
 	}
@@ -125,6 +211,17 @@ pdBridgeWait(PDBridgeHeader *h, uint32_t ms)
 	}
 	IOLockUnlock(sBridgeBell);
 	__sync_synchronize();
+}
+
+// a job's memory stays held while the daemon runs it, the client can free its textures meanwhile
+static void
+pdHoldMemory(IOBufferMemoryDescriptor **md, uint32_t n, bool hold)
+{
+	for (uint32_t i = 0; i < n; i++) {
+		if (md[i] == NULL) continue;
+		if (hold) md[i]->retain();
+		else md[i]->release();
+	}
 }
 
 // the daemon's side of the doorbells
@@ -288,11 +385,45 @@ struct PDAsyncJob {
 	IOBufferMemoryDescriptor *snap[32];
 	uint32_t queue, stamp;
 	uint64_t block[2];
+	OSArray *signals;
+	void (*perform)(void *);
+	void *argument;
+	uint32_t surfWrites[PD_SURF_MAX / 32];	// surfaces the job may write, for a CPU lock to wait on
+	uint32_t surfUses[PD_SURF_MAX / 32];	// and those it reads or writes
 };
 static IOLock *sAsyncLock;
 static struct PDAsyncJob *sAsyncHead, *sAsyncTail;
 static thread_t sAsyncThread;
 static uint32_t sAsyncBusy;
+static uint16_t sSurfPending[PD_SURF_MAX];	// queued or running jobs that may write each surface
+static uint16_t sSurfUsePending[PD_SURF_MAX];	// and that read or write it
+static bool sAsyncRendering;
+static uint64_t sAsyncStarted;
+
+bool
+pdAsyncIdle(void)
+{
+	if (sAsyncLock == NULL)
+		return true;
+	IOLockLock(sAsyncLock);
+	bool idle = sAsyncHead == NULL && !sAsyncBusy;
+	IOLockUnlock(sAsyncLock);
+	return idle;
+}
+
+// cursor motion can use the immutable completed frame while a long render waits.
+bool
+pdAsyncRenderingSlow(void)
+{
+	if (sAsyncLock == NULL)
+		return false;
+	IOLockLock(sAsyncLock);
+	uint64_t elapsed = 0;
+	if (sAsyncBusy && sAsyncRendering)
+		absolutetime_to_nanoseconds(mach_absolute_time() - sAsyncStarted, &elapsed);
+	IOLockUnlock(sAsyncLock);
+	return elapsed > 50000000;
+}
 
 // wait until every queued submission has run: a swap must not scan out a surface still being drawn
 void
@@ -307,6 +438,24 @@ pdAsyncDrain(uint32_t ms)
 	IOLockLock(sAsyncLock);
 	while ((sAsyncHead != NULL || sAsyncBusy) && mach_absolute_time() < deadline) {
 		IOLockSleepDeadline(sAsyncLock, &sAsyncBusy, deadline, THREAD_UNINT);
+	}
+	IOLockUnlock(sAsyncLock);
+}
+
+// wait until no queued or running job may still write surface id (a CPU lock of it)
+void
+pdAsyncDrainSurface(uint32_t id, uint32_t ms, bool readOnly)
+{
+	uint64_t deadline;
+
+	if (sAsyncLock == NULL || id >= PD_SURF_MAX || current_thread() == sAsyncThread) {
+		return;
+	}
+	clock_interval_to_deadline(ms, kMillisecondScale, &deadline);
+	IOLockLock(sAsyncLock);
+	// a read-only lock waits for the writers, a writing one for every job that still reads the surface too
+	while ((readOnly ? sSurfPending[id] : sSurfUsePending[id]) != 0 && mach_absolute_time() < deadline) {
+		IOLockSleepDeadline(sAsyncLock, &sSurfUsePending[id], deadline, THREAD_UNINT);
 	}
 	IOLockUnlock(sAsyncLock);
 }
@@ -348,6 +497,21 @@ halfFromDoubleBits(uint64_t bits)
 	return sign | (uint16_t)(e << 10) | (uint16_t)(mant >> 42);
 }
 
+// a non-negative whole-number clear value from its double bits, clamped to max
+static uint32_t
+uintFromDoubleBits(uint64_t bits, uint32_t max)
+{
+	int64_t e = (int64_t)((bits >> 52) & 0x7ff) - 1023;
+	uint64_t v;
+
+	if ((bits >> 63) || e < 0)
+		return 0;
+	if (e >= 32)
+		return max;
+	v = ((bits & ((1ULL << 52) - 1)) | (1ULL << 52)) >> (52 - e);
+	return v > max ? max : (uint32_t)v;
+}
+
 // Buffer id standing for "this encoder's own storage" (set{Fragment,Vertex}Bytes payloads)
 #define PD_INLINE_BYTES 0xfffffffeU
 
@@ -369,12 +533,32 @@ pdAsyncWorker(void *unused, wait_result_t wr)
 			sAsyncTail = NULL;
 		}
 		sAsyncBusy = 1;
+		sAsyncRendering = job->perform == NULL;
+		sAsyncStarted = mach_absolute_time();
 		IOLockUnlock(sAsyncLock);
 
-		job->client->runAsyncJob(job);
+		uint32_t writes[PD_SURF_MAX / 32], uses[PD_SURF_MAX / 32];
+
+		memcpy(writes, job->surfWrites, sizeof(writes));
+		memcpy(uses, job->surfUses, sizeof(uses));
+		if (job->perform != NULL) {
+			job->perform(job->argument);
+			IOFree(job, sizeof(*job));
+		} else {
+			job->client->runAsyncJob(job);
+		}
 
 		IOLockLock(sAsyncLock);
+		for (uint32_t i = 0; i < PD_SURF_MAX; i++) {
+			if ((writes[i / 32] >> (i % 32) & 1) && sSurfPending[i] != 0)
+				sSurfPending[i]--;
+			if ((uses[i / 32] >> (i % 32) & 1) && sSurfUsePending[i] != 0) {
+				sSurfUsePending[i]--;
+				IOLockWakeup(sAsyncLock, &sSurfUsePending[i], false);
+			}
+		}
 		sAsyncBusy = 0;
+		sAsyncRendering = false;
 		if (sAsyncHead == NULL) {
 			IOLockWakeup(sAsyncLock, &sAsyncBusy, false);
 		}
@@ -487,7 +671,115 @@ IOSurfaceRootUserClient::snapshotStreams(IOBufferMemoryDescriptor **snap)
 	}
 }
 
+// heap texture sizes (0x1d5) are answered at submit, before the queued job runs: a client that reads one
+// before the job ran placed a 9 MB texture in a 4 MB heap and every draw into it was skipped
+void
+IOSurfaceRootUserClient::answerQueriesNow(IOBufferMemoryDescriptor **snap)
+{
+	for (uint32_t e = 0; e < 32; e++) {
+		const uint8_t *p;
+		uint32_t total, off = 8;
+
+		if (snap[e] == NULL)
+			continue;
+		p = (const uint8_t *)snap[e]->getBytesNoCopy();
+		memcpy(&total, p, 4);
+		if (total < 16 || total > snap[e]->getLength())
+			continue;
+		while (off + 8 <= total) {
+			uint32_t op, clen;
+
+			memcpy(&op, p + off, 4);
+			memcpy(&clen, p + off + 4, 4);
+			if (clen < 8 || off + clen > total)
+				break;
+			if (op == 0x1d5 && clen >= 0x3c) {
+				uint32_t qbuf = 0;
+				uint64_t qoff = 0, ans[2];
+
+				pdHeapTexSize(p + off + 8, ans);
+				memcpy(&qbuf, p + off + 0x30, 4);
+				memcpy(&qoff, p + off + 0x34, 8);
+				answerQuery(qbuf, qoff, ans, sizeof(ans));
+			}
+			off += clen;
+		}
+	}
+}
+
+// the surfaces a submission may write: its passes' attachments, blit and copy destinations and compute
+// textures, each through its texture's (or view's) surface
+void
+IOSurfaceRootUserClient::surfaceWrites(IOBufferMemoryDescriptor **snap, uint32_t *mask, uint32_t *uses)
+{
+	for (uint32_t e = 0; e < 32; e++) {
+		const uint8_t *p;
+		uint32_t total, off = 8;
+
+		if (snap[e] == NULL)
+			continue;
+		p = (const uint8_t *)snap[e]->getBytesNoCopy();
+		memcpy(&total, p, 4);
+		if (total < 16 || total > snap[e]->getLength())
+			continue;
+		while (off + 8 <= total) {
+			uint32_t op, clen, ids[4] = { 0, 0, 0, 0 }, n = 0, rd[16], nr = 0;
+
+			memcpy(&op, p + off, 4);
+			memcpy(&clen, p + off + 4, 4);
+			if (clen < 8 || off + clen > total)
+				break;
+			if (op == 0x1a && clen >= 0x250) {
+				for (uint32_t k = 0; k < 4; k++) {
+					memcpy(&ids[n++], p + off + 0x50 + k * 0x3c + 4, 4);
+				}
+			} else if ((op == 0x12c && clen >= 0x50) || (op == 0x12f && clen >= 0x60) || (op == 0x13e && clen >= 0x10)) {
+				memcpy(&ids[n++], p + off + 12, 4);
+			} else if (op == 0xce && clen >= 0x14) {
+				memcpy(&ids[n++], p + off + 16, 4);
+			}
+			// what it reads: fragment textures, blit sources and tile textures
+			if (op == 0x72 && clen >= 0x14) {
+				memcpy(&rd[nr++], p + off + 16, 4);
+			} else if ((op == 0x12e && clen >= 0x58) || (op == 0x12f && clen >= 0x60) || (op == 0x13e && clen >= 0x10)) {
+				memcpy(&rd[nr++], p + off + 8, 4);
+			} else if (op == 0xa1 && clen >= 0x14) {
+				uint32_t cnt = 0;
+
+				memcpy(&cnt, p + off + 12, 4);
+				for (uint32_t k = 0; k < cnt && nr < 16 && 16 + 4 * (k + 1) <= clen; k++) {
+					memcpy(&rd[nr++], p + off + 16 + 4 * k, 4);
+				}
+			}
+			for (uint32_t k = 0; k < n + nr; k++) {
+				uint32_t id = k < n ? ids[k] : rd[k - n];
+				uint32_t sid = id != 0 ? texInfo(texSlot(id)).surf : 0;
+
+				if (sid == 0 || sid >= PD_SURF_MAX)
+					continue;
+				if (k < n)
+					mask[sid / 32] |= 1u << (sid % 32);
+				uses[sid / 32] |= 1u << (sid % 32);
+			}
+			off += clen;
+		}
+	}
+}
+
 static void pdAsyncEnqueue(struct PDAsyncJob *job);
+
+bool
+pdAsyncPerform(void (*fn)(void *), void *arg)
+{
+	struct PDAsyncJob *job = (struct PDAsyncJob *)IOMallocZero(sizeof(*job));
+	if (job == NULL)
+		return false;
+	job->perform = fn;
+	job->argument = arg;
+	pdAsyncEnqueue(job);
+	return true;
+}
+
 
 void
 IOSurfaceRootUserClient::submitAsync(uint32_t queue)
@@ -512,7 +804,11 @@ IOSurfaceRootUserClient::submitAsync(uint32_t queue)
 	job->block[0] = fSubmitBlocks[0];
 	job->block[1] = fSubmitBlocks[1];
 	snapshotStreams(job->snap);
-	applySignals();
+	answerQueriesNow(job->snap);
+	surfaceWrites(job->snap, job->surfWrites, job->surfUses);
+	job->signals = OSArray::withCapacity(8);
+	if (job->signals)
+		snapshotSignals(job->signals);
 	pdAsyncEnqueue(job);
 }
 
@@ -536,6 +832,12 @@ pdAsyncEnqueue(struct PDAsyncJob *job)
 			thread_deallocate(th);
 		}
 	}
+	for (uint32_t i = 0; i < PD_SURF_MAX; i++) {
+		if ((job->surfWrites[i / 32] >> (i % 32) & 1) && sSurfPending[i] != 0xffff)
+			sSurfPending[i]++;
+		if ((job->surfUses[i / 32] >> (i % 32) & 1) && sSurfUsePending[i] != 0xffff)
+			sSurfUsePending[i]++;
+	}
 	if (sAsyncTail != NULL) {
 		sAsyncTail->next = job;
 	} else {
@@ -555,6 +857,15 @@ IOSurfaceRootUserClient::runAsyncJob(struct PDAsyncJob *job)
 	fCurStamp = job->stamp;
 	start = mach_absolute_time();
 	executeStreams(job->snap);
+	if (job->signals) {
+		for (uint32_t i = 0; i + 1 < job->signals->getCount(); i += 2) {
+			OSNumber *event = OSDynamicCast(OSNumber, job->signals->getObject(i));
+			OSNumber *value = OSDynamicCast(OSNumber, job->signals->getObject(i + 1));
+			if (event && value)
+				pdEventSet(event->unsigned32BitValue() & ~kPDEventTag, value->unsigned64BitValue());
+		}
+		job->signals->release();
+	}
 	end = mach_absolute_time();
 	if (fSel2MD != NULL && job->queue - 1 < 256) {
 		((volatile uint32_t *)fSel2MD->getBytesNoCopy())[job->queue - 1] = job->stamp << 8;
@@ -562,6 +873,10 @@ IOSurfaceRootUserClient::runAsyncJob(struct PDAsyncJob *job)
 	if (fQueues != NULL && job->block[0] != 0) {
 		queueCompletion(job->queue, job->block[0], job->block[1], start, end);
 	}
+	if (fTraced)
+		IOLog("PD-gputrace: %s job queue %u stamp 0x%x blocks 0x%llx 0x%llx queues %u%s\n", fTag, job->queue,
+		    job->stamp, (unsigned long long)job->block[0], (unsigned long long)job->block[1],
+		    fQueues != NULL ? fQueues->getCount() : 0, fSel2MD != NULL ? " stamped" : "");
 	for (uint32_t e = 0; e < 32; e++) {
 		OSSafeReleaseNULL(job->snap[e]);
 	}
@@ -595,9 +910,10 @@ IOSurfaceRootUserClient::releaseResource(uint32_t rid)
 		snprintf(mkey, sizeof(mkey), "r%u", rid);
 		fResMaps->removeObject(mkey);
 	}
+	idDrop(kIdRid, rid);
 	// the object's own state only while it still names this resource: its id may already be reused
-	if (objid != 0 && objid < PD_MAX_OBJ && fObjRes[objid] == rid) {
-		fObjRes[objid] = 0;
+	uint32_t o = texSlot(objid);
+	if (o != 0 && texInfo(o).res == rid) {
 		snprintf(key, sizeof(key), "%u", objid);
 		if (fUserBuffers != NULL) {
 			IOMemoryDescriptor *um = OSDynamicCast(IOMemoryDescriptor, fUserBuffers->getObject(key));
@@ -613,12 +929,95 @@ IOSurfaceRootUserClient::releaseResource(uint32_t rid)
 		if (fResMaps != NULL) {
 			fResMaps->removeObject(key);
 		}
-		fTexW[objid] = fTexH[objid] = 0;
-		fTexPf[objid] = 0;
-		fTexSurf[objid] = 0;
-		fTexAlias[objid] = 0;
-		fTexBpr[objid] = 0;
+		idDrop(kIdObj, objid);
 	}
+}
+
+// pdobjmap=1 logs the sel 259 destroys no map handles yet
+bool
+pdObjMapLog(void)
+{
+	static int state = -1;
+
+	if (state < 0) {
+		uint32_t on = 0;
+
+		state = PE_parse_boot_argn("pdobjmap", &on, sizeof(on)) && on;
+	}
+	return state != 0;
+}
+
+// the slot of guest id in kind's map, 0 if it has none (slot 0's record reads zeros)
+uint32_t
+IOSurfaceRootUserClient::idSlot(uint32_t kind, uint32_t id)
+{
+	uint32_t s = 0;
+
+	if (id == 0)
+		return 0;
+	resLock();
+	switch (kind) {
+	case kIdObj: s = fTexMap.find(id); break;
+	case kIdPipe: s = fPipeMap.find(id); break;
+	case kIdFn: s = fFnMap.find(id); break;
+	case kIdSamp: s = fSampMap.find(id); break;
+	case kIdRid: s = fRidMap.find(id); break;
+	}
+	resUnlock();
+	return s;
+}
+
+// id's slot, a zeroed one if id is new. 0 when the map is at its cap or out of memory: the object then
+// reads as unknown, so that is logged every time
+uint32_t
+IOSurfaceRootUserClient::idSlotNew(uint32_t kind, uint32_t id)
+{
+	static const char *names[kIdKinds] = { "object", "pipeline", "function", "sampler", "resource" };
+	uint32_t s = 0, count = 0;
+	bool fresh;
+
+	if (id == 0 || kind >= kIdKinds)
+		return 0;
+	resLock();
+	switch (kind) {
+	case kIdObj: s = fTexMap.get(id, &fresh); count = fTexMap.count; break;
+	case kIdPipe: s = fPipeMap.get(id, &fresh); count = fPipeMap.count; break;
+	case kIdFn: s = fFnMap.get(id, &fresh); count = fFnMap.count; break;
+	case kIdSamp: s = fSampMap.get(id, &fresh); count = fSampMap.count; break;
+	case kIdRid: s = fRidMap.get(id, &fresh); count = fRidMap.count; break;
+	}
+	resUnlock();
+	if (s == 0)
+		IOLog("PDIOSurface: %s %s id %u has no slot: map full (%u ids) or out of memory\n", fTag, names[kind], id, count);
+	return s;
+}
+
+// the guest destroyed id: its slot and record go
+void
+IOSurfaceRootUserClient::idDrop(uint32_t kind, uint32_t id)
+{
+	if (id == 0)
+		return;
+	resLock();
+	switch (kind) {
+	case kIdObj: fTexMap.drop(id); break;
+	case kIdPipe: fPipeMap.drop(id); break;
+	case kIdFn: fFnMap.drop(id); break;
+	case kIdSamp: fSampMap.drop(id); break;
+	case kIdRid: fRidMap.drop(id); break;
+	}
+	resUnlock();
+}
+
+void
+IOSurfaceRootUserClient::free(void)
+{
+	fTexMap.destroy();
+	fPipeMap.destroy();
+	fFnMap.destroy();
+	fSampMap.destroy();
+	fRidMap.destroy();
+	IOUserClient::free();
 }
 
 void
@@ -630,7 +1029,9 @@ IOSurfaceRootUserClient::queueCompletion(uint64_t queue, uint64_t block0, uint64
 		fPendLock = IOLockAlloc();
 	}
 	if (fCompletionCall == NULL) {
-		fCompletionCall = thread_call_allocate(&IOSurfaceRootUserClient::completionFired, this);
+		// once: two runs at a time would be two writers on one notification ring
+		fCompletionCall = thread_call_allocate_with_options(&IOSurfaceRootUserClient::completionFired, this,
+		    THREAD_CALL_PRIORITY_HIGH, THREAD_CALL_OPTIONS_ONCE);
 	}
 	if (fPendLock == NULL || fCompletionCall == NULL) {
 		return;
@@ -708,11 +1109,16 @@ IOSurfaceRootUserClient::postCompletion(const PendingCompletion &pc)
 		}
 		for (uint32_t b = 0; q != NULL && b < 2; b++) {
 			uint64_t entry[5] = { pc.block[b], pc.start, pc.end, 0, 0 };
+			bool ok;
 
 			if (pc.block[b] == 0) {
 				continue;
 			}
-			q->enqueue(entry, sizeof(entry));
+			ok = q->enqueue(entry, sizeof(entry));
+			if (fTraced)
+				IOLog("PD-gputrace: %s completion queue %llu notify %llu key %s block 0x%llx -> %s\n", fTag,
+				    (unsigned long long)pc.queue, (unsigned long long)notify,
+				    ksym != NULL ? ksym->getCStringNoCopy() : "?", (unsigned long long)pc.block[b], ok ? "ok" : "full");
 		}
 	}
 	OSSafeReleaseNULL(it);
@@ -730,10 +1136,10 @@ IOSurfaceRootUserClient::eventAddress(uint32_t index)
 	return fEventMap != NULL ? fEventMap->getAddress() + 8ULL * index : 0;
 }
 
-// After a submission: its sideband list (type 1 shmem) of {u32 kind, u32 size, u32 event port,
+// Snapshot a submission's sideband list (type 1 shmem) of {u32 kind, u32 size, u32 event port,
 // u32, u64 value}. Kind 3 signals set the event, kind 4 waits need nothing as execution is in order
 void
-IOSurfaceRootUserClient::applySignals(void)
+IOSurfaceRootUserClient::snapshotSignals(OSArray *signals)
 {
 	if (sEventPage == NULL) {
 		return;
@@ -752,13 +1158,13 @@ IOSurfaceRootUserClient::applySignals(void)
 			continue;
 		}
 		fSbStamp[i] = stamp;
-		applySidebandPair(hdr, (const uint8_t *)fSbPair[i][1]->getBytesNoCopy(),
-		    (uint32_t)fSbPair[i][1]->getLength());
+		snapshotSidebandPair(hdr, (const uint8_t *)fSbPair[i][1]->getBytesNoCopy(),
+		    (uint32_t)fSbPair[i][1]->getLength(), signals);
 	}
 }
 
 void
-IOSurfaceRootUserClient::applySidebandPair(const uint8_t *hdr, const uint8_t *list, uint32_t len)
+IOSurfaceRootUserClient::snapshotSidebandPair(const uint8_t *hdr, const uint8_t *list, uint32_t len, OSArray *signals)
 {
 	uint32_t start, count;
 
@@ -791,7 +1197,12 @@ IOSurfaceRootUserClient::applySidebandPair(const uint8_t *hdr, const uint8_t *li
 			uint32_t index = num->unsigned32BitValue() & ~kPDEventTag;
 
 			if (index < kPDEventMax) {
-				pdEventSet(index, value);
+				OSNumber *signalValue = OSNumber::withNumber(value, 64);
+				if (signalValue) {
+					signals->setObject(num);
+					signals->setObject(signalValue);
+					signalValue->release();
+				}
 			}
 		}
 		OSSafeReleaseNULL(obj);
@@ -844,18 +1255,19 @@ IOSurfaceRootUserClient::markUsed(uint32_t id, bool written)
 // into the bridge, run, and copied back (a kernel may write any of them)
 void
 IOSurfaceRootUserClient::runCompute(uint32_t pipeline, const uint32_t *cBuf, const uint64_t *cOff, const uint32_t *cTex,
-    const uint32_t *cTg, const uint64_t *grid, const uint64_t *tpg, bool threads)
+    const uint32_t *cSamp, const uint32_t *cTg, const uint64_t *grid, const uint64_t *tpg, bool threads)
 {
-	uint32_t function = pipeline < PD_MAX_OBJ ? fPipelineFunction[pipeline] : 0;
+	uint32_t ps = pipeSlot(pipeline), function = pipeInfo(ps).fn;
 	IOBufferMemoryDescriptor *bmd[PD_CS_BUFS] = {}, *tmd[16] = {};
+	uint64_t tOff[16] = {};
 
 	// a type 0xe pipeline message names a compute pipeline's kernel as tag 1, like a vertex function
-	if (function == 0 && pipeline < PD_MAX_OBJ) {
-		function = fRenderVertexFn[pipeline];
+	if (function == 0) {
+		function = pipeInfo(ps).vertexFn;
 	}
 	char key[16];
 
-	if (sBridge == NULL || function >= PD_MAX_OBJ || shader(function) == NULL) {
+	if (sBridge == NULL || shader(function) == NULL) {
 		IOLog("PDIOSurface: compute skipped, pipeline %u has no shader\n", pipeline);
 		return;
 	}
@@ -878,6 +1290,9 @@ IOSurfaceRootUserClient::runCompute(uint32_t pipeline, const uint32_t *cBuf, con
 	memcpy(r->grid, grid, sizeof(r->grid));
 	memcpy(r->tpg, tpg, sizeof(r->tpg));
 	memcpy(r->tgmem, cTg, sizeof(r->tgmem));
+	for (uint32_t si = 0; si < 16; si++) {
+		r->samp[si] = fSampMap.at(sampSlot(cSamp[si]));
+	}
 	for (uint32_t bi = 0; bi < PD_CS_BUFS; bi++) {
 		uint64_t size;
 
@@ -898,39 +1313,74 @@ IOSurfaceRootUserClient::runCompute(uint32_t pipeline, const uint32_t *cBuf, con
 		memcpy(base + pos, (const uint8_t *)bmd[bi]->getBytesNoCopy() + cOff[bi], size);
 		pos = (pos + (uint32_t)size + 63) & ~63U;
 	}
+	// pdcstex=1: why a dispatch's texture slots go out empty: its first 8 dispatches per function, every
+	// dispatch with no texture set and every skipped slot (up to 512 lines)
+	static int cstexState = -1;
+	static uint8_t cstexSeen[1024];
+	static uint32_t cstexBudget = 512;
+	if (cstexState < 0) {
+		uint32_t on = 0;
+		cstexState = PE_parse_boot_argn("pdcstex", &on, sizeof(on)) && on;
+	}
+	bool cstexNone = true;
 	for (uint32_t ti = 0; ti < 16; ti++) {
-		uint32_t id = cTex[ti], w, hgt, fmt, bpr;
+		if (cTex[ti] != 0) cstexNone = false;
+	}
+	uint32_t fs = idSlot(kIdFn, function);
+	if (fs >= 1024) fs = 0;
+	bool cstexLog = cstexState && cstexBudget > 0 && (cstexSeen[fs] < 8 || cstexNone);
+	if (cstexLog) {
+		if (cstexSeen[fs] < 8) cstexSeen[fs]++;
+		cstexBudget--;
+		IOLog("PDIOSurface: compute fn %u key %u pipeline %u texture ids %u %u %u %u %u %u %u %u\n", function, r->fn,
+		    pipeline, cTex[0], cTex[1], cTex[2], cTex[3], cTex[4], cTex[5], cTex[6], cTex[7]);
+	}
+	if (cstexState && cstexBudget > 0) cstexLog = true;
+	for (uint32_t ti = 0; ti < 16; ti++) {
+		uint32_t id = cTex[ti], o = texSlot(id), w, hgt, fmt, bpr;
 		uint64_t bytes;
 
-		if (id == 0 || id >= PD_MAX_OBJ || fTexW[id] == 0) continue;
-		// a view's memory is its parent's: ids are reused, so a buffer left under the view's own
-		// id belongs to whatever object had it before
-		snprintf(key, sizeof(key), "%u", fTexAlias[id] != 0 ? fTexAlias[id] : id);
-		// a texture made on a surface reads the surface, never a buffer left under its reused id
-		tmd[ti] = fTexAlias[id] == 0 && fTexSurf[id] != 0 && sSurfaces[fTexSurf[id]].md != NULL ?
-		    sSurfaces[fTexSurf[id]].md : lookupBuffer(key);
-		if (tmd[ti] == NULL) {
+		if (id == 0) continue;
+		if (texInfo(o).w == 0) {
+			if (cstexLog && cstexBudget > 0) {
+				cstexBudget--;
+				IOLog("PDIOSurface: compute fn %u key %u slot %u texture %u skipped: %s (resource %u)\n", function,
+				    r->fn, ti, id, o == 0 ? "no slot" : "no size known", texInfo(o).res);
+			}
 			continue;
 		}
-		w = fTexW[id]; hgt = fTexH[id];
+		// a view's memory is its parent's, a heap texture's its part of the heap: ids are reused, so
+		// a buffer left under the texture's own id belongs to whatever object had it before
+		tmd[ti] = texMemory(id, &tOff[ti]);
+		if (tmd[ti] == NULL) {
+			if (cstexLog && cstexBudget > 0) {
+				cstexBudget--;
+				IOLog("PDIOSurface: compute fn %u key %u slot %u texture %u (%ux%u) skipped: no memory (alias %u surface %u)\n",
+				    function, r->fn, ti, id, texInfo(o).w, texInfo(o).h, texInfo(o).alias, texInfo(o).surf);
+			}
+			continue;
+		}
+		w = texInfo(o).w; hgt = texInfo(o).h;
 		fmt = texFmt(id, tmd[ti]->getLength());
 		bpr = w * pdTexBpp(fmt);
-		if (fTexBpr[id] >= bpr && fTexBpr[id] < 0x10000) bpr = fTexBpr[id];
-		if (fTexSurf[id] != 0 && sSurfaces[fTexSurf[id]].bytesPerRow >= bpr && sSurfaces[fTexSurf[id]].bytesPerRow < 0x10000) {
-			bpr = (uint32_t)sSurfaces[fTexSurf[id]].bytesPerRow;
+		if (texInfo(o).bpr >= bpr && texInfo(o).bpr < 0x10000) bpr = texInfo(o).bpr;
+		if (texInfo(o).surf != 0 && sSurfaces[texInfo(o).surf].bytesPerRow >= bpr && sSurfaces[texInfo(o).surf].bytesPerRow < 0x10000) {
+			bpr = (uint32_t)sSurfaces[texInfo(o).surf].bytesPerRow;
 		}
 		bytes = (uint64_t)bpr * hgt;
-		if (bytes > tmd[ti]->getLength() || pos + bytes > PD_BRIDGE_BYTES) {
+		if (tOff[ti] > tmd[ti]->getLength() || bytes > tmd[ti]->getLength() - tOff[ti] || pos + bytes > PD_BRIDGE_BYTES) {
 			IOLog("PDIOSurface: compute texture %u (%ux%u) does not fit\n", id, w, hgt);
 			tmd[ti] = NULL;
 			continue;
 		}
 		r->tex[ti].id = id; r->tex[ti].off = pos; r->tex[ti].w = w; r->tex[ti].h = hgt;
 		r->tex[ti].bpr = bpr; r->tex[ti].fmt = fmt;
-		memcpy(base + pos, tmd[ti]->getBytesNoCopy(), bytes);
+		memcpy(base + pos, (const uint8_t *)tmd[ti]->getBytesNoCopy() + tOff[ti], bytes);
 		pos = (pos + (uint32_t)bytes + 63) & ~63U;
 	}
 	h->serial = ++sBridgeSerial; h->functionID = r->fn; h->pipelineID = pipeline; h->kind = 3;
+	pdHoldMemory(bmd, PD_CS_BUFS, true);
+	pdHoldMemory(tmd, 16, true);
 	pdBridgeRing(h);
 	pdBridgeWait(h, 60000);
 	__sync_synchronize();
@@ -942,13 +1392,165 @@ IOSurfaceRootUserClient::runCompute(uint32_t pipeline, const uint32_t *cBuf, con
 		}
 		for (uint32_t ti = 0; ti < 16; ti++) {
 			if (tmd[ti] != NULL && r->tex[ti].w) {
-				memcpy(tmd[ti]->getBytesNoCopy(), base + r->tex[ti].off, (uint64_t)r->tex[ti].bpr * r->tex[ti].h);
+				memcpy((uint8_t *)tmd[ti]->getBytesNoCopy() + tOff[ti], base + r->tex[ti].off,
+				    (uint64_t)r->tex[ti].bpr * r->tex[ti].h);
 			}
 		}
 	} else {
 		IOLog("PDIOSurface: compute serial %u failed, state %u: %s\n", h->serial, h->state, h->error);
 	}
-	h->state = 0;
+	pdHoldMemory(bmd, PD_CS_BUFS, false);
+	pdHoldMemory(tmd, 16, false);
+	pdBridgeRelease(h);
+}
+
+void
+IOSurfaceRootUserClient::runTile(uint32_t pipeline, const uint32_t *tBuf, const uint64_t *tOff, const uint32_t *tTex,
+    const uint32_t *tSamp, const uint32_t *tTg, uint32_t target, const uint32_t *att, const bool *scratch,
+    const uint64_t *tpt)
+{
+	uint32_t function = pipeInfo(pipeSlot(pipeline)).tileFn, to = texSlot(target), tw, th;
+	IOBufferMemoryDescriptor *bmd[PD_CS_BUFS] = {}, *tmd[16] = {}, *amd[4] = {};
+	uint64_t texOff[16] = {}, attOff[4] = {};
+	char key[16];
+
+	if (sBridge == NULL || function == 0 || shader(function) == NULL) {
+		IOLog("PDIOSurface: tile dispatch skipped, pipeline %u has no tile kernel (function %u)\n", pipeline, function);
+		return;
+	}
+	if (texInfo(to).w == 0 || texInfo(to).h == 0) {
+		IOLog("PDIOSurface: tile dispatch skipped, pipeline %u: no colour attachment 0 (target %u)\n", pipeline, target);
+		return;
+	}
+	if (tpt[0] == 0 || tpt[1] == 0 || tpt[0] * tpt[1] > 1024) {
+		IOLog("PDIOSurface: tile dispatch skipped, %llux%llu threads per tile\n", (unsigned long long)tpt[0],
+		    (unsigned long long)tpt[1]);
+		return;
+	}
+	PDBridgeGuard bridgeGuard;
+	if (!pdBridgeIdle(2000)) {
+		IOLog("PDIOSurface: tile dispatch skipped, shader daemon busy or absent\n");
+		return;
+	}
+	PDBridgeHeader *h = (PDBridgeHeader *)sBridge->getBytesNoCopy();
+	uint8_t *base = (uint8_t *)h;
+	PDTileRequest *r = (PDTileRequest *)(base + PD_DRAW_REQ);
+	uint32_t pos = PD_DRAW_DATA;
+
+	tw = texInfo(to).w;
+	th = texInfo(to).h;
+	bzero(r, sizeof(*r));
+	r->fn = shaderKey(function);
+	r->mOff = pos; r->mSize = (uint32_t)shader(function)->getLength();
+	memcpy(base + pos, shader(function)->getBytesNoCopy(), r->mSize);
+	pos = (pos + r->mSize + 63) & ~63U;
+	r->tpt[0] = (uint32_t)tpt[0]; r->tpt[1] = (uint32_t)tpt[1]; r->tpt[2] = 1;
+	r->tilesX = (tw + PD_TILE_SIZE - 1) / PD_TILE_SIZE;
+	r->tilesY = (th + PD_TILE_SIZE - 1) / PD_TILE_SIZE;
+	memcpy(r->tgmem, tTg, sizeof(r->tgmem));
+	for (uint32_t si = 0; si < 16; si++) {
+		r->samp[si] = fSampMap.at(sampSlot(tSamp[si]));
+	}
+	for (uint32_t bi = 0; bi < PD_CS_BUFS; bi++) {
+		uint64_t size;
+
+		if (tBuf[bi] == 0) continue;
+		snprintf(key, sizeof(key), "%u", tBuf[bi]);
+		bmd[bi] = lookupBuffer(key);
+		if (bmd[bi] == NULL || tOff[bi] >= bmd[bi]->getLength()) {
+			bmd[bi] = NULL;
+			continue;
+		}
+		size = bmd[bi]->getLength() - tOff[bi];
+		if (size > 0x2000000) size = 0x2000000;
+		if (pos + size > PD_BRIDGE_BYTES / 2) {
+			bmd[bi] = NULL;
+			continue;
+		}
+		r->buf[bi].id = tBuf[bi]; r->buf[bi].off = pos; r->buf[bi].size = (uint32_t)size;
+		memcpy(base + pos, (const uint8_t *)bmd[bi]->getBytesNoCopy() + tOff[bi], size);
+		pos = (pos + (uint32_t)size + 63) & ~63U;
+	}
+	for (uint32_t ti = 0; ti < 16; ti++) {
+		uint32_t id = tTex[ti], o = texSlot(id), fmt, bpr;
+		uint64_t bytes;
+
+		if (id == 0 || texInfo(o).w == 0) continue;
+		tmd[ti] = texMemory(id, &texOff[ti]);
+		if (tmd[ti] == NULL) continue;
+		fmt = texFmt(id, tmd[ti]->getLength());
+		bpr = texInfo(o).w * pdTexBpp(fmt);
+		if (texInfo(o).bpr >= bpr && texInfo(o).bpr < 0x10000) bpr = texInfo(o).bpr;
+		if (texInfo(o).surf != 0 && sSurfaces[texInfo(o).surf].bytesPerRow >= bpr && sSurfaces[texInfo(o).surf].bytesPerRow < 0x10000)
+			bpr = (uint32_t)sSurfaces[texInfo(o).surf].bytesPerRow;
+		bytes = (uint64_t)bpr * texInfo(o).h;
+		if (texOff[ti] > tmd[ti]->getLength() || bytes > tmd[ti]->getLength() - texOff[ti] || pos + bytes > PD_BRIDGE_BYTES / 2) {
+			IOLog("PDIOSurface: tile texture %u (%ux%u) does not fit\n", id, texInfo(o).w, texInfo(o).h);
+			tmd[ti] = NULL;
+			continue;
+		}
+		r->tex[ti].id = id; r->tex[ti].off = pos; r->tex[ti].w = texInfo(o).w; r->tex[ti].h = texInfo(o).h;
+		r->tex[ti].bpr = bpr; r->tex[ti].fmt = fmt;
+		memcpy(base + pos, (const uint8_t *)tmd[ti]->getBytesNoCopy() + texOff[ti], bytes);
+		pos = (uint32_t)((pos + bytes + 63) & ~63ULL);
+	}
+	// the implicit imageblock: attachment 0 and attachments 1-3 (scratch when memoryless), as a draw sees them
+	for (uint32_t k = 0; k < 4; k++) {
+		uint32_t id = k == 0 ? target : att[k], o = texSlot(id), w, hgt, fmt;
+		uint64_t bytes;
+
+		if (id == 0) continue;
+		if (k > 0 && scratch[k]) {
+			amd[k] = fAttScratch[k];
+			w = tw; hgt = th; fmt = 1;
+		} else {
+			if (texInfo(o).w == 0 || texInfo(o).h == 0) continue;
+			amd[k] = texMemory(id, &attOff[k]);
+			if (amd[k] == NULL) continue;
+			w = texInfo(o).w; hgt = texInfo(o).h;
+			fmt = texFmt(id, amd[k]->getLength());
+		}
+		if (amd[k] == NULL) continue;
+		bytes = (uint64_t)w * pdTexBpp(fmt) * hgt;
+		if (attOff[k] > amd[k]->getLength() || bytes > amd[k]->getLength() - attOff[k] || pos + bytes > PD_BRIDGE_BYTES) {
+			IOLog("PDIOSurface: tile attachment %u (texture %u, %ux%u) does not fit\n", k, id, w, hgt);
+			amd[k] = NULL;
+			continue;
+		}
+		r->rt[k].id = id; r->rt[k].off = pos; r->rt[k].w = w; r->rt[k].h = hgt;
+		r->rt[k].bpr = w * pdTexBpp(fmt); r->rt[k].fmt = fmt;
+		memcpy(base + pos, (const uint8_t *)amd[k]->getBytesNoCopy() + attOff[k], bytes);
+		pos = (uint32_t)((pos + bytes + 63) & ~63ULL);
+	}
+	h->serial = ++sBridgeSerial; h->functionID = r->fn; h->pipelineID = pipeline; h->kind = 4;
+	pdHoldMemory(bmd, PD_CS_BUFS, true);
+	pdHoldMemory(tmd, 16, true);
+	pdHoldMemory(amd, 4, true);
+	pdBridgeRing(h);
+	pdBridgeWait(h, 60000);
+	__sync_synchronize();
+	if (h->state == 2) {
+		for (uint32_t bi = 0; bi < PD_CS_BUFS; bi++) {
+			if (bmd[bi] != NULL && r->buf[bi].size)
+				memcpy((uint8_t *)bmd[bi]->getBytesNoCopy() + tOff[bi], base + r->buf[bi].off, r->buf[bi].size);
+		}
+		for (uint32_t ti = 0; ti < 16; ti++) {
+			if (tmd[ti] != NULL && r->tex[ti].w)
+				memcpy((uint8_t *)tmd[ti]->getBytesNoCopy() + texOff[ti], base + r->tex[ti].off,
+				    (uint64_t)r->tex[ti].bpr * r->tex[ti].h);
+		}
+		for (uint32_t k = 0; k < 4; k++) {
+			if (amd[k] != NULL && r->rt[k].w)
+				memcpy((uint8_t *)amd[k]->getBytesNoCopy() + attOff[k], base + r->rt[k].off,
+				    (uint64_t)r->rt[k].bpr * r->rt[k].h);
+		}
+	} else {
+		IOLog("PDIOSurface: tile serial %u failed, state %u: %s\n", h->serial, h->state, h->error);
+	}
+	pdHoldMemory(bmd, PD_CS_BUFS, false);
+	pdHoldMemory(tmd, 16, false);
+	pdHoldMemory(amd, 4, false);
+	pdBridgeRelease(h);
 }
 
 // Encoder storage is [stream bytes][encoder kind] then commands of [opcode][command bytes,
@@ -964,13 +1566,16 @@ IOSurfaceRootUserClient::executeStreams(IOBufferMemoryDescriptor **snap)
 		}
 		const uint8_t *p = (const uint8_t *)md->getBytesNoCopy();
 		uint32_t total, off = 8;
-		uint32_t currentPipeline = 0, cBuf[PD_CS_BUFS] = {}, cTex[16] = {}, cTg[4] = {};
+		uint32_t currentPipeline = 0, cBuf[PD_CS_BUFS] = {}, cTex[16] = {}, cSamp[16] = {}, cTg[4] = {};
 		uint64_t cOff[PD_CS_BUFS] = {};
 		// Render encoder state: pipeline, vertex and fragment buffers, fragment textures
 		uint32_t rPipeline = 0, vBuf[PD_DRAW_BUFS] = {}, fBuf[PD_DRAW_BUFS] = {}, fTex[16] = {}, fSamp[16] = {}, rTarget = 0;
 		uint32_t rAtt[4] = {};	// the pass's colour attachments 1-3 (RenderBox: coverage 1, layer 2)
 		bool rScratch[4] = {};	// attachment k has no memory of the target's size: it uses fAttScratch[k]
 		uint64_t vOff[PD_DRAW_BUFS] = {}, fOff[PD_DRAW_BUFS] = {};
+		// the tile stage's bindings (0x9c-0xa1), used by dispatchThreadsPerTile (0x9b)
+		uint32_t tBuf[PD_CS_BUFS] = {}, tTex[16] = {}, tSamp[16] = {}, tTg[4] = {};
+		uint64_t tOff[PD_CS_BUFS] = {};
 		double viewport[6] = {};
 
 		memcpy(&total, p, 4);
@@ -988,6 +1593,37 @@ IOSurfaceRootUserClient::executeStreams(IOBufferMemoryDescriptor **snap)
 			}
 			if (op == 0xd0 && clen >= 0x0c) {
 				memcpy(&currentPipeline, p + off + 8, 4);
+			} else if (op == 0x1c2 && clen >= 0x18) {
+				// compute pipeline info: {pipeline, buffer, u64 offset} -> {u64 maxTotalThreadsPerThreadgroup,
+				// threadExecutionWidth, staticThreadgroupMemoryLength, 0}, left zero, MPS dispatches empty grids
+				uint32_t pso = 0, qbuf = 0;
+				uint64_t qoff = 0, ans[4] = { 1024, 32, 0, 0 };
+
+				memcpy(&pso, p + off + 8, 4);
+				memcpy(&qbuf, p + off + 12, 4);
+				memcpy(&qoff, p + off + 16, 8);
+				if (pipeInfo(pipeSlot(pso)).maxThreads != 0)
+					ans[0] = pipeInfo(pipeSlot(pso)).maxThreads;
+				answerQuery(qbuf, qoff, ans, sizeof(ans));
+			} else if (op == 0xa4 && clen >= 0x14) {
+				// the render encoder's tileWidth/tileHeight: {buffer, u64 offset} -> {u16 32, u16 32}
+				uint32_t qbuf = 0;
+				uint64_t qoff = 0;
+				uint16_t tile[2] = { 32, 32 };
+
+				memcpy(&qbuf, p + off + 8, 4);
+				memcpy(&qoff, p + off + 12, 8);
+				answerQuery(qbuf, qoff, tile, sizeof(tile));
+			} else if (op == 0x1d5 && clen >= 0x3c) {
+				// heapTextureSizeAndAlignWithDescriptor: {0x28 byte descriptor, buffer, u64 offset} -> {u64 size,
+				// u64 align}, for the linear rows a heap texture (sel 261 kind 0x38) gets here
+				uint32_t qbuf = 0;
+				uint64_t qoff = 0, ans[2];
+
+				pdHeapTexSize(p + off + 8, ans);
+				memcpy(&qbuf, p + off + 0x30, 4);
+				memcpy(&qoff, p + off + 0x34, 8);
+				answerQuery(qbuf, qoff, ans, sizeof(ans));
 			} else if (op == 0xcb && clen >= 0x1c) {
 				// {index, kind, id, u64 offset}: setBuffer and setBytes alike (bytes land in a staging buffer)
 				uint32_t index = 0, id = 0;
@@ -1004,6 +1640,20 @@ IOSurfaceRootUserClient::executeStreams(IOBufferMemoryDescriptor **snap)
 				memcpy(&index, p + off + 8, 4);
 				memcpy(&id, p + off + 16, 4);
 				if (index < 16) cTex[index] = id;
+			} else if (op == 0xcc && clen >= 0x14) {
+				// setSamplerState {index, kind, sampler id}, laid out like 0xce
+				uint32_t index = 0, id = 0, w[4] = {};
+				static uint32_t logged;
+
+				memcpy(&index, p + off + 8, 4);
+				memcpy(&id, p + off + 16, 4);
+				if (index < 16) cSamp[index] = id;
+				if (logged < 8) {
+					logged++;
+					memcpy(w, p + off + 8, clen - 8 < sizeof(w) ? clen - 8 : sizeof(w));
+					IOLog("PDIOSurface: compute sampler bind len 0x%x %08x %08x %08x %08x flags 0x%x\n", clen, w[0], w[1],
+					    w[2], w[3], fSampMap.at(sampSlot(id)));
+				}
 			} else if (op == 0xd3 && clen >= 0x14) {
 				// setThreadgroupMemoryLength {u32 length, u64 index}
 				uint32_t length = 0, index = 0;
@@ -1035,7 +1685,7 @@ IOSurfaceRootUserClient::executeStreams(IOBufferMemoryDescriptor **snap)
 				if (imd != NULL && ioff + sizeof(counts) <= imd->getLength()) {
 					memcpy(counts, (const uint8_t *)imd->getBytesNoCopy() + ioff, sizeof(counts));
 					grid[0] = counts[0]; grid[1] = counts[1]; grid[2] = counts[2];
-					runCompute(currentPipeline, cBuf, cOff, cTex, cTg, grid, tpg, false);
+					runCompute(currentPipeline, cBuf, cOff, cTex, cSamp, cTg, grid, tpg, false);
 				} else {
 					IOLog("PDIOSurface: %s indirect dispatch buffer %u+0x%llx unknown\n", fTag, ibuf, (unsigned long long)ioff);
 				}
@@ -1051,15 +1701,15 @@ IOSurfaceRootUserClient::executeStreams(IOBufferMemoryDescriptor **snap)
 					uint64_t ext = 1;
 
 					for (uint32_t ti = 0; ti < 16; ti++) {
-						if (cTex[ti] != 0 && cTex[ti] < PD_MAX_OBJ && fTexH[cTex[ti]] > ext)
-							ext = fTexH[cTex[ti]];
+						if (texInfo(texSlot(cTex[ti])).h > ext)
+							ext = texInfo(texSlot(cTex[ti])).h;
 					}
 					tpg[1] = tpg[0] != 0 && tpg[0] < 1024 ? 1024 / tpg[0] : 1;
 					grid[1] = op == 0xca ? ext : (ext + tpg[1] - 1) / tpg[1];
 				}
-				runCompute(currentPipeline, cBuf, cOff, cTex, cTg, grid, tpg, op == 0xca);
-			} else if (op == 0xcc || op == 0xd8 || op == 0xdb || op == 0xd7 || op == 0xd1 || op == 0x86) {
-				// sampler (the daemon samples one way), imageblock size, encoder begin and end
+				runCompute(currentPipeline, cBuf, cOff, cTex, cSamp, cTg, grid, tpg, op == 0xca);
+			} else if (op == 0xd8 || op == 0xdb || op == 0xd7 || op == 0xd1 || op == 0x86) {
+				// imageblock size, encoder begin and end
 			} else if (op == 0x132 && clen >= 0x20) {
 				uint32_t id, value;
 				uint64_t start, count;
@@ -1105,28 +1755,28 @@ IOSurfaceRootUserClient::executeStreams(IOBufferMemoryDescriptor **snap)
 				for (uint32_t k = 1; k < 4; k++) {
 					rScratch[k] = false;
 				}
+				// a pass without colour attachment 0 (depth or stencil only) must not draw into the last pass's target
+				rTarget = 0;
 				for (uint32_t k = 0; k < 4; k++) {
 					const uint8_t *a = p + off + 0x50 + k * 0x3c;
 					uint32_t id;
 					uint16_t load;
-					uint64_t c[4];
-					char key[16];
+					uint64_t c[4], toff = 0, tlen = 0;
 					IOBufferMemoryDescriptor *tex;
 
 					memcpy(&id, a + 4, 4);
 					memcpy(&load, a + 0x18, 2);
 					memcpy(c, a + 0x20, sizeof(c));
 					if (k > 0)
-						rAtt[k] = id < PD_MAX_OBJ ? id : 0;
+						rAtt[k] = id;
 					// an attachment without memory of attachment 0's size is memoryless: scratch, cleared
-					if (k > 0 && rAtt[k] != 0 && rTarget != 0 && rTarget < PD_MAX_OBJ) {
-						char sk[16];
+					if (k > 0 && rAtt[k] != 0 && rTarget != 0) {
 						IOBufferMemoryDescriptor *have;
-						uint64_t need = (uint64_t)fTexW[rTarget] * fTexH[rTarget] * 8;
+						uint32_t to = texSlot(rTarget), ao = texSlot(rAtt[k]);
+						uint64_t need = (uint64_t)texInfo(to).w * texInfo(to).h * 8, hoff;
 
-						snprintf(sk, sizeof(sk), "%u", rAtt[k]);
-						have = lookupBuffer(sk);
-						if (have == NULL || fTexW[rAtt[k]] != fTexW[rTarget] || fTexH[rAtt[k]] != fTexH[rTarget]) {
+						have = texMemory(rAtt[k], &hoff);
+						if (have == NULL || texInfo(ao).w != texInfo(to).w || texInfo(ao).h != texInfo(to).h) {
 							if (fAttScratch[k] == NULL || fAttScratch[k]->getLength() < need) {
 								OSSafeReleaseNULL(fAttScratch[k]);
 								fAttScratch[k] = IOBufferMemoryDescriptor::withCapacity(need, kIODirectionInOut);
@@ -1141,26 +1791,30 @@ IOSurfaceRootUserClient::executeStreams(IOBufferMemoryDescriptor **snap)
 							continue;
 						}
 					}
-					if (id == 0 || id >= PD_MAX_OBJ) {
+					if (id == 0) {
 						continue;
 					}
 					if (k == 0)
 						rTarget = id;
 					markUsed(id, true);
-					snprintf(key, sizeof(key), "%u", id);
-					tex = lookupBuffer(key);
-					if (tex == NULL && fTexSurf[id] != 0 && sSurfaces[fTexSurf[id]].md != NULL) {
-						tex = sSurfaces[fTexSurf[id]].md;
+					tex = texMemory(id, &toff);
+					// a texture on shared memory (a heap) owns only its own rows of it
+					if (tex != NULL && toff < tex->getLength()) {
+						tlen = tex->getLength() - toff;
+						uint32_t o = texSlot(id);
+
+						if (texInfo(o).alias != 0 && texInfo(o).bpr != 0 && (uint64_t)texInfo(o).bpr * texInfo(o).h < tlen)
+							tlen = (uint64_t)texInfo(o).bpr * texInfo(o).h;
 					}
 					// dontCare (0) leaves the contents undefined: zeros, so last frame never shows through
-					if (tex != NULL && load == 0) {
-						bzero(tex->getBytesNoCopy(), tex->getLength());
-					} else if (tex != NULL && load == 2) {
+					if (tlen != 0 && load == 0) {
+						bzero((uint8_t *)tex->getBytesNoCopy() + toff, tlen);
+					} else if (tlen != 0 && load == 2) {
 						// in the texture's own format: half RGBA, BGRA8, RGBA8, or one byte
 						uint32_t fmt = texFmt(id, tex->getLength());
-						uint8_t px[8];
+						uint8_t px[16] = {};
 						uint32_t bpp = pdTexBpp(fmt);
-						uint8_t *t = (uint8_t *)tex->getBytesNoCopy();
+						uint8_t *t = (uint8_t *)tex->getBytesNoCopy() + toff;
 
 						if (fmt == 1) {
 							for (int ch = 0; ch < 4; ch++) {
@@ -1175,12 +1829,26 @@ IOSurfaceRootUserClient::executeStreams(IOBufferMemoryDescriptor **snap)
 							px[0] = unorm8FromDoubleBits(c[3]);
 						} else if (fmt == 3) {
 							px[0] = unorm8FromDoubleBits(c[0]);
+						} else if (fmt >= 6 && fmt <= 11) {
+							// integer formats: RG16, R32, RG32, RGBA16, R16, RGBA8 unsigned lanes
+							static const uint8_t lanes[] = { 2, 1, 2, 4, 1, 4 }, width[] = { 2, 4, 4, 2, 2, 1 };
+							uint32_t n = lanes[fmt - 6], w = width[fmt - 6];
+
+							for (uint32_t ch = 0; ch < n; ch++) {
+								uint32_t v = uintFromDoubleBits(c[ch], w == 4 ? 0xffffffffU : (1U << (w * 8)) - 1);
+								memcpy(px + ch * w, &v, w);
+							}
+						} else if (fmt == 12 || fmt == 13) {
+							for (uint32_t ch = 0; ch < fmt - 11; ch++) {
+								uint16_t h = halfFromDoubleBits(c[ch]);
+								memcpy(px + ch * 2, &h, 2);
+							}
 						} else {
 							for (int ch = 0; ch < 4; ch++) {
 								px[ch == 0 ? 2 : (ch == 2 ? 0 : ch)] = unorm8FromDoubleBits(c[ch]);
 							}
 						}
-						for (uint64_t i = 0; i + bpp <= tex->getLength(); i += bpp) {
+						for (uint64_t i = 0; i + bpp <= tlen; i += bpp) {
 							memcpy(t + i, px, bpp);
 						}
 					}
@@ -1196,10 +1864,10 @@ IOSurfaceRootUserClient::executeStreams(IOBufferMemoryDescriptor **snap)
 				markUsed(tid, true);
 				snprintf(key, sizeof(key), "%u", tid);
 				tex = op == 0x133 ? lookupBuffer(key) : NULL;
-				if (tex != NULL && tid < PD_MAX_OBJ && fTexW[tid] != 0 && fTexH[tid] != 0) {
+				if (tex != NULL && texInfo(texSlot(tid)).w != 0 && texInfo(texSlot(tid)).h != 0) {
 					uint8_t *base = (uint8_t *)tex->getBytesNoCopy();
 					uint64_t len = tex->getLength(), at = 0;
-					uint32_t w = fTexW[tid], h = fTexH[tid];
+					uint32_t w = texInfo(texSlot(tid)).w, h = texInfo(texSlot(tid)).h;
 
 					while ((w > 1 || h > 1) && at + (uint64_t)w * h * 4 <= len) {
 						uint32_t nw = w > 1 ? w / 2 : 1, nh = h > 1 ? h / 2 : 1;
@@ -1232,7 +1900,7 @@ IOSurfaceRootUserClient::executeStreams(IOBufferMemoryDescriptor **snap)
 				uint32_t src = 0, dst = 0;
 				uint64_t sx = 0, sy = 0, w = 0, h = 0, dx = 0, dy = 0;
 				uint16_t lv[4] = { 0, 0, 0, 0 };
-				char key[16];
+				uint64_t sbase = 0, dbase = 0;
 				IOBufferMemoryDescriptor *sb, *db;
 
 				memcpy(&src, p + off + 8, 4);
@@ -1247,38 +1915,43 @@ IOSurfaceRootUserClient::executeStreams(IOBufferMemoryDescriptor **snap)
 					memcpy(&dx, p + off + 0x40, 8);
 					memcpy(&dy, p + off + 0x48, 8);
 					memcpy(lv, p + off + 0x58, sizeof(lv));
-				} else if (src < PD_MAX_OBJ) {
-					w = fTexW[src];
-					h = fTexH[src];
+				} else {
+					w = texInfo(texSlot(src)).w;
+					h = texInfo(texSlot(src)).h;
 				}
-				snprintf(key, sizeof(key), "%u", src);
-				sb = lookupBuffer(key);
-				snprintf(key, sizeof(key), "%u", dst);
-				db = lookupBuffer(key);
-				if (sb != NULL && db != NULL && src < PD_MAX_OBJ && dst < PD_MAX_OBJ && fTexW[src] != 0 && fTexW[dst] != 0) {
-					// Level n of a packed chain starts after levels 0..n-1
-					uint64_t so = 0, doff = 0;
-					uint32_t sw = fTexW[src], sh = fTexH[src], dw = fTexW[dst], dh = fTexH[dst];
+				sb = texMemory(src, &sbase);
+				db = texMemory(dst, &dbase);
+				if (sb != NULL && db != NULL && texInfo(texSlot(src)).w != 0 && texInfo(texSlot(dst)).w != 0) {
+					// each side in its own format and row pitch: copied as packed BGRA8 rows, a half-float or
+					// padded surface source moved half a row at the wrong pitch (black backdrops)
+					uint32_t sbpp = pdTexBpp(texFmt(src, sb->getLength())), dbpp = pdTexBpp(texFmt(dst, db->getLength()));
+					uint32_t ss = texSlot(src), ds = texSlot(dst);
+					uint32_t sw = texInfo(ss).w, sh = texInfo(ss).h, dw = texInfo(ds).w, dh = texInfo(ds).h;
+					uint64_t so = sbase, doff = dbase, spitch = texPitch(src, sbpp), dpitch = texPitch(dst, dbpp);
 
+					// level n of a packed chain starts after levels 0..n-1 (after the texture's own offset)
 					for (uint16_t l = 0; l < lv[1] && (sw > 1 || sh > 1); l++) {
-						so += (uint64_t)sw * sh * 4; sw = sw > 1 ? sw / 2 : 1; sh = sh > 1 ? sh / 2 : 1;
+						so += spitch * sh; sw = sw > 1 ? sw / 2 : 1; sh = sh > 1 ? sh / 2 : 1; spitch = (uint64_t)sw * sbpp;
 					}
 					for (uint16_t l = 0; l < lv[3] && (dw > 1 || dh > 1); l++) {
-						doff += (uint64_t)dw * dh * 4; dw = dw > 1 ? dw / 2 : 1; dh = dh > 1 ? dh / 2 : 1;
+						doff += dpitch * dh; dw = dw > 1 ? dw / 2 : 1; dh = dh > 1 ? dh / 2 : 1; dpitch = (uint64_t)dw * dbpp;
 					}
-					if (w <= sw && sx <= sw - w && h <= sh && sy <= sh - h && w <= dw && dx <= dw - w && h <= dh &&
-					    dy <= dh - h && so + (uint64_t)sw * sh * 4 <= sb->getLength() &&
-					    doff + (uint64_t)dw * dh * 4 <= db->getLength()) {
+					if (sbpp == dbpp && w <= sw && sx <= sw - w && h <= sh && sy <= sh - h && w <= dw && dx <= dw - w &&
+					    h <= dh && dy <= dh - h && h != 0 && so + spitch * (sy + h - 1) + (sx + w) * sbpp <= sb->getLength() &&
+					    doff + dpitch * (dy + h - 1) + (dx + w) * dbpp <= db->getLength()) {
 						for (uint64_t y = 0; y < h; y++) {
-							memcpy((uint8_t *)db->getBytesNoCopy() + doff + ((dy + y) * dw + dx) * 4,
-							    (const uint8_t *)sb->getBytesNoCopy() + so + ((sy + y) * sw + sx) * 4, w * 4);
+							memcpy((uint8_t *)db->getBytesNoCopy() + doff + (dy + y) * dpitch + dx * dbpp,
+							    (const uint8_t *)sb->getBytesNoCopy() + so + (sy + y) * spitch + sx * sbpp, w * sbpp);
 						}
+					} else if (h != 0) {
+						IOLog("PDIOSurface: %s copyTexture %u (%ux%u, %u B/px) -> %u (%ux%u, %u B/px) %llux%llu rejected\n", fTag,
+						    src, sw, sh, sbpp, dst, dw, dh, dbpp, (unsigned long long)w, (unsigned long long)h);
 					}
 				}
 			} else if (op == 0x12c && clen >= 0x50) {
-				// copyFromBuffer:...toTexture: rows of a BGRA8 source into the texture
+				// copyFromBuffer:...toTexture: rows of the source into the texture, in its format
 				uint32_t src, dst;
-				uint64_t soff, bpr, w, h, ox, oy;
+				uint64_t soff, bpr, w, h, ox, oy, tbase = 0;
 				char key[16];
 				IOBufferMemoryDescriptor *sb, *tex;
 
@@ -1292,23 +1965,26 @@ IOSurfaceRootUserClient::executeStreams(IOBufferMemoryDescriptor **snap)
 				memcpy(&oy, p + off + 0x48, 8);
 				snprintf(key, sizeof(key), "%u", src);
 				sb = lookupBuffer(key);
-				snprintf(key, sizeof(key), "%u", dst);
-				tex = lookupBuffer(key);
-				if (sb != NULL && tex != NULL && dst < PD_MAX_OBJ && fTexW[dst] != 0 && w <= fTexW[dst] &&
-				    ox <= fTexW[dst] - w && h <= fTexH[dst] && oy <= fTexH[dst] - h && bpr >= w * 4 &&
-				    soff <= sb->getLength() && h * bpr <= sb->getLength() - soff) {
+				tex = texMemory(dst, &tbase);
+				uint32_t tbpp = tex != NULL ? pdTexBpp(texFmt(dst, tex->getLength())) : 4, ds = texSlot(dst);
+				uint64_t tpitch = texPitch(dst, tbpp);
+
+				if (sb != NULL && tex != NULL && texInfo(ds).w != 0 && w <= texInfo(ds).w &&
+				    ox <= texInfo(ds).w - w && h <= texInfo(ds).h && oy <= texInfo(ds).h - h && bpr >= w * tbpp &&
+				    soff <= sb->getLength() && h * bpr <= sb->getLength() - soff && h != 0 &&
+				    tbase + tpitch * (oy + h - 1) + (ox + w) * tbpp <= tex->getLength()) {
 					for (uint64_t y = 0; y < h; y++) {
 						const uint8_t *row = (const uint8_t *)sb->getBytesNoCopy() + soff + y * bpr;
 
-						memcpy((uint8_t *)tex->getBytesNoCopy() + ((oy + y) * fTexW[dst] + ox) * 4, row, w * 4);
+						memcpy((uint8_t *)tex->getBytesNoCopy() + tbase + (oy + y) * tpitch + ox * tbpp, row, w * tbpp);
 					}
 				} else {
 					IOLog("PDIOSurface: %s copyBufferToTexture %u -> %u rejected\n", fTag, src, dst);
 				}
 			} else if (op == 0x12e && clen >= 0x58) {
-				// copyFromTexture:...toBuffer: BGRA8 rows out of the texture
+				// copyFromTexture:...toBuffer: the texture's rows out, in its format
 				uint32_t src, dst;
-				uint64_t ox, oy, w, h, doff, bpr;
+				uint64_t ox, oy, w, h, doff, bpr, tbase = 0;
 				char key[16];
 				IOBufferMemoryDescriptor *tex, *db;
 
@@ -1320,16 +1996,19 @@ IOSurfaceRootUserClient::executeStreams(IOBufferMemoryDescriptor **snap)
 				memcpy(&h, p + off + 0x30, 8);
 				memcpy(&doff, p + off + 0x40, 8);
 				memcpy(&bpr, p + off + 0x48, 8);
-				snprintf(key, sizeof(key), "%u", src);
-				tex = lookupBuffer(key);
+				tex = texMemory(src, &tbase);
 				snprintf(key, sizeof(key), "%u", dst);
 				db = lookupBuffer(key);
-				if (tex != NULL && db != NULL && src < PD_MAX_OBJ && fTexW[src] != 0 && w <= fTexW[src] &&
-				    ox <= fTexW[src] - w && h <= fTexH[src] && oy <= fTexH[src] - h && bpr >= w * 4 &&
-				    doff <= db->getLength() && h * bpr <= db->getLength() - doff) {
+				uint32_t tbpp = tex != NULL ? pdTexBpp(texFmt(src, tex->getLength())) : 4, ss = texSlot(src);
+				uint64_t tpitch = texPitch(src, tbpp);
+
+				if (tex != NULL && db != NULL && texInfo(ss).w != 0 && w <= texInfo(ss).w &&
+				    ox <= texInfo(ss).w - w && h <= texInfo(ss).h && oy <= texInfo(ss).h - h && bpr >= w * tbpp &&
+				    doff <= db->getLength() && h * bpr <= db->getLength() - doff && h != 0 &&
+				    tbase + tpitch * (oy + h - 1) + (ox + w) * tbpp <= tex->getLength()) {
 					for (uint64_t y = 0; y < h; y++) {
 						memcpy((uint8_t *)db->getBytesNoCopy() + doff + y * bpr,
-						    (const uint8_t *)tex->getBytesNoCopy() + ((oy + y) * fTexW[src] + ox) * 4, w * 4);
+						    (const uint8_t *)tex->getBytesNoCopy() + tbase + (oy + y) * tpitch + ox * tbpp, w * tbpp);
 					}
 				} else {
 					IOLog("PDIOSurface: %s copyTextureToBuffer %u -> %u rejected\n", fTag, src, dst);
@@ -1410,12 +2089,12 @@ IOSurfaceRootUserClient::executeStreams(IOBufferMemoryDescriptor **snap)
 					memcpy(&c16, p + off + 16, 2);
 					memcpy(&d16, p + off + 18, 2);
 					a = c16; b = d16;
-					// 0x09 is {prim, index buffer, u16 count, u16 byte offset, instances}. RenderBox's
-					// index buffer holds 0 1 2 3 .. at 0 and quad strips 1 0 2 3 ffff .. at +0x100
+					// 0x09 is {prim, index buffer, u16 count, u16 byte offset, u16 instances, u16 often 0x100}.
+					// RenderBox's index buffer holds 0 1 2 3 .. at 0 and quad strips 1 0 2 3 ffff .. at +0x100
 					if (op == 0x09 && clen >= 0x18) {
-						uint32_t inst = 0;
+						uint16_t inst = 0;
 
-						memcpy(&inst, p + off + 20, 4);
+						memcpy(&inst, p + off + 20, 2);
 						if (inst > 1)
 							instances = inst;
 					}
@@ -1436,31 +2115,52 @@ IOSurfaceRootUserClient::executeStreams(IOBufferMemoryDescriptor **snap)
 				// Hand it to the daemon when every piece is at hand
 				{
 					PDBridgeGuard bridgeGuard;
-					uint32_t vfn = rPipeline < PD_MAX_OBJ ? fRenderVertexFn[rPipeline] : 0;
-					uint32_t ffn = rPipeline < PD_MAX_OBJ ? fRenderFragmentFn[rPipeline] : 0;
+					uint32_t rps = pipeSlot(rPipeline), rto = texSlot(rTarget);
+					uint32_t vfn = pipeInfo(rps).vertexFn, ffn = pipeInfo(rps).fragmentFn;
 					char key[16];
 					IOBufferMemoryDescriptor *tgt;
+					uint64_t tgtOff = 0;
+					const char *missing = NULL;
+					uint32_t missingId = 0;
 
-					snprintf(key, sizeof(key), "%u", rTarget);
-					// a target made on a surface draws into the surface, as its textures read it
-					tgt = rTarget < PD_MAX_OBJ && fTexAlias[rTarget] == 0 && fTexSurf[rTarget] != 0 &&
-					    sSurfaces[fTexSurf[rTarget]].md != NULL ? sSurfaces[fTexSurf[rTarget]].md : lookupBuffer(key);
-					if (!(sBridge != NULL && shader(vfn) != NULL && shader(ffn) != NULL && tgt != NULL &&
-					    rTarget < PD_MAX_OBJ && fTexW[rTarget] != 0 && fTexH[rTarget] != 0 && (prim == 3 || prim == 4))) {
-						IOLog("PDIOSurface: draw skipped, pipeline %u target %u prim %u incomplete\n", rPipeline, rTarget, prim);
+					// a target made on a surface draws into the surface, one in a heap into its part of the heap
+					tgt = texMemory(rTarget, &tgtOff);
+					if (sBridge == NULL) {
+						missing = "no shader daemon";
+					} else if (shader(vfn) == NULL) {
+						missing = "vertex function unknown:"; missingId = vfn;
+					} else if (ffn == 0) {
+						missing = "pipeline has no fragment function";
+					} else if (shader(ffn) == NULL) {
+						missing = "fragment function unknown:"; missingId = ffn;
+					} else if (rTarget == 0) {
+						missing = "no colour attachment 0";
+					} else if (texInfo(rto).w == 0 || texInfo(rto).h == 0) {
+						missing = "target size unknown";
+					} else if (tgt == NULL) {
+						missing = "target memory unknown, alias"; missingId = texInfo(rto).alias;
+					} else if (prim > 4) {
+						missing = "primitive not a point, line or triangle type";
+					}
+					if (missing != NULL) {
+						IOLog("PDIOSurface: draw skipped, pipeline %u target %u prim %u incomplete: %s %u\n", rPipeline,
+						    rTarget, prim, missing, missingId);
 					} else if (!pdBridgeIdle(2000)) {
 						IOLog("PDIOSurface: draw skipped, shader daemon busy or absent\n");
 					} else {
 						PDBridgeHeader *h = (PDBridgeHeader *)sBridge->getBytesNoCopy();
 						uint8_t *base = (uint8_t *)h;
 						PDDrawRequest *r = (PDDrawRequest *)(base + PD_DRAW_REQ);
-						uint32_t pos = PD_DRAW_DATA, tw = fTexW[rTarget], th = fTexH[rTarget];
+						uint32_t pos = PD_DRAW_DATA, tw = texInfo(rto).w, th = texInfo(rto).h;
 						uint32_t tfmt = texFmt(rTarget, tgt->getLength());
 						uint32_t tbpr = tw * pdTexBpp(tfmt);
 						uint64_t tbytes = (uint64_t)tbpr * th;
+						uint64_t rtOff[4] = { 0, 0, 0, 0 };	// where attachments 1-3 start in their memory
 
-						if (tbytes > tgt->getLength()) {
-							IOLog("PDIOSurface: draw target %u (%ux%u) is larger than its buffer\n", rTarget, tw, th);
+						if (tgtOff > tgt->getLength() || tbytes > tgt->getLength() - tgtOff) {
+							IOLog("PDIOSurface: draw target %u (%ux%u fmt %u) is larger than its buffer: off 0x%llx of 0x%llx, alias %u surf %u\n",
+							    rTarget, tw, th, tfmt, (unsigned long long)tgtOff, (unsigned long long)tgt->getLength(),
+							    texInfo(rto).alias, texInfo(rto).surf);
 						} else if (h->status == 0x44525652 && h->state == 0 && tbytes <= PD_BRIDGE_BYTES / 2) {
 							bzero(r, sizeof(*r));
 							r->vfn = shaderKey(vfn); r->ffn = shaderKey(ffn);
@@ -1487,32 +2187,34 @@ IOSurfaceRootUserClient::executeStreams(IOBufferMemoryDescriptor **snap)
 							}
 							// Fragment textures, in the format the texture request named
 							for (uint32_t ti = 0; ti < 16; ti++) {
-								uint32_t id = fTex[ti];
+								uint32_t id = fTex[ti], o = texSlot(id);
 								IOBufferMemoryDescriptor *tmd;
 								uint32_t w, hgt, fmt, bpr;
 								uint64_t bytes, toff;
 
 								if (id == 0) continue;
-								if (id >= PD_MAX_OBJ || fTexW[id] == 0) continue;
-								// a view or buffer texture reads the memory it was made on, never a buffer
-								// left under its reused id
-								snprintf(key, sizeof(key), "%u", fTexAlias[id] != 0 ? fTexAlias[id] : id);
-								// a texture made on a surface reads the surface, never a buffer left under its reused id
-								tmd = fTexAlias[id] == 0 && fTexSurf[id] != 0 && sSurfaces[fTexSurf[id]].md != NULL ?
-								    sSurfaces[fTexSurf[id]].md : lookupBuffer(key);
-								if (tmd == NULL) continue;
-								w = fTexW[id]; hgt = fTexH[id];
+								if (texInfo(o).w == 0) {
+									IOLog("PDIOSurface: draw texture slot %u id %u dropped, size unknown\n", ti, id);
+									continue;
+								}
+								// a view, buffer or heap texture reads the memory it was made on (from its offset),
+								// a surface texture the surface: never a buffer left under its reused id
+								tmd = texMemory(id, &toff);
+								if (tmd == NULL) {
+									IOLog("PDIOSurface: draw texture slot %u id %u dropped, memory unknown, alias %u surf %u\n", ti, id,
+									    texInfo(o).alias, texInfo(o).surf);
+									continue;
+								}
+								w = texInfo(o).w; hgt = texInfo(o).h;
 								fmt = texFmt(id, tmd->getLength());
-								// a texture on a buffer starts at its offset
-								toff = fTexAlias[id] != 0 ? fTexOff[id] : 0;
 								bpr = w * pdTexBpp(fmt);
-								if (fTexBpr[id] >= bpr && fTexBpr[id] < 0x10000) {
-									bpr = fTexBpr[id];
+								if (texInfo(o).bpr >= bpr && texInfo(o).bpr < 0x10000) {
+									bpr = texInfo(o).bpr;
 								}
 								// A surface pads its rows: take its own pitch
-								if (fTexSurf[id] != 0 && sSurfaces[fTexSurf[id]].bytesPerRow >= bpr &&
-								    sSurfaces[fTexSurf[id]].bytesPerRow < 0x10000) {
-									bpr = (uint32_t)sSurfaces[fTexSurf[id]].bytesPerRow;
+								if (texInfo(o).surf != 0 && sSurfaces[texInfo(o).surf].bytesPerRow >= bpr &&
+								    sSurfaces[texInfo(o).surf].bytesPerRow < 0x10000) {
+									bpr = (uint32_t)sSurfaces[texInfo(o).surf].bytesPerRow;
 								}
 								bytes = (uint64_t)bpr * hgt;
 								// the last row needs only its pixels: an offset texture may end short of a full pitch
@@ -1520,7 +2222,9 @@ IOSurfaceRootUserClient::executeStreams(IOBufferMemoryDescriptor **snap)
 								    toff + (uint64_t)bpr * (hgt - 1) + (uint64_t)w * pdTexBpp(fmt) <= tmd->getLength())
 									bytes = tmd->getLength() - toff;
 								if (toff + bytes > tmd->getLength() || bytes > 0x2000000 || pos + bytes > PD_BRIDGE_BYTES / 2) {
-									IOLog("PDIOSurface: draw texture %u (%ux%u) does not fit\n", id, w, hgt);
+									IOLog("PDIOSurface: draw texture %u (%ux%u bpr %u) does not fit: off 0x%llx of 0x%llx, alias %u\n",
+									    id, w, hgt, bpr, (unsigned long long)toff, (unsigned long long)tmd->getLength(),
+									    texInfo(o).alias);
 									continue;
 								}
 								r->ftex[ti].id = id; r->ftex[ti].off = pos; r->ftex[ti].w = w; r->ftex[ti].h = hgt;
@@ -1530,10 +2234,10 @@ IOSurfaceRootUserClient::executeStreams(IOBufferMemoryDescriptor **snap)
 							}
 							r->prim = prim; r->count = a; r->indexed = (op == 0x07 || op == 0x09 || op == 0x06);
 							for (uint32_t si = 0; si < 16; si++) {
-								r->samp[si] = fSamp[si] < PD_MAX_OBJ ? fSampFlags[fSamp[si]] : 0;
+								r->samp[si] = fSampMap.at(sampSlot(fSamp[si]));
 							}
 							r->instances = instances > 4096 ? 4096 : instances;
-							r->pad0 = rPipeline < PD_MAX_OBJ ? fPipeBlend[rPipeline] : 0;   // blend state for the daemon
+							r->pad0 = pipeInfo(rps).blend;   // blend state for the daemon
 							if ((op == 0x07 || op == 0x09 || op == 0x06)) {
 								IOBufferMemoryDescriptor *imd;
 
@@ -1558,7 +2262,7 @@ IOSurfaceRootUserClient::executeStreams(IOBufferMemoryDescriptor **snap)
 								}
 							}
 							r->targetOff = pos; r->tw = tw; r->th = th; r->tbpr = tbpr; r->tfmt = tfmt;
-							memcpy(base + pos, tgt->getBytesNoCopy(), tbytes);
+							memcpy(base + pos, (const uint8_t *)tgt->getBytesNoCopy() + tgtOff, tbytes);
 							// attachments 1-3 after the target, in their own formats
 							{
 								uint32_t apos = (uint32_t)((pos + tbytes + 63) & ~63ULL);
@@ -1576,53 +2280,103 @@ IOSurfaceRootUserClient::executeStreams(IOBufferMemoryDescriptor **snap)
 										amd = fAttScratch[k];
 										aw = tw; ah = th; afmt = 1;
 									} else {
-										if (fTexW[aid] == 0 || fTexH[aid] == 0) continue;
-										snprintf(key, sizeof(key), "%u", aid);
-										amd = fTexAlias[aid] == 0 && fTexSurf[aid] != 0 && sSurfaces[fTexSurf[aid]].md != NULL ?
-										    sSurfaces[fTexSurf[aid]].md : lookupBuffer(key);
+										uint32_t ao = texSlot(aid);
+
+										if (texInfo(ao).w == 0 || texInfo(ao).h == 0) continue;
+										amd = texMemory(aid, &rtOff[k]);
 										if (amd == NULL) continue;
-										aw = fTexW[aid]; ah = fTexH[aid];
+										aw = texInfo(ao).w; ah = texInfo(ao).h;
 										afmt = texFmt(aid, amd->getLength());
 									}
 									if (amd == NULL) continue;
 									abpr = aw * pdTexBpp(afmt);
 									abytes = (uint64_t)abpr * ah;
-									if (abytes > amd->getLength() || apos + abytes > PD_BRIDGE_BYTES) continue;
+									if (rtOff[k] > amd->getLength() || abytes > amd->getLength() - rtOff[k] ||
+									    apos + abytes > PD_BRIDGE_BYTES) continue;
 									r->rt[k].id = aid; r->rt[k].off = apos; r->rt[k].w = aw; r->rt[k].h = ah;
 									r->rt[k].bpr = abpr; r->rt[k].fmt = afmt;
-									r->rtBlend[k] = rPipeline < PD_MAX_OBJ ? fPipeBlendRT[rPipeline][k] : 0;
-									memcpy(base + apos, amd->getBytesNoCopy(), abytes);
+									r->rtBlend[k] = pipeInfo(rps).blendRT[k];
+									memcpy(base + apos, (const uint8_t *)amd->getBytesNoCopy() + rtOff[k], abytes);
 									apos = (uint32_t)((apos + abytes + 63) & ~63ULL);
 								}
 							}
 							memcpy(r->viewport, viewport, sizeof(viewport));
 							if (r->viewport[2] == 0) { r->viewport[2] = tw; r->viewport[3] = th; }
 							h->serial = ++sBridgeSerial; h->functionID = r->vfn; h->pipelineID = rPipeline; h->kind = 2;
+							pdHoldMemory(&tgt, 1, true);
 							pdBridgeRing(h);
-							pdBridgeWait(h, 60000);
+							// cold Vulkan pipelines can take over a minute, retain the first frame.
+							pdBridgeWait(h, 180000);
 							__sync_synchronize();
 							if (h->state == 2) {
-								memcpy(tgt->getBytesNoCopy(), base + pos, tbytes);
+								memcpy((uint8_t *)tgt->getBytesNoCopy() + tgtOff, base + pos, tbytes);
 								for (uint32_t k = 1; k < 4; k++) {
 									IOBufferMemoryDescriptor *amd;
+									uint64_t abytes = (uint64_t)r->rt[k].bpr * r->rt[k].h, aoff = 0;
 
 									if (r->rt[k].w == 0) continue;
-									snprintf(key, sizeof(key), "%u", r->rt[k].id);
-									amd = rScratch[k] ? fAttScratch[k] :
-									    fTexAlias[r->rt[k].id] == 0 && fTexSurf[r->rt[k].id] != 0 &&
-									    sSurfaces[fTexSurf[r->rt[k].id]].md != NULL ? sSurfaces[fTexSurf[r->rt[k].id]].md : lookupBuffer(key);
-									if (amd != NULL && (uint64_t)r->rt[k].bpr * r->rt[k].h <= amd->getLength())
-										memcpy(amd->getBytesNoCopy(), base + r->rt[k].off, (uint64_t)r->rt[k].bpr * r->rt[k].h);
+									amd = rScratch[k] ? fAttScratch[k] : texMemory(r->rt[k].id, &aoff);
+									if (amd != NULL && aoff <= amd->getLength() && abytes <= amd->getLength() - aoff)
+										memcpy((uint8_t *)amd->getBytesNoCopy() + aoff, base + r->rt[k].off, abytes);
 								}
 							} else {
 								IOLog("PDIOSurface: draw serial %u failed, state %u: %s\n", h->serial, h->state, h->error);
 							}
-							h->state = 0; h->kind = 0;
+							pdHoldMemory(&tgt, 1, false);
+							pdBridgeRelease(h);
 						} else {
 							IOLog("PDIOSurface: draw skipped, target %u (%ux%u) too large or daemon busy\n", rTarget, tw, th);
 						}
 					}
 				}
+			} else if (op == 0x9d && clen >= 0x1c) {
+				// setTileBuffer(s) and setTileBytes (staged in a buffer): {index, count, ids, u64 offsets}
+				uint32_t index = 0, n = 0;
+
+				memcpy(&index, p + off + 8, 4);
+				memcpy(&n, p + off + 12, 4);
+				for (uint32_t k = 0; k < n && index + k < PD_CS_BUFS && 16 + 4 * n + 8 * (k + 1) <= clen; k++) {
+					memcpy(&tBuf[index + k], p + off + 16 + 4 * k, 4);
+					memcpy(&tOff[index + k], p + off + 16 + 4 * n + 8 * k, 8);
+				}
+			} else if (op == 0x9e && clen >= 0x14) {
+				// setTileBufferOffset {index, u64 offset}
+				uint32_t index = 0;
+
+				memcpy(&index, p + off + 8, 4);
+				if (index < PD_CS_BUFS)
+					memcpy(&tOff[index], p + off + 12, 8);
+			} else if ((op == 0x9f || op == 0xa0 || op == 0xa1) && clen >= 0x14) {
+				// tile sampler (0x9f, 0xa0 with LOD clamps after it) and texture (0xa1): {index, count, ids}
+				uint32_t index = 0, n = 0, *dst = op == 0xa1 ? tTex : tSamp;
+
+				memcpy(&index, p + off + 8, 4);
+				memcpy(&n, p + off + 12, 4);
+				for (uint32_t k = 0; k < n && index + k < 16 && 16 + 4 * (k + 1) <= clen; k++) {
+					memcpy(&dst[index + k], p + off + 16 + 4 * k, 4);
+				}
+			} else if (op == 0x9c && clen >= 0x1c) {
+				// setThreadgroupMemoryLength:offset:atIndex: {u64 length, u64 offset, u32 index}
+				uint64_t len = 0;
+				uint32_t index = 0;
+
+				memcpy(&len, p + off + 8, 8);
+				memcpy(&index, p + off + 0x18, 4);
+				if (index < 4)
+					tTg[index] = len < 0x10000 ? (uint32_t)len : 0x10000;
+			} else if (op == 0x9b && clen >= 0x20) {
+				// dispatchThreadsPerTile {u64 width, height, depth}: the tile pipeline set by 0x74
+				uint64_t tpt[3];
+
+				memcpy(tpt, p + off + 8, sizeof(tpt));
+				for (uint32_t k = 0; k < PD_CS_BUFS; k++) {
+					markUsed(tBuf[k], false);
+				}
+				for (uint32_t k = 0; k < 16; k++) {
+					markUsed(tTex[k], true);
+				}
+				markUsed(rTarget, true);
+				runTile(rPipeline, tBuf, tOff, tTex, tSamp, tTg, rTarget, rAtt, rScratch, tpt);
 			} else if (op == 0x75) {
 				// scissor, always the full target so far
 			} else {

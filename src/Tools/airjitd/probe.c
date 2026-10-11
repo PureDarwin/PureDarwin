@@ -50,9 +50,10 @@ void pd_probe_begin(struct pd_probe *p, const struct PDDrawRequest *r, uint32_t 
 
 void pd_probe_triangle(struct pd_probe *p, uint32_t tri, const float *sx, const float *sy, const float vpos[3][4],
                        const float *var0, unsigned nvar, float area) {
-  if (p->r->count > 12)
+  if (p->r->count > 12 || p->tris >= PD_TRI_MAX_LOGS)
     return;
 
+  p->tris++;
   logv("AIRJITD:   tri %u: (%.1f,%.1f) (%.1f,%.1f) (%.1f,%.1f) clip w %.3f %.3f %.3f var0 %.3f %.3f %.3f %.3f "
          "area %.1f",
          tri / 3, sx[0], sy[0], sx[1], sy[1], sx[2], sy[2], vpos[0][3], vpos[1][3], vpos[2][3],

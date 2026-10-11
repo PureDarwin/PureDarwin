@@ -222,6 +222,15 @@ IOPortTransportStateDisplayPort::newUserClient(task_t owningTask, void *security
 OSDefineMetaClassAndStructors(PDDisplayNub, IOService);
 OSDefineMetaClassAndStructors(IOMobileFramebuffer, IOService);
 
+static void
+pdSetDisplayNumber(OSDictionary *dict, const char *key, uint32_t value)
+{
+	OSNumber *number = OSNumber::withNumber(value, 32);
+	if (dict != NULL && number != NULL)
+		dict->setObject(key, number);
+	OSSafeReleaseNULL(number);
+}
+
 bool
 IOMobileFramebuffer::start(IOService *provider)
 {
@@ -295,6 +304,28 @@ IOMobileFramebuffer::start(IOService *provider)
 		OSDictionary *d = OSDynamicCast(OSDictionary, obj);
 
 		if (d != NULL) {
+			uint32_t w, h;
+			pdDisplayGeometry(&w, &h);
+			pdSetDisplayNumber(d, "DisplayWidth", w);
+			pdSetDisplayNumber(d, "DisplayHeight", h);
+			OSDictionary *attrs = OSDynamicCast(OSDictionary, d->getObject("DisplayAttributes"));
+			pdSetDisplayNumber(attrs, "NativeFormatHorizontalPixels", w);
+			pdSetDisplayNumber(attrs, "NativeFormatVerticalPixels", h);
+			uint32_t aspect = (uint32_t)(((uint64_t)w << 16) / h);
+			pdSetDisplayNumber(attrs, "PreciseAspectRatio", aspect);
+			OSArray *timings = OSDynamicCast(OSArray, d->getObject("TimingElements"));
+			OSDictionary *timing = timings ? OSDynamicCast(OSDictionary, timings->getObject(0)) : NULL;
+			if (timing != NULL) {
+				pdSetDisplayNumber(OSDynamicCast(OSDictionary, timing->getObject("HorizontalAttributes")), "Active", w);
+				pdSetDisplayNumber(OSDynamicCast(OSDictionary, timing->getObject("VerticalAttributes")), "Active", h);
+				pdSetDisplayNumber(timing, "PreciseAspectRatio", aspect);
+				// the public registry includes this packed counterpart to the timing keys.
+				uint64_t timingData[10] = { 0, w, 0, 278134784, 0, h, 0, 3932160, 0, 13 };
+				OSData *data = OSData::withBytes(timingData, sizeof(timingData));
+				if (data != NULL)
+					timing->setObject("ElementData", data);
+				OSSafeReleaseNULL(data);
+			}
 			OSCollectionIterator *it = OSCollectionIterator::withCollection(d);
 			OSSymbol *k;
 
@@ -346,7 +377,8 @@ PDDisplayNub::publishOne(IOService *owner, const char *name, const char *compati
 	nub->setProperty("display-type", dtype);
 	// WindowServer reads the canvas size from the display node it paired with the framebuffer
 	{
-		uint32_t w = 800, h = 600;
+		uint32_t w, h;
+		pdDisplayGeometry(&w, &h);
 		OSData *dw = OSData::withBytes(&w, sizeof(w));
 		OSData *dh = OSData::withBytes(&h, sizeof(h));
 

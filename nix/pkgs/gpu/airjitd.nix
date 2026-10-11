@@ -13,10 +13,15 @@
 stdenv.mkDerivation {
   pname = "puredarwin-airjitd";
   version = "0.1";
-  src = ../../../src/Tools/airjitd;
+  # air2spv.h carries decoders both the CPU path and the Vulkan executor use
+  src = lib.fileset.toSource {
+    root = ../../../src/Tools;
+    fileset = lib.fileset.unions [ ../../../src/Tools/airjitd ../../../src/Tools/air2spv/air2spv.h ];
+  };
 
   buildPhase = ''
     runHook preBuild
+    cd airjitd
     SDK="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
     CC="${darwinCrossToolchain}/bin/${targetTriple}-clang"
     CFLAGS="-target arm64-apple-macos14 -O1 -isysroot $SDK -I${llvm}/usr/include -Wall"

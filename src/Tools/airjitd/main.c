@@ -8,6 +8,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "dump.h"
+#include "exec.h"
 #include "airjitd.h"
 #include "backend.h"
 #include "bridge.h"
@@ -15,6 +17,10 @@
 #include "metallib.h"
 #include "raster.h"
 #include "stage.h"
+#include "tile.h"
+#ifdef AIRJITD_VULKAN
+#include "vulkan/vk.h"
+#endif
 
 static const struct pd_backend *backend = &pd_llvm_backend;
 
@@ -161,13 +167,14 @@ static int job_draw(struct pd_job *j) {
 
   if (r->vfn >= PD_MAX_STAGES || r->ffn >= PD_MAX_STAGES)
     rc = PD_ERR_BAD_STAGE;
-  else if ((rc = stage_ready(r->vfn, j->base + r->vmOff, r->vmSize, "vertex stage")) == 0)
-    rc = stage_ready(r->ffn, j->base + r->fmOff, r->fmSize, "fragment stage");
-
-  // a fault while drawing is blamed on the fragment stage, which runs per pixel
-  if (!rc) {
+  else {
+    // a fault while drawing is blamed on the fragment stage, which runs per pixel
     job_stage = r->ffn;
-    rc = pd_run_draw(r, j->base, j->size, j->h->serial);
+    pd_cap_draw(r, j->base, j->size, j->h->serial, 0);
+    rc = pd_exec_draw(r, j->base, j->size, j->h->serial, stage_ready);
+    pd_cap_draw(r, j->base, j->size, j->h->serial, 1);
+    if (!rc)
+      pd_dump_draw(r, j->base, j->size, j->h->serial);
   }
 
   logv("AIRJITD: draw %u: prim %u count %u %s, stages %u/%u, target %ux%u fmt %u -> %d", j->h->serial, r->prim,
@@ -177,17 +184,39 @@ static int job_draw(struct pd_job *j) {
 
 static int job_compute(struct pd_job *j) {
   struct PDComputeRequest *r = (struct PDComputeRequest *)(j->base + PD_BRIDGE_REQ);
-  int rc = stage_ready(r->fn, j->base + r->mOff, r->mSize, "kernel");
+  int rc = r->fn >= PD_MAX_STAGES ? PD_ERR_BAD_STAGE : 0;
 
   if (!rc) {
     job_stage = r->fn;
-    rc = pd_run_compute(r, j->base, j->size);
+    pd_cap_compute(r, j->base, j->size, j->h->serial, 0);
+    rc = pd_exec_compute(r, j->base, j->size, stage_ready);
+    pd_cap_compute(r, j->base, j->size, j->h->serial, 1);
+    if (!rc)
+      pd_dump_compute(r, j->base, j->size, j->h->serial);
   }
 
   logv("AIRJITD: compute %u: kernel %u grid %llux%llux%llu (%s) tpg %llux%llux%llu -> %d", j->h->serial, r->fn,
          (unsigned long long)r->grid[0], (unsigned long long)r->grid[1], (unsigned long long)r->grid[2],
          r->threads ? "threads" : "groups", (unsigned long long)r->tpg[0], (unsigned long long)r->tpg[1],
          (unsigned long long)r->tpg[2], rc);
+  return rc;
+}
+
+static int job_tile(struct pd_job *j) {
+  struct PDTileRequest *r = (struct PDTileRequest *)(j->base + PD_BRIDGE_REQ);
+  int rc = r->fn >= PD_MAX_STAGES ? PD_ERR_BAD_STAGE : 0;
+
+  if (!rc) {
+    job_stage = r->fn;
+    pd_cap_tile(r, j->base, j->size, j->h->serial, 0);
+    rc = pd_exec_tile(r, j->base, j->size, stage_ready);
+    pd_cap_tile(r, j->base, j->size, j->h->serial, 1);
+    if (!rc)
+      pd_dump_tile(r, j->base, j->size, j->h->serial);
+  }
+
+  logv("AIRJITD: tile %u: kernel %u, %ux%u threads on %ux%u tiles, attachment 0 %ux%u fmt %u -> %d", j->h->serial,
+       r->fn, r->tpt[0], r->tpt[1], r->tilesX, r->tilesY, r->rt[0].w, r->rt[0].h, r->rt[0].fmt, rc);
   return rc;
 }
 
@@ -233,6 +262,7 @@ static const struct {
   { PD_JOB_INTROSPECT, job_introspect },
   { PD_JOB_DRAW, job_draw },
   { PD_JOB_COMPUTE, job_compute },
+  { PD_JOB_TILE, job_tile },
 };
 
 static int run_job(struct pd_job *j) {
@@ -264,8 +294,131 @@ static void finish_job(struct PDBridgeHeader *h, int rc) {
   logmsg("AIRJITD: job %u failed %d", h->serial, rc);
 }
 
+// where jobs ran and how long they took, by kind, logged every 30 s while jobs come in
+static struct {
+  uint32_t n[2][5];
+  uint64_t us[2][5];
+  uint64_t last;
+  int unlogged;
+#ifdef AIRJITD_VULKAN
+  // the Vulkan jobs' time by part, and their submissions, bytes up and back
+  uint64_t translate, pipeline, upload, run, readback, wait, teardown, up, down;
+  uint32_t submits, allocs, tex_hits;
+  uint64_t cached_draw_us;
+  uint32_t cached_draw_n, cached_draw_hist[101];
+#endif
+} stats;
+
+#ifdef AIRJITD_VULKAN
+// distinct reasons the Vulkan executor declined a job, each logged once
+#define PD_REASONS 48
+static struct {
+  char text[96];
+  uint32_t n;
+} reasons[PD_REASONS];
+static unsigned nreasons;
+
+static void count_reason(const char *why) {
+  unsigned k;
+
+  if (stats.cached_draw_n) {
+    uint32_t cumulative = 0, p50 = 0, p95 = 0;
+    uint64_t half = ((uint64_t)stats.cached_draw_n + 1) / 2;
+    uint64_t ninety_five = ((uint64_t)stats.cached_draw_n * 95 + 99) / 100;
+    for (k = 0; k < 101; k++) {
+      cumulative += stats.cached_draw_hist[k];
+      if (!p50 && cumulative >= half) p50 = k + 1;
+      if (!p95 && cumulative >= ninety_five) p95 = k + 1;
+    }
+    logmsg("AIRJITD: cached draws %u avg %llu us, p50 below %u ms p95 below %u ms (101 means overflow)",
+           stats.cached_draw_n, (unsigned long long)(stats.cached_draw_us / stats.cached_draw_n), p50, p95);
+  }
+  for (k = 0; k < nreasons; k++) {
+    if (!strncmp(reasons[k].text, why, sizeof(reasons[k].text) - 1)) {
+      reasons[k].n++;
+      return;
+    }
+  }
+  if (nreasons == PD_REASONS)
+    return;
+  snprintf(reasons[nreasons].text, sizeof(reasons[nreasons].text), "%s", why);
+  reasons[nreasons++].n = 1;
+  logmsg("AIRJITD: vulkan fallback reason %u: %s", nreasons, why);
+}
+#endif
+
+// logged once jobs have run and the queue went quiet, at most every 10 s
+static void log_stats(void) {
+  static const char *const names[5] = { "legacy", "introspect", "draw", "compute", "tile" };
+  uint64_t now = pd_now_us();
+  unsigned k;
+
+  if (!stats.unlogged || now - stats.last < 10000000u)
+    return;
+  stats.last = now, stats.unlogged = 0;
+  for (k = PD_JOB_DRAW; k < 5; k++) {
+    logmsg("AIRJITD: stats %s: vulkan %u jobs %llu ms, cpu %u jobs %llu ms", names[k], stats.n[1][k],
+           (unsigned long long)stats.us[1][k] / 1000, stats.n[0][k], (unsigned long long)stats.us[0][k] / 1000);
+  }
+#ifdef AIRJITD_VULKAN
+  logmsg("AIRJITD: stats vulkan ms: translate %llu pipeline %llu upload %llu run %llu readback %llu wait %llu teardown %llu, "
+         "%u submits %u allocs %u cached textures, %llu KB up %llu KB back",
+         (unsigned long long)stats.translate / 1000, (unsigned long long)stats.pipeline / 1000,
+         (unsigned long long)stats.upload / 1000, (unsigned long long)stats.run / 1000,
+         (unsigned long long)stats.readback / 1000, (unsigned long long)stats.wait / 1000,
+         (unsigned long long)stats.teardown / 1000, stats.submits, stats.allocs, stats.tex_hits, (unsigned long long)stats.up >> 10,
+         (unsigned long long)stats.down >> 10);
+  if (stats.cached_draw_n) {
+    uint32_t cumulative = 0, p50 = 0, p95 = 0;
+    uint64_t half = ((uint64_t)stats.cached_draw_n + 1) / 2;
+    uint64_t ninety_five = ((uint64_t)stats.cached_draw_n * 95 + 99) / 100;
+    for (k = 0; k < 101; k++) {
+      cumulative += stats.cached_draw_hist[k];
+      if (!p50 && cumulative >= half) p50 = k + 1;
+      if (!p95 && cumulative >= ninety_five) p95 = k + 1;
+    }
+    logmsg("AIRJITD: cached draws %u avg %llu us, p50 below %u ms p95 below %u ms (101 means overflow)",
+           stats.cached_draw_n, (unsigned long long)(stats.cached_draw_us / stats.cached_draw_n), p50, p95);
+  }
+  for (k = 0; k < nreasons; k++) {
+    logmsg("AIRJITD: stats fallback %u x%u: %s", k + 1, reasons[k].n, reasons[k].text);
+  }
+#endif
+}
+
+static void count_job(uint32_t kind, uint64_t us) {
+  int vk = pd_exec_on_vulkan && (kind == PD_JOB_DRAW || kind == PD_JOB_COMPUTE || kind == PD_JOB_TILE);
+
+  if (kind >= 5)
+    return;
+#ifdef AIRJITD_VULKAN
+  if (!vk && pd_vk_enabled() && kind >= PD_JOB_DRAW && pd_vk_reason()[0])
+    count_reason(pd_vk_reason());
+#endif
+  stats.n[vk][kind]++, stats.us[vk][kind] += us, stats.unlogged = 1;
+#ifdef AIRJITD_VULKAN
+  if (vk) {
+    // exclude new shader compilation, record only draws reusing their graphics pipeline.
+    if (kind == PD_JOB_DRAW && pd_vk_last.pipeline_cached > 0) {
+      unsigned bucket = us / 1000 < 100 ? (unsigned)(us / 1000) : 100;
+      stats.cached_draw_n++, stats.cached_draw_us += us, stats.cached_draw_hist[bucket]++;
+    }
+    stats.translate += pd_vk_last.translate, stats.pipeline += pd_vk_last.pipeline, stats.upload += pd_vk_last.upload;
+    stats.run += pd_vk_last.run, stats.readback += pd_vk_last.readback, stats.wait += pd_vk_last.wait;
+    stats.teardown += pd_vk_last.teardown, stats.up += pd_vk_last.up_bytes, stats.down += pd_vk_last.down_bytes;
+    stats.submits += pd_vk_last.submits, stats.allocs += pd_vk_last.allocs, stats.tex_hits += pd_vk_last.tex_hits;
+    logv("AIRJITD: vulkan job kind %u %llu us: translate %llu pipeline %llu upload %llu run %llu readback %llu wait %llu, "
+         "%d submits, %llu KB up %llu KB back", kind, (unsigned long long)us, (unsigned long long)pd_vk_last.translate,
+         (unsigned long long)pd_vk_last.pipeline, (unsigned long long)pd_vk_last.upload, (unsigned long long)pd_vk_last.run,
+         (unsigned long long)pd_vk_last.readback, (unsigned long long)pd_vk_last.wait, pd_vk_last.submits,
+         (unsigned long long)pd_vk_last.up_bytes >> 10, (unsigned long long)pd_vk_last.down_bytes >> 10);
+  }
+#endif
+}
+
 // sleeps in the kext until a job is queued, bounded there to 20 ms
 static void wait_for_job(struct pd_job *j) {
+  log_stats();
   if (j->doorbells && IOConnectCallScalarMethod(j->conn, PD_BRIDGE_SEL_WAIT_JOB, NULL, 0, NULL, NULL) == 0)
     return;
 
@@ -312,8 +465,20 @@ static void serve(struct pd_job *j) {
     rc = run_job(j);
     in_job = 0;
     logv("AIRJITD: job %u kind %u took %llu us", h->serial, h->kind, (unsigned long long)(pd_now_us() - t0));
+    count_job(h->kind, pd_now_us() - t0);
     finish_job(h, rc);
     ring_done(j);
+#ifdef AIRJITD_VULKAN
+    // a lost device fails every later submit: exit after this job, launchd starts a daemon with a new one
+    if (pd_vk_device_lost()) {
+      logmsg("AIRJITD: Vulkan device lost, exiting for a fresh daemon");
+      // status 0 tells the kext the daemon is absent, so it skips jobs and does not wait out launchd's restart
+      h->status = 0;
+      *(volatile uint32_t *)((uint8_t *)h + PD_BRIDGE_VERSION_OFF) = 0;
+      __sync_synchronize();
+      exit(75);
+    }
+#endif
   }
 }
 
@@ -341,6 +506,7 @@ static int map_bridge(struct pd_job *j) {
 
   j->conn = conn;
   j->doorbells = 1;
+  pd_log_attach(conn);
   j->h = (struct PDBridgeHeader *)(uintptr_t)address;
   j->base = (uint8_t *)j->h;
   j->size = (uint32_t)size;
@@ -351,12 +517,14 @@ static int map_bridge(struct pd_job *j) {
 int main(int argc, char **argv) {
   struct pd_job j;
 
-  pd_log_verbose = argc > 1 && strcmp(argv[1], "-v") == 0;
+  pd_log_verbose = (argc > 1 && strcmp(argv[1], "-v") == 0) || pd_log_bootarg_verbose();
+  // jobs run on this thread and WindowServer waits on each one: user-interactive keeps it on the P cores
+  int qos = pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
 
   // O_NONBLOCK: a blocking console write would park the daemon mid-job once getty
   // owns the console, and WindowServer with it
   open("/dev/console", O_WRONLY | O_NOCTTY | O_NONBLOCK);
-  logmsg("AIRJITD: starting shader daemon, %s backend", backend->name);
+  logmsg("AIRJITD: starting shader daemon, %s backend, qos user-interactive %s", backend->name, qos == 0 ? "set" : "failed");
   backend->init();
   install_fault_handlers();
 
@@ -368,6 +536,8 @@ int main(int argc, char **argv) {
   }
 
   j.h->state = PD_STATE_IDLE;
+  *(volatile uint32_t *)((uint8_t *)j.h + PD_BRIDGE_VERSION_OFF) = PD_BRIDGE_VERSION;
+  __sync_synchronize();
   j.h->status = PD_DAEMON_READY;
   __sync_synchronize();
   serve(&j);
