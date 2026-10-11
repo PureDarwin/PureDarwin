@@ -537,8 +537,7 @@ window_initialize(struct window *window, const struct window_impl *impl,
 	window->handler = &null_handler;
 	window->view_handler.impl = &view_handler_impl;
 	window->view->window = window;
-	window->view->corner_radius = WINDOW_CORNER_RADIUS;
-	window->view->shadow = WINDOW_SHADOW_BLUR + WINDOW_SHADOW_OFFSET;
+	compositor_apply_window_style(window->view);
 	window->base.motion_throttle_ms = def_motion_throttle_ms;
 	window->base.min_width = 0;
 	window->base.min_height = 0;

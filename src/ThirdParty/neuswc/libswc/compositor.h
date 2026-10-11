@@ -69,6 +69,9 @@ compositor_damage_all(void);
 #define WINDOW_SHADOW_OFFSET 10
 #define WINDOW_SHADOW_ALPHA 90
 
+struct compositor_view;
+void compositor_apply_window_style(struct compositor_view *view);
+
 struct compositor_view {
 	struct view base;
 	struct surface *surface;

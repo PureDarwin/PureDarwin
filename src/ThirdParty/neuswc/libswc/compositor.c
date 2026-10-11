@@ -55,6 +55,20 @@
 #include "window.h"
 
 #include <assert.h>
+#include <stdint.h>
+#if __has_include(<notify.h>)
+#include <notify.h>
+#else
+// libSystem exports notify(3) but this sdk does not ship its header
+#define NOTIFY_STATUS_OK 0
+uint32_t notify_post(const char *name);
+uint32_t notify_register_check(const char *name, int *out_token);
+uint32_t notify_register_file_descriptor(const char *name, int *notify_fd, int flags, int *out_token);
+uint32_t notify_set_state(int token, uint64_t state64);
+uint32_t notify_get_state(int token, uint64_t *state64);
+uint32_t notify_cancel(int token);
+#endif
+#include <unistd.h>
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
@@ -765,6 +779,56 @@ update_extents(struct compositor_view *view)
 	view->border.damaged_border1 = true;
 	view->border.damaged_border2 = true;
 	view->decor.damaged = true;
+}
+
+static void schedule_updates(uint32_t screens);
+
+// Settings turns window rounding and shadows on and off through this notification's state
+#define WINDOW_STYLE_NOTIFICATION "org.puredarwin.WindowServer.windowstyle"
+#define WINDOW_STYLE_SQUARE 0x1
+#define WINDOW_STYLE_FLAT 0x2
+static int window_style_token = -1;
+static uint64_t window_style;
+
+void
+compositor_apply_window_style(struct compositor_view *view)
+{
+	view->corner_radius = (window_style & WINDOW_STYLE_SQUARE) ? 0 : WINDOW_CORNER_RADIUS;
+	view->shadow = (window_style & WINDOW_STYLE_FLAT) ? 0 : WINDOW_SHADOW_BLUR + WINDOW_SHADOW_OFFSET;
+}
+
+static int
+handle_window_style(int fd, uint32_t mask, void *data)
+{
+	struct compositor_view *view;
+	int token;
+
+	while (read(fd, &token, sizeof(token)) == sizeof(token))
+		;
+	if (notify_get_state(window_style_token, &window_style) != NOTIFY_STATUS_OK)
+		return 0;
+	wl_list_for_each(view, &compositor.views, link) {
+		if (!view->window)
+			continue;
+		// damage the old shadow, restyle, then damage the new extents
+		damage_view(view);
+		compositor_apply_window_style(view);
+		update_extents(view);
+		damage_view(view);
+	}
+	schedule_updates(-1);
+	return 0;
+}
+
+static void
+watch_window_style(void)
+{
+	int fd;
+
+	if (notify_register_file_descriptor(WINDOW_STYLE_NOTIFICATION, &fd, 0, &window_style_token) != NOTIFY_STATUS_OK)
+		return;
+	notify_get_state(window_style_token, &window_style);
+	wl_event_loop_add_fd(swc.event_loop, fd, WL_EVENT_READABLE, &handle_window_style, NULL);
 }
 
 static void
@@ -2123,6 +2187,7 @@ compositor_initialize(void)
 		                NULL);
 	}
 
+	watch_window_style();
 	compositor.initialized = true;
 
 	return true;
