@@ -13,6 +13,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 @class NSImage;
 @class NSPasteboard;
 
+@class NSAppearance;
+
 @interface NSColor : NSObject <NSCopying, NSCoding>
 
 + (NSColor *)highlightColor;
@@ -21,6 +23,20 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 + (NSColor *)alternateSelectedControlColor;
 + (NSColor *)controlAccentColor;
+// resolves through the provider against the appearance being drawn
++ (NSColor *)colorWithName:(NSString *)name dynamicProvider:(NSColor *(^)(NSAppearance *appearance))provider;
++ (NSColor *)labelColor;
++ (NSColor *)secondaryLabelColor;
++ (NSColor *)tertiaryLabelColor;
++ (NSColor *)quaternaryLabelColor;
++ (NSColor *)placeholderTextColor;
++ (NSColor *)separatorColor;
++ (NSColor *)linkColor;
++ (NSColor *)underPageBackgroundColor;
++ (NSColor *)selectedContentBackgroundColor;
++ (NSColor *)unemphasizedSelectedContentBackgroundColor;
++ (NSColor *)findHighlightColor;
+
 + (NSColor *)alternateSelectedControlTextColor;
 + (NSColor *)controlColor;
 + (NSColor *)secondarySelectedControlColor;

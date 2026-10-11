@@ -10,6 +10,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 // Reviewed for API completeness against 10.6.
 
+#import <AppKit/NSAppearance.h>
 #import <AppKit/NSResponder.h>
 #import <AppKit/AppKitExport.h>
 #import <AppKit/NSView.h>
@@ -615,6 +616,13 @@ APPKIT_EXPORT NSString *const NSWindowDidEndLiveResizeNotification;
 - (id)platformWindow;
 - (void)addEntriesToDeviceDictionary:(NSDictionary *)entries;
 @end
+
+// the look this window and what it contains draw with, inherited when unset
+@interface NSWindow (NSAppearance) <NSAppearanceCustomization>
+@property(strong) NSAppearance *appearance;
+@property(readonly, strong) NSAppearance *effectiveAppearance;
+@end
+
 
 //private
 APPKIT_EXPORT NSString *const NSWindowWillAnimateNotification;

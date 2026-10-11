@@ -5,6 +5,7 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
+#import <AppKit/NSAppearance.h>
 #import <AppKit/NSGraphicsStyle.h>
 #import <AppKit/NSBezierPath.h>
 #import <AppKit/NSInterfaceTheme.h>
@@ -394,6 +395,10 @@ static NSDictionary *sDimmedMenuTextShadowAttributes = nil;
    }
 }
 
+static BOOL drawingDark(void) {
+   return [[NSAppearance currentDrawingAppearance] _isDark];
+}
+
 // a modern push button: rounded, white with a hairline and a soft drop, the default one in the accent colour
 static void drawModernButton(NSRect rect,NSColor *fill,BOOL outlined) {
    NSRect body=NSInsetRect(rect,0.5,1);
@@ -404,7 +409,7 @@ static void drawModernButton(NSRect rect,NSColor *fill,BOOL outlined) {
    [fill setFill];
    [shape fill];
    if(outlined){
-    [[NSColor colorWithCalibratedWhite:0 alpha:0.16] setStroke];
+    [[NSColor colorWithCalibratedWhite:drawingDark() ? 1 : 0 alpha:drawingDark() ? 0.10 : 0.16] setStroke];
     [shape setLineWidth:0.75];
     [shape stroke];
    }
@@ -418,7 +423,7 @@ static void drawModernButton(NSRect rect,NSColor *fill,BOOL outlined) {
    if(defaulted)
     drawModernButton(rect,[NSColor controlAccentColor],NO);
    else
-    drawModernButton(rect,[NSColor whiteColor],YES);
+    drawModernButton(rect,drawingDark() ? [NSColor colorWithCalibratedWhite:0.40 alpha:1] : [NSColor whiteColor],YES);
 }
 
 -(void)drawPushButtonPressedInRect:(NSRect)rect {
@@ -426,7 +431,7 @@ static void drawModernButton(NSRect rect,NSColor *fill,BOOL outlined) {
                                               inRect:rect])
     return;
 
-   drawModernButton(rect,[NSColor colorWithCalibratedWhite:0.86 alpha:1],YES);
+   drawModernButton(rect,[NSColor colorWithCalibratedWhite:drawingDark() ? 0.50 : 0.86 alpha:1],YES);
 }
 
 -(void)drawPushButtonHighlightedInRect:(NSRect)rect {
@@ -434,7 +439,7 @@ static void drawModernButton(NSRect rect,NSColor *fill,BOOL outlined) {
                                               inRect:rect])
     return;
 
-   drawModernButton(rect,[NSColor colorWithCalibratedWhite:0.9 alpha:1],YES);
+   drawModernButton(rect,[NSColor colorWithCalibratedWhite:drawingDark() ? 0.46 : 0.9 alpha:1],YES);
 }
 
 -(NSSize)sizeOfButtonImage:(NSImage *)image enabled:(BOOL)enabled mixed:(BOOL)mixed {
@@ -627,7 +632,7 @@ static void drawModernButton(NSRect rect,NSColor *fill,BOOL outlined) {
                                               inRect:rect])
     return;
 
-   [[NSColor colorWithCalibratedWhite:0.9 alpha:1] setFill];
+   [[NSColor colorWithCalibratedWhite:drawingDark() ? 0.17 : 0.9 alpha:1] setFill];
    NSRectFill(rect);
 }
 
@@ -870,7 +875,7 @@ static void drawModernButton(NSRect rect,NSColor *fill,BOOL outlined) {
     [background setFill];
     [shape fill];
    }
-   [[NSColor colorWithCalibratedWhite:0 alpha:0.18] setStroke];
+   [[NSColor colorWithCalibratedWhite:drawingDark() ? 1 : 0 alpha:drawingDark() ? 0.14 : 0.18] setStroke];
    [shape setLineWidth:0.75];
    [shape stroke];
    if(focused){

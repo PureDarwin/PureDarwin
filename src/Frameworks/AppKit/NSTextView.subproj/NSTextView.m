@@ -2298,6 +2298,11 @@ NSString * const NSOldSelectedCharacterRange=@"NSOldSelectedCharacterRange";
     _font=font;
     [self _addAttribute:NSFontAttributeName value:_font range:NSMakeRange(0,[[self textStorage] length])];
     [self _updateTypingAttributes];
+    // an empty view has no glyphs to relayout, but its caret line takes this font
+    if([[self textStorage] length]==0){
+     [[self layoutManager] invalidateLayoutForCharacterRange:NSMakeRange(0,0) isSoft:NO actualCharacterRange:NULL];
+     [self updateInsertionPointStateAndRestartTimer:NO];
+    }
 }
 
 -(void)setFont:(NSFont *)font range:(NSRange)range {

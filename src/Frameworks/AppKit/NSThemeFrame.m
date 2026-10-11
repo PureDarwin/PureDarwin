@@ -26,6 +26,7 @@
 #import <AppKit/NSWindow-Private.h>
 #import <AppKit/NSGraphics.h>
 #import <AppKit/NSColor.h>
+#import <AppKit/NSAppearance.h>
 #import <AppKit/NSImage.h>
 #import <AppKit/NSToolbarView.h>
 #import <AppKit/NSAttributedString.h>
@@ -320,11 +321,14 @@ static void drawWindowControl(O2Context *context, CGRect rect,
 
     [self _layoutControls];
     // a transparent title bar keeps the window's background colour
+    BOOL dark = [[self effectiveAppearance] _isDark];
+    CGFloat bar = dark ? 0.22 : 0.886;
+
     if(clearBar)
         O2ContextSetRGBFillColor(_context, r, g, b, a);
     else
-        O2ContextSetGrayFillColor(_context, 0.886, 1);
-    O2ContextSetGrayStrokeColor(_context, 0.886, 1);
+        O2ContextSetGrayFillColor(_context, bar, 1);
+    O2ContextSetGrayStrokeColor(_context, bar, 1);
 
     // let's round these corners
     float radius = NSWindowCornerRadius;
@@ -351,7 +355,7 @@ static void drawWindowControl(O2Context *context, CGRect rect,
 
     // hairline between the title bar and the content
     if(!clearBar) {
-        O2ContextSetGrayFillColor(_context, 0.725, 1);
+        O2ContextSetGrayFillColor(_context, dark ? 0.11 : 0.725, 1);
         O2ContextFillRect(_context, CGRectMake(0, _frame.size.height - [self _titleHeight], _frame.size.width, 1));
     }
 
@@ -364,7 +368,8 @@ static void drawWindowControl(O2Context *context, CGRect rect,
 
     if(t) {
         NSFont *titleFont = [NSFont titleBarFontOfSize:NSWindowTitleFontSize];
-        NSColor *titleColor = [NSColor colorWithCalibratedWhite:active ? 0.16 : 0.6 alpha:1];
+        NSColor *titleColor = dark ? [NSColor colorWithCalibratedWhite:active ? 0.9 : 0.54 alpha:1]
+                                    : [NSColor colorWithCalibratedWhite:active ? 0.16 : 0.6 alpha:1];
         NSDictionary *attrs = @{
             NSFontAttributeName : titleFont,
             NSForegroundColorAttributeName : titleColor

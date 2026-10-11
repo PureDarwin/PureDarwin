@@ -9,6 +9,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 // Reviewed for API completeness against 10.6.
 
+#import <AppKit/NSAppearance.h>
 #import <AppKit/NSResponder.h>
 #import <AppKit/NSGraphics.h>
 #import <AppKit/NSAnimation.h>
@@ -403,3 +404,10 @@ APPKIT_EXPORT NSString *const NSViewFocusDidChangeNotification;
 @interface NSObject (NSView_toolTipOwner)
 - (NSString *)view:(NSView *)view stringForToolTip:(NSToolTipTag)tag point:(NSPoint)point userData:(void *)data;
 @end
+
+// the look this view and what it contains draw with, inherited when unset
+@interface NSView (NSAppearance) <NSAppearanceCustomization>
+@property(strong) NSAppearance *appearance;
+@property(readonly, strong) NSAppearance *effectiveAppearance;
+@end
+

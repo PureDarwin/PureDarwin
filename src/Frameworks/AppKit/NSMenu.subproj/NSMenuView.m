@@ -1,3 +1,4 @@
+#import <AppKit/NSAppearance.h>
 #import <AppKit/NSMenuView.h>
 #import <AppKit/NSInterfaceStyle.h>
 #import <AppKit/NSMenu.h>
@@ -474,9 +475,12 @@ static NSInteger pdExitIndex = -1;
             [[NSBezierPath bezierPathWithRoundedRect:r xRadius:PANEL_R + k yRadius:PANEL_R + k] fill];
         }
         // the demo's 92%, the compositor blurs what shows through
-        [[NSColor colorWithCalibratedRed:0.98 green:0.969 blue:0.961 alpha:0.92] setFill];
+        BOOL dark = [[NSAppearance currentDrawingAppearance] _isDark];
+
+        [(dark ? [NSColor colorWithCalibratedRed:0.172 green:0.172 blue:0.18 alpha:0.92]
+               : [NSColor colorWithCalibratedRed:0.98 green:0.969 blue:0.961 alpha:0.92]) setFill];
         [panel fill];
-        [[NSColor colorWithCalibratedWhite:0 alpha:0.12] setStroke];
+        [[NSColor colorWithCalibratedWhite:dark ? 1 : 0 alpha:0.12] setStroke];
         [panel setLineWidth:1];
         [panel stroke];
     }
@@ -524,11 +528,12 @@ static NSInteger pdExitIndex = -1;
     NSString *title = [item title], *keys;
     NSRect textRect;
     BOOL enabled = [item isEnabled];
+    BOOL dark = [[NSAppearance currentDrawingAppearance] _isDark];
     CGFloat w;
 
     if ([item isSeparatorItem]) {
         // solid, NSRectFill copies pixels, so an alpha colour would cut a see-through line in the panel
-        [[NSColor colorWithCalibratedRed:0.862 green:0.853 blue:0.846 alpha:1] setFill];
+        [(dark ? [NSColor colorWithCalibratedWhite:0.3 alpha:1] : [NSColor colorWithCalibratedRed:0.862 green:0.853 blue:0.846 alpha:1]) setFill];
         NSRectFill(NSMakeRect(NSMinX(rect) + 3, floor(NSMidY(rect)), NSWidth(rect) - 6, 1));
         return;
     }
@@ -538,8 +543,11 @@ static NSInteger pdExitIndex = -1;
         [[NSBezierPath bezierPathWithRoundedRect:rect xRadius:HIGHLIGHT_R yRadius:HIGHLIGHT_R] fill];
     }
 
-    ink = selected ? [NSColor whiteColor] : enabled ? [NSColor colorWithCalibratedWhite:0.1 alpha:1] : [NSColor colorWithCalibratedWhite:0.67 alpha:1];
-    keyInk = selected ? [NSColor colorWithCalibratedWhite:1 alpha:0.75] : [NSColor colorWithCalibratedWhite:0.1 alpha:enabled ? 0.5 : 0.3];
+    // the demo's #eee text and #777 disabled in the dark
+    CGFloat text = dark ? 0.93 : 0.1;
+
+    ink = selected ? [NSColor whiteColor] : enabled ? [NSColor colorWithCalibratedWhite:text alpha:1] : [NSColor colorWithCalibratedWhite:dark ? 0.47 : 0.67 alpha:1];
+    keyInk = selected ? [NSColor colorWithCalibratedWhite:1 alpha:0.75] : [NSColor colorWithCalibratedWhite:text alpha:enabled ? 0.5 : 0.3];
     attrs = @{ NSFontAttributeName : _font, NSForegroundColorAttributeName : ink };
     keyAttrs = @{ NSFontAttributeName : _font, NSForegroundColorAttributeName : keyInk };
 

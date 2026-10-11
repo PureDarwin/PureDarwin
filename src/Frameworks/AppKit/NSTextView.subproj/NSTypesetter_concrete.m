@@ -908,7 +908,10 @@ static void loadGlyphAndCharacterCacheForLocation(NSTypesetter_concrete *self,un
    }
 
    if(_font==nil){
-    _font=NSFontAttributeInDictionary(nil);
+    // an empty line takes the text view's typing font, so the caret matches the text to come
+    _font=[[[_layoutManager firstTextView] typingAttributes] objectForKey:NSFontAttributeName];
+    if(_font==nil)
+     _font=NSFontAttributeInDictionary(nil);
 
 #if DEBUGLAYOUTGLYPHSINLAYOUTMANAGER
        NSLog(@"_font is nil - defaulting to font: %@", _font);

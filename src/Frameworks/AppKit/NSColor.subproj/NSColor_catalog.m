@@ -9,9 +9,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSColor_catalog.h>
 #import <AppKit/NSColorList.h>
 #import <AppKit/NSGraphics.h>
+#import <AppKit/NSAppearance.h>
 
 @interface NSColor(NSAppKitPrivate)
 -(CGColorRef)CGColorRef;
++(NSColor *)_systemColorNamed:(NSString *)colorName dark:(BOOL)dark;
 @end
 
 void NSColorSetCatalogColor(NSString *catalogName,NSString *colorName,NSColor *color);
@@ -59,6 +61,23 @@ NSColor *NSColorGetCatalogColor(NSString *catalogName,NSString *colorName);
 
 -(NSColor *)color { return _color; }
 
+// component queries answer through the colour this one stands for, in rgb
+-(NSColor *)_rgb {
+   return [[self _resolvedColor] colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+}
+
+// system colours follow the appearance being drawn, other catalogs keep their colour
+-(NSColor *)_resolvedColor {
+   if([_catalogName isEqualToString:@"System"]){
+    NSColor *color=[NSColor _systemColorNamed:_colorName dark:[[NSAppearance currentDrawingAppearance] _isDark]];
+
+    if(color!=nil)
+     return color;
+   }
+   return _color;
+}
+
+
 -(NSString *)colorSpaceName {
    return NSNamedColorSpace;
 }
@@ -76,10 +95,10 @@ NSColor *NSColorGetCatalogColor(NSString *catalogName,NSString *colorName);
 
    if ([colorSpace isEqualToString:[self colorSpaceName]])
     return self;
-   if([colorSpace isEqualToString:[_color colorSpaceName]])
-    return _color;
+   if([colorSpace isEqualToString:[[self _resolvedColor] colorSpaceName]])
+    return [self _resolvedColor];
 
-   result=[_color colorUsingColorSpaceName:colorSpace device:device];
+   result=[[self _resolvedColor] colorUsingColorSpaceName:colorSpace device:device];
    
    if(result==nil)
     NSLog(@"result ==nil %@ %@",_colorName,colorSpace);
@@ -88,54 +107,154 @@ NSColor *NSColorGetCatalogColor(NSString *catalogName,NSString *colorName);
 }
 
 -(CGColorRef)CGColorRef {
-   return [_color CGColorRef];
+   return [[self _resolvedColor] CGColorRef];
 }
 
 -(void)setFill {
-   if(_color==nil)
+   if([self _resolvedColor]==nil)
     [NSException raise:@"NSUnknownColor" format:@"Unknown color %@ in catalog %@",_colorName,_catalogName];
     
-   [_color setFill];
+   [[self _resolvedColor] setFill];
 }
 
 -(void)setStroke {
-   if(_color==nil)
+   if([self _resolvedColor]==nil)
     [NSException raise:@"NSUnknownColor" format:@"Unknown color %@ in catalog %@",_colorName,_catalogName];
     
-   [_color setStroke];
+   [[self _resolvedColor] setStroke];
 }
 
 -(NSInteger)numberOfComponents {
-   [NSException raise:NSInvalidArgumentException format:@"-numberOfComponents not valid for the NSColor Catalog color: %@ %@; need to first convert colorspace.",_catalogName,_colorName];
+   return [[self _rgb] numberOfComponents];
 }
 
 -(void)getComponents:(CGFloat *)components {
-   [NSException raise:NSInvalidArgumentException format:@"-getComponents not valid for the NSColor Catalog color: %@ %@; need to first convert colorspace.",_catalogName,_colorName];
+   [[self _rgb] getComponents:components];
 }
 
 // alpha is defined for every color on macOS, catalog colors answer through the color they stand for
 -(CGFloat)alphaComponent {
-   return [_color alphaComponent];
+   return [[self _resolvedColor] alphaComponent];
 }
 
 -(NSColor *)colorWithAlphaComponent:(CGFloat)alpha {
-   return [_color colorWithAlphaComponent:alpha];
+   return [[self _resolvedColor] colorWithAlphaComponent:alpha];
 }
 
 -(void)getWhite:(CGFloat *)white alpha:(CGFloat *)alpha {
-   [NSException raise:NSInvalidArgumentException format:@"getWhite not valid for the NSColor Catalog color: %@ %@; need to first convert colorspace.",_catalogName,_colorName];
+   [[[self _resolvedColor] colorUsingColorSpaceName:NSCalibratedWhiteColorSpace] getWhite:white alpha:alpha];
 }
 
 -(void)getRed:(CGFloat *)red green:(CGFloat *)green blue:(CGFloat *)blue alpha:(CGFloat *)alpha {
-   [NSException raise:NSInvalidArgumentException format:@"-getRed not valid for the NSColor Catalog color: %@ %@; need to first convert colorspace.",_catalogName,_colorName];
+   [[self _rgb] getRed:red green:green blue:blue alpha:alpha];
 }
 
 -(void)getHue:(CGFloat *)huep saturation:(CGFloat *)saturationp brightness:(CGFloat *)brightnessp alpha:(CGFloat *)alphap {
-   [NSException raise:NSInvalidArgumentException format:@"-getHue not valid for the NSColor Catalog color: %@ %@; need to first convert colorspace.",_catalogName,_colorName];
+   [[self _rgb] getHue:huep saturation:saturationp brightness:brightnessp alpha:alphap];
 }
 
 -(void)getCyan:(CGFloat *)cyan magenta:(CGFloat *)magenta yellow:(CGFloat *)yellow black:(CGFloat *)black alpha:(CGFloat *)alpha {
    [NSException raise:NSInvalidArgumentException format:@"-getCyan not valid for the NSColor Catalog color: %@ %@; need to first convert colorspace.",_catalogName,_colorName];
+}
+
+@end
+
+// a colour that asks its provider each time it is used, as +colorWithName:dynamicProvider: hands out
+@interface NSColor_dynamic : NSColor {
+    NSString *_name;
+    NSColor *(^_provider)(NSAppearance *);
+}
+@end
+
+@implementation NSColor_dynamic
+
+-initWithName:(NSString *)name provider:(NSColor *(^)(NSAppearance *))provider {
+   _name=[name copy];
+   _provider=[provider copy];
+   return self;
+}
+
+-(void)dealloc {
+   [_name release];
+   [_provider release];
+   [super dealloc];
+}
+
+-copyWithZone:(NSZone *)zone {
+   return [self retain];
+}
+
+-(NSColor *)_resolvedColor {
+   return _provider([NSAppearance currentDrawingAppearance]);
+}
+
+-(NSString *)colorSpaceName {
+   return NSNamedColorSpace;
+}
+
+-(NSString *)colorNameComponent {
+   return _name;
+}
+
+-(NSString *)description {
+   return [NSString stringWithFormat:@"<%@ %@ %@>",[self class],_name,[self _resolvedColor]];
+}
+
+-(NSColor *)colorUsingColorSpaceName:(NSString *)colorSpace device:(NSDictionary *)device {
+   return [[self _resolvedColor] colorUsingColorSpaceName:colorSpace device:device];
+}
+
+-(NSColor *)colorUsingColorSpace:(NSColorSpace *)space {
+   return [[self _resolvedColor] colorUsingColorSpace:space];
+}
+
+-(CGColorRef)CGColorRef {
+   return [[self _resolvedColor] CGColorRef];
+}
+
+-(void)set {
+   [[self _resolvedColor] set];
+}
+
+-(void)setFill {
+   [[self _resolvedColor] setFill];
+}
+
+-(void)setStroke {
+   [[self _resolvedColor] setStroke];
+}
+
+-(CGFloat)alphaComponent {
+   return [[self _resolvedColor] alphaComponent];
+}
+
+-(void)getRed:(CGFloat *)red green:(CGFloat *)green blue:(CGFloat *)blue alpha:(CGFloat *)alpha {
+   [[[self _resolvedColor] colorUsingColorSpaceName:NSCalibratedRGBColorSpace] getRed:red green:green blue:blue alpha:alpha];
+}
+
+-(void)getWhite:(CGFloat *)white alpha:(CGFloat *)alpha {
+   [[[self _resolvedColor] colorUsingColorSpaceName:NSCalibratedWhiteColorSpace] getWhite:white alpha:alpha];
+}
+
+// a dynamic colour with alpha stays dynamic
+-(NSColor *)colorWithAlphaComponent:(CGFloat)alpha {
+   NSColor *(^provider)(NSAppearance *)=_provider;
+
+   return [NSColor colorWithName:_name dynamicProvider:^NSColor *(NSAppearance *appearance) {
+      return [provider(appearance) colorWithAlphaComponent:alpha];
+   }];
+}
+
+-(NSColor *)blendedColorWithFraction:(CGFloat)fraction ofColor:(NSColor *)color {
+   return [[self _resolvedColor] blendedColorWithFraction:fraction ofColor:color];
+}
+
+@end
+
+@implementation NSColor(NSDynamicColor)
+
++(NSColor *)colorWithName:(NSString *)name dynamicProvider:(NSColor *(^)(NSAppearance *))provider {
+   return [[[NSColor_dynamic alloc] initWithName:name provider:provider] autorelease];
 }
 
 @end

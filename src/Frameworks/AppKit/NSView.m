@@ -49,6 +49,8 @@ NSString * const NSViewFocusDidChangeNotification=@"NSViewFocusDidChangeNotifica
 -(void)_trackingAreasChanged;
 @end
 
+void _NSAppearanceDrawView(NSView *view, void (^draw)(void));
+
 @implementation NSView
 
 static BOOL NSViewLayersEnabled=NO;
@@ -2182,7 +2184,7 @@ static NSGraphicsContext *graphicsContextForView(NSView *view){
            NSRectFill(rect);
        }
       else
-           [self drawRect:rect];
+           _NSAppearanceDrawView(self, ^{ [self drawRect:rect]; });
 
       [self unlockFocus];
 

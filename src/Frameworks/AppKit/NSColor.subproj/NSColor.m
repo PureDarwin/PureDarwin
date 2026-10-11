@@ -356,6 +356,50 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return color != nil ? color : [NSColor colorWithCalibratedWhite:0.93 alpha:1.0];
 }
 
++(NSColor *)labelColor {
+   return [NSColor colorWithCatalogName:@"System" colorName:@"labelColor"];
+}
+
++(NSColor *)secondaryLabelColor {
+   return [NSColor colorWithCatalogName:@"System" colorName:@"secondaryLabelColor"];
+}
+
++(NSColor *)tertiaryLabelColor {
+   return [NSColor colorWithCatalogName:@"System" colorName:@"tertiaryLabelColor"];
+}
+
++(NSColor *)quaternaryLabelColor {
+   return [NSColor colorWithCatalogName:@"System" colorName:@"quaternaryLabelColor"];
+}
+
++(NSColor *)placeholderTextColor {
+   return [NSColor colorWithCatalogName:@"System" colorName:@"placeholderTextColor"];
+}
+
++(NSColor *)separatorColor {
+   return [NSColor colorWithCatalogName:@"System" colorName:@"separatorColor"];
+}
+
++(NSColor *)linkColor {
+   return [NSColor colorWithCatalogName:@"System" colorName:@"linkColor"];
+}
+
++(NSColor *)underPageBackgroundColor {
+   return [NSColor colorWithCatalogName:@"System" colorName:@"underPageBackgroundColor"];
+}
+
++(NSColor *)selectedContentBackgroundColor {
+   return [NSColor colorWithCatalogName:@"System" colorName:@"selectedContentBackgroundColor"];
+}
+
++(NSColor *)unemphasizedSelectedContentBackgroundColor {
+   return [NSColor colorWithCatalogName:@"System" colorName:@"unemphasizedSelectedContentBackgroundColor"];
+}
+
++(NSColor *)findHighlightColor {
+   return [NSColor colorWithCatalogName:@"System" colorName:@"findHighlightColor"];
+}
+
 +(NSColor *)windowFrameColor {
     return [NSColor colorWithCatalogName:@"System" colorName:@"windowFrameColor"];
 }
@@ -538,8 +582,79 @@ static const struct { const char *name; CGFloat r, g, b, a; } _pdSystemColors[] 
     {"menuItemTextColor",             0.00, 0.00, 0.00, 1.0},
     {"selectedMenuItemColor",         0.14, 0.44, 0.85, 1.0},
     {"selectedMenuItemTextColor",     1.00, 1.00, 1.00, 1.0},
+    {"labelColor",                    0.00, 0.00, 0.00, 0.85},
+    {"secondaryLabelColor",           0.00, 0.00, 0.00, 0.50},
+    {"tertiaryLabelColor",            0.00, 0.00, 0.00, 0.26},
+    {"quaternaryLabelColor",          0.00, 0.00, 0.00, 0.10},
+    {"placeholderTextColor",          0.00, 0.00, 0.00, 0.25},
+    {"separatorColor",                0.00, 0.00, 0.00, 0.10},
+    {"linkColor",                     0.00, 0.41, 0.85, 1.0},
+    {"underPageBackgroundColor",      0.59, 0.59, 0.59, 1.0},
+    {"selectedContentBackgroundColor",            0.00, 0.39, 0.88, 1.0},
+    {"unemphasizedSelectedContentBackgroundColor", 0.86, 0.86, 0.86, 1.0},
+    {"findHighlightColor",            1.00, 1.00, 0.00, 1.0},
     {NULL, 0, 0, 0, 0}
 };
+
+// dark aqua, only the colours that change
+static const struct { const char *name; CGFloat r, g, b, a; } _pdSystemDarkColors[] = {
+    {"controlColor",                  0.25, 0.25, 0.25, 1.0},
+    {"controlBackgroundColor",        0.12, 0.12, 0.12, 1.0},
+    {"controlTextColor",              1.00, 1.00, 1.00, 0.85},
+    {"disabledControlTextColor",      1.00, 1.00, 1.00, 0.25},
+    {"selectedControlColor",          0.25, 0.39, 0.55, 1.0},
+    {"secondarySelectedControlColor", 0.27, 0.27, 0.27, 1.0},
+    {"selectedControlTextColor",      1.00, 1.00, 1.00, 0.85},
+    {"controlHighlightColor",         0.35, 0.35, 0.35, 1.0},
+    {"controlLightHighlightColor",    0.45, 0.45, 0.45, 1.0},
+    {"controlShadowColor",            0.08, 0.08, 0.08, 1.0},
+    {"controlDarkShadowColor",        0.00, 0.00, 0.00, 1.0},
+    {"highlightColor",                0.70, 0.70, 0.70, 1.0},
+    {"gridColor",                     0.30, 0.30, 0.30, 1.0},
+    {"textColor",                     1.00, 1.00, 1.00, 1.0},
+    {"textBackgroundColor",           0.12, 0.12, 0.12, 1.0},
+    {"selectedTextColor",             1.00, 1.00, 1.00, 1.0},
+    {"selectedTextBackgroundColor",   0.25, 0.39, 0.55, 1.0},
+    {"headerColor",                   0.20, 0.20, 0.20, 1.0},
+    {"headerTextColor",               1.00, 1.00, 1.00, 0.85},
+    {"scrollBarColor",                0.20, 0.20, 0.20, 1.0},
+    {"knobColor",                     0.45, 0.45, 0.45, 1.0},
+    {"selectedKnobColor",             0.60, 0.60, 0.60, 1.0},
+    {"windowFrameColor",              0.25, 0.25, 0.25, 1.0},
+    {"windowBackgroundColor",         0.20, 0.20, 0.20, 1.0},
+    {"menuBackgroundColor",           0.17, 0.17, 0.18, 1.0},
+    {"mainMenuBarColor",              0.17, 0.17, 0.18, 1.0},
+    {"menuItemTextColor",             1.00, 1.00, 1.00, 0.85},
+    {"labelColor",                    1.00, 1.00, 1.00, 0.85},
+    {"secondaryLabelColor",           1.00, 1.00, 1.00, 0.55},
+    {"tertiaryLabelColor",            1.00, 1.00, 1.00, 0.25},
+    {"quaternaryLabelColor",          1.00, 1.00, 1.00, 0.10},
+    {"placeholderTextColor",          1.00, 1.00, 1.00, 0.25},
+    {"separatorColor",                1.00, 1.00, 1.00, 0.10},
+    {"linkColor",                     0.25, 0.61, 1.00, 1.0},
+    {"underPageBackgroundColor",      0.16, 0.16, 0.16, 1.0},
+    {"unemphasizedSelectedContentBackgroundColor", 0.27, 0.27, 0.27, 1.0},
+    {"findHighlightColor",            0.84, 0.70, 0.00, 1.0},
+    {NULL, 0, 0, 0, 0}
+};
+
+// a system colour as it looks in the light or the dark appearance
++(NSColor *)_systemColorNamed:(NSString *)colorName dark:(BOOL)dark {
+    const char *wanted = [colorName UTF8String];
+
+    if(wanted == NULL)
+        return nil;
+    if(dark) {
+        for(int i = 0; _pdSystemDarkColors[i].name != NULL; i++) {
+            if(strcmp(_pdSystemDarkColors[i].name, wanted) == 0)
+                return [NSColor colorWithCalibratedRed:_pdSystemDarkColors[i].r
+                                                 green:_pdSystemDarkColors[i].g
+                                                  blue:_pdSystemDarkColors[i].b
+                                                 alpha:_pdSystemDarkColors[i].a];
+        }
+    }
+    return [self _fallbackColorNamed:colorName];
+}
 
 +(NSColorList *)_builtInSystemColorList {
     NSColorList *list = [[[NSColorList alloc] initWithName:@"System"] autorelease];
@@ -585,6 +700,11 @@ static const struct { const char *name; CGFloat r, g, b, a; } _pdSystemColors[] 
 }
 
 +(NSColor *)colorWithCatalogName:(NSString *)catalogName colorName:(NSString *)colorName {
+    if([catalogName isEqualToString:@"System"]) {
+        NSColor *light = [self _systemColorNamed:colorName dark:NO];
+
+        return light ? [NSColor_catalog colorWithCatalogName:catalogName colorName:colorName color:light] : nil;
+    }
     NSColorList *list = [NSColorList colorListNamed:catalogName];
     if(!list) {
         static BOOL warned = NO;

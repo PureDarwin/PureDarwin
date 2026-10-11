@@ -21,6 +21,7 @@
  * IN THE SOFTWARE.
  */
 
+#import <AppKit/NSAppearance.h>
 #import <AppKit/NSResponder.h>
 #import <AppKit/AppKitExport.h>
 #import <AppKit/NSGraphics.h>
@@ -341,6 +342,13 @@ typedef NS_ENUM(NSInteger, NSApplicationActivationPolicy) {
 - (void)applicationWillUpdate:(NSNotification *)aNotification;
 
 @end
+
+// the look this app and what it contains draw with, inherited when unset
+@interface NSApplication (NSAppearance) <NSAppearanceCustomization>
+@property(strong) NSAppearance *appearance;
+@property(readonly, strong) NSAppearance *effectiveAppearance;
+@end
+
 
 APPKIT_EXPORT int NSApplicationMain(int argc, const char *argv[]);
 
