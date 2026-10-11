@@ -68,6 +68,57 @@ static NSColor *ink(void)
     return lightDark(lookoutRGB(0x1b, 0x1b, 0x1b, 1), lookoutRGB(0xee, 0xee, 0xee, 1));
 }
 
+// the icon's shape in the light ink, worked out on the pixels so it does not depend on compositing into an image's focus
+static NSImage *lightTint(NSImage *image)
+{
+    static NSMutableDictionary *cache;
+    NSValue *key = [NSValue valueWithNonretainedObject:image];
+    NSImage *done = [cache objectForKey:key];
+
+    if (done)
+        return done;
+
+    NSBitmapImageRep *src = [NSBitmapImageRep imageRepWithData:[image TIFFRepresentation]];
+    if (!src || [src bitsPerSample] != 8 || [src samplesPerPixel] != 4 || [src isPlanar])
+        return nil;
+
+    NSInteger w = [src pixelsWide], h = [src pixelsHigh], row = [src bytesPerRow];
+    BOOL alphaFirst = ([src bitmapFormat] & NSAlphaFirstBitmapFormat) != 0;
+    BOOL premultiplied = ([src bitmapFormat] & NSAlphaNonpremultipliedBitmapFormat) == 0;
+    NSBitmapImageRep *dst = [[[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:w pixelsHigh:h
+        bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSCalibratedRGBColorSpace
+        bitmapFormat:[src bitmapFormat] bytesPerRow:row bitsPerPixel:32] autorelease];
+    if (!dst)
+        return nil;
+
+    const unsigned char *in = [src bitmapData];
+    unsigned char *out = [dst bitmapData];
+
+    for (NSInteger y = 0; y < h; y++) {
+        for (NSInteger x = 0; x < w; x++) {
+            const unsigned char *p = in + y * row + x * 4;
+            unsigned char *q = out + y * row + x * 4;
+            unsigned char a = alphaFirst ? p[0] : p[3];
+            unsigned char ink = premultiplied ? (unsigned char)(a * 0xf0 / 255) : 0xf0;
+
+            if (alphaFirst) {
+                q[0] = a;
+                q[1] = q[2] = q[3] = ink;
+            } else {
+                q[0] = q[1] = q[2] = ink;
+                q[3] = a;
+            }
+        }
+    }
+
+    done = [[[NSImage alloc] initWithSize:[image size]] autorelease];
+    [done addRepresentation:dst];
+    if (!cache)
+        cache = [[NSMutableDictionary alloc] init];
+    [cache setObject:done forKey:key];
+    return done;
+}
+
 // monochrome icons are drawn light on the dark bar
 static void drawIcon(NSImage *image, NSRect rect)
 {
@@ -75,14 +126,8 @@ static void drawIcon(NSImage *image, NSRect rect)
         [image drawInRect:rect fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1];
         return;
     }
-    NSImage *tinted = [[image copy] autorelease];
-    NSRect all = { NSZeroPoint, [tinted size] };
-
-    [tinted lockFocus];
-    [lookoutRGB(0xf0, 0xf0, 0xf0, 1) set];
-    NSRectFillUsingOperation(all, NSCompositeSourceAtop);
-    [tinted unlockFocus];
-    [tinted drawInRect:rect fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1];
+    NSImage *tinted = lightTint(image);
+    [(tinted ?: image) drawInRect:rect fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1];
 }
 
 static NSFont *lookoutFont(NSString *name, CGFloat size)
@@ -560,8 +605,16 @@ static NSImage *loadImage(NSString *name)
     [_lookoutResults removeAllObjects];
     _lookoutSelection = 0;
     [self layoutLookout];
+    // the cell sets the field editor up from its colour when it takes focus, so the concrete ink goes in first
+    NSColor *text = darkNow() ? lookoutRGB(0xee, 0xee, 0xee, 1) : lookoutRGB(0x1b, 0x1b, 0x1b, 1);
+    [_lookoutField setTextColor:text];
     [_lookoutWindow makeKeyAndOrderFront:nil];
     [_lookoutWindow makeFirstResponder:_lookoutField];
+
+    // the cell hands the editor its text colour, the caret colour is the editor's own
+    NSText *editor = [_lookoutWindow fieldEditor:YES forObject:_lookoutField];
+    if ([editor isKindOfClass:[NSTextView class]])
+        [(NSTextView *)editor setInsertionPointColor:text];
 }
 
 // every installed app once, Finder from CoreServices with them
