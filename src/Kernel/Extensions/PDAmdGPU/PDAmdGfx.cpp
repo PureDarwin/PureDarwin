@@ -66,6 +66,7 @@
 #define PACKET3_CLEAR_STATE         0x12
 #define PACKET3_CONTEXT_CONTROL     0x28
 #define PACKET3_PREAMBLE_CNTL       0x4a
+#define PACKET3_RELEASE_MEM         0x49
 #define PACKET3_SET_CONTEXT_REG     0x69
 #define PACKET3_SET_CONTEXT_START   0x0000a000
 #define kPreambleBegin              (2u << 28)
@@ -80,6 +81,15 @@
 #define kGfxRptrOff     0x1000
 #define kGfxWptrOff     0x1010
 #define kGfxMqdOff      0x2000
+#define kGfxFenceOff    0x1100
+
+// release_mem: gcr sequence, gl2 write-back, glm write-back and invalidate, cache policy 3,
+// cache_flush_and_inv_ts_event at event index 5, as gfx_v10_0_ring_emit_fence sends it
+#define kReleaseMemCntl     ((1u << 22) | (1u << 21) | (1u << 13) | (1u << 12) | (3u << 25) | 0x14 | (5u << 8))
+#define kReleaseMemData32   (1u << 29)
+#define kReleaseMemIntSel2  (2u << 24)
+#define mmCP_INT_CNTL_RING0 0x1e0a
+#define kTimeStampIntEnable 0x04000000
 
 // amdgpu's gfx ring 0 doorbell, AMDGPU_NAVI10_DOORBELL_GFX_RING0 doubled for a 64-bit doorbell, in dwords into bar2
 #define kGfxDoorbell        (0x8b << 1)
@@ -278,6 +288,9 @@ void PDAmdGPU::gfxTest(bool kiq)
 
     traceFault("cp unhalt");
 
+    // the end-of-pipe interrupt the fence raises, gfx_v10_0_set_gfx_eop_interrupt_state for me 0 pipe 0
+    wreg(soc15(kHwGC, 0, mmCP_INT_CNTL_RING0), rreg(soc15(kHwGC, 0, mmCP_INT_CNTL_RING0)) | kTimeStampIntEnable);
+
     // cp_gfx_start's prologue, then the ring test's scratch write
     wreg(scratch, 0xcafedead);
     uint32_t *ring = (uint32_t *)IOMallocZeroData(kGfxRingSize);
@@ -290,6 +303,20 @@ void PDAmdGPU::gfxTest(bool kiq)
     ring[n++] = PACKET3(PACKET3_SET_UCONFIG_REG, 1);
     ring[n++] = scratch - PACKET3_SET_UCONFIG_START;
     ring[n++] = 0xdeadbeef;
+
+    UInt32 irqSeen = irqCount;
+
+    // the fence: the cp writes the sequence number once everything before it has finished
+    uint64_t fenceMc = ringMc + kGfxFenceOff;
+    uint32_t seq = 0x5e9c0001;
+    ring[n++] = PACKET3(PACKET3_RELEASE_MEM, 6);
+    ring[n++] = kReleaseMemCntl;
+    ring[n++] = kReleaseMemData32 | kReleaseMemIntSel2;
+    ring[n++] = (uint32_t)fenceMc;
+    ring[n++] = (uint32_t)(fenceMc >> 32);
+    ring[n++] = seq;
+    ring[n++] = 0;
+    ring[n++] = 0;
     copyToVram(base, ring, n * 4);
     IOFreeData(ring, kGfxRingSize);
     uint32_t shadow[2] = { n, 0 };
@@ -304,6 +331,16 @@ void PDAmdGPU::gfxTest(bool kiq)
     for (int i = 0; i < 1000 && (v = rreg(scratch)) != 0xdeadbeef; i++)
         IODelay(100);
     if (v != 0xdeadbeef) dumpGfxState("gfx ring test");
+
+    uint32_t fence = 0;
+    for (int i = 0; i < 1000 && fence != seq; i++) {
+        IODelay(100);
+        readVram(base + kGfxFenceOff, &fence, 4);
+    }
+    LOG("gfx: fence %s, wrote 0x%08x, expected 0x%08x\n", fence == seq ? "signalled" : "missing", fence, seq);
+    bool woke = irqWait(irqSeen, 100);
+    LOG("irq: %s, %u interrupts so far\n", woke ? "fence interrupt woke the waiter" : "no interrupt within 100 ms", (unsigned)irqCount);
+    ihDrain("after fence");
     LOG("gfx: ring test %s, SCRATCH_REG0 0x%08x, rptr %u wptr %u, hqd rptr %u wptr %u base 0x%08x active %u, CP_STAT 0x%08x\n",
         v == 0xdeadbeef ? "passed" : "failed", v, rreg(soc15(kHwGC, 0, mmCP_RB0_RPTR)),
         rreg(soc15(kHwGC, 0, mmCP_RB0_WPTR)), rreg(gc(mmCP_GFX_HQD_RPTR)), rreg(gc(mmCP_GFX_HQD_WPTR)),

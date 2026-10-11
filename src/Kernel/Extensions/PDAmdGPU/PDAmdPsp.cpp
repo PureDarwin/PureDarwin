@@ -327,6 +327,8 @@ void PDAmdGPU::pspLoadGfx(void)
         traceFault("gfxhub");
         rlcInit();
         traceFault("rlc");
+        irqInit();
+        ihInit();
         sdmaTest();
         traceFault("sdma");
         gfxStart();
@@ -386,6 +388,8 @@ void PDAmdGPU::probePsp(void)
 // so the next driver to run (ours or amdgpu) finds a psp that accepts SETUP_TMR and AUTOLOAD_RLC again
 void PDAmdGPU::teardown(void)
 {
+    ihStop();
+    irqStop();
     wreg(soc15(kHwGC, 0, 0x0f56), rreg(soc15(kHwGC, 0, 0x0f56)) | 0x15000000);     // CP_ME_CNTL ce, pfp, me halt
     wreg(soc15(kHwGC, 0, 0x0f55), rreg(soc15(kHwGC, 0, 0x0f55)) | 0x50000000);     // CP_MEC_CNTL me1, me2 halt
     wreg(soc15(kHwGC, 0, 0x002a), rreg(soc15(kHwGC, 0, 0x002a)) | 0x1);            // SDMA0_F32_CNTL halt

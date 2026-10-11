@@ -10,7 +10,8 @@ target_sources(PDAmdGPU.kext PRIVATE
     PDAmdSmu.cpp
     PDAmdGfx.cpp
     PDAmdGmc.cpp
-    PDAmdKiq.cpp)
+    PDAmdKiq.cpp
+    PDAmdIh.cpp)
 
 set_source_files_properties(PDAmdPsp.cpp PROPERTIES
     COMPILE_DEFINITIONS "PDAMDGPU_FW_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/firmware\""

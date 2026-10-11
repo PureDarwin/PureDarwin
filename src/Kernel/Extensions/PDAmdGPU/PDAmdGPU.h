@@ -1,6 +1,8 @@
 #pragma once
 
 #include <IOKit/IOService.h>
+#include <IOKit/IOFilterInterruptEventSource.h>
+#include <IOKit/IOWorkLoop.h>
 #include <IOKit/pci/IOPCIDevice.h>
 
 #define LOG(x, ...) kprintf("PDAmdGPU: " x, ##__VA_ARGS__)
@@ -18,6 +20,7 @@
 // hardware ids from the discovery table
 #define kHwMP1  1
 #define kHwGC   11
+#define kHwOSSSYS 40
 #define kHwNBIF 108
 #define kHwMP0  255
 
@@ -65,6 +68,11 @@ private:
     // psp ring, fence, command buffer and firmware staging, all in the carveout
     uint64_t           fbStart, fbOffset, pspBase;
     uint32_t           pspFence;
+    uint64_t           ihBase;
+    uint32_t           ihRptr;
+    IOFilterInterruptEventSource *irqSource;
+    volatile UInt32    irqCount;
+    IOLock            *irqLock;
 
     void probePsp(void);
     bool pspSubmit(const uint32_t *cmd, uint32_t words, uint32_t *resp, uint32_t respWords);
@@ -90,6 +98,14 @@ private:
     void rlcInit(void);
     void goldenInit(void);
     void teardown(void);
+    void ihInit(void);
+    uint32_t ihDrain(const char *why);
+    void ihStop(void);
+    bool irqInit(void);
+    void irqStop(void);
+    bool irqWait(UInt32 seen, uint32_t ms);
+    static bool irqFilter(OSObject *owner, IOFilterInterruptEventSource *src);
+    static void irqAction(OSObject *owner, IOInterruptEventSource *src, int count);
     void traceFault(const char *step);
 };
 
