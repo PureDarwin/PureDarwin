@@ -201,7 +201,9 @@ ${if grubProtocol == "linux" then ''
           echo "  replacing $base symlink with staged directory"
           rm "$staging/$base"
         fi
-        cp -a -- "$entry" "$staging"/
+        # replace files and never write through a staged symlink (framework-compat's CoreFoundation
+        # binary lands on corefoundation's link to /usr/lib/libCoreFoundation.dylib)
+        cp -a --remove-destination -- "$entry" "$staging"/
       done
       chmod -R u+rwX "$staging"
     }
@@ -414,13 +416,68 @@ EOF
 test -r /etc/profile && . /etc/profile
 EOF
     cat > $staging/etc/zshrc <<'EOF'
+# /etc/zshrc: interactive zsh setup for every user
 [[ -o interactive ]] || return
 
-unsetopt monitor
+# history, appended as commands run so concurrent shells keep each other's lines
+HISTFILE=''${ZDOTDIR:-$HOME}/.zsh_history
+HISTSIZE=10000
+SAVEHIST=10000
+setopt extended_history inc_append_history hist_ignore_dups hist_ignore_space hist_reduce_blanks
+setopt interactive_comments no_beep
+
+# emacs editing, plus what terminals send for the editing keys in either cursor-key mode
 bindkey -e
 bindkey '^?' backward-delete-char
 bindkey '^H' backward-delete-char
-export PS1='# '
+bindkey '^[[3~' delete-char
+bindkey '^[[3;5~' kill-word
+bindkey '^[[2~' overwrite-mode
+bindkey '^[[Z' reverse-menu-complete
+bindkey '^[[5~' beginning-of-buffer-or-history
+bindkey '^[[6~' end-of-buffer-or-history
+autoload -Uz up-line-or-beginning-search down-line-or-beginning-search
+zle -N up-line-or-beginning-search
+zle -N down-line-or-beginning-search
+for seq in '^[[A' '^[OA'; do bindkey $seq up-line-or-beginning-search; done
+for seq in '^[[B' '^[OB'; do bindkey $seq down-line-or-beginning-search; done
+for seq in '^[[D' '^[OD'; do bindkey $seq backward-char; done
+for seq in '^[[C' '^[OC'; do bindkey $seq forward-char; done
+for seq in '^[[H' '^[OH' '^[[1~' '^[[7~'; do bindkey $seq beginning-of-line; done
+for seq in '^[[F' '^[OF' '^[[4~' '^[[8~'; do bindkey $seq end-of-line; done
+for seq in '^[[1;5D' '^[[1;3D' '^[^[[D'; do bindkey $seq backward-word; done
+for seq in '^[[1;5C' '^[[1;3C' '^[^[[C'; do bindkey $seq forward-word; done
+unset seq
+
+# colours for ls and grep, BSD and GNU-style tools alike
+export CLICOLOR=1
+export LS_COLORS='di=1;34:ln=1;36:so=1;35:pi=33:ex=1;32:bd=1;33:cd=1;33:su=37;41:sg=30;43:tw=30;42:ow=34;42'
+ls --color=auto -d / >/dev/null 2>&1 && alias ls='ls --color=auto'
+grep --color=auto -q x <<< x 2>/dev/null && alias grep='grep --color=auto'
+
+# completion: menu selection, case-insensitive, coloured like ls
+autoload -Uz compinit
+# start from the dump made with the image, compinit rebuilds it when fpath has changed since
+_zcompdump=''${ZDOTDIR:-$HOME}/.zcompdump
+[[ -e $_zcompdump ]] || cp /usr/share/zsh/$ZSH_VERSION/zcompdump $_zcompdump 2>/dev/null
+compinit -d $_zcompdump
+unset _zcompdump
+zmodload -i zsh/complist
+zstyle ':completion:*' menu select
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
+zstyle ':completion:*' list-colors ''${(s.:.)LS_COLORS}
+zstyle ':completion:*:descriptions' format '%B%d%b'
+
+# the window title follows the directory, and names the command while it runs
+if [[ $TERM == (xterm*|screen*|tmux*) ]]; then
+  autoload -Uz add-zsh-hook
+  _title_precmd() { print -Pn '\e]0;%n@%m: %~\a' }
+  _title_preexec() { print -Pn '\e]0;%n@%m: '; print -rn -- $1; print -n '\a' }
+  add-zsh-hook precmd _title_precmd
+  add-zsh-hook preexec _title_preexec
+fi
+
+PROMPT='%F{green}%n@%m%f %B%F{blue}%1~%f%b %# '
 EOF
     cat > $staging/etc/resolv.conf <<'EOF'
 nameserver 10.0.2.3
@@ -723,6 +780,17 @@ EOF
       xargs
     do
       ln -s toybox "$staging/bin/$applet"
+    done
+    # the rest of the configured toybox applets, only where no real command of that name is installed
+    for applet in \
+      basename cat cut dirname echo false head hostname kill pwd seq sha1sum sha256sum sha512sum \
+      sleep tail test tr true uname uniq wc yes
+    do
+      [ -e "$staging/bin/toybox" ] || break
+      if [ ! -e "$staging/bin/$applet" ] && [ ! -e "$staging/usr/bin/$applet" ] &&
+         [ ! -e "$staging/sbin/$applet" ] && [ ! -e "$staging/usr/sbin/$applet" ]; then
+        ln -s toybox "$staging/bin/$applet"
+      fi
     done
     ln -s toybox "$staging/usr/bin/env"
     ln -sf zsh "$staging/bin/sh"

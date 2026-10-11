@@ -14,22 +14,26 @@
 , vulkanTools
 , vulkanHeaders
 , vulkanLoader
-, libX11
-, libXext
-, libxcb
-, libXau
-, libXdmcp
-, libXrandr
-, xorgproto
+, libX11 ? null
+, libXext ? null
+, libxcb ? null
+, libXau ? null
+, libXdmcp ? null
+, libXrandr ? null
+, xorgproto ? null
+  # without x11 only vulkaninfo is built: vkcube needs a window system
+, withX11 ? true
 , targetTriple ? "x86_64-apple-darwin20.4"
 , appleSdk
 }:
 
 let
-  xDeps = [ libX11 libXext libxcb libXau libXdmcp libXrandr xorgproto ];
+  xDeps = lib.optionals withX11 [ libX11 libXext libxcb libXau libXdmcp libXrandr xorgproto ];
+  onOff = b: if b then "ON" else "OFF";
+  cmakeCpu = if lib.hasPrefix "arm64-" targetTriple then "aarch64" else "x86_64";
 in
 stdenv.mkDerivation {
-  pname = "puredarwin-vulkan-tools";
+  pname = "puredarwin-vulkan-tools${lib.optionalString (!withX11) "-nox"}";
   inherit (vulkanTools) version src;
 
   nativeBuildInputs = [ cmake ninja python3 glslang pkg-config ];
@@ -71,7 +75,7 @@ stdenv.mkDerivation {
 
     cmake -B build -G Ninja \
       -DCMAKE_SYSTEM_NAME=Darwin \
-      -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
+      -DCMAKE_SYSTEM_PROCESSOR=${cmakeCpu} \
       -DCMAKE_C_COMPILER=${darwinCrossToolchain}/bin/${targetTriple}-clang \
       -DCMAKE_CXX_COMPILER=${darwinCrossToolchain}/bin/${targetTriple}-clang++ \
       -DCMAKE_AR=${darwinCrossToolchain}/bin/${targetTriple}-ar \
@@ -85,13 +89,13 @@ stdenv.mkDerivation {
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_PREFIX_PATH="${vulkanHeaders};${vulkanLoader}/usr;${glslang}" \
       -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH \
-      -DBUILD_CUBE=ON \
+      -DBUILD_CUBE=${onOff withX11} \
       -DBUILD_VULKANINFO=ON \
       -DBUILD_ICD=OFF \
-      -DCUBE_WSI_SELECTION=XCB \
-      -DBUILD_WSI_XCB_SUPPORT=ON \
-      -DBUILD_WSI_XLIB_SUPPORT=ON \
-      -DBUILD_WSI_WAYLAND_SUPPORT=OFF
+      ${lib.optionalString withX11 "-DCUBE_WSI_SELECTION=XCB"} \
+      -DBUILD_WSI_XCB_SUPPORT=${onOff withX11} \
+      -DBUILD_WSI_XLIB_SUPPORT=${onOff withX11} \
+      -DBUILD_WSI_WAYLAND_SUPPORT=OFF ${lib.optionalString (lib.hasPrefix "arm64-" targetTriple) "-DBUILD_WSI_DISPLAY_SUPPORT=ON"}
 
     runHook postConfigure
   '';

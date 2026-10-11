@@ -1055,16 +1055,22 @@
               libxshmfence = libxshmfenceSharedBuild;
               zlib = xvfbZlibBuild;
               expat = expatBuild;
-              libX11 = xlibBuild;
-              libXext = xvfbLibXextBuild;
-              libxcb = xcbBuild;
-              libXau = xvfbLibXauBuild;
-              libXdmcp = xvfbLibXdmcpBuild;
-              libXxf86vm = xvfbLibXxf86vmBuild;
+              # the shared guest x libraries: a static libxcb inside lavapipe numbers extensions apart from the
+              # app's (GLFW) libxcb on the same connection, so requests went out under other extensions' opcodes
+              libX11 = libX11SharedBuild;
+              libXext = libXextSharedBuild;
+              libxcb = libxcbSharedBuild;
+              libXau = libXauSharedBuild;
+              libXdmcp = libXdmcpSharedBuild;
+              libXxf86vm = libXxf86vmSharedBuild;
               wayland = waylandBuild;
               waylandProtocols = waylandProtocolsBuild;
               waylandScanner = waylandScannerBuild;
               pdVirglShim = pdVirglShimBuild;
+              radeonWinsysSrc = ./nix/pkgs/mesa/radeon-puredarwin;
+              radeonAbiHeader = ./src/Kernel/Extensions/PDRadeonFramebuffer/PDRadeonRenderShared.h;
+              corefoundation = coreFoundationBuild;
+              iokit = iokitBuild;
               virglWinsysSrc = ./nix/pkgs/mesa/virgl-puredarwin;
               virglAbiHeader = ./src/Kernel/Extensions/IOVirtIOGPU/IOVirtIOGPU3DShared.h;
               inherit (pkgs) meson ninja pkg-config python3 bison flex xorgproto xtrans;
@@ -1539,50 +1545,167 @@
               coregraphics = coregraphicsBuild;
               src = ./src/Userspace/cg-screen-demo;
             };
-          gershwinSystemBuild = pkgs.stdenvNoCC.mkDerivation {
-            pname = "gershwin-system";
-            version = "2026-09-06";
-            src = pkgs.fetchFromGitHub {
-              owner = "gershwin-desktop";
-              repo = "gershwin-system";
-              rev = "a29ac743fea4388d580467e1998d7bf4c06b1de2";
-              hash = "sha256-T/1iGevtrkIfoUVDu645UTujd+lhUxOuGiYfCYlaCYw=";
+          terminalBuild =
+            pkgs.callPackage ./nix/pkgs/apps/terminal.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              appkit = appkitBuild;
+              onyx2d = onyx2dBuild;
+              coretext = coretextBuild;
+              quartzcore = quartzcoreBuild;
+              coregraphics = coregraphicsBuild;
+              applicationservices = applicationservicesBuild;
+              coreservices = coreServicesBuild;
+              windowserver = windowserverBuild;
+              openglFramework = openglFrameworkNoxBuild;
+              mesa = mesaNoxBuild;
+              src = ./src/Userspace/Terminal;
             };
-            installPhase = ''
-              runHook preInstall
-              mkdir -p "$out/System/Library"
-              cp -R Library/. "$out/System/Library/"
-              runHook postInstall
+          # the system menu bar, the server AppKit apps publish their menus to
+          menubarBuild =
+            pkgs.callPackage ./nix/pkgs/apps/menubar.nix {
+              librsvg = pkgs.librsvg;
+              iokit = iokitBuild;
+              iokitHeaders = iokitCFStaticBuild;
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              appkit = appkitBuild;
+              onyx2d = onyx2dBuild;
+              coretext = coretextBuild;
+              quartzcore = quartzcoreBuild;
+              coregraphics = coregraphicsBuild;
+              applicationservices = applicationservicesBuild;
+              coreservices = coreServicesBuild;
+              windowserver = windowserverBuild;
+              openglFramework = openglFrameworkNoxBuild;
+              mesa = mesaNoxBuild;
+              src = ./src/Userspace/MenuBar;
+            };
+          # the desktop picture and the dock bar
+          dockBuild =
+            pkgs.callPackage ./nix/pkgs/apps/dock.nix {
+              librsvg = pkgs.librsvg;
+              libjpeg = pkgs.libjpeg;
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              appkit = appkitBuild;
+              onyx2d = onyx2dBuild;
+              coretext = coretextBuild;
+              quartzcore = quartzcoreBuild;
+              coregraphics = coregraphicsBuild;
+              applicationservices = applicationservicesBuild;
+              coreservices = coreServicesBuild;
+              windowserver = windowserverBuild;
+              openglFramework = openglFrameworkNoxBuild;
+              mesa = mesaNoxBuild;
+              src = ./src/Userspace/Dock;
+            };
+          # the file browser the dock's Files tile opens
+          finderBuild =
+            pkgs.callPackage ./nix/pkgs/apps/finder.nix {
+              librsvg = pkgs.librsvg;
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              appkit = appkitBuild;
+              onyx2d = onyx2dBuild;
+              coretext = coretextBuild;
+              quartzcore = quartzcoreBuild;
+              coregraphics = coregraphicsBuild;
+              applicationservices = applicationservicesBuild;
+              coreservices = coreServicesBuild;
+              windowserver = windowserverBuild;
+              openglFramework = openglFrameworkNoxBuild;
+              mesa = mesaNoxBuild;
+              src = ./src/Userspace/Finder;
+            };
+          # PureDarwin's own system settings
+          settingsBuild =
+            pkgs.callPackage ./nix/pkgs/apps/settings.nix {
+              librsvg = pkgs.librsvg;
+              iokit = iokitBuild;
+              iokitHeaders = iokitCFStaticBuild;
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              appkit = appkitBuild;
+              onyx2d = onyx2dBuild;
+              coretext = coretextBuild;
+              quartzcore = quartzcoreBuild;
+              coregraphics = coregraphicsBuild;
+              applicationservices = applicationservicesBuild;
+              coreservices = coreServicesBuild;
+              windowserver = windowserverBuild;
+              openglFramework = openglFrameworkNoxBuild;
+              mesa = mesaNoxBuild;
+              src = ./src/Userspace/Settings;
+            };
+          # the hardware report behind About PureDarwin's More Info
+          systemInformationBuild =
+            pkgs.callPackage ./nix/pkgs/apps/system-information.nix {
+              iokit = iokitBuild;
+              iokitHeaders = iokitCFStaticBuild;
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              appkit = appkitBuild;
+              onyx2d = onyx2dBuild;
+              coretext = coretextBuild;
+              quartzcore = quartzcoreBuild;
+              coregraphics = coregraphicsBuild;
+              applicationservices = applicationservicesBuild;
+              coreservices = coreServicesBuild;
+              windowserver = windowserverBuild;
+              openglFramework = openglFrameworkNoxBuild;
+              mesa = mesaNoxBuild;
+              src = ./src/Userspace/SystemInformation;
+            };
+          # the basic calculator the Dock and Lookout open
+          calculatorBuild =
+            pkgs.callPackage ./nix/pkgs/apps/calculator.nix {
+              iokit = iokitBuild;
+              iokitHeaders = iokitCFStaticBuild;
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              appkit = appkitBuild;
+              onyx2d = onyx2dBuild;
+              coretext = coretextBuild;
+              quartzcore = quartzcoreBuild;
+              coregraphics = coregraphicsBuild;
+              applicationservices = applicationservicesBuild;
+              coreservices = coreServicesBuild;
+              windowserver = windowserverBuild;
+              openglFramework = openglFrameworkNoxBuild;
+              mesa = mesaNoxBuild;
+              src = ./src/Userspace/Calculator;
+            };
+          # neuswc plus the Terminal from launchd, the Wayland counterpart of startx with xterm
+          waylandSessionBuild =
+            pkgs.runCommand "puredarwin-wayland-session" { } ''
+              install -Dm755 ${./src/Userspace/wayland-session/pd-wayland-session} \
+                $out/usr/libexec/pd-wayland-session
+              install -Dm644 ${./src/Userspace/wayland-session/org.puredarwin.wayland-session.plist} \
+                $out/System/Library/LaunchDaemons/org.puredarwin.wayland-session.plist
             '';
-            meta = {
-              description = "Gershwin system-domain configuration and scripts";
-              homepage = "https://github.com/gershwin-desktop/gershwin-system";
-              license = lib.licenses.bsd2;
-              platforms = lib.platforms.unix;
-            };
-          };
-          gershwinAssetsBuild = pkgs.stdenvNoCC.mkDerivation {
-            pname = "gershwin-assets";
-            version = "2026-09-06";
-            src = pkgs.fetchFromGitHub {
-              owner = "gershwin-desktop";
-              repo = "gershwin-assets";
-              rev = "9266b6edd28ce7fb6d9e6dfcf9cca4cc4b1c3038";
-              hash = "sha256-Scc33jaG/lJqEjunU9MGKGIM47YgRACoipsWsnPe2U8=";
-            };
-            installPhase = ''
-              runHook preInstall
-              mkdir -p "$out/System/Library"
-              cp -R Library/. "$out/System/Library/"
-              runHook postInstall
-            '';
-            meta = {
-              description = "Gershwin system-domain artwork and resources";
-              homepage = "https://github.com/gershwin-desktop/gershwin-assets";
-              license = lib.licenses.bsd2;
-              platforms = lib.platforms.unix;
-            };
-          };
+          systemFontsBuild = pkgs.callPackage ./nix/pkgs/base/system-fonts.nix { };
           # Wayland-only image: cairo/dbus/mesa each bake an libX11 path into
           # their output unless their X11 backends are configured out.
           cairoNoxBuild =
@@ -2586,6 +2709,11 @@
             inherit (pkgs.libXrandr) version src;
             deps = [ pkgs.xorgproto libX11SharedBuild libXextSharedBuild libXrenderSharedBuild ];
           };
+          libXxf86vmSharedBuild = mkSharedXorgLib {
+            pname = "puredarwin-libXxf86vm";
+            inherit (pkgs.libXxf86vm) version src;
+            deps = [ pkgs.xorgproto libX11SharedBuild libXextSharedBuild ];
+          };
           libXcursorSharedBuild = mkSharedXorgLib {
             pname = "puredarwin-libXcursor";
             inherit (pkgs.libXcursor) version src;
@@ -2611,6 +2739,264 @@
               libXrandr = libXrandrSharedBuild;
               inherit (pkgs) xorgproto;
             };
+          radeonGlTestsBuild =
+            pkgs.callPackage ./nix/pkgs/gpu/radeon-gl-tests.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              mesa = mesaNoxBuild;
+              libSystem = libSystemBuild;
+              corefoundation = coreFoundationBuild;
+              iokit = iokitBuild;
+              libdrmSrc = pkgs.libdrm.src;
+              vulkanHeaders = pkgs.vulkan-headers;
+            };
+          radeonTestsBuild =
+            pkgs.callPackage ./nix/pkgs/gpu/radeon-tests.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              corefoundation = coreFoundationBuild;
+              iokit = iokitBuild;
+              libdrmSrc = pkgs.libdrm.src;
+              vulkanHeaders = pkgs.vulkan-headers;
+            };
+          libdrmVirtgpuBuild =
+            pkgs.callPackage ./nix/pkgs/gpu/libdrm-virtgpu.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              corefoundation = coreFoundationBuild;
+              iokit = iokitBuild;
+              libdrmSrc = pkgs.libdrm.src;
+              vulkanHeaders = pkgs.vulkan-headers;
+            };
+          mesaVenusBuild =
+            pkgs.callPackage ./nix/pkgs/mesa/mesa-venus.nix rec {
+              version = "26.0.3";
+              src = pkgs.fetchurl {
+                url = "https://archive.mesa3d.org/mesa-${version}.tar.xz";
+                sha256 = "0d71d6vslcmyr94bma7cvacz0dzrgc3hzf5nni2sm2cf68yl9dyx";
+              };
+              nativeMesonTools = nativeMesonToolsDir;
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              libcxxDylib = libcxxDylibBuild;
+              libcxxabiDylib = libcxxabiDylibBuild;
+              zlib = xvfbZlibBuild;
+              libdrmVirtgpu = libdrmVirtgpuBuild;
+              inherit (pkgs) meson ninja pkg-config python3 bison flex glslang;
+            };
+          venusTestsBuild =
+            pkgs.callPackage ./nix/pkgs/gpu/venus-tests.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              vulkanHeaders = pkgs.vulkan-headers;
+              vulkanLoader = vulkanLoaderBuild;
+              inherit (pkgs) glslang;
+            };
+          # venus with x11 and wayland wsi, and the Metal demos (pdmtl window, Indium tests) windowed on PD
+          mesaVenusWsiBuild =
+            mesaVenusBuild.override {
+              withX11 = true;
+              withWayland = true;
+              wayland = waylandBuild;
+              waylandProtocols = waylandProtocolsBuild;
+              waylandScanner = waylandScannerBuild;
+              libX11 = libX11SharedBuild;
+              libxcb = libxcbSharedBuild;
+              libXau = libXauSharedBuild;
+              libXdmcp = libXdmcpSharedBuild;
+              libxshmfence = libxshmfenceSharedBuild;
+              inherit (pkgs) xorgproto;
+            };
+          # the wayland-only vulkan stack for image-wayland-minimal, so it carries no x11 client libraries
+          vulkanLoaderNoxBuild =
+            vulkanLoaderBuild.override {
+              withX11 = false;
+              libX11 = null; libxcb = null; libXau = null; libXdmcp = null;
+              libXrandr = null; libXrender = null; xorgproto = null;
+            };
+          vulkanToolsNoxBuild =
+            vulkanToolsBuild.override {
+              withX11 = false;
+              vulkanLoader = vulkanLoaderNoxBuild;
+              libX11 = null; libXext = null; libxcb = null; libXau = null;
+              libXdmcp = null; libXrandr = null; xorgproto = null;
+            };
+          mesaVenusWaylandBuild =
+            mesaVenusBuild.override {
+              withWayland = true;
+              wayland = waylandBuild;
+              waylandProtocols = waylandProtocolsBuild;
+              waylandScanner = waylandScannerBuild;
+            };
+          venusTestsNoxBuild =
+            venusTestsBuild.override { vulkanLoader = vulkanLoaderNoxBuild; };
+          # the Metal demos on the same loader, GLFW dlopens its window system, so Wayland needs no x11 libraries
+          metalPdNoxBuild =
+            metalPdBuild.override { vulkanLoader = vulkanLoaderNoxBuild; };
+          metalObjcPdNoxBuild =
+            metalObjcPdBuild.override {
+              vulkanLoader = vulkanLoaderNoxBuild;
+              metalPd = metalPdNoxBuild;
+            };
+          metalAppleSamplesNoxBuild =
+            metalAppleSamplesBuild.override { metalObjc = metalObjcPdNoxBuild; };
+          glfwPdBuild =
+            pkgs.callPackage ./nix/pkgs/gpu/glfw-pd.nix {
+              inherit (pkgs.glfw) src version;
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              xHeaders = [ libX11SharedBuild libXextSharedBuild libXrenderSharedBuild libXrandrSharedBuild
+                libXfixesSharedBuild libXiSharedBuild libXcursorSharedBuild pkgs.libXinerama ];
+              wayland = waylandBuild;
+              xkbcommon = xkbcommonBuild;
+              waylandScanner = waylandScannerBuild;
+              compatInclude = ./nix/pkgs/wayland/pd-compat-include;
+              inherit (pkgs) xorgproto;
+            };
+          spirvCrossPdBuild = pkgs.callPackage ./nix/pkgs/gpu/spirv-cross-pd.nix {
+            inherit darwinCrossToolchain nativeLd appleSdk;
+            libSystem = libSystemBuild;
+            libcxxDylib = libcxxDylibBuild;
+            libcxxabiDylib = libcxxabiDylibBuild;
+          };
+          metalPdBuild =
+            pkgs.callPackage ./nix/pkgs/gpu/metal-pd.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              libcxxDylib = libcxxDylibBuild;
+              libcxxabiDylib = libcxxabiDylibBuild;
+              llvm = llvmCrossBuild;
+              iokit = iokitBuild;
+              corefoundation = coreFoundationBuild;
+              vulkanLoader = vulkanLoaderBuild;
+              vulkanHeaders = pkgs.vulkan-headers;
+              glfw = glfwPdBuild;
+              mesa = mesaNoxBuild;
+              spirvCross = spirvCrossPdBuild;
+              inherit (pkgs) spirv-headers glm stb xxd;
+            };
+          metalObjcPdBuild =
+            pkgs.callPackage ./nix/pkgs/gpu/metal-objc-pd.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              libcxxDylib = libcxxDylibBuild;
+              libcxxabiDylib = libcxxabiDylibBuild;
+              llvm = llvmCrossBuild;
+              iokit = iokitBuild;
+              corefoundation = coreFoundationBuild;
+              libobjc = libobjcBuild;
+              foundation = foundationBuild;
+              vulkanLoader = vulkanLoaderBuild;
+              vulkanHeaders = pkgs.vulkan-headers;
+              glfw = glfwPdBuild;
+              metalPd = metalPdBuild;
+              spirvCross = spirvCrossPdBuild;
+              appkit = appkitBuild;
+              onyx2d = onyx2dBuild;
+              coretext = coretextBuild;
+              quartzcore = quartzcoreBuild;
+              coregraphics = coregraphicsBuild;
+              applicationservices = applicationservicesBuild;
+              coreservices = coreServicesBuild;
+              windowserver = windowserverBuild;
+              openglFramework = openglFrameworkNoxBuild;
+              mesa = mesaNoxBuild;
+              appFrameworks = appFrameworksBuild;
+            };
+          # MetalPerformanceShaders' image kernels on PD's Metal
+          mpsBuild =
+            pkgs.callPackage ./nix/pkgs/gpu/mps.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              metalObjc = metalObjcPdBuild;
+              src = ./src/Frameworks/MetalPerformanceShaders;
+            };
+          mpsNoxBuild = mpsBuild.override { metalObjc = metalObjcPdNoxBuild; };
+          iosurfaceBuild =
+            pkgs.callPackage ./nix/pkgs/apple/iosurface.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              corefoundation = coreFoundationBuild;
+              src = ./src/Frameworks/IOSurface;
+            };
+          audiotoolboxBuild =
+            pkgs.callPackage ./nix/pkgs/apple/audiotoolbox.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              src = ./src/Frameworks/AudioToolbox;
+            };
+          # apple's framework install paths (CoreFoundation re-export shim, Versions/C) for Xcode-built apps
+          frameworkCompatBuild =
+            pkgs.callPackage ./nix/pkgs/apple/framework-compat.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              swiftRuntime = swiftRuntimeBuild;
+            };
+          # the Cocoa.framework umbrella over Foundation, AppKit and CoreData that Xcode-built apps link
+          cocoaBuild =
+            pkgs.callPackage ./nix/pkgs/apple/cocoa.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              foundation = foundationBuild;
+              appkit = appkitBuild;
+              coredata = coredataBuild;
+              src = ./src/Frameworks/Cocoa;
+            };
+          # CoreMedia, UniformTypeIdentifiers, ImageIO, UserNotifications, ScreenCaptureKit, GameKit
+          appFrameworksBuild =
+            pkgs.callPackage ./nix/pkgs/apple/app-frameworks.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              coregraphics = coregraphicsBuild;
+              onyx2d = onyx2dBuild;
+              coretext = coretextBuild;
+              quartzcore = quartzcoreBuild;
+              applicationservices = applicationservicesBuild;
+              coreservices = coreServicesBuild;
+              windowserver = windowserverBuild;
+              appkit = appkitBuild;
+              openglFramework = openglFrameworkNoxBuild;
+              mesa = mesaNoxBuild;
+              srcs = {
+                CoreMedia = ./src/Frameworks/CoreMedia;
+                UniformTypeIdentifiers = ./src/Frameworks/UniformTypeIdentifiers;
+                ImageIO = ./src/Frameworks/ImageIO;
+                UserNotifications = ./src/Frameworks/UserNotifications;
+                ScreenCaptureKit = ./src/Frameworks/ScreenCaptureKit;
+                GameKit = ./src/Frameworks/GameKit;
+                ModelIO = ./src/Frameworks/ModelIO;
+              };
+            };
+          # apple's Metal samples (MIT) on PD's Metal, MetalKit and AppKit storyboards
+          metalAppleSamplesBuild =
+            pkgs.callPackage ./nix/pkgs/gpu/metal-apple-samples.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              libcxxDylib = libcxxDylibBuild;
+              libcxxabiDylib = libcxxabiDylibBuild;
+              corefoundation = coreFoundationBuild;
+              libobjc = libobjcBuild;
+              foundation = foundationBuild;
+              metalObjc = metalObjcPdBuild;
+              compilerRt = compilerRtBuild;
+              appkit = appkitBuild;
+              onyx2d = onyx2dBuild;
+              coretext = coretextBuild;
+              quartzcore = quartzcoreBuild;
+              coregraphics = coregraphicsBuild;
+              applicationservices = applicationservicesBuild;
+              coreservices = coreServicesBuild;
+              windowserver = windowserverBuild;
+              openglFramework = openglFrameworkNoxBuild;
+              mesa = mesaNoxBuild;
+            };
           vulkanLoaderBuild =
             pkgs.callPackage ./nix/pkgs/mesa/vulkan-loader.nix {
               inherit darwinCrossToolchain nativeLd;
@@ -2625,6 +3011,8 @@
               libXdmcp = libXdmcpSharedBuild;
               libXrandr = libXrandrSharedBuild;
               libXrender = libXrenderSharedBuild;
+              # vkCreateWaylandSurfaceKHR for Metal's CAMetalLayer on PD's Wayland windows
+              wayland = waylandBuild;
               inherit (pkgs) xorgproto;
             };
           libxshmfenceSharedBuild = mkSharedXorgLib {
@@ -3005,6 +3393,7 @@
               fontconfig = fontconfigBuild;
               freetype = freetype2Build;
               pixman = xvfbPixmanBuild;
+              mesaNox = mesaNoxBuild;
               src = ./src/ThirdParty/neuwld;
             };
           neuswcBuild =
@@ -3018,6 +3407,7 @@
               iokit = iokitBuild;
               iokitHeaders = iokitCFStaticBuild;
               neuwld = neuwldBuild;
+              mesaNox = mesaNoxBuild;
               pdsurface = pdsurfaceBuild;
               pixman = xvfbPixmanBuild;
               wayland = waylandBuild;
@@ -3265,6 +3655,39 @@
               notifyInclude = ./src/Libraries/XPC/notify;
               src = "${foundationSource}/src/Frameworks/Foundation";
             };
+          swiftToolchain = pkgs.callPackage ./nix/pkgs/toolchain/swift-toolchain.nix { };
+          swiftRuntimeBuild =
+            pkgs.callPackage ./nix/pkgs/apple/swift-runtime.nix {
+              inherit darwinCrossToolchain nativeLd swiftToolchain;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              libcxxDylib = libcxxDylibBuild;
+              libcxxabiDylib = libcxxabiDylibBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              overlaySrc = ./src/Libraries/SwiftOverlays;
+              objcApinotes = ./src/Libraries/objc4/runtime/Module/ObjectiveC.apinotes;
+              dispatchModulemap = ./src/Libraries/libSystem/libdispatch/dispatch/darwin/module.modulemap;
+              cfModulemap = ./src/Frameworks/CoreFoundation/Base.subproj/module.modulemap;
+            };
+          swiftRuntimeArm64Build = swiftRuntimeBuild.override {
+            darwinCrossToolchain = arm64CrossToolchain;
+            targetTriple = "arm64-apple-darwin20.4";
+            libSystem = arm64.libSystemArm64Build;
+            libobjc = libobjcArm64Build;
+            libcxxDylib = libcxxDylibArm64Build;
+            libcxxabiDylib = libcxxabiDylibArm64Build;
+            corefoundation = coreFoundationArm64Build;
+            foundation = foundationArm64Build;
+          };
+          frameworkCompatArm64Build = frameworkCompatBuild.override {
+            darwinCrossToolchain = arm64CrossToolchain;
+            targetTriple = "arm64-apple-darwin20.4";
+            libSystem = arm64.libSystemArm64Build;
+            corefoundation = coreFoundationArm64Build;
+            foundation = foundationArm64Build;
+            swiftRuntime = swiftRuntimeArm64Build;
+          };
           protocolBufferBuild =
             pkgs.callPackage ./nix/pkgs/apple/protocolbuffer.nix {
               inherit darwinCrossToolchain nativeLd;
@@ -3321,12 +3744,12 @@
               quartzcore = quartzcoreBuild;
               applicationservices = applicationservicesBuild;
               coreservices = coreServicesBuild;
-              openglFramework = openglFrameworkBuild;
+              openglFramework = openglFrameworkNoxBuild;
               windowserver = windowserverBuild;
               freetype2 = freetype2Build;
               fontconfig = fontconfigBuild;
-              mesa = mesaBuild;
-              glu = gluBuild;
+              mesa = mesaNoxBuild;
+              glu = gluNoxBuild;
               src = ./src/Frameworks/AppKit;
             };
           windowserverBuild =
@@ -3352,9 +3775,9 @@
               libobjc = libobjcBuild;
               corefoundation = coreFoundationBuild;
               foundation = foundationBuild;
-              openglFramework = openglFrameworkBuild;
-              mesa = mesaBuild;
-              glu = gluBuild;
+              openglFramework = openglFrameworkNoxBuild;
+              mesa = mesaNoxBuild;
+              glu = gluNoxBuild;
               src = ./src/Frameworks/CoreVideo;
             };
           quartzcoreBuild =
@@ -3367,11 +3790,11 @@
               onyx2d = onyx2dBuild;
               coregraphics = coregraphicsBuild;
               coretext = coretextBuild;
-              openglFramework = openglFrameworkBuild;
+              openglFramework = openglFrameworkNoxBuild;
               corevideo = corevideoBuild;
               applicationservices = applicationservicesBuild;
-              mesa = mesaBuild;
-              glu = gluBuild;
+              mesa = mesaNoxBuild;
+              glu = gluNoxBuild;
               src = ./src/Frameworks/QuartzCore;
             };
           # arm64 twins of the remaining image packages and their dependency
@@ -3592,6 +4015,23 @@
             wlrootsArm64Build
             swayArm64Build
             libdrmArm64Build
+            libdrmPdpvrArm64Build
+            mesaPvrNativeToolsBuild
+            mesaPowervrArm64Build
+            vulkanLoaderArm64Build
+            pdvktriArm64Build
+            pdvkspinArm64Build
+            pvrVulkanArm64
+            pvrVulkanIpdArm64
+            libdrmVirtgpuArm64Build
+            mesaVenusArm64Build
+            venusVulkanIpdArm64
+            mesaPowervrX11Arm64Build
+            vulkanLoaderX11Arm64Build
+            vulkanToolsArm64Build
+            x11PvrArm64
+            xorgNoGlxArm64Build
+            puredarwingopArm64Build
             xwaylandArm64Build
             libdisplayInfoArm64Build
             xvfbLibXxf86vmArm64Build
@@ -3621,6 +4061,7 @@
             kernelArm64Build
             kernelArm64VirtBuild
             kernelArm64VirtDebugBuild
+            kernelArm64VirtAmpBuild
             kernelArm64T8010Build
             kernelArm64T8010DebugBuild
             kernelArm64Bcm2837Build
@@ -3650,6 +4091,8 @@
           imageExtraPackagesArm64 = arm64.imageExtraPackagesArm64 ++ [
             xfconfArm64 libxfce4utilArm64 libxfce4uiArm64 libxfce4windowingArm64
             garconArm64 exoArm64 xfwm4Arm64 xfdesktopArm64 thunarArm64
+            # /usr/lib/swift and the Foundation path Xcode-built apps link
+            swiftRuntimeArm64Build frameworkCompatArm64Build
           ];
           securityBuild =
             pkgs.callPackage ./nix/pkgs/apple/security.nix {
@@ -3978,19 +4421,20 @@
           # Image contents (see nix/image-contents.nix).
           imageContents = import ./nix/image-contents.nix {
             inherit
+              appkitBuild windowserverBuild applicationservicesBuild terminalBuild menubarBuild dockBuild finderBuild systemInformationBuild calculatorBuild settingsBuild waylandSessionBuild
               nixPortPackages
               atspi2CoreBuild autoconfBuild automakeBuild bisonBuild bmakeBuild cairoBuild
               cairoGobjectBuild cctoolsBuild coreFoundationBuild curlBuild darwinCrossToolchain
               coreServicesBuild dbusBuild dilloBuild diskArbitrationBuild wineBuild dmenuBuild exoBuild expatBuild fastfetchBuild
               libX11SharedBuild libxcbSharedBuild libXauSharedBuild libXdmcpSharedBuild
               libXextSharedBuild libXrenderSharedBuild libXfixesSharedBuild libXiSharedBuild
-              libXcursorSharedBuild libXrandrSharedBuild nettleSharedBuild gnutlsSharedBuild glibNetworkingBuild llvmCrossBuild vulkanLoaderBuild libxshmfenceSharedBuild vulkanToolsBuild
-              fbdoomBuild fbdoomExternalSrc fileBuild flexBuild fontconfigBuild foundationBuild
+              libXcursorSharedBuild libXrandrSharedBuild libXxf86vmSharedBuild nettleSharedBuild gnutlsSharedBuild glibNetworkingBuild llvmCrossBuild vulkanLoaderBuild libxshmfenceSharedBuild vulkanToolsBuild vulkanLoaderNoxBuild vulkanToolsNoxBuild mesaVenusWaylandBuild venusTestsNoxBuild libdrmVirtgpuBuild glfwPdBuild metalPdNoxBuild metalObjcPdNoxBuild metalAppleSamplesNoxBuild spirvCrossPdBuild
+              fbdoomBuild fbdoomExternalSrc fileBuild flexBuild fontconfigBuild foundationBuild frameworkCompatBuild swiftRuntimeBuild cocoaBuild appFrameworksBuild mpsNoxBuild audiotoolboxBuild iosurfaceBuild
               freetype2Build fribidiBuild garconBuild gdkPixbufBuild gitBuild glibBuild gnum4Build
-              gnumakeBuild gtk3Build gtkLayerShellBuild gtk3NoxBuild gtkLayerShellNoxBuild onyx2dBuild coregraphicsBuild coretextBuild coredataBuild cgScreenDemoBuild gershwinSystemBuild gershwinAssetsBuild cairoNoxBuild dbusNoxBuild pdEpollShimBuild tllistBuild fcftBuild footBuild userlandNoxBuild pangoNoxBuild netsurfNoxBuild libepoxyNoxBuild fastfetchNoxBuild harfbuzzNoxBuild atspi2CoreNoxBuild cairoGobjectNoxBuild xkbcommonNoxBuild mesaNoxBuild openglFrameworkNoxBuild mesaDemosNoxBuild librsvgNoxBuild harfbuzzBuild i3Build i3statusShimBuild iceauthBuild
+              gnumakeBuild gtk3Build gtkLayerShellBuild gtk3NoxBuild gtkLayerShellNoxBuild onyx2dBuild coregraphicsBuild coretextBuild quartzcoreBuild corevideoBuild coredataBuild cgScreenDemoBuild systemFontsBuild cairoNoxBuild dbusNoxBuild pdEpollShimBuild tllistBuild fcftBuild footBuild userlandNoxBuild pangoNoxBuild netsurfNoxBuild libepoxyNoxBuild fastfetchNoxBuild harfbuzzNoxBuild atspi2CoreNoxBuild cairoGobjectNoxBuild xkbcommonNoxBuild mesaNoxBuild openglFrameworkNoxBuild mesaDemosNoxBuild librsvgNoxBuild harfbuzzBuild i3Build i3statusShimBuild iceauthBuild
               cursorThemeBuild iconThemesBuild icuCoreBuild imageExtraPackagesArm64 imageExtraPackagesArm64Nox imageExtraPackagesArm64Sg2002 splitBaseSystemArm64Sg2002 iographicsBuild iokitBuild asmjitTestArm64Build
               iomediacheckBuild ioregBuild isDarwin jsoncBuild kc-tools kernelArm64Build kernelArm64VirtBuild
-              kernelArm64VirtDebugBuild kernelArm64T8010Build kernelArm64T8010DebugBuild kernelArm64Bcm2837Build kernelArm64Bcm2837DebugBuild kernelArm64Sun50iBuild kernelArm64Sun50iDebugBuild kernelArm64Virt4kDebugBuild kernelArm32Bcm2835Build kernelArm32Bcm2835DebugBuild kernelArm32Bcm2835DevBuild
+              kernelArm64VirtDebugBuild kernelArm64VirtAmpBuild kernelArm64T8010Build kernelArm64T8010DebugBuild kernelArm64Bcm2837Build kernelArm64Bcm2837DebugBuild kernelArm64Sun50iBuild kernelArm64Sun50iDebugBuild kernelArm64Virt4kDebugBuild kernelArm32Bcm2835Build kernelArm32Bcm2835DebugBuild kernelArm32Bcm2835DevBuild
               kextsArm32Bcm2835Build compilerRtArmv6Build
               kernelBuild kernelDebugBuild kernelSource kextsArm64Build kextsBuild
               launchctlBuild launchdBuild lib libSystemBuild libdrmBuild libXftBuild libapfsrwBuild libcssBuild waylandBuild waylandProtocolsBuild neuwldBuild neuswcBuild wlrootsBuild swayBuild wlrootsNoxBuild swayNoxBuild
@@ -4097,6 +4541,7 @@
             libXi-shared = libXiSharedBuild;
             libXcursor-shared = libXcursorSharedBuild;
             libXrandr-shared = libXrandrSharedBuild;
+            libXxf86vm-shared = libXxf86vmSharedBuild;
             nettle-shared = nettleSharedBuild;
             gnutls-shared = gnutlsSharedBuild;
             libxshmfence-shared = libxshmfenceSharedBuild;
@@ -4132,6 +4577,14 @@
             applicationservices = applicationservicesBuild;
             windowserver = windowserverBuild;
             appkit = appkitBuild;
+            terminal = terminalBuild;
+            menubar = menubarBuild;
+            dock = dockBuild;
+            finder = finderBuild;
+            system-information = systemInformationBuild;
+            calculator = calculatorBuild;
+            settings = settingsBuild;
+            wayland-session = waylandSessionBuild;
           };
           arm64Packages = {
             libSystem-armv6 = arm64.libSystemArmv6Build;
@@ -4187,6 +4640,9 @@
             libwnck-arm64 = libwnckArm64Build;
             llvm-arm64 = llvmCrossArm64Build;
             airjitd = airjitdArm64Build;
+            air2spv = pkgs.callPackage ./nix/pkgs/gpu/air2spv.nix { };
+            metal-window = pkgs.callPackage ./nix/pkgs/gpu/metal-window.nix { };
+            indium-pd = pkgs.callPackage ./nix/pkgs/gpu/indium-pd.nix { };
             compiler-rt-arm64 = compilerRtArm64Build;
             wine-arm64 = wineArm64Build;
             asmjit-test-arm64 = asmjitTestArm64Build;
@@ -4200,6 +4656,39 @@
             wlroots-arm64 = wlrootsArm64Build;
             sway-arm64 = swayArm64Build;
             libdrm-arm64 = libdrmArm64Build;
+            libdrm-pdpvr-arm64 = libdrmPdpvrArm64Build;
+            radeon-gl-tests = radeonGlTestsBuild;
+            radeon-tests = radeonTestsBuild;
+            libdrm-virtgpu = libdrmVirtgpuBuild;
+            mesa-venus = mesaVenusBuild;
+            venus-tests = venusTestsBuild;
+            mesa-venus-wsi = mesaVenusWsiBuild;
+            glfw-pd = glfwPdBuild;
+            metal-pd = metalPdBuild;
+            metal-objc = metalObjcPdBuild;
+            mps = mpsBuild;
+            metal-apple-samples = metalAppleSamplesBuild;
+            framework-compat = frameworkCompatBuild;
+            cocoa = cocoaBuild;
+            app-frameworks = appFrameworksBuild;
+            audiotoolbox = audiotoolboxBuild;
+            iosurface = iosurfaceBuild;
+            mesa-pvr-native-tools = mesaPvrNativeToolsBuild;
+            mesa-powervr-arm64 = mesaPowervrArm64Build;
+            vulkan-loader-arm64 = vulkanLoaderArm64Build;
+            pdvktri-arm64 = pdvktriArm64Build;
+            pdvkspin-arm64 = pdvkspinArm64Build;
+            pvr-vulkan-arm64 = pvrVulkanArm64;
+            pvr-vulkan-ipd-arm64 = pvrVulkanIpdArm64;
+            libdrm-virtgpu-arm64 = libdrmVirtgpuArm64Build;
+            mesa-venus-arm64 = mesaVenusArm64Build;
+            venus-vulkan-ipd-arm64 = venusVulkanIpdArm64;
+            mesa-powervr-x11-arm64 = mesaPowervrX11Arm64Build;
+            vulkan-loader-x11-arm64 = vulkanLoaderX11Arm64Build;
+            vulkan-tools-arm64 = vulkanToolsArm64Build;
+            x11-pvr-arm64 = x11PvrArm64;
+            xorg-noglx-arm64 = xorgNoGlxArm64Build;
+            puredarwingop-arm64 = puredarwingopArm64Build;
             xwayland-arm64 = xwaylandArm64Build;
             libdisplayInfo-arm64 = libdisplayInfoArm64Build;
             libXxf86vm-arm64 = xvfbLibXxf86vmArm64Build;
@@ -4239,6 +4728,7 @@
             libxml2-arm64 = libxml2Arm64Build;
             yajl-arm64 = yajlArm64Build;
             glib-arm64 = glibArm64Build;
+            userland = userlandBuild;
             userland-arm64 = userlandArm64Build;
             coreFoundation-arm64 = coreFoundationArm64Build;
             i3statusShim-arm64 = i3statusShimArm64Build;
@@ -4265,6 +4755,10 @@
             vmprobe-arm64 = vmprobeArm64Build;
             fltk-arm64 = fltkArm64Build;
             foundation-arm64 = foundationArm64Build;
+            swift-runtime = swiftRuntimeBuild;
+            swift-toolchain = swiftToolchain;
+            swift-runtime-arm64 = swiftRuntimeArm64Build;
+            framework-compat-arm64 = frameworkCompatArm64Build;
             fribidi-arm64 = fribidiArm64Build;
             gdkPixbuf-arm64 = gdkPixbufArm64Build;
             git-arm64 = gitArm64Build;
@@ -4385,7 +4879,13 @@
             cg-screen-demo = cgScreenDemoBuild;
           } // commonPackages // arm64Packages // probePackages // linuxPackages
             // lib.filterAttrs (_: lib.isDerivation) nixPortPackages;
-          apps = lib.optionalAttrs (!isDarwin) linuxApps;
+          apps = lib.optionalAttrs (!isDarwin) (linuxApps // {
+            # metal shaders in a Linux window (pdmtl demo): nix run .#metal-window
+            metal-window = {
+              type = "app";
+              program = "${arm64Packages.metal-window}/bin/metal-window";
+            };
+          });
           devShells = {
             kernel = devShell;
             default = devShell;

@@ -28,6 +28,13 @@
 , flexBuild
 , fontconfigBuild
 , foundationBuild
+, frameworkCompatBuild
+, swiftRuntimeBuild
+, cocoaBuild
+, appFrameworksBuild
+, mpsNoxBuild
+, audiotoolboxBuild
+, iosurfaceBuild
 , freetype2Build
 , fribidiBuild
 , garconBuild
@@ -42,10 +49,11 @@
 , onyx2dBuild
 , coregraphicsBuild
 , coretextBuild
+, quartzcoreBuild
+, corevideoBuild
 , coredataBuild
 , cgScreenDemoBuild
-, gershwinSystemBuild
-, gershwinAssetsBuild
+, systemFontsBuild
 , cairoNoxBuild
 , pdEpollShimBuild
 , tllistBuild
@@ -93,12 +101,23 @@
 , libXiSharedBuild
 , libXcursorSharedBuild
 , libXrandrSharedBuild
+, libXxf86vmSharedBuild
 , nettleSharedBuild
 , gnutlsSharedBuild
 , glibNetworkingBuild
 , llvmCrossBuild
 , vulkanLoaderBuild
 , vulkanToolsBuild
+, vulkanLoaderNoxBuild
+, vulkanToolsNoxBuild
+, mesaVenusWaylandBuild
+, venusTestsNoxBuild
+, libdrmVirtgpuBuild
+, glfwPdBuild
+, metalPdNoxBuild
+, metalObjcPdNoxBuild
+, metalAppleSamplesNoxBuild
+, spirvCrossPdBuild
 , libxshmfenceSharedBuild
 , iomediacheckBuild
 , ioregBuild
@@ -107,6 +126,7 @@
 , kernelArm64Build
 , kernelArm64VirtBuild
 , kernelArm64VirtDebugBuild
+, kernelArm64VirtAmpBuild
 , kernelArm64T8010Build
 , kernelArm64T8010DebugBuild
 , kernelArm64Bcm2837Build
@@ -136,6 +156,17 @@
 , waylandProtocolsBuild
 , neuwldBuild
 , neuswcBuild
+, appkitBuild
+, windowserverBuild
+, applicationservicesBuild
+, terminalBuild
+, menubarBuild
+, dockBuild
+, finderBuild
+, systemInformationBuild
+, calculatorBuild
+, settingsBuild
+, waylandSessionBuild
 , wlrootsBuild
 , swayBuild
 , wlrootsNoxBuild
@@ -450,6 +481,7 @@ let
     libXi-shared = libXiSharedBuild;
     libXcursor-shared = libXcursorSharedBuild;
     libXrandr-shared = libXrandrSharedBuild;
+    libXxf86vm-shared = libXxf86vmSharedBuild;
     nettle = nettleSharedBuild;
     gnutls = gnutlsSharedBuild;
     glib-networking = glibNetworkingBuild;
@@ -554,10 +586,12 @@ let
     onyx2d = onyx2dBuild;
     coregraphics = coregraphicsBuild;
     coretext = coretextBuild;
+    # AppKit links both, without them no AppKit app loads
+    quartzcore = quartzcoreBuild;
+    corevideo = corevideoBuild;
     coredata = coredataBuild;
     cg-screen-demo = cgScreenDemoBuild;
-    gershwin-system = gershwinSystemBuild;
-    gershwin-assets = gershwinAssetsBuild;
+    system-fonts = systemFontsBuild;
     icucore = icuCoreBuild;
     libcxxabi-dylib = libcxxabiDylibBuild;
     libcxx-dylib = libcxxDylibBuild;
@@ -568,6 +602,12 @@ let
     pd-virgl-shim = pdVirglShimBuild;
     libobjc = libobjcBuild;
     foundation = foundationBuild;
+    framework-compat = frameworkCompatBuild;
+    swift-runtime = swiftRuntimeBuild;
+    cocoa = cocoaBuild;
+    app-frameworks = appFrameworksBuild;
+    audiotoolbox = audiotoolboxBuild;
+    iosurface = iosurfaceBuild;
     iokit = iokitBuild;
     coreServices = coreServicesBuild;
     security = securityBuild;
@@ -822,6 +862,13 @@ let
       };
       kcArm64ReleaseBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
         kernel = kernelArm64VirtBuild;
+        inherit kernelSource;
+        kexts = kextsArm64Build;
+        kcTools = kc-tools.packages.${system}.default;
+      };
+      # the A733 kernel: VIRT with an E and a P cluster for the AMP (Edge) scheduler
+      kcArm64A733ReleaseBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
+        kernel = kernelArm64VirtAmpBuild;
         inherit kernelSource;
         kexts = kextsArm64Build;
         kcTools = kc-tools.packages.${system}.default;
@@ -1144,7 +1191,7 @@ let
         "libx11-locale"
         "libX11-shared" "libxcb-shared" "libXau-shared" "libXdmcp-shared"
         "libXext-shared" "libXrender-shared" "libXfixes-shared" "libXi-shared"
-        "libXcursor-shared" "libXrandr-shared"
+        "libXcursor-shared" "libXrandr-shared" "libXxf86vm-shared"
         # Xfce is an X11 desktop end to end
         "libxfce4util" "xfconf" "libwnck" "libxfce4ui" "xfwm4"
         "libxfce4windowing" "garcon" "exo" "xfce4-session" "xfce4-panel"
@@ -1204,6 +1251,12 @@ let
           libcxxTestBuild
           objcTestBuild
           foundationBuild
+          # x86 CoreFoundation.framework binary (Foundation + CF re-export) and Versions/C paths
+          frameworkCompatBuild
+          # /usr/lib/swift, which framework-compat's Foundation re-exports from
+          swiftRuntimeBuild
+          audiotoolboxBuild
+          iosurfaceBuild
           securityBuild
           symptomReporterBuild
           systemConfigurationBuild
@@ -1334,8 +1387,7 @@ let
           coregraphicsBuild
           coretextBuild
           cgScreenDemoBuild
-          gershwinSystemBuild
-          gershwinAssetsBuild
+          systemFontsBuild
           waylandBuild
           waylandProtocolsBuild
           xkbcommonNoxBuild
@@ -1350,6 +1402,40 @@ let
         espMB = 60;
         rootMB = 420;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 serial_video_mirror=1 pd_fault_trace=1";
+      };
+      # ps from PureDarwin's own userland, toybox's ps reads Linux /proc
+      psOnlyBuild = pkgs.runCommand "puredarwin-ps" { } ''
+        mkdir -p $out/bin
+        cp "$(find ${userlandNoxBuild} -path '*/bin/ps' | head -n 1)" $out/bin/ps
+      '';
+      # the Wayland counterpart of a minimal X11 session: neuswc with pdwm, and the
+      # AppKit Terminal started by org.puredarwin.wayland-session.
+      imageWaylandMinimalBuild = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystemStripped;
+        extraPackages = lib.unique (strippedExtraPackages ++ lib.filter lib.isDerivation [
+          foundationBuild freetype2Build fontconfigBuild libpngBuild libjpegBuild xvfbZlibBuild
+          xvfbFontsBuild pdsurfaceBuild onyx2dBuild coregraphicsBuild coretextBuild
+          waylandBuild xkbcommonNoxBuild xkeyboardConfigBuild neuswcBuild
+          quartzcoreBuild corevideoBuild applicationservicesBuild windowserverBuild appkitBuild coredataBuild cocoaBuild appFrameworksBuild mpsNoxBuild
+          openglFrameworkNoxBuild mesaNoxBuild gluNoxBuild llvmCrossBuild pdVirglShimBuild
+          terminalBuild menubarBuild dockBuild finderBuild systemInformationBuild calculatorBuild settingsBuild waylandSessionBuild psOnlyBuild
+          # Inter and the other system faces the window chrome and menu bar are drawn in
+          systemFontsBuild
+          # something full-screen to run in it
+          ncursesBuild nanoBuild fastfetchNoxBuild
+          # vulkan on the host gpu with PUREDARWIN_VM_VENUS=1 (venus virtio-gpu)
+          vulkanLoaderNoxBuild mesaVenusWaylandBuild libdrmVirtgpuBuild vulkanToolsNoxBuild venusTestsNoxBuild
+          # the Metal demos: pdmtl and Indium tests (metal-pd), Metal.framework (metal-objc), Apple's samples
+          glfwPdBuild metalPdNoxBuild metalObjcPdNoxBuild metalAppleSamplesNoxBuild spirvCrossPdBuild
+        ]);
+        kc = kcBuild;
+        xnuLoader = xnuLoaderDefault;
+        apfsprogs = pkgs.apfsprogs;
+        imageFileName = "puredarwin-wayland-minimal.img";
+        espMB = 60;
+        rootMB = 1200;
+        # a graphical boot: the progress bar instead of the verbose log, which -v brings back
+        bootArgs = "debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopprogress=1";
       };
       imageLegacyShellBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemStripped;
@@ -1479,12 +1565,28 @@ let
               chmod u+w "$ovmf_vars"
             fi
 
+            # PUREDARWIN_VM_VENUS=1 renders a venus/blob virtio-gpu on the host GPU, and virtio disks move to an iothread
+            # so host shader compiles in the render worker don't stall guest I/O into IOStorageFamily timeouts.
+            venus_args=()
+            disk_iothread=""
+            if [ -n "''${PUREDARWIN_VM_VENUS:-}" ]; then
+              # virglrenderer dlopens libvulkan.so, the ICDs come from the host driver
+              export LD_LIBRARY_PATH="${pkgs.vulkan-loader}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+              venus_args=(
+                -vga none
+                -device "virtio-gpu-gl-pci,venus=on,blob=on,hostmem=''${PUREDARWIN_VM_HOSTMEM:-1G}"
+                -display "''${PUREDARWIN_VM_DISPLAY:-egl-headless,rendernode=''${PUREDARWIN_VM_RENDERNODE:-/dev/dri/renderD128}}"
+                -object "iothread,id=io0"
+              )
+              disk_iothread=",iothread=io0"
+            fi
+
             ${if diskStyle == "switch" then ''
             case "''${PUREDARWIN_VM_DISK:-ahci}" in
               virtio|virtio-blk)
                 disk_args=(
                   -drive "if=none,id=system,file=$image,format=raw,cache=writeback$image_readonly_opt"
-                  -device "virtio-blk-pci,drive=system"
+                  -device "virtio-blk-pci,drive=system$disk_iothread"
                 )
                 ;;
               ahci)
@@ -1507,6 +1609,7 @@ let
               ${lib.concatStringsSep "\n              " qemuArgs}
             )
             qemu_args+=("''${disk_args[@]}")
+            qemu_args+=("''${venus_args[@]}")
 
             # Zero-or-one argument, so it cannot be an array element: an unset
             # variable would contribute an empty argv entry.
@@ -1948,6 +2051,23 @@ EOF
             vga_args=(-device "''${PUREDARWIN_VM_VGA:-ramfb}")
           fi
 
+          # PUREDARWIN_VM_VENUS=1 as in the x86 runners. PUREDARWIN_VM_HOSTGL names a host library dir (the Pi's v3dv setup) put first on the path,
+          # and its v3dv-rdwr.so is preloaded when present.
+          venus_args=()
+          disk_iothread=""
+          if [ -n "''${PUREDARWIN_VM_VENUS:-}" ]; then
+            export LD_LIBRARY_PATH="''${PUREDARWIN_VM_HOSTGL:+$PUREDARWIN_VM_HOSTGL:}${pkgs.vulkan-loader}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            if [ -e "''${PUREDARWIN_VM_HOSTGL:-/nonexistent}/v3dv-rdwr.so" ]; then
+              export LD_PRELOAD="$PUREDARWIN_VM_HOSTGL/v3dv-rdwr.so"
+            fi
+            venus_args=(
+              -device "virtio-gpu-gl-pci,venus=on,blob=on,hostmem=''${PUREDARWIN_VM_HOSTMEM:-1G}"
+              -display "''${PUREDARWIN_VM_DISPLAY:-egl-headless,rendernode=''${PUREDARWIN_VM_RENDERNODE:-/dev/dri/renderD128}}"
+              -object "iothread,id=io0"
+            )
+            disk_iothread=",iothread=io0"
+          fi
+
           if [ -z "$image" ]; then
             if [ -e "$PWD/puredarwin-arm64-virt.img" ]; then
               image="$PWD/puredarwin-arm64-virt.img"
@@ -1982,8 +2102,9 @@ EOF
             -drive if=pflash,format=raw,unit=0,readonly=on,file="$aavmf_code" \
             -drive if=pflash,format=raw,unit=1,file="$aavmf_vars" \
             -drive if=none,id=system,file="$image",format=raw$image_readonly_opt \
-            -device virtio-blk-pci,drive=system,bootindex=1 \
+            -device "virtio-blk-pci,drive=system,bootindex=1$disk_iothread" \
             "''${vga_args[@]}" \
+            "''${venus_args[@]}" \
             -device virtio-net-pci,netdev=net0 \
             -netdev user,id=net0,hostfwd=tcp::2223-:22 \
             -device qemu-xhci,id=xhci \
@@ -2002,6 +2123,7 @@ EOF
       kc-debug = kcDebugBuild;
       kc-arm64-debug = kcArm64DebugBuild;
       kc-arm64 = kcArm64ReleaseBuild;
+      kc-arm64-a733 = kcArm64A733ReleaseBuild;
       kc-arm64-t8010-debug = kcArm64T8010DebugBuild;
       ramdisk-arm64-t8010 = ramdiskArm64T8010Build;
       ramdisk-arm64-sun50i = ramdiskArm64Sun50iBuild;
@@ -2060,6 +2182,7 @@ EOF
       opengl-framework-nox = openglFrameworkNoxBuild;
       mesa-demos-nox = mesaDemosNoxBuild;
       image-wayland = imageWaylandBuild;
+      image-wayland-minimal = imageWaylandMinimalBuild;
       wlroots-nox = wlrootsNoxBuild;
       sway-nox = swayNoxBuild;
       gtk3-nox = gtk3NoxBuild;

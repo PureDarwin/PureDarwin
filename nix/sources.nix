@@ -91,6 +91,9 @@ let
     # 3D user-client ABI header, shared with the IOVirtIOGPU kext, used
     # used by the pd-virgl-shim static lib the Mesa winsys links.
     "src/Kernel/Extensions/IOVirtIOGPU/IOVirtIOGPU3DShared.h"
+    # the PDPowerVR user-client uAPI header, shared with the kext, used by the
+    # puredarwingop DDX's scanout path (pdscanout.c).
+    "src/Kernel/Extensions/PDPowerVR/include/pd_pvr_uapi.h"
     # plain-C virgl shim (built into a static archive for Mesa's libGL)
     "src/Libraries/PDVirglShim"
     # mdnsd is built from src/Userspace/mdnsd but its sources are

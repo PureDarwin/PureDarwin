@@ -397,6 +397,11 @@ let
   libgbmArm64Build = mkArm64Build ./pkgs/x11/libgbm.nix {
     pdsurface = pdsurfaceArm64Build;
   };
+  libdrmPdpvrArm64Build = mkArm64Build ./pkgs/gpu/libdrm-pdpvr.nix {
+    corefoundation = coreFoundationArm64Build;
+    iokit = iokitArm64Build;
+    libdrmSrc = pkgs.libdrm.src;
+  };
   libdrmArm64Build = mkArm64Build ./pkgs/x11/libdrm.nix {
     corefoundation = coreFoundationArm64Build;
     iokit = iokitArm64Build;
@@ -678,6 +683,204 @@ let
     virglAbiHeader = ../src/Kernel/Extensions/IOVirtIOGPU/IOVirtIOGPU3DShared.h;
     inherit (pkgs) meson ninja pkg-config python3 bison flex xorgproto xtrans;
   };
+  # the powervr vulkan driver for PDPowerVR, on the mesa release the linux reference runs
+  mesaPowervrVersion = "26.0.3";
+  mesaPowervrSrc = pkgs.fetchurl {
+    url = "https://archive.mesa3d.org/mesa-${mesaPowervrVersion}.tar.xz";
+    sha256 = "0d71d6vslcmyr94bma7cvacz0dzrgc3hzf5nni2sm2cf68yl9dyx";
+  };
+  mesaPvrNativeToolsBuild = pkgs.callPackage ./pkgs/mesa/mesa-pvr-native-tools.nix {
+    src = mesaPowervrSrc;
+    version = mesaPowervrVersion;
+  };
+  mesaPowervrArm64Build = mkArm64Build ./pkgs/mesa/mesa-powervr.nix {
+    src = mesaPowervrSrc;
+    version = mesaPowervrVersion;
+    nativeMesonTools = nativeMesonToolsDir;
+    zlib = xvfbZlibArm64Build;
+    libdrmPdpvr = libdrmPdpvrArm64Build;
+    mesaPvrNativeTools = mesaPvrNativeToolsBuild;
+    inherit (pkgs) meson ninja pkg-config python3 bison flex glslang;
+  };
+  vulkanLoaderArm64Build = mkArm64Build ./pkgs/mesa/vulkan-loader.nix {
+    nativeMesonTools = nativeMesonToolsDir;
+    corefoundation = coreFoundationArm64Build;
+    vulkanLoader = pkgs.vulkan-loader;
+    vulkanHeaders = pkgs.vulkan-headers;
+    withX11 = false;
+  };
+  pdvktriArm64Build = mkArm64Build ./pkgs/gpu/pdvktri.nix {
+    vulkanHeaders = pkgs.vulkan-headers;
+    vulkanLoader = vulkanLoaderArm64Build;
+    libdrmPdpvr = libdrmPdpvrArm64Build;
+    inherit (pkgs) glslang;
+  };
+  pdvkspinArm64Build = mkArm64Build ./pkgs/gpu/pdvkspin.nix {
+    vulkanHeaders = pkgs.vulkan-headers;
+    vulkanLoader = vulkanLoaderArm64Build;
+    iokit = iokitArm64Build;
+    corefoundation = coreFoundationArm64Build;
+    inherit (pkgs) glslang;
+  };
+  # everything the triangle needs beyond the minimal root, laid out for the image
+  pvrVulkanArm64 = pkgs.runCommand "puredarwin-pvr-vulkan-arm64" { } ''
+    mkdir -p $out
+    for p in ${libdrmPdpvrArm64Build} ${mesaPowervrArm64Build} ${vulkanLoaderArm64Build} ${pdvktriArm64Build} ${pdvkspinArm64Build}; do
+      for d in usr/lib usr/share/vulkan usr/local/bin System/Library/LaunchDaemons; do
+        [ -d $p/$d ] && mkdir -p $out/$d && cp -a $p/$d/. $out/$d/ && chmod -R u+w $out/$d
+      done
+    done
+    rm -rf $out/usr/lib/pkgconfig $out/usr/lib/cmake
+  '';
+  # the driver and its libdrm shim for airjitd inside the stock macOS userland: no libIOKitCF or
+  # /usr/lib/libCoreFoundation there, so they bind to Apple's frameworks, and live in /usr/local/lib/pdvk
+  pvrVulkanIpdArm64 = pkgs.runCommand "puredarwin-pvr-vulkan-ipd-arm64" { } ''
+    d=$out/usr/local/lib/pdvk
+    mkdir -p $d
+    cp ${libdrmPdpvrArm64Build}/usr/lib/libdrm_pdpvr.dylib ${mesaPowervrArm64Build}/usr/lib/libvulkan_powervr_mesa.dylib $d/
+    chmod u+w $d/*.dylib
+    int=${nativeMesonToolsDir}/bin/install_name_tool
+    $int -id /usr/local/lib/pdvk/libdrm_pdpvr.dylib \
+      -change /usr/lib/libIOKitCF.dylib /System/Library/Frameworks/IOKit.framework/Versions/A/IOKit \
+      -change /usr/lib/libCoreFoundation.dylib /System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation \
+      $d/libdrm_pdpvr.dylib
+    $int -id /usr/local/lib/pdvk/libvulkan_powervr_mesa.dylib \
+      -change /usr/lib/libdrm_pdpvr.dylib /usr/local/lib/pdvk/libdrm_pdpvr.dylib \
+      $d/libvulkan_powervr_mesa.dylib
+    for f in $d/*.dylib; do
+      ${pkgs.rcodesign}/bin/rcodesign sign "$f"
+    done
+    ${nativeMesonToolsDir}/bin/otool -L $d/*.dylib
+  '';
+  # venus (virtio-gpu vulkan) on IOVirtIOGPU's venus client, for arm64 guests under KVM
+  libdrmVirtgpuArm64Build = mkArm64Build ./pkgs/gpu/libdrm-virtgpu.nix {
+    corefoundation = coreFoundationArm64Build;
+    iokit = iokitArm64Build;
+    libdrmSrc = pkgs.libdrm.src;
+    vulkanHeaders = pkgs.vulkan-headers;
+  };
+  mesaVenusArm64Build = mkArm64Build ./pkgs/mesa/mesa-venus.nix {
+    src = mesaPowervrSrc;
+    version = mesaPowervrVersion;
+    nativeMesonTools = nativeMesonToolsDir;
+    zlib = xvfbZlibArm64Build;
+    libdrmVirtgpu = libdrmVirtgpuArm64Build;
+    inherit (pkgs) meson ninja pkg-config python3 bison flex glslang;
+  };
+  # the venus icd and its shim for the stock macOS userland (IPD), shipped as frameworks over PD's dylibs
+  venusVulkanIpdArm64 = pkgs.runCommand "puredarwin-venus-vulkan-ipd-arm64" { } ''
+    d=$out/usr/local/lib/pdvk
+    mkdir -p $d
+    cp ${libdrmVirtgpuArm64Build}/usr/lib/libdrm_virtgpu.dylib ${mesaVenusArm64Build}/usr/lib/libvulkan_virtio.dylib $d/
+    chmod u+w $d/*.dylib
+    int=${nativeMesonToolsDir}/bin/install_name_tool
+    $int -id /usr/local/lib/pdvk/libdrm_virtgpu.dylib \
+      -change /usr/lib/libIOKitCF.dylib /System/Library/Frameworks/IOKit.framework/Versions/A/IOKit \
+      -change /usr/lib/libCoreFoundation.dylib /System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation \
+      $d/libdrm_virtgpu.dylib
+    $int -id /usr/local/lib/pdvk/libvulkan_virtio.dylib \
+      -change /usr/lib/libdrm_virtgpu.dylib /usr/local/lib/pdvk/libdrm_virtgpu.dylib \
+      $d/libvulkan_virtio.dylib
+    # the kext check, run from a launchd job in the guest
+    cp ${libdrmVirtgpuArm64Build}/usr/local/bin/vnsmoke ${libdrmVirtgpuArm64Build}/usr/local/bin/vnprobe $d/
+    chmod u+w $d/vnsmoke $d/vnprobe
+    $int -change /usr/lib/libIOKitCF.dylib /System/Library/Frameworks/IOKit.framework/Versions/A/IOKit \
+      -change /usr/lib/libCoreFoundation.dylib /System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation \
+      $d/vnsmoke
+    for f in $d/*.dylib $d/vnsmoke $d/vnprobe; do
+      ${pkgs.rcodesign}/bin/rcodesign sign "$f"
+    done
+    ${nativeMesonToolsDir}/bin/otool -L $d/*.dylib
+  '';
+  # the same driver and loader with x11 wsi, linked to the shared guest x libraries
+  mesaPowervrX11Arm64Build = mkArm64Build ./pkgs/mesa/mesa-powervr.nix {
+    src = mesaPowervrSrc;
+    version = mesaPowervrVersion;
+    nativeMesonTools = nativeMesonToolsDir;
+    zlib = xvfbZlibArm64Build;
+    libdrmPdpvr = libdrmPdpvrArm64Build;
+    mesaPvrNativeTools = mesaPvrNativeToolsBuild;
+    withX11 = true;
+    libX11 = libX11SharedArm64Build;
+    libxcb = libxcbSharedArm64Build;
+    libXau = libXauSharedArm64Build;
+    libXdmcp = libXdmcpSharedArm64Build;
+    libxshmfence = libxshmfenceSharedArm64Build;
+    inherit (pkgs) meson ninja pkg-config python3 bison flex glslang xorgproto;
+  };
+  vulkanLoaderX11Arm64Build = mkArm64Build ./pkgs/mesa/vulkan-loader.nix {
+    nativeMesonTools = nativeMesonToolsDir;
+    corefoundation = coreFoundationArm64Build;
+    vulkanLoader = pkgs.vulkan-loader;
+    vulkanHeaders = pkgs.vulkan-headers;
+    libX11 = libX11SharedArm64Build;
+    libxcb = libxcbSharedArm64Build;
+    libXau = libXauSharedArm64Build;
+    libXdmcp = libXdmcpSharedArm64Build;
+    libXrandr = libXrandrSharedArm64Build;
+    libXrender = libXrenderSharedArm64Build;
+    inherit (pkgs) xorgproto;
+  };
+  vulkanToolsArm64Build = mkArm64Build ./pkgs/mesa/vulkan-tools.nix {
+    nativeMesonTools = nativeMesonToolsDir;
+    vulkanTools = pkgs.vulkan-tools;
+    vulkanHeaders = pkgs.vulkan-headers;
+    vulkanLoader = vulkanLoaderX11Arm64Build;
+    libX11 = libX11SharedArm64Build;
+    libXext = libXextSharedArm64Build;
+    libxcb = libxcbSharedArm64Build;
+    libXau = libXauSharedArm64Build;
+    libXdmcp = libXdmcpSharedArm64Build;
+    libXrandr = libXrandrSharedArm64Build;
+    inherit (pkgs) xorgproto;
+  };
+  puredarwingopArm64Build = mkArm64Build ./pkgs/x11/xf86-video-puredarwingop.nix {
+    xorg = xorgNoGlxArm64Build;
+    pixman = xvfbPixmanArm64Build;
+    iokit = iokitArm64Build;
+    corefoundation = coreFoundationArm64Build;
+    inherit (pkgs) xorgproto;
+  };
+  # xorg on the puredarwingop driver plus the x11 vulkan stack, laid out over a minimal root,
+  # Xvfb rides along so the client side can be checked on a board with no display attached
+  x11PvrArm64 = pkgs.runCommand "puredarwin-x11-pvr-arm64" { } ''
+    mkdir -p $out
+    for p in ${xorgNoGlxArm64Build} ${xkbcompArm64Build} ${xkeyboardConfigArm64Build} ${xeyesArm64Build} \
+        ${libdrmPdpvrArm64Build} ${mesaPowervrX11Arm64Build} ${vulkanLoaderX11Arm64Build} ${vulkanToolsArm64Build} \
+        ${libX11SharedArm64Build} ${libxcbSharedArm64Build} ${libXauSharedArm64Build} ${libXdmcpSharedArm64Build} \
+        ${libXextSharedArm64Build} ${libXrenderSharedArm64Build} ${libXrandrSharedArm64Build} ${libxshmfenceSharedArm64Build} \
+        ${freetype2Arm64Build} ${xvfbLibxcvtArm64Build} ${xvfbArm64Build}; do
+      for d in usr/bin usr/share/X11 usr/share/vulkan; do
+        [ -d $p/$d ] && mkdir -p $out/$d && cp -a $p/$d/. $out/$d/ && chmod -R u+w $out/$d
+      done
+      # some packages link bin/ back into usr/bin, so take bin/ only when usr/bin is absent
+      [ -d $p/bin ] && [ ! -d $p/usr/bin ] && mkdir -p $out/usr/bin && cp -a $p/bin/. $out/usr/bin/
+      mkdir -p $out/usr/lib
+      # the shared guest libraries keep their dylibs in lib/ and only symlink them from usr/lib
+      [ -d $p/lib ] && find $p/lib -maxdepth 1 -name '*.dylib' -exec cp -a {} $out/usr/lib/ \;
+      [ -d $p/usr/lib ] && find $p/usr/lib -mindepth 1 -maxdepth 1 ! -lname '../../lib/*' -exec cp -a {} $out/usr/lib/ \;
+      chmod -R u+w $out
+    done
+    mkdir -p $out/usr/lib/xorg/modules/drivers
+    cp ${puredarwingopArm64Build}/usr/lib/xorg/modules/drivers/puredarwingop_drv.so $out/usr/lib/xorg/modules/drivers/
+    # glx would pull the llvmpipe mesa in, and the server runs without it
+    rm -rf $out/usr/lib/xorg/modules/extensions $out/usr/lib/xorg/modules/input $out/usr/lib/pkgconfig $out/usr/lib/cmake $out/usr/include
+    rm -f $out/usr/bin/vkcubepp $out/usr/bin/gtf
+    rm -f $out/usr/lib/*.a $out/usr/lib/*.la
+    # libxcb's extension libraries name it by its configure libdir, /lib
+    for f in $out/usr/lib/libxcb-*.dylib; do
+      [ -L "$f" ] || ${nativeMesonToolsDir}/bin/install_name_tool -change /lib/libxcb.1.dylib /usr/lib/libxcb.1.dylib "$f"
+    done
+    install -Dm644 ${./pkgs/x11/a733-xorg.conf} $out/etc/X11/xorg.conf
+    install -Dm755 ${./pkgs/x11/pdx11-demo.sh} $out/usr/local/bin/pdx11-demo
+    install -Dm644 ${./pkgs/x11/org.puredarwin.xorg.plist} $out/System/Library/LaunchDaemons/org.puredarwin.xorg.plist
+    install -Dm644 ${./pkgs/x11/org.puredarwin.pdx11demo.plist} $out/System/Library/LaunchDaemons/org.puredarwin.pdx11demo.plist
+    # scanout: the cube through VK_KHR_display, flipped by PDSun60iDisplay
+    install -Dm755 ${pdvkspinArm64Build}/usr/local/bin/pdvkdisplay $out/usr/local/bin/pdvkdisplay
+    install -Dm755 ${pdvkspinArm64Build}/usr/local/bin/pdvkspin $out/usr/local/bin/pdvkspin
+    install -Dm755 ${./pkgs/gpu/pddisplay-demo.sh} $out/usr/local/bin/pddisplay-demo
+    install -Dm644 ${./pkgs/gpu/org.puredarwin.pddisplay.plist} $out/System/Library/LaunchDaemons/org.puredarwin.pddisplay.plist
+  '';
   mesaDemosArm64Build = mkArm64Build ./pkgs/mesa/mesa-demos.nix {
     nativeMesonTools = nativeMesonToolsDir;
     mesa = mesaArm64Build;
@@ -1257,6 +1460,25 @@ let
     mesaGlHeaders = pkgs.mesa-gl-headers;
     glHeaders = pkgs.libglvnd.dev;
     mesa = mesaArm64Build;
+  };
+  # the a733 server: no glx, so no llvmpipe mesa underneath it
+  xorgNoGlxArm64Build = mkArm64Build ./pkgs/x11/xorg.nix {
+    xorg-server = pkgs.xorg-server;
+    pixman = xvfbPixmanArm64Build;
+    libXau = xvfbLibXauArm64Build;
+    libXfont2 = xvfbLibXfont2Arm64Build;
+    zlib = xvfbZlibArm64Build;
+    freetype2 = freetype2Arm64Build;
+    libfontenc = libfontencArm64Build;
+    xvfbZlib = xvfbZlibArm64Build;
+    inherit (pkgs) xorgproto xtrans;
+    libxkbfile = xvfbLibXkbfileArm64Build;
+    libXdmcp = pkgs.libxdmcp;
+    libxcvt = xvfbLibxcvtArm64Build;
+    mesaGlHeaders = pkgs.mesa-gl-headers;
+    glHeaders = pkgs.libglvnd.dev;
+    mesa = null;
+    withGlx = false;
   };
   xtermArm64Build = mkArm64Build ./pkgs/x11/xterm.nix {
     xterm = pkgs.xterm;
@@ -2098,6 +2320,13 @@ let
     puredarwinArch = "arm64";
     inherit arm64CrossToolchain;
     prebuiltLibSystem = libSystemArm64Build;
+    # the xorg drivers build against the arm64 server sdk
+    xorgDriverIncludes = [
+      "${xorgNoGlxArm64Build}/usr/include/xorg"
+      "${xorgNoGlxArm64Build}/usr/include"
+      "${lib.getDev pkgs.xorgproto}/include"
+      "${xvfbPixmanArm64Build}/include/pixman-1"
+    ];
   };
 
   # ARM64 counterpart of the x86 Wayland-only package set. Keep the no-X
@@ -2332,6 +2561,19 @@ let
     inherit arm64CrossToolchain;
     extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=VIRT" ];
   };
+  # VIRT with mixed core types (Orange Pi Zero 4 A733: A55 E cluster, A76 P cluster), AMP scheduling
+  kernelArm64VirtAmpBuild = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm64-virtamp";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "RELEASE";
+    puredarwinArch = "arm64";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=VIRTAMP" ];
+  };
   kernelArm64Bcm2837Build = mkPureDarwinBuild {
     pname = "puredarwin-kernel-arm64-bcm2837";
     src = kernelSource;
@@ -2515,6 +2757,7 @@ let
       "RavynHDAudio.kext" "PDE1000.kext" "PDRealtek8111.kext"
       "PDBcm2835SD.kext" "PDSun50iMMC.kext" "PDSg2002SD.kext" "PDSg2002Eth.kext"
       "PDI2CFamily.kext" "PDQcomTLMM.kext" "PDQcomGeniI2C.kext" "PDI2CHID.kext"
+      "PDPowerVR.kext" "PDSun60iDisplay.kext"
     ];
     enableUserspace = false;
     installUserland = false;
@@ -2523,6 +2766,7 @@ let
     installKextNames = [
       "PDBcm2835SD.kext" "PDSun50iMMC.kext" "PDSg2002SD.kext" "PDSg2002Eth.kext"
       "PDI2CFamily.kext" "PDQcomTLMM.kext" "PDQcomGeniI2C.kext" "PDI2CHID.kext"
+      "PDPowerVR.kext" "PDSun60iDisplay.kext"
       "IOPCIFamily.kext" "IOStorageFamily.kext" "IOCDStorageFamily.kext"
       "IODVDStorageFamily.kext" "IOBDStorageFamily.kext" "IOVirtIOFamily.kext"
       "IOVirtIONet.kext" "IONetworkingFamily.kext" "IOHIDFamily.kext"
@@ -3005,6 +3249,23 @@ in
     wlrootsArm64Build
     swayArm64Build
     libdrmArm64Build
+    libdrmPdpvrArm64Build
+    mesaPvrNativeToolsBuild
+    mesaPowervrArm64Build
+    vulkanLoaderArm64Build
+    pdvktriArm64Build
+    pdvkspinArm64Build
+    pvrVulkanArm64
+    pvrVulkanIpdArm64
+    libdrmVirtgpuArm64Build
+    mesaVenusArm64Build
+    venusVulkanIpdArm64
+    mesaPowervrX11Arm64Build
+    vulkanLoaderX11Arm64Build
+    vulkanToolsArm64Build
+    x11PvrArm64
+    xorgNoGlxArm64Build
+    puredarwingopArm64Build
     xwaylandArm64Build
     libdisplayInfoArm64Build
     xvfbLibXxf86vmArm64Build
@@ -3034,6 +3295,7 @@ in
     kernelArm64Build
     kernelArm64VirtBuild
     kernelArm64VirtDebugBuild
+    kernelArm64VirtAmpBuild
     kernelArm64T8010Build
     kernelArm64T8010DebugBuild
     kernelArm64Bcm2837Build

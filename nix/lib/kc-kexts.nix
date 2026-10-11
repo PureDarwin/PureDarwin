@@ -47,6 +47,7 @@
     "IOVirtIOBlock.kext"
     "PDHyperV.kext"
     "IOIntelFramebuffer.kext"
+    "PDRadeonFramebuffer.kext"
     "PDE1000.kext"
     "PDRealtek8111.kext"
     "IOAudioFamily.kext"

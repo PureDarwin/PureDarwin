@@ -48,6 +48,7 @@ add_subdirectory(IOGOPFramebuffer)
 add_subdirectory(IOVirtIOFamily)
 add_subdirectory(IOVirtIOGPU)
 add_subdirectory(IOIntelFramebuffer)
+add_subdirectory(PDRadeonFramebuffer)
 add_subdirectory(IOVirtIONet)
 add_subdirectory(IOVirtIOBlock)
 if(PUREDARWIN_ARCH STREQUAL "x86_64")
@@ -72,6 +73,8 @@ add_subdirectory(ApfsFileSystemDriver)
 add_subdirectory(PDBcm2835SD)
 if(PUREDARWIN_ARM64)
     add_subdirectory(PDSun50iMMC)
+    add_subdirectory(PDPowerVR)
+    add_subdirectory(PDSun60iDisplay)
     add_subdirectory(PDSg2002SD)
     add_subdirectory(PDSg2002Eth)
     add_subdirectory(PDI2CFamily)
@@ -90,7 +93,7 @@ add_dependencies(kexts
     RavynAHCIPort.kext RavynXHCIPort.kext
     IOGOPFramebuffer.kext IOVirtIOFamily.kext IOVirtIOGPU.kext IOVirtIONet.kext
     IOVirtIOBlock.kext
-    IOIntelFramebuffer.kext
+    IOIntelFramebuffer.kext PDRadeonFramebuffer.kext
     IOHIDFamily.kext IONetworkingFamily.kext PDE1000.kext PDRealtek8111.kext
     IOAudioFamily.kext RavynHDAudio.kext
     corecrypto.kext ext4.kext msdosfs.kext apfs.kext HFSEncodings.kext hfs.kext
@@ -104,6 +107,8 @@ if(PUREDARWIN_ARM32)
 endif()
 if(PUREDARWIN_ARM64)
     add_dependencies(kexts PDSun50iMMC.kext)
+    add_dependencies(kexts PDPowerVR.kext)
+    add_dependencies(kexts PDSun60iDisplay.kext)
     add_dependencies(kexts PDSg2002SD.kext)
     add_dependencies(kexts PDSg2002Eth.kext)
     add_dependencies(kexts PDI2CFamily.kext)

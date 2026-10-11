@@ -32,6 +32,10 @@
 , waylandScanner
 , pdVirglShim
 , virglWinsysSrc
+, radeonWinsysSrc
+, radeonAbiHeader
+, corefoundation
+, iokit
 , virglAbiHeader
   # Wayland-only build: no x11 platform, no GLX, and no X11 library anywhere in
   # the closure. See the with_dri patch in postPatch for why that needs help.
@@ -49,11 +53,16 @@ let
     "-I${lib.getDev zlib}/include"
     "-I${lib.getDev expat}/include"
     "-I${llvm}/usr/include"
+    "-I${corefoundation}/include"
   ] ++ map (p: "-I${lib.getDev p}/include") xDeps;
   depLibs = [
     "-L${zlib}/lib"
     "-L${expat}/lib"
     "-L${llvm}/usr/lib"
+    "-L${corefoundation}/usr/lib"
+    "-L${iokit}/usr/lib"
+    "-lIOKitCF"
+    "-lCoreFoundation"
     "-L${wayland}/lib"
   ];
 
@@ -94,6 +103,14 @@ stdenv.mkDerivation rec {
     substituteInPlace src/vulkan/wsi/wsi_common_x11.c \
       --replace 'wsi_conn->has_xfixes = (ver_reply->major_version >= 2);' \
                 'wsi_conn->has_xfixes = ver_reply != NULL && (ver_reply->major_version >= 2);'
+    # the Present version reply has the same hole: a client whose connection Xlib owns (GLFW) gets NULL
+    substituteInPlace src/vulkan/wsi/wsi_common_x11.c \
+      --replace-fail 'has_present_v1_2 =
+            (ver_reply->major_version' 'has_present_v1_2 = ver_reply != NULL &&
+            (ver_reply->major_version' \
+      --replace-fail 'has_present_v1_4 =
+            (ver_reply->major_version' 'has_present_v1_4 = ver_reply != NULL &&
+            (ver_reply->major_version'
 
     # Mesa equates "darwin" with "macOS running XQuartz" and picks the applegl
     # DRI platform, whose GLX provider is a client of libXplugin - an XQuartz
@@ -127,6 +144,12 @@ stdenv.mkDerivation rec {
     # glapi_xml_py_deps, inc_mesa, gl_priv_libs) is already in scope.
     echo "subdir('mesa/glapi/openglapi')" >> src/meson.build
   '' + ''
+    mkdir -p src/gallium/winsys/radeon/puredarwin
+    cp ${radeonWinsysSrc}/* src/gallium/winsys/radeon/puredarwin/
+    cp ${radeonAbiHeader} src/gallium/winsys/radeon/puredarwin/PDRadeonRenderShared.h
+    cp src/gallium/winsys/radeon/drm/radeon_surface.{c,h} src/gallium/winsys/radeon/puredarwin/
+    python3 ${radeonWinsysSrc}/patch-mesa.py
+
     mkdir -p src/gallium/winsys/virgl/puredarwin
     cp ${virglWinsysSrc}/virgl_puredarwin_winsys.c src/gallium/winsys/virgl/puredarwin/
     cp ${virglWinsysSrc}/virgl_puredarwin_public.h src/gallium/winsys/virgl/puredarwin/
@@ -182,6 +205,8 @@ stdenv.mkDerivation rec {
 
     dritarget=src/gallium/targets/dri/meson.build
     substituteInPlace "$dritarget" \
+      --replace "files('../../winsys/radeon/puredarwin/radeon_present.c', 'dri_target.c')," \
+                "files('../../winsys/radeon/puredarwin/radeon_present.c', 'dri_target.c', '../../winsys/virgl/puredarwin/virgl_puredarwin_winsys.c')," \
       --replace "files('dri_target.c')," \
                 "files('dri_target.c', '../../winsys/virgl/puredarwin/virgl_puredarwin_winsys.c')," \
       --replace "include_directories('../../frontends/dri')," \
@@ -253,7 +278,7 @@ EOF
       --libdir=lib \
       --buildtype=release \
       -Ddefault_library=shared \
-      -Dgallium-drivers=llvmpipe,softpipe,virgl \
+      -Dgallium-drivers=llvmpipe,softpipe,virgl,r600 \
       -Dvulkan-drivers=swrast \
       -Dplatforms=${if withX11 then "x11,wayland" else "wayland"} \
       -Dopengl=true \
@@ -336,7 +361,7 @@ EOF
   dontFixup = true;
 
   meta = with lib; {
-    description = "Mesa softpipe (Gallium swrast) + OSMesa, cross-built for PureDarwin";
+    description = "Mesa native Radeon, virgl and software rendering for PureDarwin";
     platforms = platforms.unix;
   };
 }

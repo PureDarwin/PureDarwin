@@ -54,6 +54,8 @@ stdenv.mkDerivation {
       -kext "$KEXTS/PDArmPCI.kext" \
       -kext "$KEXTS/IOStorageFamily.kext" \
       -kext "$KEXTS/PDSun50iMMC.kext" \
+      -kext "$KEXTS/PDPowerVR.kext" \
+      -kext "$KEXTS/PDSun60iDisplay.kext" \
       -kext "$KEXTS/PDSg2002SD.kext" \
       -kext "$KEXTS/RavynAHCIPort.kext" \
       -kext "$KEXTS/ext4.kext" \
@@ -88,6 +90,8 @@ stdenv.mkDerivation {
       -kext "$KEXTS/PDWatchdog.kext" \
       -kext "$KEXTS/PDIOSurface.kext" \
       -kext "$KEXTS/PDDiskImages2.kext" \
+      -kext "$KEXTS/PDLifs.kext" \
+      -kext "$KEXTS/PDSerialHID.kext" \
       -kext "$KEXTS/PDKeyStore.kext" \
       "''${codeless[@]}" \
       -o kernel
