@@ -1,0 +1,891 @@
+diff -ru a/meson.build b/meson.build
+--- a/meson.build	2026-10-03 00:05:02.996767664 +0000
++++ b/meson.build	2026-10-03 00:05:14.750526788 +0000
+@@ -1768,10 +1768,11 @@
+ allow_fallback_for_libdrm = get_option('allow-fallback-for').contains('libdrm')
+ 
+ with_gallium_drisw_kms = false
+-if system_has_kms_drm
++# puredarwin: no kms, but the powervr driver talks to PDPowerVR through a libdrm shim
++if system_has_kms_drm or (host_machine.system() == 'darwin' and with_imagination_vk)
+   dep_libdrm = dependency(
+     'libdrm', version : '>=' + _drm_ver,
+-    required : with_dri2 or with_dri or with_gbm,
++    required : with_dri2 or with_dri or with_gbm or not system_has_kms_drm,
+     allow_fallback: allow_fallback_for_libdrm,
+   )
+ else
+diff -ru a/src/imagination/vulkan/pvr_instance.c b/src/imagination/vulkan/pvr_instance.c
+--- a/src/imagination/vulkan/pvr_instance.c	2026-10-03 00:05:03.027149229 +0000
++++ b/src/imagination/vulkan/pvr_instance.c	2026-10-03 00:25:41.887482833 +0000
+@@ -22,6 +22,7 @@
+ #include "wsi_common.h"
+ 
+ #include "util/build_id.h"
++#include "util/mesa-sha1.h"
+ 
+ #include "pvr_debug.h"
+ #include "pvr_device.h"
+@@ -53,6 +54,7 @@
+    DEF_CONFIG("mediatek,mt8173-gpu"),
+    DEF_CONFIG("ti,am62-gpu"),
+    DEF_CONFIG("ti,j721s2-gpu"),
++   DEF_CONFIG("allwinner,sun60i-a733-gpu"),
+ };
+ #undef DEF_CONFIG
+ 
+@@ -318,6 +320,18 @@
+    }
+ 
+    build_id_len = build_id_length(note);
++
++#if defined(__APPLE__)
++   /* Mach-O carries a 16-byte LC_UUID rather than a SHA build-id. */
++   if (build_id_len < BUILD_ID_EXPECTED_HASH_LENGTH) {
++      unsigned char digest[SHA1_DIGEST_LENGTH];
++
++      _mesa_sha1_compute(build_id_data(note), build_id_len, digest);
++      memcpy(sha_out, digest, BUILD_ID_EXPECTED_HASH_LENGTH);
++      return true;
++   }
++#endif
++
+    if (build_id_len < BUILD_ID_EXPECTED_HASH_LENGTH) {
+       mesa_loge("Build-id too short. It needs to be a SHA.");
+       return false;
+diff -ru a/src/imagination/vulkan/winsys/powervr/pvr_drm.c b/src/imagination/vulkan/winsys/powervr/pvr_drm.c
+--- a/src/imagination/vulkan/winsys/powervr/pvr_drm.c	2026-10-03 00:05:03.041149088 +0000
++++ b/src/imagination/vulkan/winsys/powervr/pvr_drm.c	2026-10-03 00:05:14.769507090 +0000
+@@ -691,6 +691,14 @@
+    drm_ws->base.sync_types[0] = &drm_ws->base.syncobj_type;
+    drm_ws->base.sync_types[1] = NULL;
+ 
++   /* Emulate timelines on top of binary syncobjs if the kernel has none. */
++   if (!(drm_ws->base.syncobj_type.features & VK_SYNC_FEATURE_TIMELINE)) {
++      drm_ws->base.timeline_syncobj_type =
++         vk_sync_timeline_get_type(&drm_ws->base.syncobj_type);
++      drm_ws->base.sync_types[1] = &drm_ws->base.timeline_syncobj_type.sync;
++      drm_ws->base.sync_types[2] = NULL;
++   }
++
+    err = u_rwlock_init(&drm_ws->dmabuf_bo_lock);
+    if (err) {
+       result = vk_error(NULL, VK_ERROR_OUT_OF_HOST_MEMORY);
+diff -ru a/src/imagination/vulkan/winsys/pvr_winsys_helper.h b/src/imagination/vulkan/winsys/pvr_winsys_helper.h
+--- a/src/imagination/vulkan/winsys/pvr_winsys_helper.h	2026-10-03 00:05:03.055424493 +0000
++++ b/src/imagination/vulkan/winsys/pvr_winsys_helper.h	2026-10-03 00:05:14.773136999 +0000
+@@ -33,6 +33,16 @@
+ #include <sys/types.h>
+ #include <xf86drm.h>
+ 
++#if defined(__APPLE__)
++/* PureDarwin maps buffers through the PDPowerVR user client, not the fd. */
++#   include <pd_pvr_drm.h>
++#   define pvr_os_mmap pd_drm_mmap
++#   define pvr_os_munmap pd_drm_munmap
++#else
++#   define pvr_os_mmap mmap
++#   define pvr_os_munmap munmap
++#endif
++
+ #include "pvr_types.h"
+ #include "vk_log.h"
+ 
+@@ -93,7 +103,7 @@
+    if (addr)
+       flags |= MAP_FIXED;
+ 
+-   void *const map = mmap(addr, len, prot, flags, fd, offset);
++   void *const map = pvr_os_mmap(addr, len, prot, flags, fd, offset);
+    if (map == MAP_FAILED) {
+       const int err = errno;
+       return vk_errorf(NULL,
+@@ -112,7 +122,7 @@
+ pvr_munmap(void *const addr, const size_t len, bool reserve)
+ {
+    if (reserve) {
+-      void *ret = mmap(addr,
++      void *ret = pvr_os_mmap(addr,
+                        len,
+                        PROT_NONE,
+                        MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+@@ -131,7 +141,7 @@
+       return VK_SUCCESS;
+    }
+ 
+-   const int ret = munmap(addr, len);
++   const int ret = pvr_os_munmap(addr, len);
+    if (ret) {
+       const int err = errno;
+       return vk_errorf(NULL,
+
+diff -ru a/src/imagination/pco/pco_opt.c b/src/imagination/pco/pco_opt.c
+--- a/src/imagination/pco/pco_opt.c
++++ b/src/imagination/pco/pco_opt.c
+@@ -27,6 +27,37 @@
+    pco_ref *psrc;
+ };
+ 
++/** A modifier use, indexed by SSA value. Instruction order excludes earlier uses. */
++struct pco_mod_use {
++   pco_instr *instr;
++   unsigned order;
++   unsigned next;
++};
++
++/** Source users remain indexed while references are replaced by hardware refs. */
++struct pco_src_use {
++   pco_instr *instr;
++   pco_ref *src;
++   unsigned order;
++   unsigned next;
++};
++
++static unsigned *pco_index_src_uses(pco_func *func, struct util_dynarray *uses)
++{
++   unsigned *heads = rzalloc_array_size(NULL, sizeof(*heads), func->next_ssa);
++   util_dynarray_init(uses, NULL);
++   unsigned order = 0;
++   pco_foreach_instr_in_func (instr, func) {
++      pco_foreach_instr_src_ssa (psrc, instr) {
++         struct pco_src_use use = { instr, psrc, order, heads[psrc->val] };
++         util_dynarray_append(uses, use);
++         heads[psrc->val] = util_dynarray_num_elements(uses, struct pco_src_use);
++      }
++      ++order;
++   }
++   return heads;
++}
++
+ /** Shared optimization context. */
+ struct pco_opt_ctx {
+    void *mem_ctx;
+@@ -56,14 +87,43 @@
+     * and where modifiers might need to be applied on more than one source.
+     */
+    pco_foreach_func_in_shader (func, shader) {
++      unsigned *heads = rzalloc_array_size(NULL, sizeof(*heads), func->next_ssa);
++      struct util_dynarray uses;
++      util_dynarray_init(&uses, ctx->mem_ctx);
++      unsigned order = 0;
++
++      /* Source swaps preserve the set of SSA values used by each instruction.
++       * Index the add/multiply users once instead of rescanning the function
++       * for every modifier. Store instructions, not source pointers: the
++       * source positions can change as earlier modifiers are prepared.
++       */
++      pco_foreach_instr_in_func (instr, func) {
++         if (instr->op == PCO_OP_FADD || instr->op == PCO_OP_FMUL) {
++            pco_foreach_instr_src_ssa (psrc, instr) {
++               struct pco_mod_use use = { instr, order, heads[psrc->val] };
++               util_dynarray_append(&uses, use);
++               heads[psrc->val] = util_dynarray_num_elements(&uses, struct pco_mod_use);
++            }
++         }
++         ++order;
++      }
++
++      order = 0;
+       pco_foreach_instr_in_func_safe (mod, func) {
++         unsigned mod_order = order++;
+          if (mod->op != PCO_OP_FNEG && mod->op != PCO_OP_FABS &&
+              mod->op != PCO_OP_FFLR)
+             continue;
+ 
+-         pco_foreach_instr_in_func_from (instr, mod) {
+-            if (instr->op != PCO_OP_FADD && instr->op != PCO_OP_FMUL)
++         unsigned value = mod->dest[0].val;
++         unsigned use_index = value < func->next_ssa ? heads[value] : 0;
++         while (use_index) {
++            const struct pco_mod_use *use =
++               util_dynarray_element(&uses, struct pco_mod_use, use_index - 1);
++            use_index = use->next;
++            if (use->order <= mod_order)
+                continue;
++            pco_instr *instr = use->instr;
+ 
+             pco_ref *match_src = NULL;
+             pco_ref *other_src = NULL;
+@@ -150,6 +210,8 @@
+ 
+          progress = true;
+       }
++      util_dynarray_fini(&uses);
++      ralloc_free(heads);
+    }
+ 
+    return progress;
+@@ -474,31 +536,31 @@
+  * \param[in] from Instruction to try and propagate from.
+  * \return True if propagation was successful.
+  */
+-static inline bool try_prop_hw_comp(pco_ref src, pco_ref repl, pco_instr *from)
+-{
+-   bool progress = false;
+-
+-   pco_foreach_instr_in_func_from (instr, from) {
+-      pco_foreach_instr_src_ssa (psrc, instr) {
+-         if (psrc->val != src.val)
+-            continue;
+-
+-         /* Propagate the source. */
+-         pco_ref _repl = repl;
+-         if (psrc->flr)
+-            _repl = pco_ref_flr(_repl);
+-         else if (psrc->abs)
+-            _repl = pco_ref_abs(_repl);
+-
+-         _repl.neg ^= psrc->neg;
+-
+-         /* TODO: types? */
+-         *psrc = _repl;
+-
+-         progress = true;
+-      }
+-   }
+-
++static inline bool try_prop_hw_comp(pco_ref src, pco_ref repl,
++                                    const struct util_dynarray *uses,
++                                    unsigned use_index, unsigned from_order)
++{
++   bool progress = false;
++   while (use_index) {
++      const struct pco_src_use *use =
++         util_dynarray_element(uses, struct pco_src_use, use_index - 1);
++      use_index = use->next;
++      /* Earlier comp instructions may already have been deleted. */
++      if (use->order <= from_order)
++         continue;
++      pco_ref *psrc = use->src;
++      if (!pco_ref_is_ssa(*psrc) || psrc->val != src.val)
++         continue;
++
++      pco_ref _repl = repl;
++      if (psrc->flr)
++         _repl = pco_ref_flr(_repl);
++      else if (psrc->abs)
++         _repl = pco_ref_abs(_repl);
++      _repl.neg ^= psrc->neg;
++      *psrc = _repl;
++      progress = true;
++   }
+    return progress;
+ }
+ 
+@@ -512,7 +574,11 @@
+ {
+    bool progress = false;
+    pco_foreach_func_in_shader (func, shader) {
++      struct util_dynarray uses;
++      unsigned *heads = pco_index_src_uses(func, &uses);
++      unsigned order = 0;
+       pco_foreach_instr_in_func_safe (instr, func) {
++         unsigned from_order = order++;
+          if (instr->op != PCO_OP_COMP)
+             continue;
+ 
+@@ -530,10 +596,12 @@
+          repl = pco_ref_chans(repl, 1);
+          repl = pco_ref_offset(repl, offset);
+ 
+-         progress |= try_prop_hw_comp(dest, repl, instr);
++         progress |= try_prop_hw_comp(dest, repl, &uses, heads[dest.val], from_order);
+ 
+          pco_instr_delete(instr);
+       }
++      util_dynarray_fini(&uses);
++      ralloc_free(heads);
+    }
+ 
+    return progress;
+@@ -698,7 +766,11 @@
+    bool progress = false;
+ 
+    pco_foreach_func_in_shader (func, shader) {
++      struct util_dynarray uses;
++      unsigned *heads = pco_index_src_uses(func, &uses);
++      unsigned order = 0;
+       pco_foreach_instr_in_func (vec, func) {
++         unsigned vec_order = order++;
+          if (vec->op != PCO_OP_VEC)
+             continue;
+ 
+@@ -709,26 +781,23 @@
+          pco_ref *pdest = &vec->dest[0];
+          unsigned chans_used = 0;
+          unsigned chans = pco_ref_get_chans(*pdest);
+-         pco_foreach_instr_in_func_from (instr, vec) {
++         unsigned value = pdest->val;
++         unsigned use_index = value < func->next_ssa ? heads[value] : 0;
++         while (use_index) {
++            const struct pco_src_use *use =
++               util_dynarray_element(&uses, struct pco_src_use, use_index - 1);
++            use_index = use->next;
++            if (use->order <= vec_order)
++               continue;
++            pco_instr *instr = use->instr;
+             if (instr->op == PCO_OP_COMP) {
+-               pco_ref src = instr->src[0];
+-               if (!pco_ref_is_ssa(src))
+-                  continue;
+-
+-               if (src.val != pdest->val)
+-                  continue;
+-
+-               unsigned offset = pco_ref_get_imm(instr->src[1]);
+-               chans_used = MAX2(chans_used, offset);
+-
++               if (use->src == &instr->src[0]) {
++                  unsigned offset = pco_ref_get_imm(instr->src[1]);
++                  chans_used = MAX2(chans_used, offset);
++               }
+                continue;
+             }
+-
+-            pco_foreach_instr_src_ssa (psrc, instr) {
+-               if (psrc->val == pdest->val) {
+-                  chans_used = MAX2(chans_used, pco_ref_get_chans(*psrc) - 1);
+-               }
+-            }
++            chans_used = MAX2(chans_used, pco_ref_get_chans(*use->src) - 1);
+          }
+ 
+          ++chans_used;
+@@ -744,6 +813,8 @@
+ 
+          progress = true;
+       }
++      util_dynarray_fini(&uses);
++      ralloc_free(heads);
+    }
+ 
+    return progress;
+
+diff -ru a/src/imagination/pco/pco_ra.c b/src/imagination/pco/pco_ra.c
+--- a/src/imagination/pco/pco_ra.c
++++ b/src/imagination/pco/pco_ra.c
+@@ -81,33 +81,47 @@
+    return false;
+ }
+ 
++struct pco_live_use { pco_instr *instr; unsigned order, next; };
++
++static unsigned *pco_index_live_uses(pco_func *func, struct util_dynarray *uses)
++{
++   unsigned *heads = rzalloc_array_size(NULL, sizeof(*heads), func->next_ssa);
++   util_dynarray_init(uses, NULL);
++   unsigned order = 0;
++   pco_foreach_instr_in_func (instr, func) {
++      pco_foreach_instr_src_ssa (psrc, instr) {
++         struct pco_live_use use = { instr, order, heads[psrc->val] };
++         util_dynarray_append(uses, use);
++         heads[psrc->val] = util_dynarray_num_elements(uses, struct pco_live_use);
++      }
++      ++order;
++   }
++   return heads;
++}
++
+ static void pco_extend_live_range(pco_ref origin,
+-                                  pco_ref current_ref,
+-                                  pco_instr *current_instr,
+                                   struct hash_table_u64 *overrides,
+-                                  struct live_range *live_ranges)
+-{
+-   pco_foreach_instr_in_func_from (instr, current_instr) {
+-      pco_foreach_instr_src_ssa (psrc, instr) {
+-         if (current_ref.val != psrc->val)
+-            continue;
+-
+-         pco_foreach_instr_dest_ssa (pdest, instr) {
+-            struct vec_override *override =
+-               _mesa_hash_table_u64_search(overrides, pdest->val);
+-
+-            if (override) {
+-               live_ranges[origin.val].end =
+-                  MAX2(live_ranges[origin.val].end,
+-                       live_ranges[override->ref.val].end);
+-               break;
+-            }
+-
++                                  struct live_range *live_ranges,
++                                  const struct util_dynarray *uses,
++                                  unsigned use_index, unsigned from_order)
++{
++   while (use_index) {
++      const struct pco_live_use *use =
++         util_dynarray_element(uses, struct pco_live_use, use_index - 1);
++      use_index = use->next;
++      if (use->order <= from_order)
++         continue;
++      pco_instr *instr = use->instr;
++      pco_foreach_instr_dest_ssa (pdest, instr) {
++         struct vec_override *override =
++            _mesa_hash_table_u64_search(overrides, pdest->val);
++         if (override) {
+             live_ranges[origin.val].end =
+-               MAX2(live_ranges[origin.val].end, instr->index);
+-         }
+-
+-         break;
++               MAX2(live_ranges[origin.val].end, live_ranges[override->ref.val].end);
++            break;
++         }
++         live_ranges[origin.val].end =
++            MAX2(live_ranges[origin.val].end, instr->index);
+       }
+    }
+ }
+@@ -450,6 +464,56 @@
+  * \param[in] allocable_interns Number of allocatable internal registers.
+  * \return True if registers were allocated.
+  */
++struct pco_live_interval {
++   unsigned var, start, end;
++};
++
++static int pco_live_interval_cmp(const void *pa, const void *pb)
++{
++   const struct pco_live_interval *a = pa, *b = pb;
++   if (a->start != b->start) return a->start < b->start ? -1 : 1;
++   /* Points precede nonempty ranges at the same start. */
++   if (a->end != b->end) return a->end < b->end ? -1 : 1;
++   return a->var < b->var ? -1 : a->var != b->var;
++}
++
++static void pco_live_interference(struct ra_graph *graph,
++                                  const struct live_range *ranges,
++                                  unsigned num_vars)
++{
++   struct pco_live_interval *intervals =
++      ralloc_array(graph, struct pco_live_interval, num_vars);
++   unsigned count = 0;
++   for (unsigned var = 0; var < num_vars; ++var) {
++      if (ranges[var].start == ~0U) continue;
++      intervals[count++] = (struct pco_live_interval){ var, ranges[var].start, ranges[var].end };
++   }
++   if (count < 2) {
++      ralloc_free(intervals);
++      return;
++   }
++   qsort(intervals, count, sizeof(*intervals), pco_live_interval_cmp);
++   unsigned *active = ralloc_array(graph, unsigned, count);
++   unsigned nactive = 0;
++   for (unsigned i = 0; i < count; ++i) {
++      const struct pco_live_interval *cur = &intervals[i];
++      unsigned retained = 0;
++      for (unsigned j = 0; j < nactive; ++j) {
++         const struct pco_live_interval *prev = &intervals[active[j]];
++         if (prev->end <= cur->start) continue;
++         active[retained++] = active[j];
++         unsigned v0 = MIN2(prev->var, cur->var), v1 = MAX2(prev->var, cur->var);
++         /* Preserve the original endpoint predicate, including point ranges. */
++         if (ranges[v1].end != ~0U && prev->start < cur->end)
++            ra_add_node_interference(graph, v0, v1);
++      }
++      nactive = retained;
++      active[nactive++] = i;
++   }
++   ralloc_free(active);
++   ralloc_free(intervals);
++}
++
+ static bool pco_ra_func(pco_func *func, pco_ra_ctx *ctx)
+ {
+    /* TODO: support multiple functions and calls. */
+@@ -464,6 +528,8 @@
+    unsigned num_ssas = func->next_ssa;
+    unsigned num_vregs = func->next_vreg;
+    unsigned num_vars = num_ssas + num_vregs;
++   if (getenv("PCO_RA_STATS"))
++      fprintf(stderr, "PCO RA: %u SSA, %u vregs, %u variables\n", num_ssas, num_vregs, num_vars);
+ 
+    /* Collect used bit sizes. */
+    uint8_t used_bits = 0;
+@@ -689,7 +755,11 @@
+    }
+ 
+    /* Extend lifetimes of non-overriden vecs that have comp instructions. */
++   struct util_dynarray live_uses;
++   unsigned *live_heads = pco_index_live_uses(func, &live_uses);
++   unsigned live_order = 0;
+    pco_foreach_instr_in_func (instr, func) {
++      unsigned from_order = live_order++;
+       if (instr->op != PCO_OP_COMP)
+          continue;
+ 
+@@ -706,8 +776,12 @@
+          continue;
+       }
+ 
+-      pco_extend_live_range(src_vec, dest, instr, overrides, live_ranges);
+-   }
++      pco_extend_live_range(src_vec, overrides, live_ranges,
++                            &live_uses, live_heads[dest.val], from_order);
++   }
++
++   util_dynarray_fini(&live_uses);
++   ralloc_free(live_heads);
+ 
+    /* Extend lifetimes of vars in loops. */
+    pco_foreach_loop_in_func (loop, func) {
+@@ -741,17 +815,8 @@
+       if (live_ranges[var].start != ~0U && live_ranges[var].end == 0)
+          live_ranges[var].end = live_ranges[var].start;
+ 
+-   /* Build interference graph from overlapping live ranges. */
+-   for (unsigned var0 = 0; var0 < num_vars; ++var0) {
+-      for (unsigned var1 = var0 + 1; var1 < num_vars; ++var1) {
+-         /* If the live ranges overlap, the register nodes interfere. */
+-         if ((live_ranges[var0].start != ~0U && live_ranges[var1].end != ~0U) &&
+-             !(live_ranges[var0].start >= live_ranges[var1].end ||
+-               live_ranges[var1].start >= live_ranges[var0].end)) {
+-            ra_add_node_interference(ra_graph, var0, var1);
+-         }
+-      }
+-   }
++   /* Sweep sorted ranges instead of comparing every variable pair. */
++   pco_live_interference(ra_graph, live_ranges, num_vars);
+ 
+    pco_foreach_instr_in_func_rev (vec, func) {
+       if (vec->op != PCO_OP_VEC)
+
+diff -ru a/src/util/register_allocate.c b/src/util/register_allocate.c
+--- a/src/util/register_allocate.c
++++ b/src/util/register_allocate.c
+@@ -526,14 +526,14 @@
+ static void
+ ra_set_adjacency_bit(struct ra_graph *g, unsigned n1, unsigned n2)
+ {
+-   unsigned index = ra_get_adjacency_bit_index(n1, n2);
++   uint64_t index = ra_get_adjacency_bit_index(n1, n2);
+    BITSET_SET(g->adjacency, index);
+ }
+ 
+ static void
+ ra_clear_adjacency_bit(struct ra_graph *g, unsigned n1, unsigned n2)
+ {
+-   unsigned index = ra_get_adjacency_bit_index(n1, n2);
++   uint64_t index = ra_get_adjacency_bit_index(n1, n2);
+    BITSET_CLEAR(g->adjacency, index);
+ }
+ 
+
+--- a/src/imagination/vulkan/pvr_arch_pipeline.c
++++ b/src/imagination/vulkan/pvr_arch_pipeline.c
+@@ -25,6 +25,15 @@
+  */
+ 
+ #include "pvr_pipeline.h"
++#include <errno.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <sys/stat.h>
++#include "nir/nir_serialize.h"
++#include "pvr_instance.h"
++#include "util/blob.h"
++#include "util/mesa-sha1.h"
++
+ 
+ #include <assert.h>
+ #include <stdbool.h>
+@@ -71,6 +80,180 @@
+ #include "vk_util.h"
+ #include "vulkan/runtime/vk_pipeline.h"
+ #include "vulkan/vulkan_core.h"
++
++
++/* Cache the expensive PCO translation/optimization/register allocation output.
++ * GPU addresses and descriptor binding pointers belong to the current pipeline;
++ * only the relocatable USC binary and scalar compiler metadata go to disk.
++ * The lowered NIR, complete binding metadata, device and driver build identify
++ * the entry. Cache failures always fall back to compiling the current shader. */
++#define PD_PCO_CACHE_MAX (64U * 1024U * 1024U)
++struct pd_pco_cache_header {
++   uint32_t magic, version, data_size, binary_size;
++   unsigned char digest[SHA1_DIGEST_LENGTH];
++};
++
++static const char *pd_pco_cache_directory(void)
++{
++   const char *dir = getenv("PD_PVR_SHADER_CACHE");
++#ifdef __APPLE__
++   if (!dir) {
++      mkdir("/var/db/airjitd", 0700);
++      dir = "/var/db/airjitd/pco";
++   }
++#endif
++   if (!dir || !*dir || !strcmp(dir, "0"))
++      return NULL;
++   if (mkdir(dir, 0700) && errno != EEXIST)
++      return NULL;
++   return dir;
++}
++
++static void pd_pco_scalar_data(pco_data *out, const pco_data *in)
++{
++   *out = *in;
++   for (unsigned i = 0; i < PVR_MAX_DESCRIPTOR_SETS; ++i)
++      out->common.desc_sets[i].bindings = NULL;
++}
++
++static bool pd_pco_cache_key(struct pvr_device *device, nir_shader *nir,
++                             const pco_data *data, char path[512])
++{
++   const char *dir = pd_pco_cache_directory();
++   if (!dir || pco_shader_cache_debug_enabled())
++      return false;
++   struct blob blob;
++   blob_init(&blob);
++   nir_serialize(&blob, nir, true);
++   if (blob.out_of_memory) {
++      blob_finish(&blob);
++      return false;
++   }
++   struct mesa_sha1 ctx;
++   unsigned char digest[SHA1_DIGEST_LENGTH];
++   char hex[SHA1_DIGEST_LENGTH * 2 + 1];
++   pco_data scalar;
++   pd_pco_scalar_data(&scalar, data);
++   uint64_t bvnc = pvr_get_packed_bvnc(&device->pdevice->dev_info);
++   const uint32_t version = 1;
++   _mesa_sha1_init(&ctx);
++   _mesa_sha1_update(&ctx, &version, sizeof(version));
++   _mesa_sha1_update(&ctx, device->pdevice->instance->driver_build_sha, SHA1_DIGEST_LENGTH);
++   _mesa_sha1_update(&ctx, &bvnc, sizeof(bvnc));
++   _mesa_sha1_update(&ctx, blob.data, blob.size);
++   _mesa_sha1_update(&ctx, &scalar, sizeof(scalar));
++   for (unsigned i = 0; i < PVR_MAX_DESCRIPTOR_SETS; ++i) {
++      const pco_descriptor_set_data *set = &data->common.desc_sets[i];
++      if (set->binding_count)
++         _mesa_sha1_update(&ctx, set->bindings, set->binding_count * sizeof(*set->bindings));
++   }
++   _mesa_sha1_final(&ctx, digest);
++   _mesa_sha1_format(hex, digest);
++   blob_finish(&blob);
++   int n = snprintf(path, 512, "%s/%s.bin", dir, hex);
++   return n > 0 && n < 512;
++}
++
++static pco_shader *pd_pco_cache_load(const char *path, pco_ctx *ctx,
++                                     nir_shader *nir, const pco_data *input,
++                                     void *mem_ctx)
++{
++   int fd = open(path, O_RDONLY | O_NOFOLLOW);
++   if (fd < 0)
++      return NULL;
++   struct stat st;
++   struct pd_pco_cache_header h;
++   pco_data stored;
++   unsigned char *binary = NULL;
++   pco_shader *shader = NULL;
++   if (fstat(fd, &st) || !S_ISREG(st.st_mode) ||
++       read(fd, &h, sizeof(h)) != sizeof(h) ||
++       h.magic != 0x5044434f || h.version != 1 || h.data_size != sizeof(stored) ||
++       !h.binary_size || h.binary_size > PD_PCO_CACHE_MAX ||
++       (uint64_t)st.st_size != sizeof(h) + sizeof(stored) + h.binary_size ||
++       read(fd, &stored, sizeof(stored)) != sizeof(stored))
++      goto out;
++   binary = malloc(h.binary_size);
++   if (!binary)
++      goto out;
++   size_t done = 0;
++   while (done < h.binary_size) {
++      ssize_t n = read(fd, binary + done, h.binary_size - done);
++      if (n < 0 && errno == EINTR) continue;
++      if (n <= 0) goto out;
++      done += n;
++   }
++   struct mesa_sha1 sha;
++   unsigned char digest[SHA1_DIGEST_LENGTH];
++   _mesa_sha1_init(&sha);
++   _mesa_sha1_update(&sha, &stored, sizeof(stored));
++   _mesa_sha1_update(&sha, binary, h.binary_size);
++   _mesa_sha1_final(&sha, digest);
++   if (memcmp(digest, h.digest, sizeof(digest)))
++      goto out;
++   for (unsigned i = 0; i < PVR_MAX_DESCRIPTOR_SETS; ++i) {
++      if (stored.common.desc_sets[i].bindings ||
++          stored.common.desc_sets[i].binding_count != input->common.desc_sets[i].binding_count)
++         goto out;
++      stored.common.desc_sets[i].bindings = input->common.desc_sets[i].bindings;
++   }
++   shader = pco_shader_from_binary(ctx, nir, &stored, binary, h.binary_size, mem_ctx);
++   if (!shader) goto out;
++   mesa_logd("PD PCO cache hit: %s", path);
++out:
++   free(binary);
++   close(fd);
++   return shader;
++}
++
++static void pd_pco_cache_store(const char *path, pco_shader *shader)
++{
++   size_t size = pco_shader_binary_size(shader);
++   if (!size || size > PD_PCO_CACHE_MAX)
++      return;
++   pco_data data;
++   pd_pco_scalar_data(&data, pco_shader_data(shader));
++   struct pd_pco_cache_header h = {0x5044434f, 1, sizeof(data), size, {0}};
++   struct mesa_sha1 sha;
++   _mesa_sha1_init(&sha);
++   _mesa_sha1_update(&sha, &data, sizeof(data));
++   _mesa_sha1_update(&sha, pco_shader_binary_data(shader), size);
++   _mesa_sha1_final(&sha, h.digest);
++   char tmp[544];
++   snprintf(tmp, sizeof(tmp), "%s.XXXXXX", path);
++   int fd = mkstemp(tmp);
++   if (fd < 0) return;
++   const void *parts[] = {&h, &data, pco_shader_binary_data(shader)};
++   size_t sizes[] = {sizeof(h), sizeof(data), size};
++   bool ok = true;
++   for (unsigned i = 0; i < 3 && ok; ++i) {
++      size_t done = 0;
++      while (done < sizes[i]) {
++         ssize_t n = write(fd, (const char *)parts[i] + done, sizes[i] - done);
++         if (n < 0 && errno == EINTR) continue;
++         if (n <= 0) { ok = false; break; }
++         done += n;
++      }
++   }
++   if (close(fd)) ok = false;
++   if (ok) ok = !rename(tmp, path);
++   if (!ok) unlink(tmp);
++}
++
++static pco_shader *pd_pco_compile(struct pvr_device *device, pco_ctx *ctx,
++                                   nir_shader *nir, pco_data *data, void *mem_ctx)
++{
++   char path[512];
++   bool cache = pd_pco_cache_key(device, nir, data, path);
++   pco_shader *shader = cache ? pd_pco_cache_load(path, ctx, nir, data, mem_ctx) : NULL;
++   if (shader) return shader;
++   shader = pco_trans_nir(ctx, nir, data, mem_ctx);
++   if (!shader) return NULL;
++   pco_process_ir(ctx, shader);
++   pco_encode_ir(ctx, shader);
++   if (cache) pd_pco_cache_store(path, shader);
++   return shader;
++}
+ 
+ /*****************************************************************************
+    PDS functions
+@@ -987,14 +1170,12 @@
+    pco_postprocess_nir(pco_ctx, nir, &shader_data);
+    pvr_postprocess_shader_data(&shader_data, nir, pCreateInfo, layout, NULL);
+ 
+-   cs = pco_trans_nir(pco_ctx, nir, &shader_data, shader_mem_ctx);
++   cs = pd_pco_compile(device, pco_ctx, nir, &shader_data, shader_mem_ctx);
+    if (!cs) {
+       result = VK_ERROR_INITIALIZATION_FAILED;
+       goto err_free_build_context;
+    }
+ 
+-   pco_process_ir(pco_ctx, cs);
+-   pco_encode_ir(pco_ctx, cs);
+ 
+    pvr_compute_state_save(compute_pipeline, cs);
+ 
+@@ -2865,7 +3046,7 @@
+       if (!nir_shaders[stage])
+          continue;
+ 
+-      *pco = pco_trans_nir(pco_ctx,
++      *pco = pd_pco_compile(device, pco_ctx,
+                            nir_shaders[stage],
+                            &shader_data[stage],
+                            shader_mem_ctx);
+@@ -2874,8 +3055,6 @@
+          goto err_free_build_context;
+       }
+ 
+-      pco_process_ir(pco_ctx, *pco);
+-      pco_encode_ir(pco_ctx, *pco);
+    }
+ 
+    pvr_vertex_state_save(gfx_pipeline, *vs);
+
+--- a/src/imagination/pco/pco.h
++++ b/src/imagination/pco/pco.h
+@@ -45,6 +45,11 @@
+ 
+ pco_shader *
+ pco_trans_nir(pco_ctx *ctx, nir_shader *nir, pco_data *data, void *mem_ctx);
++bool pco_shader_cache_debug_enabled(void);
++pco_shader *pco_shader_from_binary(pco_ctx *ctx, nir_shader *nir,
++                                  const pco_data *data, const void *binary,
++                                  unsigned size, void *mem_ctx);
++
+ void pco_process_ir(pco_ctx *ctx, pco_shader *shader);
+ void pco_encode_ir(pco_ctx *ctx, pco_shader *shader);
+ 
+
+--- a/src/imagination/pco/pco.c
++++ b/src/imagination/pco/pco.c
+@@ -89,6 +89,9 @@
+ {
+    pco_shader *shader = rzalloc_size(mem_ctx, sizeof(*shader));
+ 
++   if (!shader)
++      return NULL;
++
+    shader->ctx = ctx;
+    shader->nir = nir;
+    shader->stage = nir->info.stage;
+@@ -97,6 +100,29 @@
+    shader->is_grouped = false;
+    list_inithead(&shader->funcs);
+ 
++   return shader;
++}
++
++bool pco_shader_cache_debug_enabled(void)
++{
++   return pco_debug || pco_debug_print;
++}
++
++pco_shader *pco_shader_from_binary(pco_ctx *ctx, nir_shader *nir,
++                                  const pco_data *data, const void *binary,
++                                  unsigned size, void *mem_ctx)
++{
++   pco_shader *shader = pco_shader_create(ctx, nir, mem_ctx);
++   if (!shader)
++      return NULL;
++   shader->data = *data;
++   util_dynarray_init(&shader->binary, shader);
++   void *dest = util_dynarray_resize_bytes(&shader->binary, 1, size);
++   if (!dest) {
++      ralloc_free(shader);
++      return NULL;
++   }
++   memcpy(dest, binary, size);
+    return shader;
+ }
+ 
+diff -ru a/src/imagination/vulkan/pvr_instance.c b/src/imagination/vulkan/pvr_instance.c
+--- a/src/imagination/vulkan/pvr_instance.c
++++ b/src/imagination/vulkan/pvr_instance.c
+@@ -308,11 +308,13 @@
+ }
+ 
+ static bool
+-pvr_get_driver_build_sha(uint8_t sha_out[const static BUILD_ID_EXPECTED_HASH_LENGTH])
++pvr_get_driver_build_sha(uint8_t sha_out[const static SHA1_DIGEST_LENGTH])
+ {
+    const struct build_id_note *note;
+    unsigned build_id_len;
+ 
++   /* Mesa now stores a 32-byte digest; ELF build IDs may still be 20 bytes. */
++   memset(sha_out, 0, SHA1_DIGEST_LENGTH);
+    note = build_id_find_nhdr_for_addr(pvr_get_driver_build_sha);
+    if (!note) {
+       mesa_loge("Failed to find build-id.");
+@@ -327,7 +329,7 @@
+       unsigned char digest[SHA1_DIGEST_LENGTH];
+ 
+       _mesa_sha1_compute(build_id_data(note), build_id_len, digest);
+-      memcpy(sha_out, digest, BUILD_ID_EXPECTED_HASH_LENGTH);
++      memcpy(sha_out, digest, SHA1_DIGEST_LENGTH);
+       return true;
+    }
+ #endif
