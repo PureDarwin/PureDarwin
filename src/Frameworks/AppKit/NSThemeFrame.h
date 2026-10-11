@@ -36,6 +36,7 @@ typedef enum {
     NSRect _zoomButtonRect;
     NSPoint pointer;
     NSRect controls;
+    NSView *_controlsView;
 }
 
 - (NSWindowBorderType)windowBorderType;

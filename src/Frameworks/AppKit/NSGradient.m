@@ -15,7 +15,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 @implementation NSGradient
 
-static void evaluate(void *info,float const *input,float *output) {
+static void evaluate(void *info,const CGFloat *input,CGFloat *output) {
    NSGradient *self=(NSGradient *)info;
    CGFloat   **components=self->_components;
    CGFloat    *locations=self->_locations;

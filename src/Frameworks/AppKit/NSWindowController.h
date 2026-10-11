@@ -10,6 +10,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 @class NSWindow, NSDocument;
 
+@class NSViewController;
+
 @interface NSWindowController : NSResponder {
     NSWindow *_window;
     NSString *_nibName;
@@ -57,5 +59,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 - (void)synchronizeWindowTitleWithDocumentName;
 - (NSString *)windowTitleForDocumentDisplayName:(NSString *)displayName;
+
+-(NSViewController *)contentViewController;
+-(void)setContentViewController:(NSViewController *)controller;
 
 @end

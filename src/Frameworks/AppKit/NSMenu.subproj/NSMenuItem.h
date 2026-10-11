@@ -89,4 +89,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 - (NSString *)_keyEquivalentDescription;
 
+-(NSString *)toolTip;
+-(void)setToolTip:(NSString *)toolTip;
+
 @end

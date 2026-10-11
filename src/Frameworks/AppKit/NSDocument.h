@@ -171,4 +171,14 @@ typedef enum {
 - (BOOL)writeToURL:(NSURL *)url ofType:(NSString *)type;
 - (BOOL)writeWithBackupToFile:(NSString *)path ofType:(NSString *)type saveOperation:(NSSaveOperationType)operation;
 
+@property(getter=isDraft) BOOL draft;
+@property(readonly, getter=isInViewingMode) BOOL inViewingMode;
+@property(readonly, getter=isLocked) BOOL locked;
+@property(readonly, getter=isBrowsingVersions) BOOL browsingVersions;
++(BOOL)autosavesInPlace;
++(BOOL)preservesVersions;
+-(void)performActivityWithSynchronousWaiting:(BOOL)waitSynchronously usingBlock:(void (^)(void (^activityCompletionHandler)(void)))block;
+-(NSDocument *)duplicateAndReturnError:(NSError **)error;
+-(void)duplicateDocument:(id)sender;
+
 @end

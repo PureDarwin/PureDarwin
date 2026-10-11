@@ -144,9 +144,15 @@ stdenv.mkDerivation {
     # to be installed alongside the binary or every +imageNamed: returns nil.
     find "$src" -name '*.tiff' -exec cp {} "$frameworkDir/Versions/A/Resources/" \; 2>/dev/null || true
 
+    # the key bindings the text system turns keys into commands with, Esc, arrows and the rest
+    # (+[NSKeyboardBindingManager defaultKeyBindingManager] finds them through the same bundle)
+    cp "$src/NSKeyboardBinding/StandardKeyBindings.keyBindings" "$frameworkDir/Versions/A/Resources/"
+
     ln -s A "$frameworkDir/Versions/Current"
     ln -s Versions/Current/AppKit "$frameworkDir/AppKit"
     ln -s Versions/Current/Headers "$frameworkDir/Headers"
+    # NSBundle finds a framework's resources through this link, as on macOS
+    ln -s Versions/Current/Resources "$frameworkDir/Resources"
 
     # NSInterfaceTheme reads /System/Library/Themes/Default.plist when it is
     # present; with no theme file every control draws itself as before.

@@ -83,6 +83,14 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    [_cell setEditable:flag];
 }
 
++(instancetype)imageViewWithImage:(NSImage *)image {
+   NSSize size=[image size];
+   NSImageView *view=[[[self alloc] initWithFrame:NSMakeRect(0,0,size.width,size.height)] autorelease];
+
+   [view setImage:image];
+   return view;
+}
+
 -(void)setImage:(NSImage *)image {
 	[_cell setImage:image];
 	[self setNeedsDisplay:YES];

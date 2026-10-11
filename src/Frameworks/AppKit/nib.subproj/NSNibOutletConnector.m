@@ -12,7 +12,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 @implementation NSNibOutletConnector
 
 -(void)establishConnection {
-   NSString *methodName=[NSString stringWithFormat:@"set%@:",[_label capitalizedString]];
+   // setSceneController: for sceneController: only the first letter changes (capitalizedString lowercases the rest)
+   NSString *first=[_label length] ? [[_label substringToIndex:1] uppercaseString] : @"";
+   NSString *methodName=[NSString stringWithFormat:@"set%@%@:",first,[_label length] ? [_label substringFromIndex:1] : @""];
    SEL       selector=NSSelectorFromString(methodName);
 
    if(selector!=NULL)
@@ -21,7 +23,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
      return;
     }
 
-   object_setInstanceVariable(_source,[_label UTF8String],&_destination);
+   // the ivar gets the object itself, unretained as on macOS (object_setInstanceVariable takes the value itself)
+   Ivar ivar=class_getInstanceVariable(object_getClass(_source),[_label UTF8String]);
+
+   if(ivar!=NULL)
+    object_setIvar(_source,ivar,_destination);
 }
 
 @end

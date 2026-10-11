@@ -8,6 +8,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 // Original - Christopher Lloyd <cjwl@objc.net>
 #import <AppKit/NSMenuItem.h>
+#import <objc/runtime.h>
 #import <AppKit/NSMenu.h>
 #import <AppKit/NSImage.h>
 #import <AppKit/NSEvent.h>
@@ -383,6 +384,15 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 -(NSString *)description {
     return [NSString stringWithFormat:@"<%@[0x%x]: title: %@ action: %@ hasSubmenu: %@>",
         [self class],self,[self title],NSStringFromSelector(_action),([self hasSubmenu] ? @"YES" : @"NO")];
+}
+
+// menus draw no tool tips here, the text is kept for the getter
+-(NSString *)toolTip {
+   return objc_getAssociatedObject(self,@selector(toolTip));
+}
+
+-(void)setToolTip:(NSString *)toolTip {
+   objc_setAssociatedObject(self,@selector(toolTip),toolTip,OBJC_ASSOCIATION_COPY);
 }
 
 @end

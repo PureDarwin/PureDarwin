@@ -15,7 +15,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/AppKitExport.h>
 #import <ApplicationServices/ApplicationServices.h>
 
-@class NSWindow, NSMenu, NSMenuItem, NSCursor, NSClipView, NSPasteboard, NSTextInputContext, NSImage, NSBitmapImageRep, NSScrollView, NSTrackingArea, NSShadow, NSScreen, CALayer, CIFilter, CALayerContext;
+@class NSWindow, NSMenu, NSMenuItem, NSCursor, NSClipView, NSPasteboard, NSTextInputContext, NSImage, NSBitmapImageRep, NSScrollView, NSTrackingArea, NSShadow, NSScreen, CALayer, CIFilter, CALayerContext, CADisplayLink;
 
 // See Cocoa Event Handling Guide : Using Tracking-Area Objects : Compatibility Issues
 typedef NSInteger NSTrackingRectTag;
@@ -296,6 +296,13 @@ APPKIT_EXPORT NSString *const NSViewFocusDidChangeNotification;
 - (NSViewLayerContentsRedrawPolicy)layerContentsRedrawPolicy;
 - (void)setLayerContentsRedrawPolicy:(NSViewLayerContentsRedrawPolicy)newPolicy;
 - (CALayer *)makeBackingLayer;
+- (NSSize)convertSizeToBacking:(NSSize)size;
+- (NSSize)convertSizeFromBacking:(NSSize)size;
+- (NSPoint)convertPointToBacking:(NSPoint)point;
+- (NSPoint)convertPointFromBacking:(NSPoint)point;
+- (NSRect)convertRectToBacking:(NSRect)rect;
+- (NSRect)convertRectFromBacking:(NSRect)rect;
+- (CADisplayLink *)displayLinkWithTarget:(id)target selector:(SEL)selector;
 
 - (NSArray *)backgroundFilters;
 - (void)setBackgroundFilters:(NSArray *)filters;

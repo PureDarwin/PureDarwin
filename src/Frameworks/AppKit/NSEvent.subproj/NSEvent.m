@@ -18,13 +18,78 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <Foundation/NSDate.h>
 #import <Foundation/NSException.h>
 
+// local event monitors, run on every event the application dequeues
+@interface NSEventLocalMonitor : NSObject {
+@public
+   NSEventMask _mask;
+   NSEvent *(^_handler)(NSEvent *);
+}
+@end
+
+@implementation NSEventLocalMonitor
+-(void)dealloc {
+   [_handler release];
+   [super dealloc];
+}
+@end
+
+static NSMutableArray *localMonitors;
+static NSUInteger pressedButtons;
+
 @implementation NSEvent
+
++(id)addLocalMonitorForEventsMatchingMask:(NSEventMask)mask handler:(NSEvent *(^)(NSEvent *event))block {
+   NSEventLocalMonitor *monitor=[[NSEventLocalMonitor new] autorelease];
+
+   monitor->_mask=mask;
+   monitor->_handler=[block copy];
+   if(localMonitors==nil)
+    localMonitors=[NSMutableArray new];
+   [localMonitors addObject:monitor];
+   return monitor;
+}
+
+// no global monitors without a WindowServer event tap
++(id)addGlobalMonitorForEventsMatchingMask:(NSEventMask)mask handler:(void (^)(NSEvent *event))block {
+   return nil;
+}
+
++(void)removeMonitor:(id)monitor {
+   [localMonitors removeObjectIdenticalTo:monitor];
+}
+
+// what a dequeued event becomes after the monitors (nil when one swallowed it), tracks mouse buttons on the way
++(NSEvent *)_runLocalMonitors:(NSEvent *)event {
+   switch([event type]){
+    case NSLeftMouseDown: pressedButtons|=1; break;
+    case NSLeftMouseUp: pressedButtons&=~1u; break;
+    case NSRightMouseDown: pressedButtons|=2; break;
+    case NSRightMouseUp: pressedButtons&=~2u; break;
+    case NSOtherMouseDown: pressedButtons|=4; break;
+    case NSOtherMouseUp: pressedButtons&=~4u; break;
+    default: break;
+   }
+   NSArray *monitors=[[localMonitors copy] autorelease];
+
+   for(NSEventLocalMonitor *monitor in monitors){
+    if(event==nil)
+     break;
+    if(monitor->_mask & NSEventMaskFromType([event type]))
+     event=monitor->_handler(event);
+   }
+   return event;
+}
+
++(NSUInteger)pressedMouseButtons {
+   return pressedButtons;
+}
+
 
 +(NSPoint)mouseLocation {
    return [[NSDisplay currentDisplay] mouseLocation];
 }
 
-+(NSUInteger)modifierFlags {
++(NSEventModifierFlags)modifierFlags {
    return [[NSDisplay currentDisplay] currentModifierFlags];
 }
 
@@ -82,7 +147,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return _locationInWindow;
 }
 
--(unsigned)modifierFlags {
+-(NSEventModifierFlags)modifierFlags {
    return _modifierFlags;
 }
 
@@ -94,20 +159,48 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     return _windowNumber;
 }
 
--(int)clickCount {
+-(NSInteger)clickCount {
    return 0;
 }
 
--(float)deltaX {
+-(CGFloat)deltaX {
    return 0;
 }
 
--(float)deltaY {
+-(CGFloat)deltaY {
    return 0;
 }
 
--(float)deltaZ {
+-(CGFloat)deltaZ {
    return 0;
+}
+
+-(NSInteger)buttonNumber {
+   switch(_type){
+    case NSRightMouseDown: case NSRightMouseUp: case NSRightMouseDragged:
+     return 1;
+    case NSOtherMouseDown: case NSOtherMouseUp: case NSOtherMouseDragged:
+     return 2;
+    default:
+     return 0;
+   }
+}
+
+// wheel deltas are in lines
+-(BOOL)hasPreciseScrollingDeltas {
+   return NO;
+}
+
+-(CGFloat)scrollingDeltaX {
+   return [self deltaX];
+}
+
+-(CGFloat)scrollingDeltaY {
+   return [self deltaY];
+}
+
+-(BOOL)isARepeat {
+   return NO;
 }
 
 -(NSString *)characters {
@@ -201,7 +294,7 @@ static NSTimer *_periodicTimer=nil;
 
 @end
 
-unsigned NSEventMaskFromType(NSEventType type){
-   return 1<<type;
+NSEventMask NSEventMaskFromType(NSEventType type){
+   return type < 64 ? 1ULL << type : 0;
 }
 

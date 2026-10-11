@@ -34,14 +34,50 @@
 extern void CGNativeBorderFrameWidthsForStyle(unsigned styleMask, CGFloat *top,
     CGFloat *left, CGFloat *bottom, CGFloat *right);
 
+@interface NSThemeFrame (PDControls)
+-(void)_drawControlsInContext:(O2Context *)context;
+@end
+
+// the traffic lights in their own view above a full-size content view, which would cover the frame's drawing
+@interface NSThemeFrameControls : NSView
+@end
+
+@implementation NSThemeFrameControls
+
+-(BOOL)isOpaque {
+   return NO;
+}
+
+-(void)drawRect:(NSRect)rect {
+   O2Context *context = [[[self window] graphicsContext] graphicsPort];
+   NSRect frame = [self frame];
+
+   O2ContextSaveGState(context);
+   O2ContextTranslateCTM(context, -frame.origin.x, -frame.origin.y);
+   [(NSThemeFrame *)[self superview] _drawControlsInContext:context];
+   O2ContextRestoreGState(context);
+}
+
+// presses go to the frame, which knows the buttons and moves the window from the rest
+-(void)mouseDown:(NSEvent *)event {
+   [[self superview] mouseDown:event];
+}
+
+@end
+
 @implementation NSThemeFrame
 
 // all measurements in pixels
 const float NSWindowTitleHeight = 32;
+// toolbar heights of macOS's unified and compact styles
+const float NSWindowUnifiedTitleHeight = 52;
+const float NSWindowCompactTitleHeight = 38;
 const float NSWindowEdgePad = 2;
 const float NSWindowCornerRadius = 8;
-const float NSWindowControlDiameter = 14;
-const float NSWindowControlSpacing = 10;
+const float NSWindowControlDiameter = 12;
+const float NSWindowControlSpacing = 8;
+const float NSWindowControlInset = 12;
+const float NSWindowTitleFontSize = 13;
 
 static O2Image *wsClose, *wsCloseHover, *wsMini, *wsMiniHover;
 static O2Image *wsZoom, *wsZoomUp, *wsZoomDown;
@@ -63,12 +99,19 @@ static void drawWindowControl(O2Context *context, CGRect rect,
     O2ContextAddEllipseInRect(context, rect);
     O2ContextFillPath(context);
 
+    // a faint darker rim keeps the light visible on a pale bar
+    O2ContextSetRGBStrokeColor(context, r * 0.8, g * 0.8, b * 0.8, 1);
+    O2ContextSetLineWidth(context, 0.5);
+    O2ContextBeginPath(context);
+    O2ContextAddEllipseInRect(context, CGRectInset(rect, 0.25, 0.25));
+    O2ContextStrokePath(context);
+
     if(glyph == kControlGlyphNone)
         return;
 
-    CGFloat inset = radius * 0.45;
-    O2ContextSetRGBStrokeColor(context, 0, 0, 0, 0.6);
-    O2ContextSetLineWidth(context, 1.5);
+    CGFloat inset = radius * 0.42;
+    O2ContextSetRGBStrokeColor(context, 0, 0, 0, 0.55);
+    O2ContextSetLineWidth(context, 1.2);
     O2ContextBeginPath(context);
     switch(glyph) {
         case kControlGlyphClose:
@@ -128,10 +171,12 @@ static void drawWindowControl(O2Context *context, CGRect rect,
     if(NSPointInRect(pointer, controls)) {
         if(!inRect) {
             [self setNeedsDisplay:YES]; // highlight controls if mouse has gone into them
+            [_controlsView setNeedsDisplay:YES];
             inRect = YES;
         }
     } else if(inRect) { // we left the control zone
             [self setNeedsDisplay:YES];
+            [_controlsView setNeedsDisplay:YES];
             inRect = NO;
     }
 
@@ -145,6 +190,91 @@ static void drawWindowControl(O2Context *context, CGRect rect,
 -(void)setWindowBorderType:(NSWindowBorderType)borderType {
    _borderType = borderType;
    [self setNeedsDisplay:YES];
+}
+
+// only a full-size content view can grow the title bar, elsewhere the native border fixes it
+-(CGFloat)_titleHeight {
+    NSWindow *window = [self window];
+
+    if(!([window styleMask] & NSFullSizeContentViewWindowMask))
+        return NSWindowTitleHeight;
+    switch([window toolbarStyle]) {
+        case NSWindowToolbarStyleUnified:
+            return NSWindowUnifiedTitleHeight;
+        case NSWindowToolbarStyleUnifiedCompact:
+            return NSWindowCompactTitleHeight;
+        default:
+            return NSWindowTitleHeight;
+    }
+}
+
+-(void)_layoutControls {
+    CGRect button = NSMakeRect(NSWindowControlInset,
+        _frame.size.height - [self _titleHeight] / 2 - NSWindowControlDiameter / 2,
+        NSWindowControlDiameter, NSWindowControlDiameter);
+
+    _closeButtonRect = button;
+    button.origin.x += NSWindowControlSpacing + NSWindowControlDiameter;
+    _miniButtonRect = button;
+    button.origin.x += NSWindowControlSpacing + NSWindowControlDiameter;
+    _zoomButtonRect = button;
+    controls = NSMakeRect(_closeButtonRect.origin.x, _closeButtonRect.origin.y,
+            2*NSWindowControlSpacing + 3*NSWindowControlDiameter, NSWindowControlDiameter);
+}
+
+-(void)_drawControlsInContext:(O2Context *)_context {
+    BOOL hover = NSPointInRect(pointer, controls);
+    BOOL active = [[self window] isKeyWindow];
+
+    // inactive windows draw flat grey lights until the pointer is over them, as on macOS
+    if(!active && !hover) {
+        drawWindowControl(_context, _closeButtonRect, 0.80, 0.80, 0.80, kControlGlyphNone);
+        drawWindowControl(_context, _miniButtonRect, 0.80, 0.80, 0.80, kControlGlyphNone);
+        drawWindowControl(_context, _zoomButtonRect, 0.80, 0.80, 0.80, kControlGlyphNone);
+    } else if(wsClose != nil) {
+        if(hover) {
+            [_context drawImage:wsCloseHover inRect:_closeButtonRect];
+            [_context drawImage:wsMiniHover inRect:_miniButtonRect];
+            [_context drawImage:wsZoomUp inRect:_zoomButtonRect];
+        } else {
+            [_context drawImage:wsClose inRect:_closeButtonRect];
+            [_context drawImage:wsMini inRect:_miniButtonRect];
+            [_context drawImage:wsZoom inRect:_zoomButtonRect];
+        }
+    } else {
+        drawWindowControl(_context, _closeButtonRect, 0.99, 0.36, 0.34,
+            hover ? kControlGlyphClose : kControlGlyphNone);
+        drawWindowControl(_context, _miniButtonRect, 1.00, 0.74, 0.20,
+            hover ? kControlGlyphMini : kControlGlyphNone);
+        drawWindowControl(_context, _zoomButtonRect, 0.16, 0.79, 0.25,
+            hover ? kControlGlyphZoom : kControlGlyphNone);
+    }
+    // a window without the action keeps that light flat grey even when key
+    if(!([[self window] styleMask] & NSMiniaturizableWindowMask))
+        drawWindowControl(_context, _miniButtonRect, 0.82, 0.82, 0.82, kControlGlyphNone);
+    if(!([[self window] styleMask] & NSResizableWindowMask))
+        drawWindowControl(_context, _zoomButtonRect, 0.82, 0.82, 0.82, kControlGlyphNone);
+}
+
+-(NSRect)_controlsOverlayFrame {
+    return NSMakeRect(0, NSHeight([self bounds]) - [self _titleHeight],
+        2 * NSWindowControlInset + 3 * NSWindowControlDiameter + 2 * NSWindowControlSpacing, [self _titleHeight]);
+}
+
+// the overlay exists only with a full-size content view and always stays the frontmost subview
+-(void)addSubview:(NSView *)view {
+    [super addSubview:view];
+    if(view == _controlsView || !([[self window] styleMask] & NSFullSizeContentViewWindowMask))
+        return;
+    if(_controlsView == nil) {
+        _controlsView = [[NSThemeFrameControls alloc] initWithFrame:[self _controlsOverlayFrame]];
+        [_controlsView setAutoresizingMask:NSViewMinYMargin];
+    } else {
+        [_controlsView retain];
+        [_controlsView removeFromSuperview];
+        [_controlsView autorelease];
+    }
+    [super addSubview:_controlsView];
 }
 
 -(void)drawRect:(NSRect)rect {
@@ -178,14 +308,23 @@ static void drawWindowControl(O2Context *context, CGRect rect,
     O2ContextSetRGBFillColor(_context, r, g, b, a);
     O2ContextFillRect(_context, bounds);
 
-    if([[self window] styleMask] == NSBorderlessWindowMask)
+    if([[self window] styleMask] == NSBorderlessWindowMask || ([[self window] styleMask] & NSFullScreenWindowMask))
         return;
 
     if([[self window] isSheet])
         bounds.size.height += cheatSheet;
 
-    O2ContextSetGrayStrokeColor(_context, 0.8, 1);
-    O2ContextSetGrayFillColor(_context, 0.8, 1);
+    NSUInteger style = [window styleMask];
+    BOOL fullSize = (style & NSFullSizeContentViewWindowMask) != 0;
+    BOOL clearBar = [window titlebarAppearsTransparent];
+
+    [self _layoutControls];
+    // a transparent title bar keeps the window's background colour
+    if(clearBar)
+        O2ContextSetRGBFillColor(_context, r, g, b, a);
+    else
+        O2ContextSetGrayFillColor(_context, 0.886, 1);
+    O2ContextSetGrayStrokeColor(_context, 0.886, 1);
 
     // let's round these corners
     float radius = NSWindowCornerRadius;
@@ -210,52 +349,35 @@ static void drawWindowControl(O2Context *context, CGRect rect,
     O2ContextClosePath(_context);
     O2ContextFillPath(_context);
 
-    // window controls
-    CGRect button = NSMakeRect(NSWindowControlSpacing,
-        _frame.size.height - NSWindowTitleHeight / 2 - NSWindowControlDiameter / 2,
-        NSWindowControlDiameter, NSWindowControlDiameter);
-    _closeButtonRect = button;
-    button.origin.x += NSWindowControlSpacing + NSWindowControlDiameter;
-    _miniButtonRect = button;
-    button.origin.x += NSWindowControlSpacing + NSWindowControlDiameter;
-    _zoomButtonRect = button;
-
-    controls = NSMakeRect(_closeButtonRect.origin.x, _closeButtonRect.origin.y,
-            3*NSWindowControlSpacing + 3*NSWindowControlDiameter, NSWindowControlDiameter);
-
-    BOOL hover = NSPointInRect(pointer, controls);
-
-    if(wsClose != nil) {
-        if(hover) {
-            [_context drawImage:wsCloseHover inRect:_closeButtonRect];
-            [_context drawImage:wsMiniHover inRect:_miniButtonRect];
-            [_context drawImage:wsZoomUp inRect:_zoomButtonRect];
-        } else {
-            [_context drawImage:wsClose inRect:_closeButtonRect];
-            [_context drawImage:wsMini inRect:_miniButtonRect];
-            [_context drawImage:wsZoom inRect:_zoomButtonRect];
-        }
-    } else {
-        drawWindowControl(_context, _closeButtonRect, 0.99, 0.36, 0.34,
-            hover ? kControlGlyphClose : kControlGlyphNone);
-        drawWindowControl(_context, _miniButtonRect, 1.00, 0.74, 0.20,
-            hover ? kControlGlyphMini : kControlGlyphNone);
-        drawWindowControl(_context, _zoomButtonRect, 0.16, 0.79, 0.25,
-            hover ? kControlGlyphZoom : kControlGlyphNone);
+    // hairline between the title bar and the content
+    if(!clearBar) {
+        O2ContextSetGrayFillColor(_context, 0.725, 1);
+        O2ContextFillRect(_context, CGRectMake(0, _frame.size.height - [self _titleHeight], _frame.size.width, 1));
     }
-    NSString *t = [[self window] title];
+
+    // over a full-size content view the overlay draws the lights instead
+    if(!fullSize)
+        [self _drawControlsInContext:_context];
+
+    BOOL active = [window isKeyWindow];
+    NSString *t = [window titleVisibility] == NSWindowTitleHidden ? nil : [window title];
+
     if(t) {
-        NSFont *titleFont = [NSFont titleBarFontOfSize:15.0];
-        NSColor *titleColor = [NSColor blackColor];
+        NSFont *titleFont = [NSFont titleBarFontOfSize:NSWindowTitleFontSize];
+        NSColor *titleColor = [NSColor colorWithCalibratedWhite:active ? 0.16 : 0.6 alpha:1];
         NSDictionary *attrs = @{
             NSFontAttributeName : titleFont,
             NSForegroundColorAttributeName : titleColor
         };
         NSAttributedString *title = [[NSAttributedString alloc] initWithString:t attributes:attrs];
         NSSize size = [title size];
+        // the typesetter puts the baseline ceil(ascender) below the rect top, and Inter's
+        // glyphs still land 2px under the lights' centre line as measured on PD
+        CGFloat mid = _frame.size.height - [self _titleHeight] / 2;
+        CGFloat baseline = round(mid - [titleFont capHeight] / 2) + 2;
         NSRect titleRect = NSMakeRect(
-            _frame.size.width / 2 - size.width / 2,
-            _frame.size.height - NSWindowTitleHeight / 3 - size.height / 2,
+            floor(_frame.size.width / 2 - size.width / 2),
+            baseline + ceil([titleFont ascender]) - size.height,
             size.width, size.height);
         [title drawInRect:titleRect];
     }
@@ -267,6 +389,8 @@ static void drawWindowControl(O2Context *context, CGRect rect,
 
 // tile the subviews, when/if we add titlebars and such do it here
    for(NSView *view in _subviews){
+    if(view == _controlsView)
+     continue;
     if([view isKindOfClass:[NSToolbarView class]])
      toolbarView=(NSToolbarView *)view;
     else
@@ -284,17 +408,18 @@ static void drawWindowControl(O2Context *context, CGRect rect,
 
    contentFrame.size.height-=toolbarFrame.size.height;
    [contentView setFrame:contentFrame];
+   [_controlsView setFrame:[self _controlsOverlayFrame]];
 }
 
 -(void)mouseDown:(NSEvent *)event {
     CGFloat top, left, right, bottom;
     CGNativeBorderFrameWidthsForStyle([[self window] styleMask], &top, &left, &bottom, &right);
     NSPoint pos = [event locationInWindow];
-    const CGFloat resizeMargin = 6.0;
 
-    if(([[self window] styleMask] & NSResizableWindowMask) &&
-       (pos.x <= resizeMargin || pos.x >= NSWidth(_frame) - resizeMargin ||
-        pos.y <= resizeMargin || pos.y >= NSHeight(_frame) - resizeMargin)) {
+    // no title bar or buttons in full screen
+    if([[self window] styleMask] & NSFullScreenWindowMask)
+        return;
+    if([[self window] _resizeEdgesAtPoint:pos] != 0) {
         [[self window] requestResize:event];
         return;
     }

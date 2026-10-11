@@ -350,6 +350,11 @@ enum {
     [self drawItemAtIndex:_selectedIndex];
 }
 
+// Esc and command-period send this on macOS, the older cancel: still works
+-(void)cancelOperation:(id)sender {
+    [self cancel:sender];
+}
+
 - (void)cancel:(id)sender {
     _keyboardUIState = KEYBOARD_CANCEL;
 }

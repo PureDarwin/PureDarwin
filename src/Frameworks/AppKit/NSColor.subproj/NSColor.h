@@ -20,6 +20,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 + (NSColor *)gridColor;
 
 + (NSColor *)alternateSelectedControlColor;
++ (NSColor *)controlAccentColor;
 + (NSColor *)alternateSelectedControlTextColor;
 + (NSColor *)controlColor;
 + (NSColor *)secondarySelectedControlColor;
@@ -134,5 +135,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - (void)drawSwatchInRect:(NSRect)rect;
 
 - (void)writeToPasteboard:(NSPasteboard *)pasteboard;
+
+@property(readonly) CGColorRef CGColor;
++(NSColor *)colorWithCGColor:(CGColorRef)cgColor;
 
 @end

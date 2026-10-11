@@ -113,12 +113,13 @@ NSColor *NSColorGetCatalogColor(NSString *catalogName,NSString *colorName);
    [NSException raise:NSInvalidArgumentException format:@"-getComponents not valid for the NSColor Catalog color: %@ %@; need to first convert colorspace.",_catalogName,_colorName];
 }
 
+// alpha is defined for every color on macOS, catalog colors answer through the color they stand for
 -(CGFloat)alphaComponent {
-   [NSException raise:NSInvalidArgumentException format:@"-alphaComponent not valid for the NSColor Catalog color: %@ %@; need to first convert colorspace.",_catalogName,_colorName];
+   return [_color alphaComponent];
 }
 
 -(NSColor *)colorWithAlphaComponent:(CGFloat)alpha {
-   [NSException raise:NSInvalidArgumentException format:@"-colorWithAlphaComponent not valid for the NSColor Catalog color: %@ %@; need to first convert colorspace.",_catalogName,_colorName];
+   return [_color colorWithAlphaComponent:alpha];
 }
 
 -(void)getWhite:(CGFloat *)white alpha:(CGFloat *)alpha {

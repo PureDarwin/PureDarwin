@@ -33,7 +33,9 @@
 #import <Onyx2D/O2Surface.h>
 #import <Onyx2D/O2GraphicsState.h>
 #import <AppKit/NSWindow.h>
+#import <objc/runtime.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #import <AppKit/NSWindow-Private.h>
 #import <AppKit/NSThemeFrame.h>
@@ -64,6 +66,13 @@
 #import <AppKit/NSDocument.h>
 #import <WindowServer/message.h>
 #import <WindowServer/rpc.h>
+
+@interface NSCursor (NSWindowResize)
++(NSCursor *)_windowResizeCursorForEdges:(int)edges;
+@end
+
+// set while the pointer is over the resize band, so leaving it hands the cursor back
+static char resizeBandKey;
 #import "O2Context_builtin_FT.h"
 
 NSString * const NSWindowDidBecomeKeyNotification=@"NSWindowDidBecomeKeyNotification";
@@ -105,6 +114,7 @@ const float WSWindowEdgePad = 2;
 @interface NSApplication(private)
 -(void)_setMainWindow:(NSWindow *)window;
 -(void)_setKeyWindow:(NSWindow *)window;
+-(void)_menuBarActivateWindow:(NSWindow *)window;
 @end
 
 @interface _NSKeyViewPosition : NSObject {
@@ -172,11 +182,16 @@ const float WSWindowEdgePad = 2;
    return 0;
 }
 
+// a full-size content view runs under the title bar, so frame and content are the same rect
 +(NSRect)frameRectForContentRect:(NSRect)contentRect styleMask:(unsigned)styleMask {
+   if(styleMask & NSFullSizeContentViewWindowMask)
+    return contentRect;
    return CGOutsetRectForNativeWindowBorder(contentRect,styleMask);
 }
 
 +(NSRect)contentRectForFrameRect:(NSRect)frameRect styleMask:(unsigned)styleMask {
+   if(styleMask & NSFullSizeContentViewWindowMask)
+    return frameRect;
    return CGInsetRectForNativeWindowBorder(frameRect,styleMask);
 }
 
@@ -193,6 +208,17 @@ const float WSWindowEdgePad = 2;
 +(NSArray *)windowNumbersWithOptions:(NSWindowNumberListOptions)options {
    NSUnimplementedMethod();
    return nil;
+}
+
+// windows here never merge into tabs, the setting is kept for the getter only
+static BOOL _allowsAutomaticWindowTabbing=YES;
+
++(BOOL)allowsAutomaticWindowTabbing {
+   return _allowsAutomaticWindowTabbing;
+}
+
++(void)setAllowsAutomaticWindowTabbing:(BOOL)value {
+   _allowsAutomaticWindowTabbing=value;
 }
 
 +(void)removeFrameUsingName:(NSString *)name {
@@ -418,7 +444,7 @@ const float WSWindowEdgePad = 2;
         O2Surface *surface = [[O2Surface alloc] initWithBytes:buffer
                 width:_frame.size.width height:_frame.size.height
                 bitsPerComponent:8 bytesPerRow:4*_frame.size.width colorSpace:colorSpace
-                bitmapInfo:kO2BitmapByteOrderDefault|kCGImageAlphaPremultipliedFirst];
+                bitmapInfo:kO2BitmapByteOrder32Little|kCGImageAlphaPremultipliedFirst];
         _context = [[O2Context_builtin_FT alloc] initWithSurface:surface flipped:NO];
 
         /* +currentContext is not owned by us; releasing it frees a context
@@ -680,6 +706,18 @@ const float WSWindowEdgePad = 2;
 
 -(BOOL)isMovableByWindowBackground {
    return _isMovableByWindowBackground;
+}
+
+-(NSWindowTitleVisibility)titleVisibility {
+   return _titleVisibility;
+}
+
+-(BOOL)titlebarAppearsTransparent {
+   return _titlebarAppearsTransparent;
+}
+
+-(NSWindowToolbarStyle)toolbarStyle {
+   return _toolbarStyle;
 }
 
 -(BOOL)allowsToolTipsWhenApplicationIsInactive {
@@ -1109,9 +1147,17 @@ const float WSWindowEdgePad = 2;
         winTitle = _title;
 
     [self _updateWSState];
+    // the title bar is ours to draw, so a later title change has to repaint it
+    [_backgroundView setNeedsDisplay:YES];
 
     if ([self _isApplicationWindow])
         [NSApp changeWindowsItem:self title:title filename:NO];
+}
+
+// the compositor's title and the title bar we draw, after the title or the edited state changed
+-(void)_updatePlatformWindowTitle {
+    [self _updateWSState];
+    [_backgroundView setNeedsDisplay:YES];
 }
 
 -(void)setTitleWithRepresentedFilename:(NSString *)filename {
@@ -1126,6 +1172,8 @@ const float WSWindowEdgePad = 2;
 -(void)setContentView:(NSView *)view {
    view=[view retain];
    [view setFrame:[_contentView frame]];
+   // the content view always fills the window, whatever mask it was archived with
+   [view setAutoresizingMask:NSViewWidthSizable|NSViewHeightSizable];
 
    [_contentView removeFromSuperview];
    [_contentView release];
@@ -1181,12 +1229,7 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 -(void)setBackgroundColor:(NSColor *)color {
    if (color==nil) color = [NSColor windowBackgroundColor];
 
-   /* Setting the colour it already has must not invalidate. -[NSMenuView
-    * window] is swizzled by Gershwin to restyle the window on every call, and
-    * -window is a plain accessor that drawing and event routing call
-    * constantly - so an unconditional setNeedsDisplay: here became an
-    * unbounded redraw loop: draw asks for -window, -window dirties the view,
-    * the next pass redraws, for ever, re-flushing identical pixels. */
+   // setting the colour it already has must not invalidate, or a draw that sets it loops for ever
    if(pdWindowColorsEqual(color,_backgroundColor))
     return;
 
@@ -1286,7 +1329,13 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 }
 
 -(void)setIgnoresMouseEvents:(BOOL)value {
+   struct wsRPCSimple data = {
+       { kWSWindowSetIgnoresMouse, sizeof(struct wsRPCSimple) - sizeof(struct wsRPCBase) },
+       (int)_number, value ? 1 : 0
+   };
+
    _ignoresMouseEvents=value;
+   _windowServerRPC(&data, sizeof(data), NULL, NULL);
 }
 
 -(void)setAspectRatio:(NSSize)value {
@@ -1364,6 +1413,28 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 
 -(void)setMovableByWindowBackground:(BOOL)value {
    _isMovableByWindowBackground=value;
+}
+
+-(void)setTitleVisibility:(NSWindowTitleVisibility)value {
+   _titleVisibility=value;
+   [_backgroundView setNeedsDisplay:YES];
+}
+
+-(void)setTitlebarAppearsTransparent:(BOOL)value {
+   _titlebarAppearsTransparent=value;
+   [_backgroundView setNeedsDisplay:YES];
+}
+
+// the unified styles make the title bar as tall as a toolbar, with the lights centred in it
+-(void)setToolbarStyle:(NSWindowToolbarStyle)value {
+   _toolbarStyle=value;
+   [_backgroundView resizeSubviewsWithOldSize:[_backgroundView bounds].size];
+   [_backgroundView setNeedsDisplay:YES];
+}
+
+// a view drawn where the title bar would be starts the same compositor move the title bar does
+-(void)performWindowDragWithEvent:(NSEvent *)event {
+   [self requestMove:event];
 }
 
 -(void)setAllowsToolTipsWhenApplicationIsInactive:(BOOL)value {
@@ -1453,6 +1524,13 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 
 -(float)userSpaceScaleFactor {
    return 1.0;
+}
+
+// device pixels per point: the screen's, or 1 off screen
+-(CGFloat)backingScaleFactor {
+   NSScreen *screen=[self screen];
+
+   return screen!=nil ? [screen backingScaleFactor] : 1.0;
 }
 
 -(NSResponder *)firstResponder {
@@ -1648,6 +1726,8 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 
 -(NSRect)constrainFrameRect:(NSRect)rect toScreen:(NSScreen *)screen {
    if ( !screen) return rect;
+   // like macOS only titled windows are kept clear of the menu bar, so popup menus can sit right under it
+   if (!(_styleMask & NSTitledWindowMask)) return rect;
    NSRect visRect = [screen visibleFrame];
 
    if (NSMaxX(rect) > NSMaxX(visRect)) {
@@ -1782,9 +1862,22 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 /* The compositor decides which surface holds keyboard focus, so follow it:
    these are driven from the window-server receive loop, hopped to the main
    thread because key state is not safe to touch from that thread. */
+// asks the compositor to blur what is behind the window, inside its edges less inset and rounded by radius
+-(void)_setBackgroundBlurInset:(CGFloat)inset radius:(CGFloat)radius {
+   struct wsRPCSimple data = {
+       { kWSWindowSetBlur, sizeof(struct wsRPCSimple) - sizeof(struct wsRPCBase) },
+       (int)_number, 1, (int)inset, (int)radius
+   };
+
+   _windowServerRPC(&data, sizeof(data), NULL, NULL);
+}
+
 -(void)_serverDidGiveKeyFocus {
    if([self canBecomeKeyWindow] && ![self isKeyWindow])
     [self makeKeyWindow];
+   [NSApp _menuBarActivateWindow:self];
+   // this arrives as a queued call, not an event, so nothing else would repaint the lights
+   [self displayIfNeeded];
 }
 
 -(void)_serverDidTakeKeyFocus {
@@ -1792,6 +1885,33 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
     [NSApp _setKeyWindow:nil];
     [self resignKeyWindow];
    }
+   [self displayIfNeeded];
+}
+
+// a tiling compositor picks the size, the top edge stays put in Cocoa's bottom-left coordinates
+-(void)_serverDidConfigureSize:(NSValue *)value {
+   NSSize size=[value sizeValue];
+   NSRect frame=[self frame];
+
+   if(!(_styleMask&NSResizableWindowMask) || NSEqualSizes(size,frame.size))
+    return;
+
+   frame.origin.y+=frame.size.height-size.height;
+   frame.size=size;
+   [self setFrame:frame display:YES];
+}
+
+// the compositor placed the window, value is its top left in screen coordinates counted from the top
+// only the local frame changes, telling the server would move it again
+-(void)_serverDidMoveTo:(NSValue *)value {
+   NSPoint topLeft=[value pointValue];
+   NSRect screen=[[NSScreen mainScreen] frame];
+   NSPoint origin=NSMakePoint(topLeft.x,NSMaxY(screen)-topLeft.y-_frame.size.height);
+
+   if(NSEqualPoints(origin,_frame.origin))
+    return;
+   _frame.origin=origin;
+   [self postNotificationName:NSWindowDidMoveNotification];
 }
 
 /* Invoked once the window has become key; call -makeKeyWindow to make it so. */
@@ -1799,6 +1919,11 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
    if(_firstResponder!=self && [_firstResponder respondsToSelector:_cmd])
     [_firstResponder performSelector:_cmd];
 
+   // cursor rects are only live in the key window, so they are built as it becomes key
+   [self resetCursorRects];
+
+   // the frame greys its traffic lights and title while the window is not key
+   [self _redrawForKeyChange];
    [self postNotificationName:NSWindowDidBecomeKeyNotification];
 }
 
@@ -1806,7 +1931,15 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
    if(_firstResponder!=self && [_firstResponder respondsToSelector:_cmd])
     [_firstResponder performSelector:_cmd];
 
+   [self _redrawForKeyChange];
    [self postNotificationName:NSWindowDidResignKeyNotification];
+}
+
+// a full-size content view and the lights above it cover the frame, so they repaint with it
+-(void)_redrawForKeyChange {
+   [_backgroundView setNeedsDisplay:YES];
+   for(NSView *view in [_backgroundView subviews])
+    [view setNeedsDisplay:YES];
 }
 
 -(void)becomeMainWindow {
@@ -2236,7 +2369,7 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 }
 
 -(NSPoint)mouseLocationOutsideOfEventStream {
-    struct wsRPCSimple data = { {kCGGetLastMouseDelta, 0}, 0, 0, 0, 0};
+    struct wsRPCSimple data = { {kCGGetMouseLocation, 0}, 0, 0, 0, 0};
     int len = sizeof(data);
     kern_return_t ret = _windowServerRPC(&data, sizeof(data), &data, &len);
 
@@ -2250,7 +2383,7 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
     return [NSApp currentEvent];
 }
 
--(NSEvent *)nextEventMatchingMask:(unsigned int)mask {
+-(NSEvent *)nextEventMatchingMask:(NSEventMask)mask {
    return [self nextEventMatchingMask:mask untilDate:[NSDate distantFuture]
       inMode:NSEventTrackingRunLoopMode dequeue:YES];
 }
@@ -2258,7 +2391,7 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 -(void) captureEvents {
 }
 
--(NSEvent *)nextEventMatchingMask:(unsigned int)mask untilDate:(NSDate *)untilDate inMode:(NSString *)mode dequeue:(BOOL)dequeue {
+-(NSEvent *)nextEventMatchingMask:(NSEventMask)mask untilDate:(NSDate *)untilDate inMode:(NSString *)mode dequeue:(BOOL)dequeue {
    NSEvent *event;
 
 // this should get migrated down into event queue
@@ -2273,7 +2406,7 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
    return event;
 }
 
--(void)discardEventsMatchingMask:(unsigned)mask beforeEvent:(NSEvent *)event {
+-(void)discardEventsMatchingMask:(NSEventMask)mask beforeEvent:(NSEvent *)event {
    NSUnimplementedMethod();
 }
 
@@ -2320,7 +2453,19 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
    switch([event type]){
 
     case NSLeftMouseDown:{
+        // the frame's resize band takes the press before any view, as on macOS
+        if([self _resizeEdgesAtPoint:[event locationInWindow]] != 0) {
+            [self requestResize:event];
+            break;
+        }
+
         NSView *view=[_backgroundView hitTest:[event locationInWindow]];
+
+        if(getenv("PD_INPUT_TRACE") != NULL)
+            NSLog(@"Input trace: window=%d point=(%.1f,%.1f) frame=%@ hit=%@ content=%@",
+                  _number, [event locationInWindow].x, [event locationInWindow].y,
+                  NSStringFromRect(_frame), view != nil ? NSStringFromClass([view class]) : @"nil",
+                  _contentView != nil ? NSStringFromClass([_contentView class]) : @"nil");
 
         if([view acceptsFirstResponder]){
             if([view needsPanelToBecomeKey]) {
@@ -2350,6 +2495,21 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
      break;
 
     case NSMouseMoved:{
+      int edges=[self _resizeEdgesAtPoint:[event locationInWindow]];
+
+      // over the resize band the edge shape shows, leaving it, cursor rects decide again
+      if(edges != 0) {
+        [[NSCursor _windowResizeCursorForEdges:edges] set];
+        objc_setAssociatedObject(self,&resizeBandKey,[NSNumber numberWithBool:YES],OBJC_ASSOCIATION_RETAIN);
+        break;
+      }
+      if(objc_getAssociatedObject(self,&resizeBandKey)!=nil) {
+        objc_setAssociatedObject(self,&resizeBandKey,nil,OBJC_ASSOCIATION_RETAIN);
+        [[NSCursor arrowCursor] set];
+        [self _invalidateTrackingAreas];
+      }
+      [self platformWindowSetCursorEvent:nil];
+
       NSView *hit=[_backgroundView hitTest:[event locationInWindow]];
 
       if(hit==nil)
@@ -2365,6 +2525,20 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 
     case NSRightMouseDragged:
      [[_backgroundView hitTest:_mouseDownLocationInWindow] rightMouseDragged:event];
+     break;
+
+    case NSOtherMouseDown:
+     _mouseDownLocationInWindow=[event locationInWindow];
+     [[_backgroundView hitTest:[event locationInWindow]] otherMouseDown:event];
+     break;
+
+    case NSOtherMouseUp:
+     [[_backgroundView hitTest:_mouseDownLocationInWindow] otherMouseUp:event];
+     _mouseDownLocationInWindow=NSMakePoint(NAN,NAN);
+     break;
+
+    case NSOtherMouseDragged:
+     [[_backgroundView hitTest:_mouseDownLocationInWindow] otherMouseDragged:event];
      break;
 
     case NSMouseEntered:
@@ -2592,6 +2766,45 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
     return zoomedFrame;
 }
 
+// the NSWindowOcclusionStateVisible state applies while on screen, and nothing here tracks being covered by other windows
+-(NSUInteger)occlusionState {
+   return [self isVisible] ? (1 << 1) : 0;
+}
+
+static char restorableKey, fullScreenFrameKey;
+
+-(BOOL)isRestorable {
+   NSNumber *value=objc_getAssociatedObject(self,&restorableKey);
+
+   return value ? [value boolValue] : YES;
+}
+
+// stored only: no state restoration on PD
+-(void)setRestorable:(BOOL)value {
+   objc_setAssociatedObject(self,&restorableKey,[NSNumber numberWithBool:value],OBJC_ASSOCIATION_RETAIN);
+}
+
+// full screen is the screen's whole frame with the size it had before kept to come back to
+-(void)toggleFullScreen:sender {
+   NSValue *saved=objc_getAssociatedObject(self,&fullScreenFrameKey);
+   NSNotificationCenter *center=[NSNotificationCenter defaultCenter];
+
+   if(saved==nil){
+    [center postNotificationName:@"NSWindowWillEnterFullScreenNotification" object:self];
+    objc_setAssociatedObject(self,&fullScreenFrameKey,[NSValue valueWithRect:[self frame]],OBJC_ASSOCIATION_RETAIN);
+    _styleMask|=NSFullScreenWindowMask;
+    [self setFrame:[[self screen] frame] display:YES];
+    [center postNotificationName:@"NSWindowDidEnterFullScreenNotification" object:self];
+   }
+   else {
+    [center postNotificationName:@"NSWindowWillExitFullScreenNotification" object:self];
+    _styleMask&=~(NSUInteger)NSFullScreenWindowMask;
+    [self setFrame:[saved rectValue] display:YES];
+    objc_setAssociatedObject(self,&fullScreenFrameKey,nil,OBJC_ASSOCIATION_RETAIN);
+    [center postNotificationName:@"NSWindowDidExitFullScreenNotification" object:self];
+   }
+}
+
 -(void)zoom:sender {
     BOOL zooming = !_isZoomed;
     NSRect zoomedFrame = zooming ? [self zoomedFrame] : _savedFrame;
@@ -2616,7 +2829,14 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
         if(zooming)
             _savedFrame = [self frame];
         _isZoomed = zooming;
-        [self setFrame: zoomedFrame display: YES];
+
+        // with no delegate frame to honour, maximising is the compositor's: its configure sizes the window
+        BOOL custom = (_delegate && [_delegate respondsToSelector: @selector(windowWillUseStandardFrame:defaultFrame:)]) ||
+                      [self respondsToSelector: @selector(windowWillUseStandardFrame:defaultFrame:)];
+        if(zooming && !custom)
+            [self _updateWSState];
+        else
+            [self setFrame: zoomedFrame display: YES];
     }
 }
 
@@ -2966,7 +3186,9 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 
    return ([NSApp modalWindow]==self)?NO:YES;
 }
+#endif // 0
 
+// cursor rects and tracking areas against the pointer, run on every mouse move
 -(BOOL)platformWindowSetCursorEvent:(CGWindow *)window {
    NSMutableArray *exited=[NSMutableArray array];
    NSMutableArray *entered=[NSMutableArray array];
@@ -3173,7 +3395,6 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 
    return cursorIsSet;
 }
-#endif // 0
 
 -(NSUndoManager *)undoManager {
     if ([_delegate respondsToSelector:@selector(windowWillReturnUndoManager:)])
@@ -3240,19 +3461,42 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
     kern_return_t result=_windowServerRPC(&move,sizeof(move),NULL,NULL);
 }
 
--(void)requestResize:(NSEvent *)event {
-    NSPoint point = [event locationInWindow];
-    const CGFloat margin = 6.0;
+// the band along the frame that resizes the window, as kWSResize* edges, wider along the corners
+-(int)_resizeEdgesAtPoint:(NSPoint)point {
+    const CGFloat edge = 5.0, corner = 16.0;
+    CGFloat width = NSWidth(_frame), height = NSHeight(_frame);
     int edges = 0;
 
-    if(point.x <= margin)
+    if(!(_styleMask & NSResizableWindowMask) || (_styleMask & NSFullScreenWindowMask) || _isZoomed || _sheetContext != nil)
+        return 0;
+    if(point.x < 0 || point.y < 0 || point.x > width || point.y > height)
+        return 0;
+
+    BOOL left = point.x <= edge, right = point.x >= width - edge;
+    BOOL bottom = point.y <= edge, top = point.y >= height - edge;
+
+    if(left || right) {
+        bottom = bottom || point.y <= corner;
+        top = top || point.y >= height - corner;
+    }
+    if(top || bottom) {
+        left = left || point.x <= corner;
+        right = right || point.x >= width - corner;
+    }
+
+    if(left)
         edges |= kWSResizeLeft;
-    else if(point.x >= NSWidth(_frame) - margin)
+    else if(right)
         edges |= kWSResizeRight;
-    if(point.y <= margin)
+    if(bottom)
         edges |= kWSResizeBottom;
-    else if(point.y >= NSHeight(_frame) - margin)
+    else if(top)
         edges |= kWSResizeTop;
+    return edges;
+}
+
+-(void)requestResize:(NSEvent *)event {
+    int edges = [self _resizeEdgesAtPoint:[event locationInWindow]];
 
     if(edges == 0)
         return;
@@ -3359,6 +3603,8 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
     strncpy(data.title, [_title UTF8String], sizeof(data.title));
     if(_isMiniaturized == YES)
         data.state = MINIMIZED;
+    else if(_styleMask & NSFullScreenWindowMask)
+        data.state = FULLSCREEN;
     else if(_isZoomed == YES)
         data.state = MAXIMIZED;
     else if(_isVisible == NO)
@@ -3375,10 +3621,11 @@ void CGNativeBorderFrameWidthsForStyle(unsigned styleMask,CGFloat *top,CGFloat *
 CGRect CGInsetRectForNativeWindowBorder(CGRect frame,unsigned styleMask) {
     CGFloat top, left, bottom, right;
     CGNativeBorderFrameWidthsForStyle(styleMask, &top, &left, &bottom, &right);
+    // the size loses both borders on each axis
     frame.origin.x += left;
     frame.origin.y += bottom;
-    frame.size.width -= right;
-    frame.size.height -= top;
+    frame.size.width -= left + right;
+    frame.size.height -= top + bottom;
     return frame;
 }
 
@@ -3387,14 +3634,20 @@ CGRect CGOutsetRectForNativeWindowBorder(CGRect frame,unsigned styleMask) {
     CGNativeBorderFrameWidthsForStyle(styleMask, &top, &left, &bottom, &right);
     frame.origin.x -= left;
     frame.origin.y -= bottom;
-    frame.size.width += right;
-    frame.size.height += top;
+    frame.size.width += left + right;
+    frame.size.height += top + bottom;
     return frame;
 }
 
 void CGNativeBorderFrameWidthsForStyle(unsigned styleMask,CGFloat *top,CGFloat *left,
                                        CGFloat *bottom,CGFloat *right)
 {
+    // full screen has no title bar or border, as on macOS
+    if(styleMask & NSFullScreenWindowMask) {
+        *top=*left=*bottom=*right=0;
+        return;
+    }
+
     switch(styleMask & 0x0FFF) {
         case NSBorderlessWindowMask:
             *top=0;
@@ -3403,10 +3656,11 @@ void CGNativeBorderFrameWidthsForStyle(unsigned styleMask,CGFloat *top,CGFloat *
             *right=0;
             break;
         // FIXME: tool window style?
+        // the title bar is the only frame, content runs to the window's edges as on macOS
         default:
             *top=32;
-            *left=2;
-            *bottom=3;
-            *right=2;
+            *left=0;
+            *bottom=0;
+            *right=0;
     }
 }

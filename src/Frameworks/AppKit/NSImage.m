@@ -813,6 +813,32 @@ NSString *const NSImageNameCaution=@"NSCaution";
                 }
         }
 
+        // building a cache draws through another context, the caller's must come back exactly as it was
+        NSGraphicsContext *outer=[NSGraphicsContext currentContext];
+        NSArray *outerFocus=[[[outer focusStack] copy] autorelease];
+
+        // part of a bitmap is cropped straight from its pixels, the window-backed cache below swaps the current context
+        if(cachedRep==nil && !drawFullImage && !_isFlipped && [any isKindOfClass:[NSBitmapImageRep class]]) {
+                NSBitmapImageRep *bitmap=(NSBitmapImageRep *)any;
+                CGImageRef        whole=[bitmap CGImage];
+                CGFloat           sx=[bitmap pixelsWide]/MAX(1,fullRect.size.width);
+                CGFloat           sy=[bitmap pixelsHigh]/MAX(1,fullRect.size.height);
+                NSRect            clipped=NSIntersectionRect(source,fullRect);
+                // image space counts up from the bottom, pixel rows count down from the top
+                CGRect            pixels=CGRectMake(floor(clipped.origin.x*sx),
+                                                    floor((fullRect.size.height-NSMaxY(clipped))*sy),
+                                                    ceil(clipped.size.width*sx),ceil(clipped.size.height*sy));
+                CGImageRef        part;
+
+                pixels.size.width=MIN(pixels.size.width,[bitmap pixelsWide]-pixels.origin.x);
+                pixels.size.height=MIN(pixels.size.height,[bitmap pixelsHigh]-pixels.origin.y);
+                if(whole!=NULL && pixels.size.width>0 && pixels.size.height>0 &&
+                   (part=CGImageCreateWithImageInRect(whole,pixels))!=NULL) {
+                        cachedRep=[[[NSBitmapImageRep alloc] initWithCGImage:part] autorelease];
+                        CGImageRelease(part);
+                }
+        }
+
         if(cachedRep==nil) {
                 // Looks like we need to create a cached rep for this image
                 NSImageRep       *uncached=any;
@@ -849,28 +875,19 @@ NSString *const NSImageNameCaution=@"NSCaution";
                 cachedRep=cached;
         }
 
+        if([NSGraphicsContext currentContext]!=outer || ![[outer focusStack] isEqualToArray:outerFocus]) {
+                [NSGraphicsContext setCurrentContext:outer];
+                [[outer focusStack] setArray:outerFocus];
+        }
+
         // OK now we've got a rep we can draw
 
         context=NSCurrentGraphicsPort();
 
         CGContextSaveGState(context);
 
-        if (CGContextSupportsGlobalAlpha(context) == NO) {
-                // That should really be done by setting the context alpha - and the compositing done in the context implementation
-                if(fraction!=1.0){
-                        // fraction is accomplished with a 1x1 alpha mask
-                        // FIXME: could use a float format image to completely preserve fraction
-                        uint8_t           bytes[1]={ MIN(MAX(0,fraction*255),255) };
-                        CGDataProviderRef provider=CGDataProviderCreateWithData(NULL,bytes,1,NULL);
-                        CGImageRef        mask=CGImageMaskCreate(1,1,8,8,1,provider,NULL,NO);
-
-                        CGContextClipToMask(context,rect,mask);
-                        CGImageRelease(mask);
-                        CGDataProviderRelease(provider);
-                }
-        } else {
-                CGContextSetAlpha(context, fraction);
-        }
+        // Onyx2D fades images by the state's alpha, the old 1x1 clip mask was never applied
+        CGContextSetAlpha(context, fraction);
         [[NSGraphicsContext currentContext] setCompositingOperation:operation];
 
         [self drawRepresentation: cachedRep inRect:rect];
@@ -878,6 +895,25 @@ NSString *const NSImageNameCaution=@"NSCaution";
         CGContextRestoreGState(context);
 
         [pool release];
+}
+
+// like Cocoa, only these honour a flipped view, the plain fromRect: form draws in the view's raw coordinates
+-(void)drawInRect:(NSRect)rect fromRect:(NSRect)source operation:(NSCompositingOperation)operation fraction:(CGFloat)fraction respectFlipped:(BOOL)respectFlipped hints:(NSDictionary *)hints {
+   CGContextRef context=NSCurrentGraphicsPort();
+
+   if(!respectFlipped || ![[NSGraphicsContext currentContext] isFlipped] || context==NULL) {
+    [self drawInRect:rect fromRect:source operation:operation fraction:fraction];
+    return;
+   }
+   CGContextSaveGState(context);
+   CGContextTranslateCTM(context,0,NSMinY(rect)+NSMaxY(rect));
+   CGContextScaleCTM(context,1,-1);
+   [self drawInRect:rect fromRect:source operation:operation fraction:fraction];
+   CGContextRestoreGState(context);
+}
+
+-(void)drawInRect:(NSRect)rect {
+   [self drawInRect:rect fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1 respectFlipped:YES hints:nil];
 }
 
 -(NSString *)description {

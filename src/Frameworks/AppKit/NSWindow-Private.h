@@ -43,4 +43,5 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - (void)redo:sender;
 - (BOOL)validateMenuItem:(NSMenuItem *)item;
 - (void)dirtyRect:(NSRect)rect;
+- (int)_resizeEdgesAtPoint:(NSPoint)point;
 @end

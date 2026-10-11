@@ -41,6 +41,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
                 firstKeyBindingManager = manager;
             }
         }
+        // without the table Esc, arrows and every other command key type as text, so say so once
+        if (firstKeyBindingManager == nil)
+            NSLog(@"AppKit: no key bindings loaded (StandardKeyBindings.keyBindings at %@)",
+                  [[NSBundle bundleForClass:[NSKeyboardBindingManager class]] pathForResource:@"StandardKeyBindings" ofType:@"keyBindings"]);
     }
 
     return firstKeyBindingManager;
@@ -142,8 +146,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - (NSKeyboardBinding *)keyBindingWithString:(NSString *)string modifierFlags:(unsigned)flags {
     int i, count = [_keyBindings count];
 
-    flags&=~ NSNumericPadKeyMask;
-    flags&=~ NSAlphaShiftKeyMask;
+    // only the four modifiers take part, as on macOS where arrows also carry function and keypad bits
+    flags&=NSShiftKeyMask|NSControlKeyMask|NSAlternateKeyMask|NSCommandKeyMask;
 
     for (i = 0; i < count; ++i) {
         NSKeyboardBinding *keyBinding = [_keyBindings objectAtIndex:i];

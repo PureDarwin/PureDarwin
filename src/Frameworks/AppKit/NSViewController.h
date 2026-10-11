@@ -1,5 +1,7 @@
 #import <AppKit/NSResponder.h>
 
+#import <AppKit/NSWindow.h>
+
 @class NSView;
 
 @interface NSViewController : NSResponder {
@@ -27,9 +29,22 @@
 
 - (void)loadView;
 
+// called once the view is loaded (by -view through -loadView, or by a storyboard)
+- (void)viewDidLoad;
+- (void)viewWillAppear;
+- (void)viewDidAppear;
+- (void)viewWillDisappear;
+- (void)viewDidDisappear;
+
 - (void)discardEditing;
 
 - (BOOL)commitEditing;
 - (void)commitEditingWithDelegate:delegate didCommitSelector:(SEL)didCommitSelector contextInfo:(void *)contextInfo;
 
+@end
+
+// a window whose content view is a view controller's view, the window takes the view's size
+@interface NSWindow (NSViewController)
+- (NSViewController *)contentViewController;
+- (void)setContentViewController:(NSViewController *)controller;
 @end

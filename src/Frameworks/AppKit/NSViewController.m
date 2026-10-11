@@ -2,6 +2,13 @@
 #import <AppKit/NSNibLoading.h>
 #import <AppKit/NSNib.h>
 #import <AppKit/NSRaise.h>
+#import <AppKit/NSWindow.h>
+#import <AppKit/NSStoryboard.h>
+#import <objc/runtime.h>
+
+@interface NSStoryboard(private)
+-(NSString *)_pathForNibNamed:(NSString *)name;
+@end
 
 @implementation NSViewController
 
@@ -32,10 +39,28 @@
 }
 
 -(NSView *)view {
-   if(_view==nil)
+   if(_view==nil){
     [self loadView];
+    if(_view!=nil)
+     [self viewDidLoad];
+   }
 
    return _view;
+}
+
+-(void)viewDidLoad {
+}
+
+-(void)viewWillAppear {
+}
+
+-(void)viewDidAppear {
+}
+
+-(void)viewWillDisappear {
+}
+
+-(void)viewDidDisappear {
 }
 
 -(NSString *)title {
@@ -77,7 +102,8 @@
    if(bundle==nil)
     bundle=[NSBundle mainBundle];
 
-   NSString     *path=[bundle pathForResource:name ofType:@"nib"];
+   // a storyboard's view controller loads its view from the compiled storyboard's nibs
+   NSString     *path=[self storyboard] ? [[self storyboard] _pathForNibNamed:name] : [bundle pathForResource:name ofType:@"nib"];
    NSDictionary *nameTable=[NSDictionary dictionaryWithObject:self forKey:NSNibOwner];
 
    if(path==nil)
@@ -97,6 +123,26 @@
 
 -(void)commitEditingWithDelegate:delegate didCommitSelector:(SEL)didCommitSelector contextInfo:(void *)contextInfo {
    NSUnimplementedMethod();
+}
+
+@end
+
+@implementation NSWindow (NSViewController)
+
+static char NSWindowContentViewControllerKey;
+
+-(NSViewController *)contentViewController {
+   return objc_getAssociatedObject(self,&NSWindowContentViewControllerKey);
+}
+
+-(void)setContentViewController:(NSViewController *)controller {
+   NSView *view=[controller view];
+
+   objc_setAssociatedObject(self,&NSWindowContentViewControllerKey,controller,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+   if(view==nil)
+    return;
+   [self setContentSize:[view frame].size];
+   [self setContentView:view];
 }
 
 @end

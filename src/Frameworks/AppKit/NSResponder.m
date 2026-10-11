@@ -251,6 +251,18 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    [_nextResponder performSelector:_cmd withObject:event];
 }
 
+-(void)otherMouseUp:(NSEvent *)event {
+   [_nextResponder performSelector:_cmd withObject:event];
+}
+
+-(void)otherMouseDown:(NSEvent *)event {
+   [_nextResponder performSelector:_cmd withObject:event];
+}
+
+-(void)otherMouseDragged:(NSEvent *)event {
+   [_nextResponder performSelector:_cmd withObject:event];
+}
+
 -(void)noop:sender {
 }
 

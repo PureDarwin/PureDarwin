@@ -126,6 +126,7 @@ typedef struct _Margins {
 
 @interface NSGraphicsStyle (NSTextField)
 - (void)drawTextFieldBorderInRect:(NSRect)rect bezeledNotLine:(BOOL)bezeledNotLine;
+- (void)drawTextFieldBezelInRect:(NSRect)rect background:(NSColor *)background focused:(BOOL)focused capsule:(BOOL)capsule;
 - (void)drawTextViewInsertionPointInRect:(NSRect)rect color:(NSColor *)color;
 @end
 

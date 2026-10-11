@@ -277,6 +277,8 @@ APPKIT_EXPORT NSString *const NSAccessibilityPressAction;
 APPKIT_EXPORT NSString *const NSAccessibilityRaiseAction;
 APPKIT_EXPORT NSString *const NSAccessibilityShowMenuAction;
 
+APPKIT_EXPORT NSString *NSAccessibilityActionDescription(NSString *action);
+
 APPKIT_EXPORT NSString *const NSAccessibilityMainWindowChangedNotification;
 APPKIT_EXPORT NSString *const NSAccessibilityFocusedWindowChangedNotification;
 APPKIT_EXPORT NSString *const NSAccessibilityFocusedUIElementChangedNotification;

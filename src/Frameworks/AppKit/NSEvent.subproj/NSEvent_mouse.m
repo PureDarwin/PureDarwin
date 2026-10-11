@@ -20,7 +20,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
         return self;
 }
 
-- (int)clickCount {
+- (NSInteger)clickCount {
         return _clickCount;
 }
 
@@ -33,8 +33,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -initWithType:(NSEventType)type location:(NSPoint)location modifierFlags:(NSUInteger)modifierFlags timestamp:(NSTimeInterval)timestamp windowNumber:(NSInteger)windowNumber context:(NSGraphicsContext*)context eventNumber:(NSInteger)eventNumber trackingNumber:(NSInteger)tracking userData:(void *)userData {
-   self=[super initWithType:type location:location modifierFlags:modifierFlags window:(id)windowNumber];
+   // a window number is stored as a number and never messaged
+   self=[super initWithType:type location:location modifierFlags:modifierFlags window:nil];
    if(self!=nil){
+    _windowNumber=windowNumber;
     _trackingNumber=tracking;
     _userData=userData;
    }
@@ -42,20 +44,21 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -initWithType:(NSEventType)type location:(NSPoint)location modifierFlags:(NSUInteger)modifierFlags timestamp:(NSTimeInterval)timestamp windowNumber:(NSInteger)windowNumber context:(NSGraphicsContext*)context eventNumber:(NSInteger)eventNumber clickCount:(NSInteger)clickCount pressure:(float)pressure {
-   [super initWithType:type location:location modifierFlags:modifierFlags window:(id)windowNumber];
+   [super initWithType:type location:location modifierFlags:modifierFlags window:nil];
+   _windowNumber=windowNumber;
    _clickCount=clickCount;
    return self;
 }
 
-- (float)deltaX {
+- (CGFloat)deltaX {
         return _deltaX;
 }
 
-- (float)deltaY {
+- (CGFloat)deltaY {
         return _deltaY;
 }
 
--(float)deltaZ {
+-(CGFloat)deltaZ {
         return 0.0;
 }
 

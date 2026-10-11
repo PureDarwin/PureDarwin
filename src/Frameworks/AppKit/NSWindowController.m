@@ -11,6 +11,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSDocument.h>
 #import <AppKit/NSNib.h>
 #import <AppKit/NSApplication.h>
+#import <AppKit/NSViewController.h>
 
 @implementation NSWindowController
 
@@ -54,6 +55,19 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 -init {
    return [self initWithWindow:nil];
+}
+
+// a storyboard's window controller: the nib connects its window (and storyboard) as outlets
+-initWithCoder:(NSCoder *)coder {
+   return [self initWithWindow:nil];
+}
+
+-(NSViewController *)contentViewController {
+   return [[self window] contentViewController];
+}
+
+-(void)setContentViewController:(NSViewController *)controller {
+   [[self window] setContentViewController:controller];
 }
 
 -(void)dealloc {

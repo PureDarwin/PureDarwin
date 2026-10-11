@@ -904,6 +904,11 @@ NSString * const NSOldSelectedCharacterRange=@"NSOldSelectedCharacterRange";
     [self insertText:@"\n"];
 }
 
+// Esc and command-period send this on macOS, the older cancel: still works
+-(void)cancelOperation:(id)sender {
+    [self cancel:sender];
+}
+
 - (void)cancel:sender {
     if (_rangeForUserCompletion.location != NSNotFound) {
         [self insertCompletion:_userCompletionHint forPartialWordRange:_rangeForUserCompletion

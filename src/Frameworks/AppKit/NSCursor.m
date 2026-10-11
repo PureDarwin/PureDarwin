@@ -24,7 +24,33 @@ id NSPlatformCreateCursorImpWithName(NSString *name) {
 
 id NSPlatformCreateCursorImpWithImage(NSImage *image,NSPoint hotSpot) {
 #ifndef WINDOWS
-   return nil;
+   // premultiplied ARGB in host order, which is what Wayland's ARGB8888 shm format is
+   size_t width=[image size].width;
+   size_t height=[image size].height;
+
+   if(width==0 || height==0)
+    return nil;
+
+   NSMutableData *pixels=[NSMutableData dataWithLength:width*height*4];
+   CGColorSpaceRef colorSpace=CGColorSpaceCreateDeviceRGB();
+   CGContextRef context=CGBitmapContextCreate([pixels mutableBytes],width,height,8,width*4,colorSpace,kCGImageAlphaPremultipliedFirst|kCGBitmapByteOrder32Little);
+   CGColorSpaceRelease(colorSpace);
+   if(context==NULL)
+    return nil;
+
+   NSAutoreleasePool *pool=[NSAutoreleasePool new];
+   NSGraphicsContext *graphicsContext=[NSGraphicsContext graphicsContextWithGraphicsPort:context flipped:NO];
+
+   [NSGraphicsContext saveGraphicsState];
+   [NSGraphicsContext setCurrentContext:graphicsContext];
+   [image drawInRect:NSMakeRect(0,0,width,height) fromRect:NSZeroRect operation:NSCompositeCopy fraction:1.0];
+   [NSGraphicsContext restoreGraphicsState];
+   [pool release];
+   CGContextRelease(context);
+
+   return [[NSDictionary alloc] initWithObjectsAndKeys:pixels,@"pixels",
+           [NSNumber numberWithInt:(int)width],@"width",[NSNumber numberWithInt:(int)height],@"height",
+           [NSNumber numberWithInt:(int)hotSpot.x],@"hotX",[NSNumber numberWithInt:(int)hotSpot.y],@"hotY",nil];
 #else
 /// move to the platform files
    size_t width=[image size].width;
@@ -329,6 +355,33 @@ static NSMutableArray *_cursorStack=nil;
     shared=[[self alloc] initWithName:NSStringFromSelector(_cmd)];
 
    return shared;
+}
+
+// the shapes over a window's resize edges and corners, by kWSResize* edge mask
++(NSCursor *)_windowResizeCursorForEdges:(int)edges {
+   static NSMutableDictionary *shared=nil;
+   NSString *name;
+
+   switch(edges){
+    case 1: name=@"top_side"; break;
+    case 2: name=@"bottom_side"; break;
+    case 4: name=@"left_side"; break;
+    case 8: name=@"right_side"; break;
+    case 5: name=@"top_left_corner"; break;
+    case 6: name=@"bottom_left_corner"; break;
+    case 9: name=@"top_right_corner"; break;
+    case 10: name=@"bottom_right_corner"; break;
+    default: return [self arrowCursor];
+   }
+   if(shared==nil)
+    shared=[[NSMutableDictionary alloc] init];
+
+   NSCursor *cursor=[shared objectForKey:name];
+   if(cursor==nil){
+    cursor=[[[self alloc] initWithName:name] autorelease];
+    [shared setObject:cursor forKey:name];
+   }
+   return cursor;
 }
 
 +(NSCursor *)operationNotAllowedCursor {

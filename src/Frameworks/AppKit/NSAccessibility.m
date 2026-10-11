@@ -337,3 +337,17 @@ id NSAccessibilityUnignoredAncestor (
 ) {
    return nil;
 }
+
+// the spoken names of the standard actions
+NSString *NSAccessibilityActionDescription(NSString *action) {
+    if ([action isEqualToString:NSAccessibilityPressAction]) return @"press";
+    if ([action isEqualToString:NSAccessibilityIncrementAction]) return @"increment";
+    if ([action isEqualToString:NSAccessibilityDecrementAction]) return @"decrement";
+    if ([action isEqualToString:NSAccessibilityConfirmAction]) return @"confirm";
+    if ([action isEqualToString:NSAccessibilityPickAction]) return @"pick";
+    if ([action isEqualToString:NSAccessibilityCancelAction]) return @"cancel";
+    if ([action isEqualToString:NSAccessibilityRaiseAction]) return @"raise";
+    if ([action isEqualToString:NSAccessibilityShowMenuAction]) return @"show menu";
+    if ([action isEqualToString:NSAccessibilityDeleteAction]) return @"delete";
+    return nil;
+}

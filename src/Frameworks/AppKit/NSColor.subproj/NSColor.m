@@ -215,6 +215,28 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return [self retain];
 }
 
+// the AppleAccentColor numbers macOS keeps in the global domain, unset meaning blue
++(NSColor *)controlAccentColor {
+    static const struct { int value; CGFloat r, g, b; } accents[] = {
+        { -1, 0x8c, 0x8c, 0x8c }, { 0, 0xe5, 0x48, 0x3f }, { 1, 0xf0, 0x8a, 0x24 }, { 2, 0xf2, 0xc2, 0x30 },
+        { 3, 0x4c, 0xae, 0x4f }, { 4, 0x2f, 0x6f, 0xdb }, { 5, 0x9b, 0x4f, 0xd1 }, { 6, 0xe0, 0x45, 0x7b },
+    };
+    CFPropertyListRef v;
+    int value = 4;
+
+    CFPreferencesAppSynchronize(kCFPreferencesAnyApplication);
+    v = CFPreferencesCopyAppValue(CFSTR("AppleAccentColor"), kCFPreferencesAnyApplication);
+    if (v != NULL) {
+        value = [(id)v intValue];
+        CFRelease(v);
+    }
+    for (unsigned i = 0; i < sizeof(accents) / sizeof(accents[0]); i++) {
+        if (accents[i].value == value)
+            return [NSColor colorWithCalibratedRed:accents[i].r / 255 green:accents[i].g / 255 blue:accents[i].b / 255 alpha:1];
+    }
+    return [NSColor colorWithCalibratedRed:0x2f / 255.0 green:0x6f / 255.0 blue:0xdb / 255.0 alpha:1];
+}
+
 +(NSColor *)alternateSelectedControlColor {
     return [NSColor colorWithCatalogName:@"System" colorName:@"alternateSelectedControlColor"];
 }
@@ -644,6 +666,23 @@ static void releasePatternInfo(void *info){
    NSInvalidAbstractInvocation();
 }
 
+// the CGColor behind this color, valid while the color lives. Others convert through device RGB
+-(CGColorRef)CGColor {
+   NSColor *color=self;
+
+   if(![color respondsToSelector:@selector(CGColorRef)])
+      color=[self colorUsingColorSpaceName:NSDeviceRGBColorSpace];
+   if(![color respondsToSelector:@selector(CGColorRef)])
+      return NULL;
+   return [(NSColor_CGColor *)color CGColorRef];
+}
+
++(NSColor *)colorWithCGColor:(CGColorRef)cgColor {
+   if(cgColor==NULL)
+      return nil;
+   return [NSColor_CGColor colorWithColorRef:cgColor spaceName:NSDeviceRGBColorSpace];
+}
+
 -(void)getWhite:(CGFloat *)white alpha:(CGFloat *)alpha {
     NSInvalidAbstractInvocation();
 }
@@ -766,8 +805,7 @@ static void releasePatternInfo(void *info){
 
 /* Cocoa blends toward white (highlight) or black (shadow) by the given
  * fraction, keeping alpha. Their absence left callers with a nil colour, and
- * -set on nil silently leaves the previous colour in place - which is how the
- * dock (from Gershwin) came out black. */
+ * -set on nil silently leaves the previous colour in place. */
 -(NSColor *)highlightWithLevel:(CGFloat)level {
    if(level <= 0.0)
     return self;

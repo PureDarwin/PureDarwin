@@ -31,6 +31,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 - (NSColor *)backgroundColor;
 - (NSColor *)textColor;
+- (NSString *)placeholderString;
+- (void)setPlaceholderString:(NSString *)value;
+- (NSAttributedString *)placeholderAttributedString;
+- (void)setPlaceholderAttributedString:(NSAttributedString *)value;
 - (BOOL)drawsBackground;
 
 - (void)setBackgroundColor:(NSColor *)color;

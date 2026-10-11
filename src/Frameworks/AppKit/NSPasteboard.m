@@ -20,6 +20,8 @@ NSString *const NSPasteboardTypeTabularText = @"NSTabularTextPboardType";
 NSString *const NSPasteboardTypeFont = @"NSFontPboardType";
 NSString *const NSPasteboardTypeRuler = @"NSRulerPboardType";
 NSString *const NSPasteboardTypeColor = @"NSColorPboardType";
+NSString *const NSPasteboardTypeFileURL = @"public.file-url";
+NSString *const NSPasteboardTypeURL = @"public.url";
 
 NSString * const NSColorPboardType=@"NSColorPboardType";
 NSString * const NSFileContentsPboardType=@"NSFileContentsPboardType";
@@ -129,6 +131,11 @@ NSString * const NSRulerPboard=@"NSRulerPboard";
 	}
 	NSLog(@"propertyListForType: produced error: %@", errorDesc);
 	return nil;
+}
+
+// the 10.6 way to take ownership: no types and no owner until data is written
+-(NSInteger)clearContents {
+   return [self declareTypes:[NSArray array] owner:nil];
 }
 
 -(int)declareTypes:(NSArray *)types owner:(id)owner {

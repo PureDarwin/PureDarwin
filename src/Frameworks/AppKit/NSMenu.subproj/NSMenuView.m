@@ -12,6 +12,7 @@
 #import <AppKit/NSStringDrawing.h>
 #import <AppKit/NSGraphicsStyle.h>
 #import <AppKit/NSAttributedString.h>
+#import <AppKit/NSBezierPath.h>
 
 NSString *const NSMenuDidBeginTrackingNotification = @"NSMenuDidBeginTrackingNotification";
 NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotification";
@@ -19,14 +20,90 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
 #define ITEM_PAD_X   10.0
 #define ITEM_PAD_Y    3.0
 #define ARROW_WIDTH  12.0
-#define SEPARATOR_H   6.0
+#define SEPARATOR_H  11.0
+
+// a vertical menu is a light panel with a 5px inset, rounded accent highlights and a shortcut column
+#define PANEL_INSET   5.0
+#define KEY_GAP      24.0
+#define HIGHLIGHT_R   4.0
+#define PANEL_R       8.0
+// a clear margin round the panel holds its drop shadow, the demo's 0 10px 30px at a quarter black
+#define SHADOW_M     16.0
+#define MENU_MIN_W  210.0
+
+// the Mac glyphs for a shortcut: control, option, shift, command, then the key
+static NSString *pdKeyEquivalentGlyphs(NSMenuItem *item)
+{
+    NSString *key = [item keyEquivalent];
+    NSUInteger mask = [item keyEquivalentModifierMask];
+    NSMutableString *out = [NSMutableString string];
+    unichar c;
+
+    if ([key length] == 0)
+        return @"";
+    c = [key characterAtIndex:0];
+    if (![[key lowercaseString] isEqualToString:key])
+        mask |= NSShiftKeyMask;
+    if (mask & NSControlKeyMask)
+        [out appendString:@"\u2303"];
+    if (mask & NSAlternateKeyMask)
+        [out appendString:@"\u2325"];
+    if (mask & NSShiftKeyMask)
+        [out appendString:@"\u21e7"];
+    if (mask & NSCommandKeyMask)
+        [out appendString:@"\u2318"];
+    switch (c) {
+    case '\r': [out appendString:@"\u21a9"]; break;
+    case '\t': [out appendString:@"\u21e5"]; break;
+    case 0x1b: [out appendString:@"\u238b"]; break;
+    case 0x7f: case '\b': [out appendString:@"\u232b"]; break;
+    case ' ': [out appendString:@"Space"]; break;
+    case NSUpArrowFunctionKey: [out appendString:@"\u2191"]; break;
+    case NSDownArrowFunctionKey: [out appendString:@"\u2193"]; break;
+    case NSLeftArrowFunctionKey: [out appendString:@"\u2190"]; break;
+    case NSRightArrowFunctionKey: [out appendString:@"\u2192"]; break;
+    default: [out appendString:[key uppercaseString]]; break;
+    }
+    return out;
+}
+
+static BOOL pdCancelTracking;
+static NSArray *pdExitRects;
+static NSInteger pdExitIndex = -1;
+
+@implementation NSMenu (PDCancelTracking)
+
+// closes whatever menu is being tracked, for the menu bar when another app takes the front
++ (void)_pdCancelTracking
+{
+    pdCancelTracking = YES;
+}
+
+// screen rects that end the next tracking when the pointer enters one, the menu bar's other titles
++ (void)_pdSetTrackingExitRects:(NSArray *)rects
+{
+    [pdExitRects release];
+    pdExitRects = [rects copy];
+    pdExitIndex = -1;
+}
+
+// which exit rect ended the last tracking, -1 when none did
++ (NSInteger)_pdTrackingExitIndex
+{
+    return pdExitIndex;
+}
+
+@end
 
 @implementation NSMenuView
 
 - (instancetype)initWithFrame:(NSRect)frame
 {
     if ((self = [super initWithFrame:frame]) != nil) {
-        _font = [[NSFont menuFontOfSize:0] retain];
+        // Inter at 13 like the rest of the desktop, the menu font type alone gives 14pt
+        _font = [[NSFont fontWithName:@"Inter-Regular" size:13] retain];
+        if (_font == nil)
+            _font = [[NSFont menuFontOfSize:13] retain];
         _highlightedIndex = -1;
         _openSubmenuIndex = -1;
     }
@@ -58,6 +135,8 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
 
 - (BOOL)isOpaque
 {
+    if (!_horizontal)
+        return NO;
     return [super isOpaque];
 }
 
@@ -178,9 +257,7 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
     if (![self _groupsIntoApplicationMenu]) {
         return [_menu itemArray];
     }
-    /* Gershwin fills the menu in after handing it over, mutating the same
-     * NSMenu rather than setting a new one, so a presentation built from the
-     * placeholder would stay cached and the bar would draw empty. */
+    // apps may fill the menu in after setMainMenu:, so rebuild when the item count changes
     NSArray *source = [_menu itemArray];
 
     if (_macBarItems != nil &&
@@ -294,6 +371,12 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
     if (!_horizontal && [item hasSubmenu]) {
         size.width += ARROW_WIDTH;
     }
+    if (!_horizontal) {
+        NSString *keys = pdKeyEquivalentGlyphs(item);
+
+        if ([keys length] > 0)
+            size.width += KEY_GAP + [keys sizeWithAttributes:[self itemAttributes]].width;
+    }
     return size;
 }
 
@@ -319,7 +402,8 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
     if (_horizontal) {
         return NSMakeRect(offset, 0.0, size.width, bounds.size.height);
     }
-    return NSMakeRect(0.0, offset, bounds.size.width, size.height);
+    return NSMakeRect(SHADOW_M + PANEL_INSET, SHADOW_M + PANEL_INSET + offset,
+                      bounds.size.width - 2 * (SHADOW_M + PANEL_INSET), size.height);
 }
 
 - (NSInteger)indexOfItemAtPoint:(NSPoint)point
@@ -354,6 +438,11 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
 
     NSRect frame = [self frame];
 
+    if (!_horizontal) {
+        total.width = MAX(total.width + 2 * PANEL_INSET, MENU_MIN_W);
+        total.width += 2 * SHADOW_M;
+        total.height += 2 * PANEL_INSET + 2 * SHADOW_M;
+    }
     frame.size = total;
     [self setFrame:frame];
 }
@@ -368,7 +457,28 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
         [style drawMenuBarBackgroundInRect:[self bounds]];
     }
     else {
-        [style drawMenuWindowBackgroundInRect:[self bounds]];
+        // the window is clear, so the panel's rounded corners and shadow show what is behind it
+        NSRect box = NSInsetRect([self bounds], SHADOW_M, SHADOW_M);
+
+        // back to transparent first, NSRectFill copies, or every redraw would stack the translucent layers
+        [[NSColor clearColor] setFill];
+        NSRectFill([self bounds]);
+        NSBezierPath *panel = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(box, 0.5, 0.5)
+                                                              xRadius:PANEL_R yRadius:PANEL_R];
+
+        // stacked faint rounded rects make the soft shadow, dropped a few pixels as in the demo
+        for (int k = 8; k >= 1; k--) {
+            NSRect r = NSOffsetRect(NSInsetRect(box, -k * 1.5, -k * 1.5), 0, 5);
+
+            [[NSColor colorWithCalibratedWhite:0 alpha:0.018] setFill];
+            [[NSBezierPath bezierPathWithRoundedRect:r xRadius:PANEL_R + k yRadius:PANEL_R + k] fill];
+        }
+        // the demo's 92%, the compositor blurs what shows through
+        [[NSColor colorWithCalibratedRed:0.98 green:0.969 blue:0.961 alpha:0.92] setFill];
+        [panel fill];
+        [[NSColor colorWithCalibratedWhite:0 alpha:0.12] setStroke];
+        [panel setLineWidth:1];
+        [panel stroke];
     }
 
     for (NSInteger i = 0; i < count; i++) {
@@ -379,38 +489,76 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
             continue;
         }
 
-        if ([item isSeparatorItem]) {
-            [style drawMenuSeparatorInRect:rect];
+        if (_horizontal) {
+            [self _drawBarItem:item inRect:rect index:i style:style];
             continue;
         }
+        [self _drawMenuItem:item inRect:rect selected:(i == _highlightedIndex)];
+    }
+}
 
-        BOOL selected = (i == _highlightedIndex);
-        BOOL enabled = [item isEnabled];
+- (void)_drawBarItem:(NSMenuItem *)item inRect:(NSRect)rect index:(NSInteger)i style:(NSGraphicsStyle *)style
+{
+    BOOL selected = (i == _highlightedIndex);
+    BOOL enabled = [item isEnabled];
+    NSString *title = [item title];
 
-        if (selected) {
-            if (_horizontal) {
-                [style drawMenuBarItemBorderInRect:rect hover:YES selected:YES];
-            }
-            else {
-                [style drawMenuSelectionInRect:rect enabled:enabled];
-            }
-        }
+    if ([item isSeparatorItem]) {
+        [style drawMenuSeparatorInRect:rect];
+        return;
+    }
+    if (selected) {
+        [style drawMenuBarItemBorderInRect:rect hover:YES selected:YES];
+    }
+    [style drawMenuItemText:(title != nil ? title : @"")
+                     inRect:NSInsetRect(rect, ITEM_PAD_X, ITEM_PAD_Y)
+                    enabled:enabled
+                   selected:selected];
+}
 
-        NSRect textRect = NSInsetRect(rect, ITEM_PAD_X, ITEM_PAD_Y);
-        NSString *title = [item title];
+// one row of a vertical menu: highlight, title, shortcut and submenu arrow
+- (void)_drawMenuItem:(NSMenuItem *)item inRect:(NSRect)rect selected:(BOOL)selected
+{
+    NSColor *ink, *keyInk;
+    NSDictionary *attrs, *keyAttrs;
+    NSString *title = [item title], *keys;
+    NSRect textRect;
+    BOOL enabled = [item isEnabled];
+    CGFloat w;
 
-        [style drawMenuItemText:(title != nil ? title : @"")
-                         inRect:textRect
-                        enabled:enabled
-                       selected:selected];
+    if ([item isSeparatorItem]) {
+        // solid, NSRectFill copies pixels, so an alpha colour would cut a see-through line in the panel
+        [[NSColor colorWithCalibratedRed:0.862 green:0.853 blue:0.846 alpha:1] setFill];
+        NSRectFill(NSMakeRect(NSMinX(rect) + 3, floor(NSMidY(rect)), NSWidth(rect) - 6, 1));
+        return;
+    }
+    selected = selected && enabled;
+    if (selected) {
+        [[NSColor controlAccentColor] setFill];
+        [[NSBezierPath bezierPathWithRoundedRect:rect xRadius:HIGHLIGHT_R yRadius:HIGHLIGHT_R] fill];
+    }
 
-        if (!_horizontal && [item hasSubmenu]) {
-            NSRect arrow = rect;
+    ink = selected ? [NSColor whiteColor] : enabled ? [NSColor colorWithCalibratedWhite:0.1 alpha:1] : [NSColor colorWithCalibratedWhite:0.67 alpha:1];
+    keyInk = selected ? [NSColor colorWithCalibratedWhite:1 alpha:0.75] : [NSColor colorWithCalibratedWhite:0.1 alpha:enabled ? 0.5 : 0.3];
+    attrs = @{ NSFontAttributeName : _font, NSForegroundColorAttributeName : ink };
+    keyAttrs = @{ NSFontAttributeName : _font, NSForegroundColorAttributeName : keyInk };
 
-            arrow.origin.x = NSMaxX(rect) - ARROW_WIDTH;
-            arrow.size.width = ARROW_WIDTH;
-            [style drawMenuBranchArrowInRect:arrow enabled:enabled selected:selected];
-        }
+    textRect = NSInsetRect(rect, ITEM_PAD_X, ITEM_PAD_Y);
+    // a checked item carries its mark in the left padding, the title stays in line with the rest
+    if ([item state] == NSOnState) {
+        w = [@"\u2713" sizeWithAttributes:attrs].width;
+        [@"\u2713" drawInRect:NSMakeRect(NSMinX(textRect) - w - 2, NSMinY(textRect), w + 1, NSHeight(textRect)) withAttributes:attrs];
+    }
+    [(title != nil ? title : @"") drawInRect:textRect withAttributes:attrs];
+
+    keys = pdKeyEquivalentGlyphs(item);
+    if ([keys length] > 0) {
+        w = [keys sizeWithAttributes:keyAttrs].width;
+        [keys drawInRect:NSMakeRect(NSMaxX(textRect) - w, NSMinY(textRect), w + 1, NSHeight(textRect)) withAttributes:keyAttrs];
+    }
+    if ([item hasSubmenu]) {
+        [@"\u203a" drawInRect:NSMakeRect(NSMaxX(rect) - ARROW_WIDTH, NSMinY(textRect), ARROW_WIDTH, NSHeight(textRect))
+               withAttributes:attrs];
     }
 }
 
@@ -519,40 +667,74 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
 
 - (void)mouseDown:(NSEvent *)event
 {
+    NSMenuItem *chosen;
+
     if (_menu == nil || _tracking) {
         return;
     }
+    chosen = [self _trackFromEvent:event];
 
+    // sent after tracking ends so the action sees a settled menu
+    if (chosen != nil && [chosen action] != NULL) {
+        [NSApp sendAction:[chosen action] to:[chosen target] from:chosen];
+    }
+}
+
+// runs the menu until a pick, a click on nothing or the app losing focus, and returns the pick
+- (NSMenuItem *)_trackFromEvent:(NSEvent *)event
+{
+    NSMenuItem *chosen = nil;
+    // a menu opened by sliding onto its title is already open, the next click anywhere else closes it
+    BOOL sticky = ([event type] != NSLeftMouseDown);
+    // a quick click leaves the menu open, only a drag-and-release picks on the way up
+    NSTimeInterval opened = [event timestamp];
+    BOOL dragged = NO;
+
+    // only an activation that arrives while this menu is open cancels it
+    pdCancelTracking = NO;
     _tracking = YES;
     [[NSNotificationCenter defaultCenter]
         postNotificationName:NSMenuDidBeginTrackingNotification
                       object:_menu];
 
-    NSMenuItem *chosen = nil;
-    BOOL sticky = NO;
-
     for (;;) {
-        /* Once a submenu is open the pointer is over its window, so the event's
-         * coordinates are relative to that one, not to this view's. */
+        // once a submenu is open the pointer is over its window, so the event's
+        // coordinates are relative to that one, not to this view's
         NSWindow *eventWindow = [event window];
 
+        // motion over another of our windows can arrive without its window set, find it by number
+        if (eventWindow == nil && [event windowNumber] != 0) {
+            eventWindow = [NSApp windowWithWindowNumber:[event windowNumber]];
+        }
         if (eventWindow == nil) {
             eventWindow = [self window];
         }
 
         NSPoint screenPoint = [eventWindow convertBaseToScreen:[event locationInWindow]];
         NSInteger index = -1;
+        NSUInteger exit;
+
+        for (exit = 0; exit < [pdExitRects count]; exit++) {
+            if (NSPointInRect(screenPoint, [[pdExitRects objectAtIndex:exit] rectValue]))
+                break;
+        }
+        if (exit < [pdExitRects count]) {
+            pdExitIndex = exit;
+            break;
+        }
         NSMenuView *view = [self viewForScreenPoint:screenPoint index:&index];
 
         [view setHighlightedItemIndex:index];
+        // the run loop is not redrawing while we track, so menus repaint themselves here
+        [[self window] displayIfNeeded];
+        [_submenuWindow displayIfNeeded];
 
         if (view == self) {
             if (index >= 0) {
                 NSMenuItem *item = [[self presentedItems] objectAtIndex:index];
 
-                /* The application menu's slot has no submenu of its own - its
-                 * contents are the loose items - so asking for one is not the
-                 * same question as whether there is anything to open. */
+                // the application menu's slot has no submenu of its own, its
+                // contents are the loose items
                 BOOL opens = ([item hasSubmenu] || item == _macAppItem);
 
                 if (opens && [item isEnabled]) {
@@ -566,6 +748,12 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
 
         NSEventType type = [event type];
 
+        if (type == NSLeftMouseDragged)
+            dragged = YES;
+        if (type == NSLeftMouseUp && !sticky && !dragged && [event timestamp] - opened < 0.4) {
+            sticky = YES;
+            type = NSMouseMoved;
+        }
         if (type == NSLeftMouseUp || (sticky && type == NSLeftMouseDown)) {
             NSMenuItem *hit = nil;
 
@@ -584,8 +772,8 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
                 chosen = hit;
                 break;
             }
-            /* Nothing actionable under the cursor: the first release opens the
-             * menu for good, anything after that dismisses it. */
+            // nothing actionable under the cursor: the first release opens the
+            // menu for good, anything after that dismisses it
             if (type == NSLeftMouseUp && !sticky) {
                 sticky = YES;
             }
@@ -599,10 +787,19 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
         if (sticky) {
             mask |= NSLeftMouseDownMask;
         }
-        event = [NSApp nextEventMatchingMask:mask
-                                   untilDate:[NSDate distantFuture]
-                                      inMode:NSEventTrackingRunLoopMode
-                                     dequeue:YES];
+        // a click in another app reaches us only as lost focus, so wake up to check for it
+        for (event = nil; event == nil;) {
+            event = [NSApp nextEventMatchingMask:mask
+                                       untilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]
+                                          inMode:NSEventTrackingRunLoopMode
+                                         dequeue:YES];
+            if (event == nil) {
+                // a click in another app never reaches us, its owner says so instead through +_pdCancelTracking
+                [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate date]];
+                if (pdCancelTracking)
+                    break;
+            }
+        }
         if (event == nil) {
             break;
         }
@@ -611,15 +808,14 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
     [self closeSubmenu];
     [self setHighlightedItemIndex:-1];
     _tracking = NO;
+    pdCancelTracking = NO;
+    [pdExitRects release];
+    pdExitRects = nil;
 
     [[NSNotificationCenter defaultCenter]
         postNotificationName:NSMenuDidEndTrackingNotification
                       object:_menu];
-
-    /* Sent after tracking ends so the action sees a settled menu. */
-    if (chosen != nil && [chosen action] != NULL) {
-        [NSApp sendAction:[chosen action] to:[chosen target] from:chosen];
-    }
+    return chosen;
 }
 
 - (void)mouseUp:(NSEvent *)event

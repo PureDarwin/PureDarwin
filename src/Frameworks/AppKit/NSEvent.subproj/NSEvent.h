@@ -12,7 +12,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 @class NSWindow, NSGraphicsContext, NSTrackingArea;
 
-typedef enum {
+// cocoa's NSEventType numbers (NSUInteger-sized, as Xcode-built apps read them), masks are 1 << type in 64 bits
+typedef NSUInteger NSEventType;
+enum {
     NSLeftMouseDown = 1,
     NSLeftMouseUp = 2,
     NSRightMouseDown = 3,
@@ -25,46 +27,88 @@ typedef enum {
     NSKeyDown = 10,
     NSKeyUp = 11,
     NSFlagsChanged = 12,
-    NSPeriodic = 13,
-    NSCursorUpdate = 14,
-    NSPlatformSpecific = 15,
-    NSPlatformSpecificDisplayEvent = 16,
-    NSAppKitSystem = 17,
-    NSScrollWheel = 18,
-    NSApplicationDefined = 19,
-    NSAppKitDefined = 20,
-    /* Middle and extra buttons. The values continue this enum's own numbering
-     * rather than Cocoa's, because the masks below are 1 << type and must stay
-     * inside 32 bits. */
-    NSOtherMouseDown = 21,
-    NSOtherMouseUp = 22,
-    NSOtherMouseDragged = 23
-} NSEventType;
+    NSAppKitDefined = 13,
+    NSSystemDefined = 14,
+    NSApplicationDefined = 15,
+    NSPeriodic = 16,
+    NSCursorUpdate = 17,
+    NSEventTypeRotate = 18,
+    NSEventTypeBeginGesture = 19,
+    NSEventTypeEndGesture = 20,
+    NSScrollWheel = 22,
+    NSTabletPoint = 23,
+    NSTabletProximity = 24,
+    NSOtherMouseDown = 25,
+    NSOtherMouseUp = 26,
+    NSOtherMouseDragged = 27,
+    NSEventTypeGesture = 29,
+    NSEventTypeMagnify = 30,
+    NSEventTypeSwipe = 31,
+    NSEventTypeSmartMagnify = 32,
+    NSEventTypeQuickLook = 33,
+    NSEventTypePressure = 34,
+    NSEventTypeDirectTouch = 37,
+    NSEventTypeChangeMode = 38,
+    // types of Cocotron's own, past every Cocoa type
+    NSPlatformSpecific = 60,
+    NSPlatformSpecificDisplayEvent = 61,
+    NSAppKitSystem = 62
+};
 
-enum {
-    NSLeftMouseDownMask = 1 << NSLeftMouseDown,
-    NSLeftMouseUpMask = 1 << NSLeftMouseUp,
-    NSRightMouseDownMask = 1 << NSRightMouseDown,
-    NSRightMouseUpMask = 1 << NSRightMouseUp,
-    NSMouseMovedMask = 1 << NSMouseMoved,
-    NSLeftMouseDraggedMask = 1 << NSLeftMouseDragged,
-    NSRightMouseDraggedMask = 1 << NSRightMouseDragged,
-    NSMouseEnteredMask = 1 << NSMouseEntered,
-    NSMouseExitedMask = 1 << NSMouseExited,
-    NSKeyDownMask = 1 << NSKeyDown,
-    NSKeyUpMask = 1 << NSKeyUp,
-    NSFlagsChangedMask = 1 << NSFlagsChanged,
-    NSPeriodicMask = 1 << NSPeriodic,
-    NSCursorUpdateMask = 1 << NSCursorUpdate,
-    NSScrollWheelMask = 1 << NSScrollWheel,
-    NSApplicationDefinedMask = 1 << NSApplicationDefined,
-    NSAppKitDefinedMask = 1 << NSAppKitDefined,
-    NSOtherMouseDownMask = 1 << NSOtherMouseDown,
-    NSOtherMouseUpMask = 1 << NSOtherMouseUp,
-    NSOtherMouseDraggedMask = 1 << NSOtherMouseDragged,
-    NSAnyEventMask = 0xffffffff,
+typedef unsigned long long NSEventMask;
 
-    NSPlatformSpecificDisplayMask = 1 << NSPlatformSpecificDisplayEvent,
+enum : NSEventMask {
+    NSLeftMouseDownMask = 1ULL << NSLeftMouseDown,
+    NSLeftMouseUpMask = 1ULL << NSLeftMouseUp,
+    NSRightMouseDownMask = 1ULL << NSRightMouseDown,
+    NSRightMouseUpMask = 1ULL << NSRightMouseUp,
+    NSMouseMovedMask = 1ULL << NSMouseMoved,
+    NSLeftMouseDraggedMask = 1ULL << NSLeftMouseDragged,
+    NSRightMouseDraggedMask = 1ULL << NSRightMouseDragged,
+    NSMouseEnteredMask = 1ULL << NSMouseEntered,
+    NSMouseExitedMask = 1ULL << NSMouseExited,
+    NSKeyDownMask = 1ULL << NSKeyDown,
+    NSKeyUpMask = 1ULL << NSKeyUp,
+    NSFlagsChangedMask = 1ULL << NSFlagsChanged,
+    NSAppKitDefinedMask = 1ULL << NSAppKitDefined,
+    NSSystemDefinedMask = 1ULL << NSSystemDefined,
+    NSApplicationDefinedMask = 1ULL << NSApplicationDefined,
+    NSPeriodicMask = 1ULL << NSPeriodic,
+    NSCursorUpdateMask = 1ULL << NSCursorUpdate,
+    NSScrollWheelMask = 1ULL << NSScrollWheel,
+    NSTabletPointMask = 1ULL << NSTabletPoint,
+    NSTabletProximityMask = 1ULL << NSTabletProximity,
+    NSOtherMouseDownMask = 1ULL << NSOtherMouseDown,
+    NSOtherMouseUpMask = 1ULL << NSOtherMouseUp,
+    NSOtherMouseDraggedMask = 1ULL << NSOtherMouseDragged,
+    NSAnyEventMask = ~0ULL,
+
+    NSPlatformSpecificDisplayMask = 1ULL << NSPlatformSpecificDisplayEvent,
+};
+
+enum : NSEventMask {
+    NSEventMaskLeftMouseDown = NSLeftMouseDownMask,
+    NSEventMaskLeftMouseUp = NSLeftMouseUpMask,
+    NSEventMaskRightMouseDown = NSRightMouseDownMask,
+    NSEventMaskRightMouseUp = NSRightMouseUpMask,
+    NSEventMaskMouseMoved = NSMouseMovedMask,
+    NSEventMaskLeftMouseDragged = NSLeftMouseDraggedMask,
+    NSEventMaskRightMouseDragged = NSRightMouseDraggedMask,
+    NSEventMaskMouseEntered = NSMouseEnteredMask,
+    NSEventMaskMouseExited = NSMouseExitedMask,
+    NSEventMaskKeyDown = NSKeyDownMask,
+    NSEventMaskKeyUp = NSKeyUpMask,
+    NSEventMaskFlagsChanged = NSFlagsChangedMask,
+    NSEventMaskAppKitDefined = NSAppKitDefinedMask,
+    NSEventMaskSystemDefined = NSSystemDefinedMask,
+    NSEventMaskApplicationDefined = NSApplicationDefinedMask,
+    NSEventMaskPeriodic = NSPeriodicMask,
+    NSEventMaskCursorUpdate = NSCursorUpdateMask,
+    NSEventMaskScrollWheel = NSScrollWheelMask,
+    NSEventMaskOtherMouseDown = NSOtherMouseDownMask,
+    NSEventMaskOtherMouseUp = NSOtherMouseUpMask,
+    NSEventMaskOtherMouseDragged = NSOtherMouseDraggedMask,
+    NSEventMaskAny = NSAnyEventMask
 };
 
 enum {
@@ -95,7 +139,14 @@ enum {
     NSEventTypeScrollWheel = NSScrollWheel,
     NSEventTypeOtherMouseDown = NSOtherMouseDown,
     NSEventTypeOtherMouseUp = NSOtherMouseUp,
-    NSEventTypeOtherMouseDragged = NSOtherMouseDragged
+    NSEventTypeOtherMouseDragged = NSOtherMouseDragged,
+    NSEventTypeAppKitDefined = NSAppKitDefined,
+    NSEventTypeSystemDefined = NSSystemDefined,
+    NSEventTypeApplicationDefined = NSApplicationDefined,
+    NSEventTypePeriodic = NSPeriodic,
+    NSEventTypeCursorUpdate = NSCursorUpdate,
+    NSEventTypeTabletPoint = NSTabletPoint,
+    NSEventTypeTabletProximity = NSTabletProximity
 };
 
 typedef NSUInteger NSEventModifierFlags;
@@ -201,7 +252,7 @@ enum {
 }
 
 + (NSPoint)mouseLocation;
-+ (NSUInteger)modifierFlags;
++ (NSEventModifierFlags)modifierFlags;
 
 - initWithType:(NSEventType)type location:(NSPoint)location modifierFlags:(unsigned)modifierFlags window:(NSWindow *)window;
 
@@ -222,14 +273,23 @@ enum {
 - (NSEventType)type;
 - (NSTimeInterval)timestamp;
 - (NSPoint)locationInWindow;
-- (unsigned)modifierFlags;
+- (NSEventModifierFlags)modifierFlags;
 - (NSWindow *)window;
 - (NSInteger)windowNumber;
 
-- (int)clickCount;
-- (float)deltaX;
-- (float)deltaY;
-- (float)deltaZ;
+- (NSInteger)clickCount;
+- (CGFloat)deltaX;
+- (CGFloat)deltaY;
+- (BOOL)isARepeat;
+- (NSInteger)buttonNumber;
+- (BOOL)hasPreciseScrollingDeltas;
+- (CGFloat)scrollingDeltaX;
+- (CGFloat)scrollingDeltaY;
++ (NSUInteger)pressedMouseButtons;
++ (id)addLocalMonitorForEventsMatchingMask:(NSEventMask)mask handler:(NSEvent *(^)(NSEvent *event))block;
++ (id)addGlobalMonitorForEventsMatchingMask:(NSEventMask)mask handler:(void (^)(NSEvent *event))block;
++ (void)removeMonitor:(id)monitor;
+- (CGFloat)deltaZ;
 
 - (NSString *)characters;
 - (NSString *)charactersIgnoringModifiers;
@@ -247,4 +307,4 @@ enum {
 
 @end
 
-APPKIT_EXPORT unsigned NSEventMaskFromType(NSEventType type);
+APPKIT_EXPORT NSEventMask NSEventMaskFromType(NSEventType type);

@@ -904,6 +904,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     }
 
     [clipView setAutoresizingMask:NSViewWidthSizable|NSViewHeightSizable];
+    // the clip view would paint its own background behind a field that draws none
+    [clipView setDrawsBackground:[(NSTextView *)editor drawsBackground]];
     [editor setAutoresizingMask:0];
     [editor setHorizontallyResizable:[self isScrollable]];
     [editor setVerticallyResizable:YES];

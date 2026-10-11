@@ -6,6 +6,7 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 #import <AppKit/NSGraphicsStyle.h>
+#import <AppKit/NSBezierPath.h>
 #import <AppKit/NSInterfaceTheme.h>
 #import <objc/runtime.h>
 #import <AppKit/NSInterfacePartAttributedString.h>
@@ -393,18 +394,31 @@ static NSDictionary *sDimmedMenuTextShadowAttributes = nil;
    }
 }
 
+// a modern push button: rounded, white with a hairline and a soft drop, the default one in the accent colour
+static void drawModernButton(NSRect rect,NSColor *fill,BOOL outlined) {
+   NSRect body=NSInsetRect(rect,0.5,1);
+   NSBezierPath *shape=[NSBezierPath bezierPathWithRoundedRect:body xRadius:6 yRadius:6];
+
+   [[NSColor colorWithCalibratedWhite:0 alpha:0.10] setFill];
+   [[NSBezierPath bezierPathWithRoundedRect:NSOffsetRect(body,0,[[NSView focusView] isFlipped]?0.75:-0.75) xRadius:6 yRadius:6] fill];
+   [fill setFill];
+   [shape fill];
+   if(outlined){
+    [[NSColor colorWithCalibratedWhite:0 alpha:0.16] setStroke];
+    [shape setLineWidth:0.75];
+    [shape stroke];
+   }
+}
+
 -(void)drawPushButtonNormalInRect:(NSRect)rect defaulted:(BOOL)defaulted {
    if([[NSInterfaceTheme currentTheme] drawPartNamed:NSInterfaceThemePushButtonNormal
                                               inRect:rect])
     return;
 
-   if(defaulted){
-    [[NSColor blackColor] setFill];
-    NSRectFill(rect);
-    rect = NSInsetRect(rect,1,1);
-   }
-
-   NSDrawButton(rect,rect);
+   if(defaulted)
+    drawModernButton(rect,[NSColor controlAccentColor],NO);
+   else
+    drawModernButton(rect,[NSColor whiteColor],YES);
 }
 
 -(void)drawPushButtonPressedInRect:(NSRect)rect {
@@ -412,7 +426,7 @@ static NSDictionary *sDimmedMenuTextShadowAttributes = nil;
                                               inRect:rect])
     return;
 
-   NSInterfaceDrawDepressedButton(rect,rect);
+   drawModernButton(rect,[NSColor colorWithCalibratedWhite:0.86 alpha:1],YES);
 }
 
 -(void)drawPushButtonHighlightedInRect:(NSRect)rect {
@@ -420,7 +434,7 @@ static NSDictionary *sDimmedMenuTextShadowAttributes = nil;
                                               inRect:rect])
     return;
 
-   NSInterfaceDrawHighlightedButton(rect,rect);
+   drawModernButton(rect,[NSColor colorWithCalibratedWhite:0.9 alpha:1],YES);
 }
 
 -(NSSize)sizeOfButtonImage:(NSImage *)image enabled:(BOOL)enabled mixed:(BOOL)mixed {
@@ -843,11 +857,28 @@ static NSDictionary *sDimmedMenuTextShadowAttributes = nil;
 @implementation NSGraphicsStyle (NSTextField)
 
 -(void)drawTextFieldBorderInRect:(NSRect)rect bezeledNotLine:(BOOL)bezeledNotLine {
-   if(bezeledNotLine)
-    NSDrawWhiteBezel(rect,rect);
-   else {
-    [[NSColor blackColor] setStroke];
-    NSFrameRect(rect);
+   [self drawTextFieldBezelInRect:rect background:[NSColor whiteColor] focused:NO capsule:NO];
+}
+
+// a rounded field with a hairline edge, focus adds the accent ring macOS draws around the active field
+-(void)drawTextFieldBezelInRect:(NSRect)rect background:(NSColor *)background focused:(BOOL)focused capsule:(BOOL)capsule {
+   NSRect body=NSInsetRect(rect,1.5,1.5);
+   CGFloat radius=capsule?NSHeight(body)/2:5;
+   NSBezierPath *shape=[NSBezierPath bezierPathWithRoundedRect:body xRadius:radius yRadius:radius];
+
+   if(background!=nil){
+    [background setFill];
+    [shape fill];
+   }
+   [[NSColor colorWithCalibratedWhite:0 alpha:0.18] setStroke];
+   [shape setLineWidth:0.75];
+   [shape stroke];
+   if(focused){
+    NSBezierPath *ring=[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(rect,0.5,0.5) xRadius:radius+1 yRadius:radius+1];
+
+    [[[NSColor controlAccentColor] colorWithAlphaComponent:0.4] setStroke];
+    [ring setLineWidth:2.5];
+    [ring stroke];
    }
 }
 

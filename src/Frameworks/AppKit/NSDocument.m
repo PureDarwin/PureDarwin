@@ -7,6 +7,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
 #import <AppKit/NSDocument.h>
+#import <objc/runtime.h>
 #import <AppKit/NSDocumentController.h>
 #import <AppKit/NSWindowController.h>
 #import <AppKit/NSSavePanel.h>
@@ -1275,6 +1276,63 @@ forSaveOperation:(NSSaveOperationType)operation
 - (void)textDidChange:(NSNotification *)aNotification
 {
    [self updateChangeCount:NSChangeDone];
+}
+
+// a document made by Duplicate and not yet saved anywhere
+-(BOOL)isDraft {
+   return [objc_getAssociatedObject(self,@selector(isDraft)) boolValue];
+}
+
+-(void)setDraft:(BOOL)draft {
+   objc_setAssociatedObject(self,@selector(isDraft),[NSNumber numberWithBool:draft],OBJC_ASSOCIATION_RETAIN);
+}
+
+// no versions browser, file locking or autosave in place here
+-(BOOL)isInViewingMode {
+   return NO;
+}
+
+-(BOOL)isLocked {
+   return NO;
+}
+
+-(BOOL)isBrowsingVersions {
+   return NO;
+}
+
++(BOOL)autosavesInPlace {
+   return NO;
+}
+
++(BOOL)preservesVersions {
+   return NO;
+}
+
+// activities run at once, one after the other, so the block gets a completion that does nothing
+-(void)performActivityWithSynchronousWaiting:(BOOL)waitSynchronously usingBlock:(void (^)(void (^activityCompletionHandler)(void)))block {
+   block(^{});
+}
+
+// an untitled draft holding this document's data
+-(NSDocument *)duplicateAndReturnError:(NSError **)error {
+   NSString   *type=[self fileType];
+   NSData     *data=[self dataOfType:type error:error];
+   NSDocument *copy;
+
+   if(data==nil)
+    return nil;
+   copy=[[NSDocumentController sharedDocumentController] makeUntitledDocumentOfType:type error:error];
+   if(copy==nil || ![copy readFromData:data ofType:type error:error])
+    return nil;
+   [copy setDraft:YES];
+   [[NSDocumentController sharedDocumentController] addDocument:copy];
+   [copy makeWindowControllers];
+   [copy showWindows];
+   return copy;
+}
+
+-(void)duplicateDocument:(id)sender {
+   [self duplicateAndReturnError:NULL];
 }
 
 @end

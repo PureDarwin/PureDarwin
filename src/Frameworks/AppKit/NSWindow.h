@@ -25,6 +25,34 @@ enum {
     NSMiniaturizableWindowMask = 0x04,
     NSResizableWindowMask = 0x08,
     NSTexturedBackgroundWindowMask = 0x100,
+    NSFullScreenWindowMask = 1 << 14,
+    NSFullSizeContentViewWindowMask = 1 << 15,
+};
+
+// the 10.12 spellings of the same masks, so current Apple sample code compiles.
+typedef NSUInteger NSWindowStyleMask;
+enum {
+    NSWindowStyleMaskBorderless = NSBorderlessWindowMask,
+    NSWindowStyleMaskTitled = NSTitledWindowMask,
+    NSWindowStyleMaskClosable = NSClosableWindowMask,
+    NSWindowStyleMaskMiniaturizable = NSMiniaturizableWindowMask,
+    NSWindowStyleMaskResizable = NSResizableWindowMask,
+    NSWindowStyleMaskTexturedBackground = NSTexturedBackgroundWindowMask,
+    NSWindowStyleMaskFullScreen = NSFullScreenWindowMask,
+    NSWindowStyleMaskFullSizeContentView = NSFullSizeContentViewWindowMask,
+};
+
+typedef NS_ENUM(NSInteger, NSWindowToolbarStyle) {
+    NSWindowToolbarStyleAutomatic = 0,
+    NSWindowToolbarStyleExpanded = 1,
+    NSWindowToolbarStylePreference = 2,
+    NSWindowToolbarStyleUnified = 3,
+    NSWindowToolbarStyleUnifiedCompact = 4,
+};
+
+typedef NS_ENUM(NSInteger, NSWindowTitleVisibility) {
+    NSWindowTitleVisible = 0,
+    NSWindowTitleHidden = 1,
 };
 
 typedef enum {
@@ -206,6 +234,9 @@ APPKIT_EXPORT NSString *const NSWindowDidEndLiveResizeNotification;
     BOOL _showsToolbarButton;
     BOOL _ignoresMouseEvents;
     BOOL _isMovableByWindowBackground;
+    BOOL _titlebarAppearsTransparent;
+    NSWindowTitleVisibility _titleVisibility;
+    NSWindowToolbarStyle _toolbarStyle;
     BOOL _allowsToolTipsWhenApplicationIsInactive;
     BOOL _defaultButtonCellKeyEquivalentDisabled;
     BOOL _autorecalculatesKeyViewLoop;
@@ -236,6 +267,7 @@ APPKIT_EXPORT NSString *const NSWindowDidEndLiveResizeNotification;
 }
 
 + (NSWindowDepth)defaultDepthLimit;
+@property(class) BOOL allowsAutomaticWindowTabbing;
 
 + (NSRect)frameRectForContentRect:(NSRect)contentRect styleMask:(unsigned)styleMask;
 + (NSRect)contentRectForFrameRect:(NSRect)frameRect styleMask:(unsigned)styleMask;
@@ -302,6 +334,9 @@ APPKIT_EXPORT NSString *const NSWindowDidEndLiveResizeNotification;
 - (BOOL)showsToolbarButton;
 - (BOOL)displaysWhenScreenProfileChanges;
 - (BOOL)isMovableByWindowBackground;
+- (NSWindowTitleVisibility)titleVisibility;
+- (BOOL)titlebarAppearsTransparent;
+- (NSWindowToolbarStyle)toolbarStyle;
 - (BOOL)allowsToolTipsWhenApplicationIsInactive;
 
 - (BOOL)autorecalculatesContentBorderThicknessForEdge:(NSRectEdge)edge;
@@ -376,6 +411,10 @@ APPKIT_EXPORT NSString *const NSWindowDidEndLiveResizeNotification;
 - (void)setDepthLimit:(NSWindowDepth)value;
 - (void)setDisplaysWhenScreenProfileChanges:(BOOL)value;
 - (void)setMovableByWindowBackground:(BOOL)value;
+- (void)setTitleVisibility:(NSWindowTitleVisibility)value;
+- (void)setTitlebarAppearsTransparent:(BOOL)value;
+- (void)setToolbarStyle:(NSWindowToolbarStyle)value;
+- (void)performWindowDragWithEvent:(NSEvent *)event;
 - (void)setAllowsToolTipsWhenApplicationIsInactive:(BOOL)value;
 
 - (BOOL)setFrameUsingName:(NSString *)name;
@@ -387,6 +426,7 @@ APPKIT_EXPORT NSString *const NSWindowDidEndLiveResizeNotification;
 
 - (int)resizeFlags;
 - (float)userSpaceScaleFactor;
+- (CGFloat)backingScaleFactor;
 - (NSResponder *)firstResponder;
 
 - (NSButton *)standardWindowButton:(NSWindowButton)value;
@@ -492,9 +532,9 @@ APPKIT_EXPORT NSString *const NSWindowDidEndLiveResizeNotification;
 - (NSPoint)mouseLocationOutsideOfEventStream;
 
 - (NSEvent *)currentEvent;
-- (NSEvent *)nextEventMatchingMask:(unsigned)mask;
-- (NSEvent *)nextEventMatchingMask:(unsigned)mask untilDate:(NSDate *)untilDate inMode:(NSString *)mode dequeue:(BOOL)dequeue;
-- (void)discardEventsMatchingMask:(unsigned)mask beforeEvent:(NSEvent *)event;
+- (NSEvent *)nextEventMatchingMask:(NSEventMask)mask;
+- (NSEvent *)nextEventMatchingMask:(NSEventMask)mask untilDate:(NSDate *)untilDate inMode:(NSString *)mode dequeue:(BOOL)dequeue;
+- (void)discardEventsMatchingMask:(NSEventMask)mask beforeEvent:(NSEvent *)event;
 
 - (void)sendEvent:(NSEvent *)event;
 - (void)postEvent:(NSEvent *)event atStart:(BOOL)atStart;
@@ -526,6 +566,7 @@ APPKIT_EXPORT NSString *const NSWindowDidEndLiveResizeNotification;
 - (void)performZoom:sender;
 
 - (void)zoom:sender;
+- (void)toggleFullScreen:sender;
 - (void)miniaturize:sender;
 - (void)deminiaturize:sender;
 - (void)print:sender;

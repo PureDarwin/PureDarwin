@@ -91,6 +91,17 @@ NSString * const NSScreenColorSpaceDidChangeNotification = @"NSScreenColorSpaceD
     _localizedName = @"Display name not available"; // FIXME think we need EDID for this
 }
 
+// a display mode change resizes the screen in place so existing references stay valid
+-(void)_setFrame:(NSRect)frame visibleFrame:(NSRect)visibleFrame {
+    NSMutableDictionary *description = [[_deviceDescription mutableCopy] autorelease];
+
+    _frame = frame;
+    _visibleFrame = visibleFrame;
+    [description setObject:[NSValue valueWithSize:frame.size] forKey:@"NSDeviceSize"];
+    [_deviceDescription release];
+    _deviceDescription = [description copy];
+}
+
 +(NSScreen *)mainScreen {
    NSScreen *result=[[NSApp keyWindow] screen];
 
@@ -133,6 +144,11 @@ NSString * const NSScreenColorSpaceDidChangeNotification = @"NSScreenColorSpaceD
 }
 
 // FIXME: remove - deprecated from 10.6
+// what a display link on this screen ticks at
+-(NSInteger)maximumFramesPerSecond {
+   return 60;
+}
+
 -(CGFloat)userSpaceScaleFactor {
    return 1.0;
 }

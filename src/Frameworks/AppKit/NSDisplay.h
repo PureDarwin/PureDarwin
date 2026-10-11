@@ -60,9 +60,9 @@ SOFTWARE. */
 - (id)cursorWithName:(NSString *)name;
 - (void)setCursor:(id)cursor;
 
-- (NSEvent *)nextEventMatchingMask:(unsigned)mask untilDate:(NSDate *)untilDate inMode:(NSString *)mode dequeue:(BOOL)dequeue;
+- (NSEvent *)nextEventMatchingMask:(NSEventMask)mask untilDate:(NSDate *)untilDate inMode:(NSString *)mode dequeue:(BOOL)dequeue;
 
-- (void)discardEventsMatchingMask:(unsigned)mask beforeEvent:(NSEvent *)event;
+- (void)discardEventsMatchingMask:(NSEventMask)mask beforeEvent:(NSEvent *)event;
 
 - (void)postEvent:(NSEvent *)event atStart:(BOOL)atStart;
 

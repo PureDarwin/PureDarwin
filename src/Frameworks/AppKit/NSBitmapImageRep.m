@@ -302,7 +302,8 @@ NSString* NSImageCompressionFactor = @"NSImageCompressionFactor";
      const unsigned char *bytes=CFDataGetBytePtr(bitmapData);
      int                  i,length=_bytesPerRow*_pixelsHigh;
 
-     if(bitmapInfo==(kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big)){
+     // default order is component order, the same bytes as 32Big
+     if(bitmapInfo==(kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big) || bitmapInfo==kCGImageAlphaPremultipliedLast){
      for(i=0;i<length;i++)
       _bitmapPlanes[0][i]=bytes[i];
      }

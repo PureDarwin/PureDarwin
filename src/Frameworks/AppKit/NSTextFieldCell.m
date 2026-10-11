@@ -139,26 +139,24 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 // titleRectForBounds is not used for generating the value rect in a text field
+// the text sits inside the bezel with room to breathe, a single line centred vertically as on macOS
 -(NSRect)_valueRectForBounds:(NSRect)rect {
-   if([self isBezeled]){
+   CGFloat padX=2;
 
-    switch([self bezelStyle]){
-     default:
-     case NSTextFieldSquareBezel:
-    rect=NSInsetRect(rect,3,3);
-      break;
+   if([self isBezeled])
+    padX=([self bezelStyle]==NSTextFieldRoundedBezel)?MAX(8,floor(rect.size.height*0.4)):7;
+   else if([self isBordered])
+    padX=6;
+   rect=NSInsetRect(rect,padX,0);
+   if(([self isBezeled] || [self isBordered]) && ![self wraps]){
+    NSFont *font=[self font]?:[NSFont systemFontOfSize:13];
+    CGFloat line=ceil([font ascender]-[font descender]);
 
-     case NSTextFieldRoundedBezel:;
-      CGFloat radius=rect.size.height/2;
-      rect=NSInsetRect(rect,radius,3);
-      break;
+    if(line<rect.size.height){
+     rect.origin.y+=floor((rect.size.height-line)/2);
+     rect.size.height=line;
     }
    }
-   else if([self isBordered])
-    rect=NSInsetRect(rect,2,2);
-   else
-    rect=NSInsetRect(rect,2,0);
-
    return rect;
 }
 
@@ -265,62 +263,29 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     [drawValue _clipAndDrawInRect:titleRect truncatingTail: _lineBreakMode > NSLineBreakByClipping];
 }
 
-static void drawRoundedBezel(CGContextRef context,CGRect frame){
-   CGFloat radius=frame.size.height/2;
+// the field the window's field editor is working on draws the focus ring
+static BOOL isFocused(NSView *control) {
+   NSWindow *window=[control window];
+   id responder=[window firstResponder];
 
-   CGContextBeginPath(context);
-   CGContextAddArc(context,CGRectGetMaxX(frame)-radius,CGRectGetMinY(frame)+radius,radius,M_PI_2,M_PI_2*3,YES);
-   CGContextAddArc(context,CGRectGetMinX(frame)+radius,CGRectGetMinY(frame)+radius,radius,M_PI_2*3,M_PI_2,YES);
-   CGContextClosePath(context);
-   CGContextFillPath(context);
+   return [window isKeyWindow] && [responder isKindOfClass:[NSText class]] && [(NSText *)responder delegate]==(id)control;
 }
 
 -(void)drawWithFrame:(NSRect)frame inView:(NSView *)control {
    NSRect backRect=[self drawingRectForBounds:frame];
+   NSColor *background=[self drawsBackground]?(_backgroundColor?:[NSColor textBackgroundColor]):nil;
 
    _controlView=control;
 
-   if([self isBezeled]){
-    switch([self bezelStyle]){
-     default:
-     case NSTextFieldSquareBezel:
-    [[control graphicsStyle] drawTextFieldBorderInRect:frame bezeledNotLine:YES];
-    backRect=NSInsetRect(backRect,-1,-1);
-      break;
-
-     case NSTextFieldRoundedBezel:;
-      CGContextRef context=[[NSGraphicsContext currentContext] graphicsPort];
-      NSRect roundedFrame=frame;
-
-      roundedFrame.size.height--;
-      [[NSColor darkGrayColor] setFill];
-      drawRoundedBezel(context,roundedFrame);
-
-      roundedFrame.origin.y+=1;
-      [[NSColor lightGrayColor] setFill];
-      drawRoundedBezel(context,roundedFrame);
-
-      roundedFrame=NSInsetRect(roundedFrame,1,1);
-      [[NSColor whiteColor] setFill];
-      drawRoundedBezel(context,roundedFrame);
-      break;
+   if([self isBezeled] || [self isBordered]){
+    // rounded fields fill themselves, a rectangle under them would square the corners off
+    [[control graphicsStyle] drawTextFieldBezelInRect:frame background:background?:[NSColor whiteColor]
+                                              focused:isFocused(control)
+                                              capsule:[self isBezeled] && [self bezelStyle]==NSTextFieldRoundedBezel];
    }
-
-   }
-   else {
-    if([self isBordered]){
-     [[control graphicsStyle] drawTextFieldBorderInRect:frame bezeledNotLine:NO];
-     backRect=NSInsetRect(backRect,-1,-1);
-    }
-   }
-
-   if([self drawsBackground]){
-    if(!([self isBezeled] && [self bezelStyle]==NSTextFieldRoundedBezel)){
-    NSColor *color=(_backgroundColor==nil)?[NSColor controlColor]:_backgroundColor;
-
-    [color setFill];
+   else if(background!=nil){
+    [background setFill];
     NSRectFill(backRect);
-   }
    }
 
    [self drawInteriorWithFrame:frame inView:control];

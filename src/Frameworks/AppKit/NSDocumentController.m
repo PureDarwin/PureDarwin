@@ -148,10 +148,9 @@ static NSDocumentController *shared=nil;
    return nil;
 }
 
+// documents are not autosaved here, the delay is kept for the getter
 -(void)setAutosavingDelay:(NSTimeInterval)value {
    _autosavingDelay=value;
-   
-   NSUnimplementedMethod();
 }
 
 -(NSArray *)documents {

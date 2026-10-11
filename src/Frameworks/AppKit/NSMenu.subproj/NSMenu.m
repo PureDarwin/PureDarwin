@@ -7,6 +7,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
 #import <AppKit/NSMenu.h>
+#import <AppKit/NSScreen.h>
 #import <AppKit/NSMenuView.h>
 #import <AppKit/NSWindow.h>
 #import <AppKit/NSMenuItem.h>
@@ -15,6 +16,14 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSEvent.h>
 #import <AppKit/NSRaise.h>
 #import <Foundation/NSKeyedArchiver.h>
+
+@interface NSWindow(PDBlur)
+-(void)_setBackgroundBlurInset:(CGFloat)inset radius:(CGFloat)radius;
+@end
+
+@interface NSMenuView(PDTracking)
+-(NSMenuItem *)_trackFromEvent:(NSEvent *)event;
+@end
 
 @implementation NSMenu
 
@@ -56,6 +65,26 @@ static NSMutableArray *__NSMenuPopUpWindows = nil;
    /* location is the menu's top-left, and window frames are bottom-left. */
    frame.origin.x=screenPoint.x;
    frame.origin.y=screenPoint.y-frame.size.height;
+   // the view carries a 16px shadow margin, so the panel itself lands 2px below the location
+   frame.origin.x-=16;
+   frame.origin.y+=16-2;
+
+   // a positioned item opens centred on the location, as a pop-up button's current value does
+   NSInteger itemIndex=(item!=nil)?[[menuView presentedItems] indexOfObjectIdenticalTo:item]:NSNotFound;
+
+   if(itemIndex!=NSNotFound){
+    NSRect itemRect=[menuView rectOfItemAtIndex:itemIndex];
+    CGFloat itemMid=[menuView isFlipped]?NSHeight([menuView frame])-NSMidY(itemRect):NSMidY(itemRect);
+
+    frame.origin.y=screenPoint.y-itemMid;
+   }
+
+   NSRect visible=[[NSScreen mainScreen] visibleFrame];
+
+   if(NSMaxY(frame)-16>NSMaxY(visible))
+    frame.origin.y=NSMaxY(visible)-frame.size.height+16;
+   if(NSMinY(frame)+16<NSMinY(visible))
+    frame.origin.y=NSMinY(visible)-16;
 
    NSWindow *window=[[NSWindow alloc] initWithContentRect:frame
                                                 styleMask:NSBorderlessWindowMask
@@ -63,13 +92,31 @@ static NSMutableArray *__NSMenuPopUpWindows = nil;
                                                     defer:NO];
 
    [window setLevel:NSPopUpMenuWindowLevel];
+   [window setOpaque:NO];
+   [window setBackgroundColor:[NSColor clearColor]];
+   // the panel inside the 16px shadow margin gets the compositor's blur, like the demo's backdrop-filter
+   [window _setBackgroundBlurInset:16 radius:8];
    [[window contentView] addSubview:menuView];
    [window orderFront:nil];
+   // drawn now, the tracking below holds the run loop that would otherwise paint it
+   [window display];
 
    [__NSMenuPopUpWindows addObject:window];
    [window release];
 
-   return YES;
+   // tracks until the menu closes, as on macOS, and sends the pick once the window is gone
+   NSEvent *start=[NSApp currentEvent];
+   NSMenuItem *chosen=nil;
+
+   [menuView retain];
+   if(start!=nil)
+    chosen=[menuView _trackFromEvent:start];
+   [window orderOut:nil];
+   [__NSMenuPopUpWindows removeObject:window];
+   [menuView release];
+   if(chosen!=nil && [chosen action]!=NULL)
+    [NSApp sendAction:[chosen action] to:[chosen target] from:chosen];
+   return chosen!=nil;
 }
 
 +(void)popUpContextMenu:(NSMenu *)menu withEvent:(NSEvent *)event forView:(NSView *)view {

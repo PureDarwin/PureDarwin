@@ -7,6 +7,7 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
+#include <math.h>
 #import <sys/param.h>
 #import <AppKit/NSFont.h>
 #import <AppKit/NSFontManager.h>
@@ -275,7 +276,13 @@ static NSLock *_cacheLock=nil;
 }
 
 +(NSFont *)titleBarFontOfSize:(float)size {
-    return [self _uiFontOfType:kCTFontWindowTitleFontType size:size fallbackName:@"Inter-Bold"];
+    NSFont *font = [self fontWithName:@"Inter-Bold" size:(size==0)?13.0:size];
+
+    // macOS draws titles bold, the window title type alone resolves to the regular face
+    if(font!=nil)
+        return font;
+    font = [self _uiFontOfType:kCTFontWindowTitleFontType size:(size==0)?13.0:size fallbackName:@"Inter-Bold"];
+    return [[NSFontManager sharedFontManager] convertFont:font toHaveTrait:NSBoldFontMask];
 }
 
 +(NSFont *)toolTipsFontOfSize:(float)size {
@@ -290,10 +297,11 @@ static NSLock *_cacheLock=nil;
                  fallbackName:@"Inter-Regular"];
 }
 
+// the application font is proportional, so asking for it here gave text views a non-monospace face
 +(NSFont *)userFixedPitchFontOfSize:(float)size {
-   return [self _uiFontOfType:kCTFontApplicationFontType
+   return [self _uiFontOfType:kCTFontUserFixedPitchFontType
                          size:(size==0)?12.0:size
-                 fallbackName:@"Source Code Pro-Regular"];
+                 fallbackName:@"DejaVu Sans Mono"];
 }
 
 +(void)setUserFont:(NSFont *)value {
@@ -646,8 +654,9 @@ arrayWithArray:[_name componentsSeparatedByString:blank]];
    return CTFontGetLeading(_ctFont);
 }
 
+// each part rounded on its own, which is how Apple's text system reaches its line heights
 -(CGFloat)defaultLineHeightForFont {
-   return roundf(CTFontGetAscent(_ctFont) + CTFontGetDescent(_ctFont) + CTFontGetLeading(_ctFont));
+   return round(CTFontGetAscent(_ctFont)) + round(fabs(CTFontGetDescent(_ctFont))) + round(CTFontGetLeading(_ctFont));
 }
 
 -(BOOL)isFixedPitch {

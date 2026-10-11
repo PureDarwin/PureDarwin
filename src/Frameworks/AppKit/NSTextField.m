@@ -389,6 +389,13 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     [super doCommandBySelector:selector];
 }
 
+// the field editor asks its delegate, this field, before acting on a command, the field asks its own delegate in turn
+-(BOOL)textView:(NSTextView *)textView doCommandBySelector:(SEL)selector {
+   if([_delegate respondsToSelector:@selector(control:textView:doCommandBySelector:)])
+    return [_delegate control:self textView:textView doCommandBySelector:selector];
+   return NO;
+}
+
 -(void)setTitleWithMnemonic:(NSString *)value {
    [self setStringValue:value];
 }
@@ -408,6 +415,25 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 - (void) _setFontFamilyName:(NSString*)familyName {
     [(NSTextFieldCell*)_cell _setFontFamilyName:familyName];
+}
+
+// the cell keeps the placeholder, the field only forwards as Cocoa's does
+-(NSString *)placeholderString {
+   return [[self cell] placeholderString];
+}
+
+-(void)setPlaceholderString:(NSString *)value {
+   [[self cell] setPlaceholderString:value];
+   [self setNeedsDisplay:YES];
+}
+
+-(NSAttributedString *)placeholderAttributedString {
+   return [[self cell] placeholderAttributedString];
+}
+
+-(void)setPlaceholderAttributedString:(NSAttributedString *)value {
+   [[self cell] setPlaceholderAttributedString:value];
+   [self setNeedsDisplay:YES];
 }
 
 @end

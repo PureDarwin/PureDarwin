@@ -20,6 +20,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE. */
 
 #import <AppKit/NSDisplay.h>
+#import <AppKit/NSApplication.h>
+#import <AppKit/NSScreen.h>
 #import <AppKit/NSPasteboard.h>
 #import <AppKit/NSRaise.h>
 #import <AppKit/NSColorList.h>
@@ -27,8 +29,20 @@ SOFTWARE. */
 #import <Onyx2D/O2Font.h>
 #import <AppKit/O2Font_FT.h>
 #import <fontconfig.h>
+#import <WindowServer/rpc.h>
 
 #define MENU_BAR_HEIGHT 24  // exclude from visibleFrame height
+
+@interface NSScreen (NSDisplayModeChange)
+-(void)_setFrame:(NSRect)frame visibleFrame:(NSRect)visibleFrame;
+@end
+
+// runs on the window server's thread, AppKit state is only touched on the main thread
+static void displayReconfigured(CGDirectDisplayID display, CGDisplayChangeSummaryFlags flags, void *userInfo) {
+    if (flags & kCGDisplayBeginConfigurationFlag)
+        return;
+    [(NSDisplay *)userInfo performSelectorOnMainThread:@selector(_screenParametersChanged) withObject:nil waitUntilDone:NO];
+}
 
 @implementation NSDisplay
 
@@ -91,7 +105,19 @@ SOFTWARE. */
     }
     
     _depth = 32;
+    CGDisplayRegisterReconfigurationCallback(displayReconfigured, self);
     return self;
+}
+
+-(void)_screenParametersChanged {
+    CGDisplayModeRef mode = CGDisplayCopyDisplayMode(CGMainDisplayID());
+    NSRect frame = NSMakeRect(0, 0, CGDisplayModeGetWidth(mode), CGDisplayModeGetHeight(mode));
+    NSRect visFrame = frame;
+
+    CGDisplayModeRelease(mode);
+    visFrame.size.height -= MENU_BAR_HEIGHT;
+    [[_screens objectAtIndex:0] _setFrame:frame visibleFrame:visFrame];
+    [[NSNotificationCenter defaultCenter] postNotificationName:NSApplicationDidChangeScreenParametersNotification object:NSApp];
 }
 
 -(NSArray *)screens {
@@ -154,10 +180,11 @@ SOFTWARE. */
 }
 
 -(void)hideCursor {
-   /* No pointer of our own to hide; the compositor draws it. */
+   _windowServerSetCursorHidden(1);
 }
 
 -(void)unhideCursor {
+   _windowServerSetCursorHidden(0);
 }
 
 // Arrow, IBeam, HorizontalResize, VerticalResize
@@ -167,10 +194,22 @@ SOFTWARE. */
    return name;
 }
 
+// a name from -cursorWithName:, or the NSData pixels of an image cursor
 -(void)setCursor:(id)cursor {
+   if([cursor isKindOfClass:[NSString class]])
+    _windowServerSetCursorNamed([cursor UTF8String]);
+   else if([cursor isKindOfClass:[NSDictionary class]]){
+    NSData *pixels=[cursor objectForKey:@"pixels"];
+
+    _windowServerSetCursorImage([pixels bytes],[[cursor objectForKey:@"width"] intValue],
+                                [[cursor objectForKey:@"height"] intValue],
+                                [[cursor objectForKey:@"hotX"] intValue],[[cursor objectForKey:@"hotY"] intValue]);
+   }
+   else
+    _windowServerSetCursorNamed(NULL);
 }
 
--(NSEvent *)nextEventMatchingMask:(unsigned)mask untilDate:(NSDate *)untilDate inMode:(NSString *)mode dequeue:(BOOL)dequeue {
+-(NSEvent *)nextEventMatchingMask:(NSEventMask)mask untilDate:(NSDate *)untilDate inMode:(NSString *)mode dequeue:(BOOL)dequeue {
     NSEvent *result=nil;
 
     pthread_mutex_lock(&_eventQueueLock);
@@ -208,7 +247,7 @@ SOFTWARE. */
     return result;
 }
 
--(void)discardEventsMatchingMask:(unsigned)mask beforeEvent:(NSEvent *)event {
+-(void)discardEventsMatchingMask:(NSEventMask)mask beforeEvent:(NSEvent *)event {
    pthread_mutex_lock(&_eventQueueLock);
 
    int count=[_eventQueue count];
@@ -228,9 +267,15 @@ SOFTWARE. */
    pthread_mutex_unlock(&_eventQueueLock);
 }
 
+// the modifiers of the newest input event, which is as current as the window server tells us
+static NSUInteger lastModifierFlags;
+
 -(void)postEvent:(NSEvent *)event atStart:(BOOL)atStart {
    if(event==nil)
     return;
+
+   if([event type]!=NSAppKitDefined && [event type]!=NSApplicationDefined && [event type]!=NSPeriodic)
+    lastModifierFlags=[event modifierFlags];
 
    pthread_mutex_lock(&_eventQueueLock);
    if(atStart)
@@ -399,8 +444,7 @@ SOFTWARE. */
 }
 
 -(NSUInteger)currentModifierFlags {
-   NSUnimplementedMethod();
-   return 0;
+   return lastModifierFlags;
 }
 
 @end

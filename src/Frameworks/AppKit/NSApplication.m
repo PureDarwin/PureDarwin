@@ -38,6 +38,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSRaise.h>
 #import <AppKit/NSSpellChecker.h>
 #import <AppKit/NSStatusItem.h>
+#import <AppKit/NSStoryboard.h>
+#import <AppKit/NSWindowController.h>
 #import <objc/message.h>
 #import <pthread.h>
 
@@ -90,18 +92,7 @@ NSString * const NSApplicationDidChangeScreenParametersNotification=@"NSApplicat
 -initWithOwner:owner;
 @end
 
-@protocol PDGershwinMenuServer
-- (oneway void)updateMenuForWindow:(bycopy NSNumber *)windowId
-                          menuData:(bycopy NSDictionary *)menuData
-                        clientName:(bycopy NSString *)clientName;
-@end
-
-@protocol PDGershwinMenuClient
-- (oneway void)activateMenuItemAtPath:(NSArray *)indexPath
-                            forWindow:(NSNumber *)windowId;
-- (oneway void)requestMenuUpdateForWindow:(NSNumber *)windowId;
-- (bycopy id)validateMenuStateForWindow:(NSNumber *)windowId;
-@end
+#import "PDMenuServer.h"
 
 static NSConnection *pdMenuClientConnection;
 static id pdMenuServerProxy;
@@ -135,6 +126,14 @@ static NSDictionary *pdSerializeMenu(NSMenu *menu)
     return [NSDictionary dictionaryWithObjectsAndKeys:
             ([menu title] ?: @""), @"title", serializedItems, @"items", nil];
 }
+
+@interface NSEvent (LocalMonitors)
++(NSEvent *)_runLocalMonitors:(NSEvent *)event;
+@end
+
+// the zeroing-weak calls libobjc exports (objc-internal.h)
+OBJC_EXPORT id objc_storeWeak(id *location, id obj);
+OBJC_EXPORT id objc_storeWeakOrNil(id *location, id obj);
 
 @implementation NSApplication
 
@@ -269,9 +268,11 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
                                 ? [self mainWindow]
                                 : [self windowWithWindowNumber:me.windowID];
 
-                            // translate screen to window coords
-                            me.x -= [window frame].origin.x;
-                            me.y -= [window frame].origin.y;
+                            /* Input locations arrive in the receiving
+                             * window's Cocoa-local coordinate space.
+                             * WS_EVENT_MOVED alone carries a compositor
+                             * top-left screen position and is converted by
+                             * -_serverDidMoveTo:. */
                             switch(me.code) {
                                 case WS_EVENT_FOCUS_GAINED:
                                 case WS_EVENT_FOCUS_LOST: {
@@ -285,6 +286,24 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
                                                               waitUntilDone:NO];
                                     break;
                                 }
+                                case WS_EVENT_CONFIGURE:
+                                    if(window != nil)
+                                        [window performSelectorOnMainThread:@selector(_serverDidConfigureSize:)
+                                                                 withObject:[NSValue valueWithSize:NSMakeSize(me.dx, me.dy)]
+                                                              waitUntilDone:NO];
+                                    break;
+                                case WS_EVENT_MOVED:
+                                    if(window != nil)
+                                        [window performSelectorOnMainThread:@selector(_serverDidMoveTo:)
+                                                                 withObject:[NSValue valueWithPoint:NSMakePoint(me.x, me.y)]
+                                                              waitUntilDone:NO];
+                                    break;
+                                case WS_EVENT_CLOSE:
+                                    if(window != nil)
+                                        [window performSelectorOnMainThread:@selector(performClose:)
+                                                                 withObject:nil
+                                                              waitUntilDone:NO];
+                                    break;
                                 case NSKeyUp:
                                 case NSKeyDown: {
                                     NSEvent *e = [NSEvent keyEventWithType:me.code
@@ -312,14 +331,14 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
                                     break;
                                 }
                                 case NSLeftMouseDown:
-                                    clock_gettime(CLOCK_MONOTONIC, &ts);
-                                    lastClickTime = ts.tv_sec + ts.tv_nsec/1000000000;
-                                    clickCount++;
                                 case NSLeftMouseUp: {
+                                    // a press soon after the previous one continues the click sequence
                                     clock_gettime(CLOCK_MONOTONIC, &ts);
-                                    NSTimeInterval now = ts.tv_sec + ts.tv_nsec/1000000000;
-                                    if((now - lastClickTime) > [_display doubleClickInterval])
-                                        clickCount = 0;
+                                    NSTimeInterval now = ts.tv_sec + ts.tv_nsec/1e9;
+                                    if(me.code == NSLeftMouseDown) {
+                                        clickCount = (now - lastClickTime > [_display doubleClickInterval]) ? 1 : clickCount + 1;
+                                        lastClickTime = now;
+                                    }
 
                                     NSEvent *e = [NSEvent mouseEventWithType:me.code
                                                     location:NSMakePoint(me.x, me.y)
@@ -343,14 +362,14 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
                                     break;
                                 }
                                 case NSRightMouseDown:
-                                    clock_gettime(CLOCK_MONOTONIC, &ts);
-                                    lastRightClickTime = ts.tv_sec + ts.tv_nsec/1000000000;
-                                    rightClickCount++;
                                 case NSRightMouseUp: {
+                                    // a press soon after the previous one continues the click sequence
                                     clock_gettime(CLOCK_MONOTONIC, &ts);
-                                    NSTimeInterval now = ts.tv_sec + ts.tv_nsec/1000000000;
-                                    if((now - lastRightClickTime) > [_display doubleClickInterval])
-                                        rightClickCount = 0;
+                                    NSTimeInterval now = ts.tv_sec + ts.tv_nsec/1e9;
+                                    if(me.code == NSRightMouseDown) {
+                                        rightClickCount = (now - lastRightClickTime > [_display doubleClickInterval]) ? 1 : rightClickCount + 1;
+                                        lastRightClickTime = now;
+                                    }
 
                                     NSEvent *e = [NSEvent mouseEventWithType:me.code
                                                     location:NSMakePoint(me.x, me.y)
@@ -364,6 +383,30 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
                                 }
                                 case NSRightMouseDragged: {
                                     NSEvent *e = [NSEvent mouseEventWithType:me.code
+                                                    location:NSMakePoint(me.x, me.y)
+                                               modifierFlags:me.mods
+                                                      window:window
+                                                  clickCount:0
+                                                      deltaX:me.dx
+                                                      deltaY:me.dy];
+                                    [_display postEvent:e atStart:NO];
+                                    break;
+                                }
+                                case NSOtherMouseDown:
+                                case NSOtherMouseUp:
+                                case NSOtherMouseDragged: {
+                                    NSEvent *e = [NSEvent mouseEventWithType:me.code
+                                                    location:NSMakePoint(me.x, me.y)
+                                               modifierFlags:me.mods
+                                                      window:window
+                                                  clickCount:me.code == NSOtherMouseDragged ? 0 : 1
+                                                      deltaX:me.dx
+                                                      deltaY:me.dy];
+                                    [_display postEvent:e atStart:NO];
+                                    break;
+                                }
+                                case NSScrollWheel: {
+                                    NSEvent *e = [NSEvent mouseEventWithType:NSScrollWheel
                                                     location:NSMakePoint(me.x, me.y)
                                                modifierFlags:me.mods
                                                       window:window
@@ -621,6 +664,7 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
 }
 
 -(void)dealloc {
+    objc_storeWeak(&_delegate, nil);
     mach_port_deallocate(mach_task_self(),_wsReplyPort);
     [super dealloc];
 }
@@ -806,10 +850,18 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
 
 }
 
+// the delegate is a zeroing weak reference as on macOS, so an ARC app whose delegate went away sees nil.
+// a delegate that cannot be referenced weakly stays a plain pointer
 -(void)setDelegate:delegate {
     if (delegate != _delegate) {
         [self unregisterDelegate];
-        _delegate=delegate;
+        if (delegate == nil || objc_storeWeakOrNil(&_delegate, delegate) == nil) {
+            objc_storeWeak(&_delegate, nil);
+            _delegate=delegate;
+        }
+        // macOS also leaves the delegate in the current autorelease pool: apps that set it from a local and
+        // never drain that pool (Sascha Willems' samples) keep it that way
+        [[delegate retain] autorelease];
         [self registerDelegate];
     }
 }
@@ -832,7 +884,11 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
    [_mainMenu autorelease];
    _mainMenu=[menu retain];
 
-   // ensure we have an "Apple" (application) menu
+   // the first item is the app menu, as on macOS and in NSNib, an empty bar gets one made
+   NSMenu *firstMenu=([_mainMenu numberOfItems]>0) ? [[_mainMenu itemAtIndex:0] submenu] : nil;
+
+   if([_mainMenu _menuWithName:@"NSAppleMenu"] == nil && firstMenu != nil)
+     [firstMenu setValue:@"NSAppleMenu" forKey:@"name"];
    if([_mainMenu _menuWithName:@"NSAppleMenu"] == nil) {
      NSString *appName = [[NSProcessInfo processInfo] processName];
      NSMenuItem *appleMenuItem = [[NSMenuItem new] retain];
@@ -853,12 +909,12 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
     pdMenuNeedsPublish = YES;
 }
 
-- (BOOL)_connectToGershwinMenuServer
+- (BOOL)_connectToMenuServer
 {
     if (pdMenuClientConnection == nil) {
         pdMenuClientConnection = [[NSConnection alloc] init];
         [pdMenuClientConnection setRootObject:self];
-        pdMenuClientName = [[NSString stringWithFormat:@"org.gnustep.Gershwin.MenuClient.%d",
+        pdMenuClientName = [[NSString stringWithFormat:PDMenuClientNameFormat,
                                                        getpid()] retain];
         if (![pdMenuClientConnection registerName:pdMenuClientName]) {
             [pdMenuClientConnection release];
@@ -871,28 +927,57 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
 
     if (pdMenuServerProxy == nil) {
         NSConnection *connection = [NSConnection
-            connectionWithRegisteredName:@"org.gnustep.Gershwin.MenuServer" host:nil];
+            connectionWithRegisteredName:PDMenuServerName host:nil];
         if (connection == nil || ![connection isValid]) {
             return NO;
         }
         pdMenuServerProxy = [[connection rootProxy] retain];
-        [pdMenuServerProxy setProtocolForProxy:@protocol(PDGershwinMenuServer)];
+        [pdMenuServerProxy setProtocolForProxy:@protocol(PDMenuServer)];
     }
     return pdMenuServerProxy != nil;
 }
 
-- (void)_publishMainMenuToGershwin
+// agents such as the menu bar itself set LSUIElement and never publish
+static BOOL pdIsMenuAgent(void)
 {
+    id flag = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"LSUIElement"];
+
+    return [flag respondsToSelector:@selector(boolValue)] && [flag boolValue];
+}
+
+// called when one of our windows gains keyboard focus from the compositor
+- (void)_menuBarActivateWindow:(NSWindow *)window
+{
+    if (pdIsMenuAgent() || [window isKindOfClass:[NSPanel class]] || [window windowNumber] == 0)
+        return;
+    if (pdMenuNeedsPublish)
+        [self _publishMainMenu];
+    if (![self _connectToMenuServer])
+        return;
+    NS_DURING
+        [(id<PDMenuServer>)pdMenuServerProxy
+            activateClient:pdMenuClientName
+                 forWindow:[NSNumber numberWithUnsignedLong:(unsigned long)(uint32_t)[window windowNumber]]];
+    NS_HANDLER
+        [pdMenuServerProxy release];
+        pdMenuServerProxy = nil;
+    NS_ENDHANDLER
+}
+
+- (void)_publishMainMenu
+{
+    if (pdIsMenuAgent())
+        return;
     if (_mainMenu == nil) {
         if (!pdMenuLoggedWaitingForMenu) {
-            NSLog(@"NSApplication: waiting for a main menu to publish to Gershwin");
+            NSLog(@"NSApplication: waiting for a main menu to publish");
             pdMenuLoggedWaitingForMenu = YES;
         }
         return;
     }
-    if (![self _connectToGershwinMenuServer]) {
+    if (![self _connectToMenuServer]) {
         if (!pdMenuLoggedWaitingForServer) {
-            NSLog(@"NSApplication: waiting for the Gershwin menu server");
+            NSLog(@"NSApplication: waiting for the menu bar server");
             pdMenuLoggedWaitingForServer = YES;
         }
         return;
@@ -904,7 +989,7 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
     NS_DURING
         for (NSWindow *window in _windows) {
             if (![window isKindOfClass:[NSPanel class]] && [window windowNumber] != 0) {
-                [(id<PDGershwinMenuServer>)pdMenuServerProxy
+                [(id<PDMenuServer>)pdMenuServerProxy
                     updateMenuForWindow:[NSNumber numberWithUnsignedLong:
                                          (unsigned long)(uint32_t)[window windowNumber]]
                                  menuData:menuData
@@ -919,7 +1004,7 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
     NS_ENDHANDLER
 
     if (published) {
-        NSLog(@"NSApplication: published %lu menu items for %lu windows to Gershwin",
+        NSLog(@"NSApplication: published %lu menu items for %lu windows to the menu bar",
               (unsigned long)[_mainMenu numberOfItems],
               (unsigned long)[_windows count]);
 
@@ -931,7 +1016,7 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
 {
     (void)windowId;
     pdMenuNeedsPublish = YES;
-    [self _publishMainMenuToGershwin];
+    [self _publishMainMenu];
 }
 
 - (bycopy id)validateMenuStateForWindow:(NSNumber *)windowId
@@ -943,7 +1028,6 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
 - (oneway void)activateMenuItemAtPath:(NSArray *)indexPath
                             forWindow:(NSNumber *)windowId
 {
-    (void)windowId;
     NSMenu *menu = _mainMenu;
     NSMenuItem *item = nil;
 
@@ -958,9 +1042,18 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
         item = [menu itemAtIndex:index];
         menu = [item submenu];
     }
-    if (item != nil && [item action] != NULL) {
-        [self sendAction:[item action] to:[item target] from:item];
+    if (item == nil || [item action] == NULL)
+        return;
+    // the menu bar holds keyboard focus while it is used, so this app has no key window and a
+    // nil-targeted action would go nowhere, it starts from the window the menu was published for
+    if ([item target] == nil && [self keyWindow] == nil) {
+        NSWindow *window = [self windowWithWindowNumber:[windowId integerValue]];
+        NSResponder *first = [window firstResponder];
+
+        if (first != nil && [first tryToPerform:[item action] with:item])
+            return;
     }
+    [self sendAction:[item action] to:[item target] from:item];
 }
 
 /* Make a copy of the menus with nil delegates and targets before
@@ -1299,7 +1392,11 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
             [self _setMainWindow:nil];
         }
 
+     // held until the array is done with it, its dealloc removes it from _windows again
+     [check retain];
      [_windows removeObjectAtIndex:count];
+     [check release];
+     count=MIN(count,(int)[_windows count]);
    }
 }
 }
@@ -1397,7 +1494,7 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
    [[NSApp windows] makeObjectsPerformSelector:@selector(displayIfNeeded)];
 }
 
--(NSEvent *)nextEventMatchingMask:(unsigned int)mask untilDate:(NSDate *)untilDate inMode:(NSString *)mode dequeue:(BOOL)dequeue {
+-(NSEvent *)nextEventMatchingMask:(NSEventMask)mask untilDate:(NSDate *)untilDate inMode:(NSString *)mode dequeue:(BOOL)dequeue {
    NSEvent *nextEvent=nil;
 
    do {
@@ -1409,7 +1506,7 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
    if (pdMenuNeedsPublish && now >= pdMenuNextAttempt) {
     pdMenuNextAttempt = now + 0.5;
-    [self _publishMainMenuToGershwin];
+    [self _publishMainMenu];
    }
 
    /* Left set from a previous iteration this would be a dangling pointer,
@@ -1438,8 +1535,11 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
 
      if([nextEvent type]==NSAppKitSystem)
       nextEvent=nil;
-     else
+     else {
+      if(dequeue)
+       nextEvent=[NSEvent _runLocalMonitors:nextEvent];
       [nextEvent retain];
+     }
 
    NS_HANDLER
     [self reportException:localException];
@@ -1460,6 +1560,11 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
    return [nextEvent autorelease];
 }
 
+// the NSApplicationOcclusionStateVisible state: a running app always has its windows on the one screen
+-(NSUInteger)occlusionState {
+   return 1 << 1;
+}
+
 -(NSEvent *)currentEvent {
    /* Apps do use currentEvent from secondary threads and it doesn't crash on OS X, so we need to be safe here too. */
    NSEvent *result;
@@ -1471,7 +1576,7 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
    return [result autorelease];
 }
 
--(void)discardEventsMatchingMask:(unsigned)mask beforeEvent:(NSEvent *)event {
+-(void)discardEventsMatchingMask:(NSEventMask)mask beforeEvent:(NSEvent *)event {
    [_display discardEventsMatchingMask:mask beforeEvent:event];
 }
 
@@ -1625,6 +1730,17 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
                      object:self];
 }
 
+static NSApplicationActivationPolicy activationPolicy = NSApplicationActivationPolicyRegular;
+
+-(BOOL)setActivationPolicy:(NSApplicationActivationPolicy)policy {
+   activationPolicy = policy;
+   return YES;
+}
+
+-(NSApplicationActivationPolicy)activationPolicy {
+   return activationPolicy;
+}
+
 -(void)deactivate {
    if(!_isActive)
     return;
@@ -1763,6 +1879,11 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
 }
 
 // cancel modal windows
+// Esc and command-period send this on macOS, the older cancel: still works
+-(void)cancelOperation:(id)sender {
+    [self cancel:sender];
+}
+
 -(void)cancel:sender {
     if ([self modalWindow] != nil)
         [self abortModal];
@@ -2220,7 +2341,16 @@ int NSApplicationMain(int argc, const char *argv[]) {
 
     nibFile=[nibFile stringByDeletingPathExtension];
 
-    if(![NSBundle loadNibNamed:nibFile owner:NSApp])
+    // an app built from a storyboard: its initial controller, shown like the main nib's window would be
+    if(nibFile==nil && [[bundle infoDictionary] objectForKey:@"NSMainStoryboardFile"]!=nil){
+        id controller=[[[NSStoryboard mainStoryboard] instantiateInitialController] retain];
+
+        if([controller isKindOfClass:[NSWindowController class]])
+            [controller showWindow:nil];
+        else if(controller==nil)
+            NSLog(@"Unable to load main storyboard %@",[[bundle infoDictionary] objectForKey:@"NSMainStoryboardFile"]);
+    }
+    else if(![NSBundle loadNibNamed:nibFile owner:NSApp])
         NSLog(@"Unable to load main nib file %@",nibFile);
 
     [pool release];

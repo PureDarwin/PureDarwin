@@ -12,11 +12,19 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSView.h>
 #import <AppKit/NSWindow-Private.h>
 #import <OpenGL/OpenGL.h>
+#import <OpenGL/gl.h>
+#import <ApplicationServices/ApplicationServices.h>
+#include <stdlib.h>
+#include <string.h>
 #import <Foundation/NSThread-Private.h>
 
 @interface NSOpenGLContext(private)
 -(void)_clearCurrentContext;
 @end
+
+static void _freeImageBytes(void *info,const void *data,size_t size) {
+   free((void *)data);
+}
 
 @implementation NSOpenGLContext
 
@@ -221,9 +229,88 @@ static inline void _clearCurrentContext(){
    NSUnimplementedMethod();
 }
 
+// the drawable as a top-down image: GL reads rows bottom up, pixels as BGRA words
+static CGImageRef _createImageFromDrawable(CGLContextObj context) {
+   GLint size[2]={0,0},alignment,rowLength,readBuffer,drawBuffer;
+
+   if(CGLGetParameter(context,kCGLCPSurfaceBackingSize,size)!=kCGLNoError || size[0]<=0 || size[1]<=0)
+    return NULL;
+
+   size_t   rowBytes=(size_t)size[0]*4;
+   uint8_t *pixels=malloc(rowBytes*size[1]);
+   uint8_t *flipped=malloc(rowBytes*size[1]);
+
+   // the buffer the frame was drawn to: Mesa's pbuffers read the front one by default
+   glGetIntegerv(GL_READ_BUFFER,&readBuffer);
+   glGetIntegerv(GL_DRAW_BUFFER,&drawBuffer);
+   glGetIntegerv(GL_PACK_ALIGNMENT,&alignment);
+   glGetIntegerv(GL_PACK_ROW_LENGTH,&rowLength);
+   glReadBuffer(drawBuffer);
+   glPixelStorei(GL_PACK_ALIGNMENT,4);
+   glPixelStorei(GL_PACK_ROW_LENGTH,0);
+   glReadPixels(0,0,size[0],size[1],GL_BGRA,GL_UNSIGNED_INT_8_8_8_8_REV,pixels);
+   glPixelStorei(GL_PACK_ALIGNMENT,alignment);
+   glPixelStorei(GL_PACK_ROW_LENGTH,rowLength);
+   glReadBuffer(readBuffer);
+
+   // PD_GL_TRACE=1 logs each frame's size and how much of it was drawn
+   if(getenv("PD_GL_TRACE")){
+    size_t drawn=0;
+
+    for(size_t i=0;i<(size_t)size[0]*size[1];i++)
+     drawn+=((uint32_t *)pixels)[i]!=0;
+    NSLog(@"flushBuffer %dx%d buffer %x drawn %zu",size[0],size[1],drawBuffer,drawn);
+   }
+   for(GLint y=0;y<size[1];y++)
+    memcpy(flipped+rowBytes*y,pixels+rowBytes*(size[1]-1-y),rowBytes);
+   free(pixels);
+
+   CGColorSpaceRef   space=CGColorSpaceCreateDeviceRGB();
+   CGDataProviderRef provider=CGDataProviderCreateWithData(NULL,flipped,rowBytes*size[1],_freeImageBytes);
+   CGImageRef        image=CGImageCreate(size[0],size[1],8,32,rowBytes,space,kCGBitmapByteOrder32Little|kCGImageAlphaNoneSkipFirst,
+                                         provider,NULL,NO,kCGRenderingIntentDefault);
+
+   CGDataProviderRelease(provider);
+   CGColorSpaceRelease(space);
+   return image;
+}
+
+// there is no GL surface in the window here: the frame is read back and drawn into the view like any other content
 -(void)flushBuffer {
+   CGLContextObj previous=CGLGetCurrentContext();
+   CGImageRef    image;
+   BOOL          focused;
+
    CGLFlushDrawable(_glContext);
-   
+   if(_view==nil || [_view window]==nil)
+    return;
+
+   if(previous!=_glContext)
+    CGLSetCurrentContext(_glContext);
+   image=_createImageFromDrawable(_glContext);
+   if(previous!=_glContext)
+    CGLSetCurrentContext(previous);
+   if(image==NULL)
+    return;
+
+   focused=([NSView focusView]==_view);
+   if(focused || [_view lockFocusIfCanDraw]){
+    CGContextRef port=[[NSGraphicsContext currentContext] graphicsPort];
+    NSRect       bounds=[_view bounds];
+
+    CGContextSaveGState(port);
+    if([_view isFlipped]){
+     CGContextTranslateCTM(port,0,bounds.origin.y*2+bounds.size.height);
+     CGContextScaleCTM(port,1,-1);
+    }
+    CGContextDrawImage(port,CGRectMake(bounds.origin.x,bounds.origin.y,bounds.size.width,bounds.size.height),image);
+    CGContextRestoreGState(port);
+    if(!focused)
+     [_view unlockFocus];
+    // drawNow-style drawing outside -display has nobody else to flush it, inside -display the flush waits
+    [[_view window] flushWindow];
+   }
+   CGImageRelease(image);
 }
 
 @end

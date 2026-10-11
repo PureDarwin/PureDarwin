@@ -8,6 +8,7 @@
  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 #import "O2Font_FT.h"
 #import <Onyx2D/O2Font_freetype.h>
+#include <stdlib.h>
 
 O2FontRef O2FontCreateWithFontName_platform(NSString *name) {
     O2FontRef result=[[O2Font_FT alloc] initWithFontName:name];
@@ -59,8 +60,26 @@ FcConfig *O2FontSharedFontConfig() {
 
 +(NSString*)filenameForPattern:(NSString *)pattern {
    int i;
-   pattern = [self nativeFontNameForPostscriptName:pattern];
-   FcPattern *pat=FcNameParse((unsigned char*)[pattern UTF8String]);
+   FcPattern *pat=NULL;
+
+   // a real PostScript name names exactly one face, otherwise read it as family-style
+   if([pattern length]>0){
+    pat=FcPatternCreate();
+    FcPatternAddString(pat, FC_POSTSCRIPT_NAME, (const FcChar8 *)[pattern UTF8String]);
+    FcFontSet *exact=FcFontList(O2FontSharedFontConfig(), pat, NULL);
+    BOOL found=exact!=NULL && exact->nfont>0;
+
+    if(exact!=NULL)
+     FcFontSetDestroy(exact);
+    if(!found){
+     FcPatternDestroy(pat);
+     pat=NULL;
+    }
+   }
+   if(pat==NULL){
+    pattern = [self nativeFontNameForPostscriptName:pattern];
+    pat=FcNameParse((unsigned char*)[pattern UTF8String]);
+   }
 
    FcObjectSet *props=FcObjectSetBuild(FC_FILE, NULL);
 
@@ -88,7 +107,7 @@ FcConfig *O2FontSharedFontConfig() {
     filename=[[self class] filenameForPattern:@""];
 
     if(filename==nil) {
-      filename=@"/System/Library/Fonts/TTF/NimbusSans-Regular.ttf";
+      filename=@"/System/Library/Fonts/URW/NimbusSans-Regular.otf";
     }
    }
 
@@ -132,6 +151,11 @@ FcConfig *O2FontSharedFontConfig() {
 
 -(FT_Face)face {
    return _face;
+}
+
+-(void)getGlyphsForCodePoints:(uint16_t *)codes:(O2Glyph *)glyphs:(int)length {
+   for(int i=0;i<length;i++)
+    glyphs[i]=FT_Get_Char_Index(_face,codes[i]);
 }
 
 -(O2Glyph)glyphWithGlyphName:(NSString *)name {
@@ -203,9 +227,52 @@ FcConfig *O2FontSharedFontConfig() {
    return name;
 }
 
+// the PostScript name of the installed face fontconfig finds for one property, preferring
+// the upright regular-weight member when several match (a family name matches them all)
+static NSString *postscriptNameMatching(const char *property, NSString *value) {
+   FcPattern *pat=FcPatternCreate();
+   FcObjectSet *props=FcObjectSetBuild(FC_POSTSCRIPT_NAME, FC_WEIGHT, FC_SLANT, NULL);
+   NSString *result=nil;
+   int bestScore=0;
+
+   FcPatternAddString(pat, property, (const FcChar8 *)[value UTF8String]);
+   FcFontSet *set=FcFontList(O2FontSharedFontConfig(), pat, props);
+   for(int i=0;set!=NULL && i<set->nfont;i++){
+    FcChar8 *psName;
+    int weight=FC_WEIGHT_REGULAR, slant=FC_SLANT_ROMAN;
+
+    if(FcPatternGetString(set->fonts[i], FC_POSTSCRIPT_NAME, 0, &psName)!=FcResultMatch)
+     continue;
+    FcPatternGetInteger(set->fonts[i], FC_WEIGHT, 0, &weight);
+    FcPatternGetInteger(set->fonts[i], FC_SLANT, 0, &slant);
+
+    int score=1000-abs(weight-FC_WEIGHT_REGULAR)-slant;
+    if(result==nil || score>bestScore){
+     result=[NSString stringWithUTF8String:(char *)psName];
+     bestScore=score;
+    }
+   }
+
+   FcPatternDestroy(pat);
+   FcObjectSetDestroy(props);
+   if(set!=NULL)
+    FcFontSetDestroy(set);
+   return result;
+}
+
+// callers pass full and family names too, though NSFont keys everything on PostScript names
 + (NSString *)postscriptNameForFontName:(NSString *)name
 {
-   return name;
+   if(name==nil)
+    return name;
+
+   // fontconfig compares names ignoring case and blanks, so take its spelling
+   NSString *result=postscriptNameMatching(FC_POSTSCRIPT_NAME, name);
+   if(result==nil)
+    result=postscriptNameMatching(FC_FULLNAME, name);
+   if(result==nil)
+    result=postscriptNameMatching(FC_FAMILY, name);
+   return result!=nil ? result : name;
 }
 
 @end

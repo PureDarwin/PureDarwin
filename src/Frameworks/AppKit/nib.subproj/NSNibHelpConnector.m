@@ -39,7 +39,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(void)establishConnection  {
-   if ([[self file] isEqualToString:@"NSToolTipHelpKey"])
+   // a destination without tool tips (a cell, say) just has none
+   if ([[self file] isEqualToString:@"NSToolTipHelpKey"] && [_destination respondsToSelector:@selector(setToolTip:)])
         [_destination setToolTip:[self marker]];
 }
 

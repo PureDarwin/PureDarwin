@@ -8,6 +8,8 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
 #import <AppKit/NSView.h>
+#import <AppKit/NSLayoutConstraint.h>
+#import <objc/runtime.h>
 #import <AppKit/NSApplication.h>
 #import <AppKit/NSEvent.h>
 #import <AppKit/NSWindow-Private.h>
@@ -33,6 +35,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <CoreGraphics/CGWindow.h>
 #import <QuartzCore/CALayerContext.h>
 #import <QuartzCore/CATransaction.h>
+#import <QuartzCore/CADisplayLink.h>
+#import <QuartzCore/CAMetalLayer-Private.h>
 
 NSString * const NSViewFrameDidChangeNotification=@"NSViewFrameDidChangeNotification";
 NSString * const NSViewBoundsDidChangeNotification=@"NSViewBoundsDidChangeNotification";
@@ -117,6 +121,10 @@ static BOOL NSViewLayersEnabled=NO;
     _layerContentsRedrawPolicy=[keyed decodeIntegerForKey:@"NSViewLayerContentsRedrawPolicy"];
 
     _contentFilters=[[keyed decodeObjectForKey:@"NSViewContentFilters"] retain];
+    // auto Layout: the constraints IB archived on this view, and whether its frame was meant to come from them
+    [self addConstraints:[keyed decodeObjectForKey:@"NSViewConstraints"]];
+    if([keyed containsValueForKey:@"NSDoNotTranslateAutoresizingMask"])
+     [self setTranslatesAutoresizingMaskIntoConstraints:![keyed decodeBoolForKey:@"NSDoNotTranslateAutoresizingMask"]];
    }
    else {
     [NSException raise:NSInvalidArgumentException format:@"%@ can not initWithCoder:%@",[self class], [coder class]];
@@ -724,7 +732,45 @@ static inline void buildTransformsIfNeeded(NSView *self) {
    return NSMakeRect(minx,miny,maxx-minx,maxy-miny);
 }
 
+// as on macOS, a frame change goes through -setFrameOrigin: and -setFrameSize:, so a
+// subclass that overrides either one sees every resize
 -(void)setFrame:(NSRect)frame {
+   if(!NSEqualPoints(frame.origin,_frame.origin))
+    [self setFrameOrigin:frame.origin];
+   if(!NSEqualSizes(frame.size,_frame.size))
+    [self setFrameSize:frame.size];
+}
+
+// a hosted CAMetalLayer is a Wayland subsurface of the window at the view's rectangle, from the window's top left
+static CGRect metalLayerRect(NSView *self){
+   NSRect r=[self convertRect:[self bounds] toView:nil];
+
+   return CGRectMake(r.origin.x,[[self window] frame].size.height-(r.origin.y+r.size.height),r.size.width,r.size.height);
+}
+
+static void updateMetalLayer(NSView *self){
+   if(![self->_layer isKindOfClass:[CAMetalLayer class]])
+    return;
+
+   CAMetalLayer *layer=(CAMetalLayer *)self->_layer;
+
+   if(self->_window==nil){
+    [layer _pdDetach];
+    return;
+   }
+
+   CGRect r=metalLayerRect(self);
+
+   [layer setBounds:CGRectMake(0,0,r.size.width,r.size.height)];
+   if([layer _pdIsAttached]){
+    [layer setWindowOrigin:r.origin];
+    [layer _pdSetViewSize:r.size];
+   }
+   else
+    [layer _pdAttachToWindowNumber:[self->_window windowNumber] origin:r.origin size:r.size];
+}
+
+-(void)_setFrame:(NSRect)frame {
   // Cocoa does not post the notification if the frames are equal
    // Possible that resizeSubviewsWithOldSize is not called if the sizes are equal
    if(NSEqualRects(_frame,frame))
@@ -759,6 +805,8 @@ static inline void buildTransformsIfNeeded(NSView *self) {
 
     [_layerContext setFrame:layerFrame];
 
+    updateMetalLayer(self);
+
    invalidateTransform(self);
 
    if(_superview!=nil && !NSContainsRect(_frame,oldFrame))
@@ -772,14 +820,14 @@ static inline void buildTransformsIfNeeded(NSView *self) {
    NSRect frame=_frame;
 
    frame.size=size;
-   [self setFrame:frame];
+   [self _setFrame:frame];
 }
 
 -(void)setFrameOrigin:(NSPoint)origin {
-   NSRect frame=[self frame];
+   NSRect frame=_frame;
 
    frame.origin=origin;
-   [self setFrame:frame];
+   [self _setFrame:frame];
 }
 
 -(void)setFrameRotation:(CGFloat)angle {
@@ -848,6 +896,7 @@ static inline void buildTransformsIfNeeded(NSView *self) {
             [_window recalculateKeyViewLoop];
 
         [self viewDidMoveToWindow];
+        updateMetalLayer(self);
     }
 }
 
@@ -1232,6 +1281,7 @@ static inline void buildTransformsIfNeeded(NSView *self) {
 
    for(i=0;i<count;i++)
     [[_subviews objectAtIndex:i] resizeWithOldSuperviewSize:oldSize];
+   [self _pdLayoutConstraints];
 }
 
 -(void)resizeWithOldSuperviewSize:(NSSize)oldSize {
@@ -1459,6 +1509,49 @@ static inline void buildTransformsIfNeeded(NSView *self) {
    return [NSViewBackingLayer layer];
 }
 
+// the backing store's pixels: points times the window's scale, origin unchanged
+static CGFloat backingScale(NSView *self){
+   NSWindow *window=[self window];
+
+   return window!=nil ? [window backingScaleFactor] : 1.0;
+}
+
+-(NSSize)convertSizeToBacking:(NSSize)size {
+   CGFloat s=backingScale(self);
+
+   return NSMakeSize(size.width*s,size.height*s);
+}
+
+-(NSSize)convertSizeFromBacking:(NSSize)size {
+   CGFloat s=backingScale(self);
+
+   return NSMakeSize(size.width/s,size.height/s);
+}
+
+-(NSPoint)convertPointToBacking:(NSPoint)point {
+   CGFloat s=backingScale(self);
+
+   return NSMakePoint(point.x*s,point.y*s);
+}
+
+-(NSPoint)convertPointFromBacking:(NSPoint)point {
+   CGFloat s=backingScale(self);
+
+   return NSMakePoint(point.x/s,point.y/s);
+}
+
+-(NSRect)convertRectToBacking:(NSRect)rect {
+   CGFloat s=backingScale(self);
+
+   return NSMakeRect(rect.origin.x*s,rect.origin.y*s,rect.size.width*s,rect.size.height*s);
+}
+
+-(NSRect)convertRectFromBacking:(NSRect)rect {
+   CGFloat s=backingScale(self);
+
+   return NSMakeRect(rect.origin.x/s,rect.origin.y/s,rect.size.width/s,rect.size.height/s);
+}
+
 -(void)_removeLayerFromSuperlayer {
    [_layer removeFromSuperlayer];
    [_layerContext invalidate];
@@ -1500,8 +1593,23 @@ static inline void buildTransformsIfNeeded(NSView *self) {
 }
 
 -(void)_createLayersInTreeIfNeeded {
-   if(!NSViewLayersEnabled)
+   // a backing CAMetalLayer (makeBackingLayer overridden, as Metal and Vulkan views do) goes to its own
+   // subsurface, which needs no CALayer renderer
+   if(!NSViewLayersEnabled){
+    if(_layer==nil){
+     CALayer *layer=[self makeBackingLayer];
+
+     if([layer isKindOfClass:[CAMetalLayer class]]){
+      [self setLayer:layer];
+      // the view is its backing layer's delegate, and the layer is sized like the view from the start:
+      // Vulkan reads the surface's extent before the window shows
+      [layer setDelegate:self];
+      configureLayerGeometry(self);
+     }
+    }
+    [_subviews makeObjectsPerformSelector:_cmd];
     return;
+   }
 
    if(_layer==nil){
     _layer=[[self makeBackingLayer] retain];
@@ -1529,6 +1637,19 @@ static inline void buildTransformsIfNeeded(NSView *self) {
 }
 
 -(void)setLayer:(CALayer *)value {
+   // a hosted CAMetalLayer goes to its own subsurface, outside the CALayer renderer (which may be off)
+   if([value isKindOfClass:[CAMetalLayer class]] || [_layer isKindOfClass:[CAMetalLayer class]]){
+    if(value==_layer)
+     return;
+    if([_layer isKindOfClass:[CAMetalLayer class]])
+     [(CAMetalLayer *)_layer _pdDetach];
+    [value retain];
+    [_layer release];
+    _layer=value;
+    updateMetalLayer(self);
+    return;
+   }
+
    if(!NSViewLayersEnabled)
     return;
 
@@ -1556,6 +1677,11 @@ static inline void buildTransformsIfNeeded(NSView *self) {
 
     [_subviews makeObjectsPerformSelector:@selector(_addLayerToSuperlayer)];
    }
+}
+
+// macOS 14: a display link for the screen the view is on (one 60 Hz timer here)
+-(CADisplayLink *)displayLinkWithTarget:(id)target selector:(SEL)selector {
+   return [CADisplayLink displayLinkWithTarget:target selector:selector];
 }
 
 -(NSViewLayerContentsPlacement)layerContentsPlacement {
@@ -2412,4 +2538,15 @@ static NSGraphicsContext *graphicsContextForView(NSView *view){
     return [NSString stringWithFormat:@"<%@[0x%lx] frame: %@>", [self class], self, NSStringFromRect(_frame)];
 }
 
+
+// there is no OpenGL surface scaling here, the setting is only remembered for the getter
+-(BOOL)wantsBestResolutionOpenGLSurface {
+   NSNumber *value=objc_getAssociatedObject(self,@selector(wantsBestResolutionOpenGLSurface));
+
+   return [value boolValue];
+}
+
+-(void)setWantsBestResolutionOpenGLSurface:(BOOL)value {
+   objc_setAssociatedObject(self,@selector(wantsBestResolutionOpenGLSurface),[NSNumber numberWithBool:value],OBJC_ASSOCIATION_RETAIN);
+}
 @end

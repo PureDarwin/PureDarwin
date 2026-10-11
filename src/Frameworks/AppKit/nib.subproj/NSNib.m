@@ -18,6 +18,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import "NSIBObjectData.h"
 #import "NSNibHelpConnector.h"
 #import "NSCustomObject.h"
+#import "NSNibArchiveUnarchiver.h"
 
 NSString * const NSNibOwner=@"NSOwner";
 NSString * const NSNibTopLevelObjects=@"NSNibTopLevelObjects";
@@ -106,7 +107,10 @@ NSString * const NSNibTopLevelObjects=@"NSNibTopLevelObjects";
     
    NSAutoreleasePool *pool=[NSAutoreleasePool new];
    _nameTable=[nameTable retain];
-    NSKeyedUnarchiver *unarchiver=[[[NSKeyedUnarchiver alloc] initForReadingWithData:_data] autorelease];
+    // ibtool's binary nibs (NIBArchive: compiled xibs and storyboards) or keyed archives
+    NSKeyedUnarchiver *unarchiver=[NSNibArchiveUnarchiver isNibArchiveData:_data] ?
+        (NSKeyedUnarchiver *)[[[NSNibArchiveUnarchiver alloc] initForReadingWithData:_data] autorelease] :
+        [[[NSKeyedUnarchiver alloc] initForReadingWithData:_data] autorelease];
     NSIBObjectData    *objectData;
     int                i,count;
     NSMenu            *menu;

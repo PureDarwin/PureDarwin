@@ -94,6 +94,12 @@ typedef enum {
     NSPrintingFailure,
 } NSApplicationPrintReply;
 
+typedef NS_ENUM(NSInteger, NSApplicationActivationPolicy) {
+    NSApplicationActivationPolicyRegular = 0,
+    NSApplicationActivationPolicyAccessory = 1,
+    NSApplicationActivationPolicyProhibited = 2,
+};
+
 @interface NSApplication : NSResponder {
     NSString *bundleID;
     NSDisplay *_display;
@@ -170,9 +176,9 @@ typedef enum {
 
 - (void)sendEvent:(NSEvent *)event;
 
-- (NSEvent *)nextEventMatchingMask:(unsigned int)mask untilDate:(NSDate *)untilDate inMode:(NSString *)mode dequeue:(BOOL)dequeue;
+- (NSEvent *)nextEventMatchingMask:(NSEventMask)mask untilDate:(NSDate *)untilDate inMode:(NSString *)mode dequeue:(BOOL)dequeue;
 - (NSEvent *)currentEvent;
-- (void)discardEventsMatchingMask:(unsigned)mask beforeEvent:(NSEvent *)event;
+- (void)discardEventsMatchingMask:(NSEventMask)mask beforeEvent:(NSEvent *)event;
 - (void)postEvent:(NSEvent *)event atStart:(BOOL)atStart;
 
 - targetForAction:(SEL)action;
@@ -184,6 +190,9 @@ typedef enum {
 - (void)updateWindows;
 
 - (void)activateIgnoringOtherApps:(BOOL)flag;
+// recorded only: the compositor decides what a Dock or menu bar shows.
+- (BOOL)setActivationPolicy:(NSApplicationActivationPolicy)policy;
+- (NSApplicationActivationPolicy)activationPolicy;
 - (void)deactivate;
 
 - (NSWindow *)modalWindow;

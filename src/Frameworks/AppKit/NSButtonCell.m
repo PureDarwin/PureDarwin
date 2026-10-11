@@ -1087,6 +1087,13 @@ static NSSize scaledImageSizeInFrameSize(NSSize imageSize,NSSize frameSize,NSIma
         title = [[[NSAttributedString alloc] initWithString:baseTitle attributes:fgAttrs] autorelease];
     }
 
+    // a default push button is filled with the accent colour, its title reads white on it
+    if(defaulted && [self isBordered] && [self isEnabled] && _bezelStyle==NSRoundedBezelStyle && ![self isHighlighted] && [title length]){
+     NSMutableAttributedString *white=[[title mutableCopy] autorelease];
+
+     [white addAttribute:NSForegroundColorAttributeName value:[NSColor whiteColor] range:NSMakeRange(0,[white length])];
+     title=white;
+    }
     [self drawTitle:title withFrame:titleRect inView:controlView];
      }
      }
