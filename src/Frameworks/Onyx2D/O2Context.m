@@ -305,7 +305,7 @@ O2ColorRef O2ContextFillColor(O2ContextRef self) {
 }
 
 -(O2ContextRef)createCompatibleContextWithSize:(O2Size)size unused:(NSDictionary *)unused {
-   return [[isa alloc] initWithSize:size context:self];
+   return [[[self class] alloc] initWithSize:size context:self];
 }
 
 -(BOOL)getImageableRect:(O2Rect *)rect {

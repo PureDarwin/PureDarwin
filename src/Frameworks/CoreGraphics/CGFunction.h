@@ -10,10 +10,14 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 typedef struct O2Function *CGFunctionRef;
 
+// same callback types as Apple's CGFunction.h
+typedef void (*CGFunctionEvaluateCallback)(void *info, const CGFloat *in, CGFloat *out);
+typedef void (*CGFunctionReleaseInfoCallback)(void *info);
+
 typedef struct {
-    unsigned version;
-    void (*evaluate)(void *, const float *, float *);
-    void (*releaseInfo)(void *);
+    unsigned int version;
+    CGFunctionEvaluateCallback evaluate;
+    CGFunctionReleaseInfoCallback releaseInfo;
 } CGFunctionCallbacks;
 
 COREGRAPHICS_EXPORT CGFunctionRef CGFunctionRetain(CGFunctionRef self);

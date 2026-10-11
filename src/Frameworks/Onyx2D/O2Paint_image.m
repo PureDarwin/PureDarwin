@@ -144,6 +144,35 @@ ONYX2D_STATIC int O2PaintReadIntegerTranslateSpan_largb8u_PRE(O2Paint *selfX,int
    return length;
 }
 
+ONYX2D_STATIC int faded8u(O2Paint *selfX,int x,int y,O2argb8u *span,int length){
+   O2Paint_image *self=(O2Paint_image *)selfX;
+   int result=self->_unfaded8u(selfX,x,y,span,length);
+   int count=result<0?-result:result;
+
+   // premultiplied, so every channel scales by the same alpha
+   for(int i=0;i<count;i++){
+    span[i].r=(span[i].r*self->_fade)>>8;
+    span[i].g=(span[i].g*self->_fade)>>8;
+    span[i].b=(span[i].b*self->_fade)>>8;
+    span[i].a=(span[i].a*self->_fade)>>8;
+   }
+   return result;
+}
+
+ONYX2D_STATIC int faded32f(O2Paint *selfX,int x,int y,O2argb32f *span,int length){
+   O2Paint_image *self=(O2Paint_image *)selfX;
+   int result=self->_unfaded32f(selfX,x,y,span,length);
+   int count=result<0?-result:result;
+
+   for(int i=0;i<count;i++){
+    span[i].r*=self->_fadef;
+    span[i].g*=self->_fadef;
+    span[i].b*=self->_fadef;
+    span[i].a*=self->_fadef;
+   }
+   return result;
+}
+
 ONYX2D_STATIC int multiply(O2Paint *selfX,int x,int y,O2argb32f *span,int length){
    O2Paint_image *self=(O2Paint_image *)selfX;
 
@@ -302,6 +331,17 @@ ONYX2D_STATIC int stencil(O2Paint *selfX,int x,int y,O2argb32f *span,int length)
    _surfaceToMask=surfaceToMask;
    
    return self;
+}
+
+-(void)setFade:(O2Float)alpha {
+   if(alpha>=1 || _unfaded8u!=NULL || _paint_largb8u_PRE==NULL || _paint_largb32f_PRE==NULL)
+    return;
+   _fade=(unsigned)(MAX(alpha,0)*256);
+   _fadef=MAX(alpha,0);
+   _unfaded8u=_paint_largb8u_PRE;
+   _unfaded32f=_paint_largb32f_PRE;
+   _paint_largb8u_PRE=faded8u;
+   _paint_largb32f_PRE=faded32f;
 }
 
 -(void)dealloc {

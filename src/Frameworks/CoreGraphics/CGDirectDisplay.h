@@ -223,6 +223,8 @@ COREGRAPHICS_EXPORT CGDisplayModeRef CGDisplayModeRetain(CGDisplayModeRef mode);
 COREGRAPHICS_EXPORT void CGDisplayModeRelease(CGDisplayModeRef mode);
 COREGRAPHICS_EXPORT size_t CGDisplayModeGetWidth(CGDisplayModeRef mode);
 COREGRAPHICS_EXPORT size_t CGDisplayModeGetHeight(CGDisplayModeRef mode);
+COREGRAPHICS_EXPORT size_t CGDisplayModeGetPixelWidth(CGDisplayModeRef mode);
+COREGRAPHICS_EXPORT size_t CGDisplayModeGetPixelHeight(CGDisplayModeRef mode);
 COREGRAPHICS_EXPORT double CGDisplayModeGetRefreshRate(CGDisplayModeRef mode);
 COREGRAPHICS_EXPORT uint32_t CGDisplayModeGetIOFlags(CGDisplayModeRef mode);
 COREGRAPHICS_EXPORT int32_t CGDisplayModeGetIODisplayModeID(CGDisplayModeRef mode);

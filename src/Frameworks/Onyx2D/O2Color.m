@@ -109,7 +109,7 @@ O2ColorRef O2ColorCreateCopyWithAlpha(O2ColorRef self,O2Float alpha) {
     components[i]=self->_components[i];
    components[i]=alpha;
       
-   return O2ColorInitWithColorSpace([self->isa alloc],self->_colorSpace,components);
+   return O2ColorInitWithColorSpace([[self class] alloc],self->_colorSpace,components);
 }
 
 O2ColorRef O2ColorRetain(O2ColorRef self) {

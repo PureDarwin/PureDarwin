@@ -391,7 +391,7 @@ CGImageRef CGDisplayCreateImageForRect(CGDirectDisplayID display, CGRect rect) {
         CGDataProviderRef d = CGDataProviderCreateWithCFData(cfd);
         CFRelease(cfd);
         CGImageRef img = CGImageCreate(w, h, 8, 32, w*4, CGColorSpaceCreateDeviceRGB(),
-            kCGBitmapByteOrderDefault|kCGImageAlphaPremultipliedFirst, d, NULL, 0, kCGRenderingIntentDefault);
+            kCGBitmapByteOrder32Little|kCGImageAlphaPremultipliedFirst, d, NULL, 0, kCGRenderingIntentDefault);
         CFRelease(d);
         return img;
     }

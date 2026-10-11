@@ -81,6 +81,9 @@ typedef enum {
 
 - (O2Encoding *)createEncodingForTextEncoding:(O2TextEncoding)encoding;
 
+// unicode (BMP) to glyph through the font's cmap, the base class has no cmap and returns 0
+- (void)getGlyphsForCodePoints:(uint16_t *)codes:(O2Glyph *)glyphs:(int)length;
+
 O2FontRef O2FontCreateWithFontName(NSString *name);
 O2FontRef O2FontCreateWithDataProvider(O2DataProviderRef provider);
 O2FontRef O2FontRetain(O2FontRef self);
@@ -88,6 +91,7 @@ void O2FontRelease(O2FontRef self);
 
 O2FontPlatformType O2FontGetPlatformType(O2Font *self);
 CFStringRef O2FontCopyFullName(O2FontRef self);
+void O2FontGetGlyphsForUnicode(O2FontRef self, const uint16_t *codes, O2Glyph *glyphs, size_t count);
 int O2FontGetUnitsPerEm(O2FontRef self);
 int O2FontGetAscent(O2FontRef self);
 int O2FontGetDescent(O2FontRef self);

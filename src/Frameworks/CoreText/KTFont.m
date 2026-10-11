@@ -5,6 +5,7 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
+#import <Onyx2D/O2Font.h>
 #import "KTFont.h"
 #import <Onyx2D/O2Exceptions.h>
 #import <Foundation/NSArray.h>
@@ -38,7 +39,17 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
      break;
    }
 
-   CGFontRef font=CGFontCreateWithFontName((CFStringRef)name);
+   CGFontRef font=NULL;
+
+   // the fixed-pitch face is whichever monospace family is installed
+   if(uiFontType==kCTFontUserFixedPitchFontType){
+    NSString *mono[]={ @"Menlo-Regular", @"SourceCodePro-Regular", @"DejaVuSansMono" };
+
+    for(int i=0;i<3 && font==NULL;i++)
+     font=CGFontCreateWithFontName((CFStringRef)mono[i]);
+   }
+   if(font==NULL)
+    font=CGFontCreateWithFontName((CFStringRef)name);
    if(font==NULL) {
     [self release];
     return nil;
@@ -50,6 +61,12 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(void)dealloc {
+   if(_twoLevel!=NULL){
+    for(int i=0;i<256;i++){
+     free(_twoLevel[i]);
+    }
+    free(_twoLevel);
+   }
    CGFontRelease(_font);
    [super dealloc];
 }
@@ -131,18 +148,29 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return CGPointMake(((CGFloat)advancement/_unitsPerEm)*_size,0);
 }
 
+// _twoLevel caches the cmap: 256 pages of 256 glyphs, filled the first time a page is used
+static CGGlyph *glyphPage(KTFont *self,uint8_t group) {
+   if(self->_twoLevel==NULL)
+    self->_twoLevel=calloc(256,sizeof(CGGlyph *));
+   if(self->_twoLevel[group]!=NULL)
+    return self->_twoLevel[group];
+
+   uint16_t codes[256];
+   CGGlyph *page=malloc(256*sizeof(CGGlyph));
+
+   for(int i=0;i<256;i++){
+    codes[i]=(group<<8)|i;
+   }
+   O2FontGetGlyphsForUnicode((O2FontRef)self->_font,codes,page,256);
+   self->_twoLevel[group]=page;
+   return page;
+}
+
 -(void)getGlyphs:(CGGlyph *)glyphs forCharacters:(const unichar *)characters length:(unsigned)length {
-   int i;
-   
-   for(i=0;i<length;i++){
+   for(unsigned i=0;i<length;i++){
     uint16_t code=characters[i];
-    uint8_t  group=code>>8;
-    uint8_t  index=code&0xFF;
-    
-    if(_twoLevel[group]==NULL)
-     glyphs[i]=0;
-    else
-     glyphs[i]=_twoLevel[group][index];
+
+    glyphs[i]=glyphPage(self,code>>8)[code&0xFF];
    }
 }
 

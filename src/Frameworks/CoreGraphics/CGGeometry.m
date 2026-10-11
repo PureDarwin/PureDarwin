@@ -69,3 +69,4 @@ CGRect CGRectUnion(CGRect a, CGRect b) {
 	float maxY = MAX(CGRectGetMaxY(a), CGRectGetMaxY(b));
 	return CGRectMake(minX, minY, maxX - minX, maxY - minY);
 }
+

@@ -34,8 +34,15 @@
     O2Paint *_paint;
     O2InterpolationQuality _interpolationQuality;
     O2AffineTransform _surfaceToMask;
+    // a global alpha below one scales whatever the normal readers produce
+    O2PaintReadSpan_argb8u_PRE_function _unfaded8u;
+    O2PaintReadSpan_largb32f_PRE_function _unfaded32f;
+    unsigned _fade;
+    O2Float _fadef;
 }
 
 - initWithImage:(O2Image *)image mask:(O2ImageRef)mask mode:(O2SurfaceMode)mode paint:(O2Paint *)paint interpolationQuality:(O2InterpolationQuality)interpolationQuality surfaceToImage:(O2AffineTransform)surfaceToImage surfaceToMask:(O2AffineTransform)surfaceToMask;
+
+- (void)setFade:(O2Float)alpha;
 
 @end

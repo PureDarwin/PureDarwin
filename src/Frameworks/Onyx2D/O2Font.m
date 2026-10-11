@@ -396,6 +396,11 @@ NSString *O2MacRomanGlyphNames[256]={
    return [[O2Encoding alloc] initWithGlyphs:glyphs unicode:unicode];
 }
 
+-(void)getGlyphsForCodePoints:(uint16_t *)codes:(O2Glyph *)glyphs:(int)length {
+   for(int i=0;i<length;i++)
+    glyphs[i]=0;
+}
+
 -(float)nativeSizeForSize:(float)size
 {
     return size;
@@ -426,6 +431,10 @@ O2FontPlatformType O2FontGetPlatformType(O2Font *self) {
 
 CFStringRef O2FontCopyFullName(O2FontRef self) {
    return (CFStringRef)[self->_name copy];
+}
+
+void O2FontGetGlyphsForUnicode(O2FontRef self,const uint16_t *codes,O2Glyph *glyphs,size_t count) {
+   [self getGlyphsForCodePoints:(uint16_t *)codes:glyphs:(int)count];
 }
 
 int       O2FontGetUnitsPerEm(O2FontRef self) {

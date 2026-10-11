@@ -39,7 +39,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    _blendMode=kO2BlendModeNormal;
    _interpolationQuality=kO2InterpolationDefault;
    _shouldAntialias=YES;
-   _antialiasingQuality=64;
+   // 16 samples a pixel like Skia's supersampled paths, 64 cost four times the edge work for no visible gain
+   _antialiasingQuality=16;
 	_alpha = 1.;
    return self;
 }

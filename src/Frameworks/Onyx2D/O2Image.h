@@ -82,6 +82,14 @@ enum {
 
 typedef unsigned O2BitmapInfo;
 
+// default order for 8-bit components is component order in memory (32Big), as on Apple
+// wider components keep the host order they always had here
+static inline O2BitmapInfo O2BitmapInfoResolveDefaultByteOrder(O2BitmapInfo info, size_t bitsPerComponent) {
+    if ((info & kO2BitmapByteOrderMask) != kO2BitmapByteOrderDefault) return info;
+    if (bitsPerComponent == 8) return info | kO2BitmapByteOrder32Big;
+    return info | kO2BitmapByteOrder32Host;
+}
+
 #import <Onyx2D/O2ColorSpace.h>
 #import <Onyx2D/O2Pattern.h>
 #import <Onyx2D/O2ImageDecoder.h>
@@ -207,6 +215,9 @@ O2argb8u *O2ImageRead_BGRA8888_to_argb8u(O2Image *self, int x, int y, O2argb8u *
 O2argb8u *O2ImageRead_RGB888_to_argb8u(O2Image *self, int x, int y, O2argb8u *span, int length);
 O2argb8u *O2ImageRead_BGRX8888_to_argb8u(O2Image *self, int x, int y, O2argb8u *span, int length);
 O2argb8u *O2ImageRead_XRGB8888_to_argb8u(O2Image *self, int x, int y, O2argb8u *span, int length);
+O2argb8u *O2ImageRead_ARGB8888_to_argb8u(O2Image *self, int x, int y, O2argb8u *span, int length);
+O2argb8u *O2ImageRead_RGBX8888_to_argb8u(O2Image *self, int x, int y, O2argb8u *span, int length);
+O2argb8u *O2ImageRead_XBGR8888_to_argb8u(O2Image *self, int x, int y, O2argb8u *span, int length);
 O2argb8u *O2ImageRead_G3B5X1R5G2_to_argb8u(O2Image *self, int x, int y, O2argb8u *span, int length);
 O2argb8u *O2ImageRead_RGBA4444_to_argb8u(O2Image *self, int x, int y, O2argb8u *span, int length);
 O2argb8u *O2ImageRead_BARG4444_to_argb8u(O2Image *self, int x, int y, O2argb8u *span, int length);

@@ -308,6 +308,13 @@ void CGContextSetShouldSmoothFonts(CGContextRef context,bool yesOrNo) {
    O2ContextSetShouldSmoothFonts(context,yesOrNo);
 }
 
+// glyph positions are not quantized by Onyx2D's text path either way, so there is nothing to switch
+void CGContextSetShouldSubpixelQuantizeFonts(CGContextRef context,bool yesOrNo) {
+}
+
+void CGContextSetAllowsFontSubpixelQuantization(CGContextRef context,bool yesOrNo) {
+}
+
 void CGContextSetLineWidth(CGContextRef context,float width) {
    O2ContextSetLineWidth(context,width);
 }

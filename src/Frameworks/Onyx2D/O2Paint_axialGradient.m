@@ -39,8 +39,13 @@ ONYX2D_STATIC_INLINE O2argb8u O2PaintFastAxialRamp(O2Paint_ramp *self,O2Float gr
    else if(gradient>=1.0)
     return self->_colorStops[self->_numberOfColorStops-1].color8u;
    else {
-    int i=RI_FLOOR_TO_INT(gradient*(self->_numberOfColorStops-1));
-    return self->_colorStops[i].color8u;
+    // interpolate between the two nearest stops, taking the lower one alone read a level low
+    O2Float pos=gradient*(self->_numberOfColorStops-1);
+    int     i=RI_FLOOR_TO_INT(pos);
+    O2Float f=pos-i;
+
+    if(i>=self->_numberOfColorStops-1) return self->_colorStops[self->_numberOfColorStops-1].color8u;
+    return O2argb8uFromO2argb32f(O2argb32fAdd(O2argb32fMultiplyByFloat(self->_colorStops[i].color32f,1.0f-f),O2argb32fMultiplyByFloat(self->_colorStops[i+1].color32f,f)));
    }
 }
 

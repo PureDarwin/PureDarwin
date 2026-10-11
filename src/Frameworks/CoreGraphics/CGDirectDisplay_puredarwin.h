@@ -11,7 +11,27 @@
 
 #import <CoreGraphics/CoreGraphicsExport.h>
 #import <CoreGraphics/CGGeometry.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 COREGRAPHICS_EXPORT void CGDirectDisplaySetMainDisplayBounds(CGRect bounds);
+
+// one display mode as the window server reports it
+struct CGDirectDisplayModeInfo {
+    size_t width;
+    size_t height;
+    double refresh;
+    int32_t modeID;
+    bool current;
+};
+
+// the window server lists and switches modes, CoreGraphics only forwards
+struct CGDirectDisplayModeProvider {
+    int (*copyModes)(struct CGDirectDisplayModeInfo *modes, int max);
+    bool (*setMode)(int32_t modeID);
+};
+
+COREGRAPHICS_EXPORT void CGDirectDisplaySetModeProvider(const struct CGDirectDisplayModeProvider *provider);
 
 #endif /* CGDirectDisplay_puredarwin_h */

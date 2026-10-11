@@ -1,6 +1,38 @@
 #import <Onyx2D/O2Font_freetype.h>
 #ifdef FREETYPE_PRESENT
 #import <Onyx2D/O2Encoding.h>
+#include FT_SFNT_NAMES_H
+#include FT_TRUETYPE_IDS_H
+
+// the sfnt full name (name id 4), what Apple's CGFontCopyFullName returns
+static NSString *copyFullNameOfFace(FT_Face face) {
+   FT_UInt count=FT_Get_Sfnt_Name_Count(face);
+   NSString *mac=nil;
+
+   for(FT_UInt i=0;i<count;i++){
+    FT_SfntName name;
+
+    if(FT_Get_Sfnt_Name(face,i,&name)!=0 || name.name_id!=TT_NAME_ID_FULL_NAME) continue;
+
+    if(name.platform_id==TT_PLATFORM_MICROSOFT || name.platform_id==TT_PLATFORM_APPLE_UNICODE){
+     unichar chars[name.string_len/2+1];
+
+     for(FT_UInt j=0;j<name.string_len/2;j++){
+      chars[j]=(name.string[2*j]<<8)|name.string[2*j+1];
+     }
+     [mac release];
+     return [[NSString alloc] initWithCharacters:chars length:name.string_len/2];
+    }
+    if(name.platform_id==TT_PLATFORM_MACINTOSH && mac==nil)
+     mac=[[NSString alloc] initWithBytes:name.string length:name.string_len encoding:NSMacOSRomanStringEncoding];
+   }
+   if(mac!=nil) return mac;
+
+   if(face->family_name==NULL) return nil;
+   if(face->style_name==NULL || !strcmp(face->style_name,"Regular") || !strcmp(face->style_name,"Book"))
+    return [[NSString alloc] initWithUTF8String:face->family_name];
+   return [[NSString alloc] initWithFormat:@"%s %s",face->family_name,face->style_name];
+}
 
 @implementation O2Font_freetype
 
@@ -83,6 +115,8 @@ FT_Library freeTypeLibrary;
    _bbox.size.width=_face->bbox.xMax-_face->bbox.xMin;
    _bbox.size.height=_face->bbox.yMax-_face->bbox.yMin;
    _numberOfGlyphs=_face->num_glyphs;
+   if(_name==nil)
+    _name=copyFullNameOfFace(_face);
    _advances=NULL;
    return self;
 }

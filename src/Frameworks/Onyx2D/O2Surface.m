@@ -267,6 +267,17 @@ static void O2SurfaceWrite_argb8u_to_BGRA8888(O2Surface *self,int x,int y,O2argb
    }
 }
 
+static void O2SurfaceWrite_argb8u_to_ARGB8888(O2Surface *self,int x,int y,O2argb8u *span,int length){
+   uint8_t *scanline=self->_pixelBytes+y*self->_bytesPerRow+x*4;
+
+   for(int i=0;i<length;i++,span++){
+    *scanline++=span->a;
+    *scanline++=span->r;
+    *scanline++=span->g;
+    *scanline++=span->b;
+   }
+}
+
 static void O2SurfaceWrite_argb32f_to_RGBA4444(O2Surface *self,int x,int y,O2argb32f *span,int length){
    uint8_t* scanline = self->_pixelBytes + y * self->_bytesPerRow;
    int i;
@@ -337,6 +348,7 @@ static void O2SurfaceWrite_argb32f_to_argb8u_to_ANY(O2Surface *self,int x,int y,
 
 static BOOL initFunctionsForParameters(O2Surface *self,size_t bitsPerComponent,size_t bitsPerPixel,O2ColorSpaceRef colorSpace,O2BitmapInfo bitmapInfo){
    self->_writeargb32f=O2SurfaceWrite_argb32f_to_argb8u_to_ANY;// default
+   bitmapInfo=O2BitmapInfoResolveDefaultByteOrder(bitmapInfo,bitsPerComponent);
    
    switch(bitsPerComponent){
    
@@ -383,8 +395,8 @@ static BOOL initFunctionsForParameters(O2Surface *self,size_t bitsPerComponent,s
           
          case kO2ImageAlphaLast:
          case kO2ImageAlphaPremultipliedLast:
+         case kO2ImageAlphaNoneSkipLast:
           switch(bitmapInfo&kO2BitmapByteOrderMask){
-           case kO2BitmapByteOrderDefault:
            case kO2BitmapByteOrder16Little:
            case kO2BitmapByteOrder32Little:
             self->_writeargb32f=O2SurfaceWrite_argb32f_to_ABGR8888;
@@ -397,33 +409,24 @@ static BOOL initFunctionsForParameters(O2Surface *self,size_t bitsPerComponent,s
             self->_writeargb8u=O2SurfaceWrite_argb8u_to_argb8u;
             return YES;
           }
+          break;
 
-          break;
-          
          case kO2ImageAlphaPremultipliedFirst:
-          switch(bitmapInfo&kO2BitmapByteOrderMask){
-           case kO2BitmapByteOrderDefault:
-           case kO2BitmapByteOrder16Little:
-           case kO2BitmapByteOrder32Little:
-            self->_writeargb8u=O2SurfaceWrite_argb8u_to_BGRA8888;
-            return YES;
-          }
-          break;
-                    
-         case kO2ImageAlphaFirst:
-          break;
-          
-         case kO2ImageAlphaNoneSkipLast:
-          break;
-          
          case kO2ImageAlphaNoneSkipFirst:
           switch(bitmapInfo&kO2BitmapByteOrderMask){
-           case kO2BitmapByteOrderDefault:
            case kO2BitmapByteOrder16Little:
            case kO2BitmapByteOrder32Little:
             self->_writeargb8u=O2SurfaceWrite_argb8u_to_BGRA8888;
             return YES;
+
+           case kO2BitmapByteOrder16Big:
+           case kO2BitmapByteOrder32Big:
+            self->_writeargb8u=O2SurfaceWrite_argb8u_to_ARGB8888;
+            return YES;
           }
+          break;
+
+         case kO2ImageAlphaFirst:
           break;
         }
        }
@@ -520,8 +523,12 @@ static BOOL initFunctionsForParameters(O2Surface *self,size_t bitsPerComponent,s
    if([provider isDirectAccess])
     _pixelBytes=(void *)[provider bytes];
 
-   if(!initFunctionsForParameters(self,bitsPerComponent,_bitsPerPixel,colorSpace,bitmapInfo))
-    NSLog(@"O2Surface -init error, return");
+   // no write function for this format, fail like Apple's CGBitmapContextCreate does
+   if(!initFunctionsForParameters(self,bitsPerComponent,_bitsPerPixel,colorSpace,bitmapInfo)){
+    NSLog(@"O2Surface: unsupported bitmap format bpc=%zu bitmapInfo=0x%x",bitsPerComponent,bitmapInfo);
+    [self release];
+    return nil;
+   }
 
    _clampExternalPixels=NO; // only set to yes if premultiplied
    pthread_mutex_init(&_lock,NULL);

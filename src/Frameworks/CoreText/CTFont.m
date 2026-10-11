@@ -31,7 +31,11 @@ size_t CTFontGetGlyphCount(CTFontRef self) {
 
 BOOL CTFontGetGlyphsForCharacters(CTFontRef self,const unichar *characters,CGGlyph *glyphs,size_t count) {
    [self getGlyphs:glyphs forCharacters:characters length:count];
-   // FIXME: change getGlyphs: to return a BOOL
+
+   // false when any character has no glyph, as on Apple
+   for(size_t i=0;i<count;i++){
+    if(glyphs[i]==0) return NO;
+   }
    return YES;
 }
 

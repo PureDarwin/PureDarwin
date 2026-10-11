@@ -254,6 +254,18 @@ static O2Point circularLerp(O2Point t0, O2Point t1, O2Float ratio){
     [super dealloc];
 }
 
+void VGPathSetDeviceScale(VGPath *self, O2Float scale){
+   self->_deviceScale=(scale>0)?scale:1;
+}
+
+// about one segment per two device pixels of control polygon, a quarter circle stays within 0.1px
+static int curveSegments(VGPath *self,O2Float polygonLength){
+   O2Float scale=(self->_deviceScale>0)?self->_deviceScale:1;
+   int segments=(int)ceil(polygonLength*scale*0.5f);
+
+   return RI_INT_CLAMP(segments,4,256);
+}
+
 /// Given a path segment type, returns the number of coordinates it uses.
 
 int O2PathElementTypeToNumCoordinates(O2PathElementType segment){
@@ -1135,7 +1147,7 @@ BOOL VGPathAddQuadTo(VGPath *self,O2Point p0, O2Point p1, O2Point p2, BOOL subpa
 	if(!subpathHasGeometry)
 		startFlags |= START_SUBPATH;
 
-	const int segments = 256;
+	const int segments = curveSegments(self,Vector2Length(Vector2Subtract(p1,p0))+Vector2Length(Vector2Subtract(p2,p1)));
 	O2Point pp = p0;
 	O2Point tp = incomingTangent;
 	unsigned int prevFlags = startFlags;
@@ -1239,7 +1251,7 @@ BOOL VGPathAddCubicTo(VGPath *self,O2Point p0, O2Point p1, O2Point p2, O2Point p
     bezier(self,p0.x,p0.y,p1.x,p1.y,p2.x,p2.y,p3.x,p3.y,&prevFlags,&pp,&tp);
 	VGPathAddEdge(self,pp, p3, tp, outgoingTangent, prevFlags, END_SEGMENT);
 #else
-	const int segments = 256;
+	const int segments = curveSegments(self,Vector2Length(Vector2Subtract(p1,p0))+Vector2Length(Vector2Subtract(p2,p1))+Vector2Length(Vector2Subtract(p3,p2)));
 	O2Point pp = p0;
 	O2Point tp = incomingTangent;
 	unsigned int prevFlags = startFlags;

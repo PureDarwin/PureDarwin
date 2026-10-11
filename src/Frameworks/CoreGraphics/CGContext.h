@@ -191,6 +191,8 @@ COREGRAPHICS_EXPORT void CGContextSetFont(CGContextRef context, CGFontRef font);
 COREGRAPHICS_EXPORT void CGContextSetFontSize(CGContextRef context, float size);
 COREGRAPHICS_EXPORT void CGContextSelectFont(CGContextRef context, const char *name, float size, CGTextEncoding encoding);
 COREGRAPHICS_EXPORT void CGContextSetShouldSmoothFonts(CGContextRef context, bool yesOrNo);
+COREGRAPHICS_EXPORT void CGContextSetShouldSubpixelQuantizeFonts(CGContextRef context, bool yesOrNo);
+COREGRAPHICS_EXPORT void CGContextSetAllowsFontSubpixelQuantization(CGContextRef context, bool yesOrNo);
 
 COREGRAPHICS_EXPORT void CGContextSetLineWidth(CGContextRef context, float width);
 COREGRAPHICS_EXPORT void CGContextSetLineCap(CGContextRef context, CGLineCap lineCap);

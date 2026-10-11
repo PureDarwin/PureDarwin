@@ -22,11 +22,26 @@
 
 O2FontRef O2FontCreateWithFontName_platform(NSString *name) {
 #ifdef FREETYPE_PRESENT
-   FcPattern *pattern=FcNameParse((const FcChar8 *)[name UTF8String]);
+   FcPattern *pattern=NULL;
    FcPattern *match=nil;
    FcChar8 *filename=nil;
    O2FontRef result=nil;
 
+   // a PostScript name such as DejaVuSansMono-Bold names one face, which the
+   // family-style parse below would read as an unknown family and match loosely
+   FcPattern *byName=FcPatternCreate();
+   FcObjectSet *fileOnly=FcObjectSetBuild(FC_FILE, NULL);
+   FcPatternAddString(byName, FC_POSTSCRIPT_NAME, (const FcChar8 *)[name UTF8String]);
+   FcFontSet *exact=FcFontList(NULL, byName, fileOnly);
+   if(exact!=NULL && exact->nfont>0)
+    pattern=FcPatternDuplicate(byName);
+   if(exact!=NULL)
+    FcFontSetDestroy(exact);
+   FcObjectSetDestroy(fileOnly);
+   FcPatternDestroy(byName);
+
+   if(pattern==NULL)
+    pattern=FcNameParse((const FcChar8 *)[name UTF8String]);
    if(pattern==nil)
     return nil;
 

@@ -37,6 +37,8 @@
     struct Vertex *_vertices;
 
     int _segmentToVertexCapacity;
+    // how many device pixels one path unit covers, curves are cut into segments to match
+    O2Float _deviceScale;
     struct VertexIndex *_segmentToVertex;
 
     O2Float m_userMinx;
@@ -58,3 +60,5 @@ void VGPathGetPathTransformedBounds(VGPath *self, O2AffineTransform pathToSurfac
 void VGPathTessellateIfNeeded(VGPath *self);
 
 @end
+
+void VGPathSetDeviceScale(VGPath *self, O2Float scale);

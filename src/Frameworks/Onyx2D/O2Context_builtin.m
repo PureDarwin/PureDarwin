@@ -28,8 +28,9 @@
 #import <Onyx2D/O2Exceptions.h>
 #import <Onyx2D/O2GraphicsState.h>
 #import "VGPath.h"
-#import <Onyx2D/O2Paint_image.h>
 #import <Onyx2D/O2Paint_color.h>
+#import <Onyx2D/O2Font_freetype.h>
+#import <Onyx2D/O2Paint_image.h>
 #import <Onyx2D/O2Paint_axialGradient.h>
 #import <Onyx2D/O2Paint_radialGradient.h>
 #import <Onyx2D/O2Paint_pattern.h>
@@ -42,6 +43,99 @@
 void O2DContextClipAndFillEdges(O2Context_builtin *self,int fillRuleMask);
 
 @implementation O2Context_builtin
+
+#ifdef FREETYPE_PRESENT
+// glyph rendering moved here from AppKit's O2Context_builtin_FT so plain bitmap contexts draw text
+static void applyCoverageToSpan_lRGBA8888_PRE(O2argb8u *dst,unsigned char *coverageSpan,O2argb8u *src,int length){
+   int i;
+   
+   for(i=0;i<length;i++,src++,dst++){
+    int coverage=coverageSpan[i];
+    int oneMinusCoverage=inverseCoverage(coverage);
+    O2argb8u r=*src;
+    O2argb8u d=*dst;
+    
+    *dst=O2argb8uAdd(O2argb8uMultiplyByCoverage(r , coverage) , O2argb8uMultiplyByCoverage(d , oneMinusCoverage));
+   }
+}
+
+
+// a glyph can land partly or wholly outside the surface (a window laying out text before it is sized, a label running past an edge),
+// so the spans are clipped before they are read and written.
+static void drawFreeTypeBitmap(O2Context_builtin *self,O2Surface *surface,FT_Bitmap *bitmap,int x,int y,O2Paint *paint){
+   int            width=bitmap->width;
+   int            height=bitmap->rows;
+   // glyphs are written straight to the surface, so the rasterizer viewport (where CGContextClipToRect ends up)
+   // is applied here too, keeping text inside its view's clip.
+   int            clipLeft=MAX(0,self->_vpx);
+   int            clipTop=MAX(0,self->_vpy);
+   int            clipRight=MIN((int)O2ImageGetWidth((O2ImageRef)surface),
+                                self->_vpx+self->_vpwidth);
+   int            clipBottom=MIN((int)O2ImageGetHeight((O2ImageRef)surface),
+                                 self->_vpy+self->_vpheight);
+   int            pitch=(bitmap->pitch>0)?bitmap->pitch:width;
+   int            row;
+   O2argb8u      *dstBuffer;
+   O2argb8u      *srcBuffer;
+   unsigned char *coverageRow=bitmap->buffer;
+
+   if(width<=0 || height<=0 || coverageRow==NULL)
+    return;
+
+   dstBuffer=__builtin_alloca(width*sizeof(O2argb8u));
+   srcBuffer=__builtin_alloca(width*sizeof(O2argb8u));
+
+   if(clipRight<=clipLeft || clipBottom<=clipTop)
+    return;
+
+   for(row=0;row<height;row++,y++,coverageRow+=pitch){
+    if(y<clipTop || y>=clipBottom)
+     continue;
+
+    int leading=(x<clipLeft)?clipLeft-x:0;
+    int visible=width-leading;
+
+    if(x+width>clipRight)
+     visible-=(x+width)-clipRight;
+
+    if(visible<=0)
+     continue;
+
+    int            spanX=x+leading;
+    int            length=visible;
+    unsigned char *coverage=coverageRow+leading;
+    O2argb8u      *dst=dstBuffer;
+    O2argb8u      *src=srcBuffer;
+    O2argb8u      *direct=surface->_read_argb8u(surface,spanX,y,dst,length);
+
+    if(direct!=NULL)
+     dst=direct;
+
+    while(YES){
+     int chunk=O2PaintReadSpan_argb8u_PRE(paint,spanX,y,src,length);
+
+     if(chunk<0)
+      chunk=-chunk;
+     else {
+      applyCoverageToSpan_lRGBA8888_PRE(dst,coverage,src,chunk);
+
+      if(direct==NULL)
+       O2SurfaceWriteSpan_argb8u_PRE(surface,spanX,y,dst,chunk);
+     }
+     coverage+=chunk;
+
+     length-=chunk;
+     spanX+=chunk;
+     src+=chunk;
+     dst+=chunk;
+
+     if(length<=0)
+      break;
+    }
+   }
+}
+#endif
+
 
 +(BOOL)canInitBitmap {
    return YES;
@@ -259,7 +353,7 @@ ONYX2D_STATIC O2Paint *paintFromColor(O2Context_builtin *self,O2ColorRef color,O
     O2GState        *gState=O2ContextCurrentGState(self);
     O2Size           size=[pattern bounds].size;
     O2Surface       *surface=[self createSurfaceWithWidth:size.width height:size.height];
-    O2BitmapContext *context=[[self->isa alloc] initWithSurface:surface flipped:NO];
+    O2BitmapContext *context=[[[self class] alloc] initWithSurface:surface flipped:NO];
 
     O2ContextClearRect(context,O2RectMake(0,0,size.width,size.height));
 // do save/restore? probably pointless
@@ -297,6 +391,7 @@ ONYX2D_STATIC O2Paint *paintFromColor(O2Context_builtin *self,O2ColorRef color,O
    O2PathApplyTransform(_path,O2AffineTransformInvert(gState->_userSpaceTransform));
    VGPath *vgPath=[[VGPath alloc] initWithKGPath:_path];
 
+   VGPathSetDeviceScale(vgPath,sqrt(fabs(userToSurfaceMatrix.a*userToSurfaceMatrix.d-userToSurfaceMatrix.b*userToSurfaceMatrix.c)));
    if(drawingMode!=kO2PathStroke){
     O2AffineTransform surfaceToPaintMatrix =userToSurfaceMatrix;//context->m_pathUserToSurface * context->m_fillPaintToUser;
     
@@ -339,14 +434,126 @@ ONYX2D_STATIC O2Paint *paintFromColor(O2Context_builtin *self,O2ColorRef color,O
    O2PathReset(_path);
 }
 
+#ifdef FREETYPE_PRESENT
+// rendered glyphs by face, size and glyph, text redraws the same few hundred glyphs every frame
+typedef struct {
+   FT_Face face;
+   FT_F26Dot6 size;
+   FT_UInt glyph;
+   FT_Bitmap bitmap;
+   FT_Int left, top;
+   FT_Pos advance;
+} O2GlyphCacheEntry;
+
+#define O2_GLYPH_CACHE_SIZE 4096
+static O2GlyphCacheEntry *glyphCache;
+static unsigned glyphCacheCount;
+
+static O2GlyphCacheEntry *cachedGlyph(FT_Face face,FT_F26Dot6 size,FT_UInt glyph){
+   unsigned i,hash;
+
+   if(glyphCache==NULL)
+    glyphCache=calloc(O2_GLYPH_CACHE_SIZE,sizeof(O2GlyphCacheEntry));
+   hash=(unsigned)(((uintptr_t)face>>4)*31+size*17+glyph*2654435761u);
+   for(i=0;i<O2_GLYPH_CACHE_SIZE;i++){
+    O2GlyphCacheEntry *entry=&glyphCache[(hash+i)%O2_GLYPH_CACHE_SIZE];
+
+    if(entry->face==face && entry->size==size && entry->glyph==glyph)
+     return entry;
+    if(entry->face!=NULL)
+     continue;
+
+    // full enough that probing gets slow, start over
+    if(glyphCacheCount>O2_GLYPH_CACHE_SIZE*3/4){
+     unsigned j;
+
+     for(j=0;j<O2_GLYPH_CACHE_SIZE;j++)
+      free(glyphCache[j].bitmap.buffer);
+     memset(glyphCache,0,O2_GLYPH_CACHE_SIZE*sizeof(O2GlyphCacheEntry));
+     glyphCacheCount=0;
+     return cachedGlyph(face,size,glyph);
+    }
+    if(FT_Load_Glyph(face,glyph,FT_LOAD_DEFAULT)!=0 || FT_Render_Glyph(face->glyph,FT_RENDER_MODE_NORMAL)!=0)
+     return NULL;
+
+    FT_GlyphSlot slot=face->glyph;
+    size_t bytes=(size_t)abs(slot->bitmap.pitch)*slot->bitmap.rows;
+
+    entry->face=face;
+    entry->size=size;
+    entry->glyph=glyph;
+    entry->bitmap=slot->bitmap;
+    entry->bitmap.buffer=bytes?malloc(bytes):NULL;
+    if(bytes)
+     memcpy(entry->bitmap.buffer,slot->bitmap.buffer,bytes);
+    entry->left=slot->bitmap_left;
+    entry->top=slot->bitmap_top;
+    entry->advance=slot->advance.x;
+    glyphCacheCount++;
+    return entry;
+   }
+   return NULL;
+}
+#endif
+
 -(void)showGlyphs:(const O2Glyph *)glyphs advances:(const O2Size *)advances count:(unsigned)count {
-#if 0
-   O2FontRef font=O2ContextCurrentGState(self)->_font;
-   int i;
-   
+#ifdef FREETYPE_PRESENT
+   O2AffineTransform transform=O2ContextGetUserSpaceToDeviceSpaceTransform(self);
+   O2GState         *gState=O2ContextCurrentGState(self);
+   O2Paint          *paint;
+   O2Point           point=O2PointApplyAffineTransform(NSMakePoint(_textMatrix.tx,_textMatrix.ty),transform);
+   O2Font           *font=gState->_font;
+   FT_Face           face=NULL;
+   FT_Error          ftError;
+   unsigned          i;
+
+   if(gState->_fontIsDirty)
+    O2GStateClearFontIsDirty(gState);
+
+   // both O2Font_freetype in Onyx2D and AppKit's O2Font_FT answer -face
+   if([font respondsToSelector:@selector(face)])
+    face=[(O2Font_freetype *)font face];
+   if(face==NULL)
+    return;
+
+   if((ftError=FT_Set_Char_Size(face,0,gState->_pointSize*64,72.0,72.0))){
+    NSLog(@"FT_Set_Char_Size returned %d",ftError);
+    return;
+   }
+
+   paint=paintFromColor(self,gState->_fillColor,O2AffineTransformIdentity);
+
+   O2Float userAdvance=0;
+
    for(i=0;i<count;i++){
-    O2Glyph    glyph=glyphs[i];
-    O2ImageRef stencil;
+    O2GlyphCacheEntry *glyph=cachedGlyph(face,(FT_F26Dot6)(gState->_pointSize*64),glyphs[i]);
+
+    if(advances!=NULL)
+     point=O2PointApplyAffineTransform(NSMakePoint(_textMatrix.tx+userAdvance,_textMatrix.ty),transform);
+
+    if(glyph!=NULL && glyph->bitmap.buffer!=NULL)
+     drawFreeTypeBitmap(self,_surface,&glyph->bitmap,point.x+glyph->left,point.y-glyph->top,paint);
+
+    if(advances!=NULL)
+     userAdvance+=advances[i].width;
+    else if(glyph!=NULL)
+     point.x+=glyph->advance>>6;
+   }
+
+   O2PaintRelease(paint);
+
+   // move the text position past the run in user space
+   if(advances!=NULL)
+    _textMatrix.tx+=userAdvance;
+   else {
+    int     glyphAdvances[count];
+    O2Float total=0;
+
+    O2FontGetGlyphAdvances(font,glyphs,count,glyphAdvances);
+    for(i=0;i<count;i++)
+     total+=glyphAdvances[i];
+
+    _textMatrix.tx+=(total/O2FontGetUnitsPerEm(font))*gState->_pointSize;
    }
 #endif
 }
@@ -444,6 +651,8 @@ static inline O2AffineTransform createImageToSurfaceTransform(O2ImageRef image,O
     iq=gState->_interpolationQuality;
 
    O2Paint *imagePaint=[[O2Paint_image allocWithZone:NULL] initWithImage:image mask:softMask mode:VG_DRAW_IMAGE_NORMAL paint:paint interpolationQuality:iq surfaceToImage:O2AffineTransformInvert(imageToSurface) surfaceToMask:O2AffineTransformInvert(maskToSurface)];
+   // a global alpha below one fades the image as it is read
+   [(O2Paint_image *)imagePaint setFade:gState->_alpha];
         
    O2ContextSetupPaintAndBlendMode(self,imagePaint,gState->_blendMode);
    

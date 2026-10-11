@@ -131,6 +131,11 @@ ONYX2D_STATIC BOOL initFunctionsForRGBColorSpace(O2Image *self,size_t bitsPerCom
            case kO2BitmapByteOrder32Little:
             self->_read_argb8u=O2ImageRead_BGRA8888_to_argb8u;
             return YES;
+
+           case kO2BitmapByteOrder16Big:
+           case kO2BitmapByteOrder32Big:
+            self->_read_argb8u=O2ImageRead_ARGB8888_to_argb8u;
+            return YES;
           }
           break;
                     
@@ -141,12 +146,12 @@ ONYX2D_STATIC BOOL initFunctionsForRGBColorSpace(O2Image *self,size_t bitsPerCom
           switch(bitmapInfo&kO2BitmapByteOrderMask){
            case kO2BitmapByteOrder16Little:
            case kO2BitmapByteOrder32Little:
-            self->_read_argb8u=O2ImageRead_ABGR8888_to_argb8u;
+            self->_read_argb8u=O2ImageRead_XBGR8888_to_argb8u;
             return YES;
 
            case kO2BitmapByteOrder16Big:
            case kO2BitmapByteOrder32Big:
-            self->_read_argb8u=O2ImageRead_RGBA8888_to_argb8u;
+            self->_read_argb8u=O2ImageRead_RGBX8888_to_argb8u;
             return YES;
           }
           break;
@@ -272,13 +277,7 @@ ONYX2D_STATIC BOOL initFunctionsForParameters(O2Image *self,size_t bitsPerCompon
    self->_read_a32f=O2ImageRead_ANY_to_A8_to_Af;
    self->_read_argb32f=O2ImageRead_ANY_to_argb8u_to_argb32f;
 
-	if((bitmapInfo&kO2BitmapByteOrderMask)==kO2BitmapByteOrderDefault) {
-#ifdef __LITTLE_ENDIAN__
-		bitmapInfo|=kO2BitmapByteOrder32Little;
-#else
-		bitmapInfo|=kO2BitmapByteOrder32Big;
-#endif
-	}
+   bitmapInfo=O2BitmapInfoResolveDefaultByteOrder(bitmapInfo,bitsPerComponent);
 	
    switch([colorSpace type]){
     case kO2ColorSpaceModelMonochrome:
@@ -465,7 +464,10 @@ O2ImageRef O2ImageCreateWithPNGDataProvider(O2DataProviderRef pngProvider,const 
 }
 
 O2ImageRef O2ImageCreateWithImageInRect(O2ImageRef self,O2Rect rect) {
-   rect=O2RectIntegral(rect);
+   // like Quartz, the rounded rect is clipped to the image, rounding outwards could reach past its last row
+   rect=O2RectIntersection(O2RectIntegral(rect),O2RectMake(0,0,self->_width,self->_height));
+   if(rect.size.width<=0 || rect.size.height<=0)
+    return NULL;
    size_t         x=MAX(0,rect.origin.x);
    size_t         y=MAX(0,rect.origin.y);
    size_t         col,width=rect.size.width;
@@ -935,6 +937,55 @@ O2argb8u *O2ImageRead_XRGB8888_to_argb8u(O2Image *self,int x,int y,O2argb8u *spa
 	result.g = *scanline++;
     result.b = *scanline++;
     *span++=result;
+   }
+   return NULL;
+}
+
+O2argb8u *O2ImageRead_ARGB8888_to_argb8u(O2Image *self,int x,int y,O2argb8u *span,int length) {
+   const uint8_t *scanline = scanlineAtY(self,y);
+
+   if(scanline==NULL)
+    return NULL;
+
+   scanline+=x*4;
+   for(int i=0;i<length;i++,scanline+=4){
+    span[i].a=scanline[0];
+    span[i].r=scanline[1];
+    span[i].g=scanline[2];
+    span[i].b=scanline[3];
+   }
+   return NULL;
+}
+
+// skip byte last, alpha reads as opaque
+O2argb8u *O2ImageRead_RGBX8888_to_argb8u(O2Image *self,int x,int y,O2argb8u *span,int length) {
+   const uint8_t *scanline = scanlineAtY(self,y);
+
+   if(scanline==NULL)
+    return NULL;
+
+   scanline+=x*4;
+   for(int i=0;i<length;i++,scanline+=4){
+    span[i].r=scanline[0];
+    span[i].g=scanline[1];
+    span[i].b=scanline[2];
+    span[i].a=255;
+   }
+   return NULL;
+}
+
+O2argb8u *O2ImageRead_XBGR8888_to_argb8u(O2Image *self,int x,int y,O2argb8u *span,int length) {
+   const uint8_t *scanline = scanlineAtY(self,y);
+
+   if(scanline==NULL)
+    return NULL;
+
+   scanline+=x*4;
+   for(int i=0;i<length;i++,scanline+=4){
+    span[i].b=scanline[1];
+    span[i].g=scanline[2];
+    span[i].r=scanline[3];
+    span[i].a=255;
    }
    return NULL;
 }
