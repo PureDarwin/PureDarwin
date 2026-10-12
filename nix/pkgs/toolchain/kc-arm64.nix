@@ -52,6 +52,7 @@ stdenv.mkDerivation {
       -kext "$KEXTS/Sandbox.kext" \
       -kext "$KEXTS/PDArmPlatformExpert.kext" \
       -kext "$KEXTS/PDArmPCI.kext" \
+      -kext "$KEXTS/PDEcamPCI.kext" \
       -kext "$KEXTS/IOStorageFamily.kext" \
       -kext "$KEXTS/PDSun50iMMC.kext" \
       -kext "$KEXTS/PDPowerVR.kext" \

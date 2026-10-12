@@ -2744,7 +2744,7 @@ let
       "ApfsFileSystemDriver.kext"
       "AppleFileSystemDriver.kext" "corecrypto.kext" "pthread.kext" "amfi.kext"
       "Sandbox.kext" "PDWatchdog.kext" "PDIOSurface.kext" "PDDiskImages2.kext" "PDLifs.kext" "PDSerialHID.kext" "PDKeyStore.kext"
-      "PDArmPlatformExpert" "PDArmPCI"
+      "PDArmPlatformExpert" "PDArmPCI" "PDEcamPCI"
       # Arch-neutral drivers, matching what x86 builds: filesystems,
       # USB, the rest of VirtIO, and the remaining storage families.
       "msdosfs.kext" "apfs.kext" "hfs.kext" "HFSEncodings.kext"
@@ -2774,7 +2774,7 @@ let
       "ApfsFileSystemDriver.kext"
       "AppleFileSystemDriver.kext" "corecrypto.kext" "pthread.kext" "amfi.kext"
       "Sandbox.kext" "PDWatchdog.kext" "PDIOSurface.kext" "PDDiskImages2.kext" "PDLifs.kext" "PDSerialHID.kext" "PDKeyStore.kext"
-      "PDArmPlatformExpert.kext" "PDArmPCI.kext"
+      "PDArmPlatformExpert.kext" "PDArmPCI.kext" "PDEcamPCI.kext"
       "msdosfs.kext" "apfs.kext" "hfs.kext" "HFSEncodings.kext"
       "IOUSBFamily.kext" "AppleUSBEHCI.kext" "AppleUSBOHCI.kext"
       "IOUSBCompositeDriver.kext"
