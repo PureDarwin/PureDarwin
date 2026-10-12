@@ -384,7 +384,6 @@ target_sources(libc_static PRIVATE
     string/FreeBSD/strnstr.c     # _strnstr
     os/pd_assumes.c               # os_assumes/os_assert real-contract impl (see file comment: real os/assumes.c needs firehose/os_log private ABI logd doesn't back here)
     emulated/lchflags.c           # _lchflags (real launchctl.c)
-    emulated/flock.c              # _flock
     emulated/lutimes.c            # _lutimes (setattrlist-based, real Apple source)
     emulated/copyfile.c           # _copyfile/_fcopyfile + copyfile_state_* (see file comment for what is carried across)
     emulated/lchmod.c             # _lchmod (setattrlist-based, real Apple source)

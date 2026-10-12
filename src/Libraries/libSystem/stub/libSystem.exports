@@ -472,6 +472,7 @@ _mach_port_set_mscount
 _mach_msg_send
 _mach_msg_server_once
 _host_reboot
+_kext_request
 _host_set_exception_ports
 _posix_spawn
 _posix_spawnattr_init
