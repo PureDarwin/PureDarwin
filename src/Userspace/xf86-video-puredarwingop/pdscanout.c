@@ -28,8 +28,8 @@ pdscanout_open(struct pdscanout *s, uint32_t width, uint32_t height, uint32_t pi
 	kern_return_t kr;
 
 	memset(s, 0, sizeof(*s));
-	svc = IOServiceGetMatchingService(MACH_PORT_NULL, IOServiceMatching(PD_PVR_SERVICE_CLASS));
-	if (svc == IO_OBJECT_NULL) {
+	kr = IOServiceGetMatchingService(MACH_PORT_NULL, IOServiceMatching(PD_PVR_SERVICE_CLASS), &svc);
+	if (kr != KERN_SUCCESS || svc == IO_OBJECT_NULL) {
 		snprintf(why, whylen, "no %s service", PD_PVR_SERVICE_CLASS);
 		return -1;
 	}
