@@ -29,7 +29,22 @@
 #define _PDACPIPLATFORMEXPERT_H
 
 #include <IOKit/acpi/IOACPIPlatformExpert.h>
+#include <IOKit/IOMessage.h>
 #include "AppleI386CPU.h"
+
+// messageClients() code a PDACPIPowerButton sends when the button is pressed
+#define kPDACPIMessagePowerButton iokit_vendor_specific_msg(0x100)
+
+// the same press as a kernel event, vendor org.puredarwin.acpi
+#define kPDACPIEventVendor        "org.puredarwin.acpi"
+#define kPDACPIEventClass         1
+#define kPDACPIEventSubclass      1
+#define kPDACPIEventPowerButton   1
+
+// published once the namespace is up, userspace watches it for power button presses
+class PDACPIPowerButton : public IOService {
+	OSDeclareDefaultStructors(PDACPIPowerButton)
+};
 
 bool PDACPIGlueInit(void);
 void PDACPIGlueFree(void);
@@ -45,8 +60,11 @@ private:
 	void setupPIC(IOService *nub);
 	void setupBIOS(IOService *nub);
 
-	// uACPI's barebones stage: tables readable, no namespace, no AML.
+	// uACPI's early tables, then the namespace, sci and events on a thread
 	bool setupEarlyTables(void);
+	void startACPI(void);
+	static bool acpiPowerOff(void);
+	static bool acpiReset(void);
 	void logTable(const char *signature);
 
 	// Enabled processors' LAPIC ids, boot CPU first (XNU assigns it slot 0).
@@ -94,6 +112,10 @@ public:
 	virtual void setGMTTimeOfDay(long secs) APPLE_KEXT_OVERRIDE;
 	virtual void registerNVRAMController(IONVRAMController *nvram) APPLE_KEXT_OVERRIDE;
 	virtual void free(void) APPLE_KEXT_OVERRIDE;
+
+	// uacpi's sci, attached to a nub once the ioapic controller exists
+	static void attachSCI(UInt32 irq, void *handler, void *ref);
+	static void detachSCI(void);
 
 protected:
 	// IOACPIPlatformExpert's pure virtuals; only getACPITableData is real so far.

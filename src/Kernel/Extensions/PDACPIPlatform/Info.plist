@@ -84,6 +84,8 @@
 	<dict>
 		<key>com.apple.iokit.IOACPIFamily</key>
 		<string>1.0.0d1</string>
+		<key>com.apple.kpi.bsd</key>
+		<string>8.0.0</string>
 		<key>com.apple.kpi.iokit</key>
 		<string>8.0.0</string>
 		<key>com.apple.kpi.libkern</key>

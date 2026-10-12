@@ -388,6 +388,7 @@ bool PDACPIPlatformExpert::start(IOService *provider) {
 
 	publishRTC();
 	setupNVRAM();
+	if (fUACPIStarted) startACPI();
 
 	return true;
 }
@@ -600,6 +601,9 @@ int PDACPIPlatformExpert::handlePEHaltRestart(unsigned int type) {
 
 	switch (type) {
 		case kPERestartCPU:
+			// the fadt reset register first, the 0xcf9 reset below is the fallback
+			acpiReset();
+
 			// Note: This code may or may not work reliably on all systems.
 			// The original author of it indicated that it should work on any
 			// system with a compliant PCI controller.
@@ -620,6 +624,8 @@ int PDACPIPlatformExpert::handlePEHaltRestart(unsigned int type) {
 			/* ACPI soft-off: write SLP_TYP|SLP_EN to the PM1 control
 			 * register(s). Without this the caller (halt_all_cpus) just spins
 			 * in a while(1), so the machine never actually powers down. */
+			// uacpi's s5, with _S5 evaluated by the interpreter, then the hand parsed fallback
+			acpiPowerOff();
 			if (sACPIPowerOffReady) {
 				outw(sPM1aControlPort,
 				    (UInt16)((sS5SleepTypeA << 10) | 0x2000));

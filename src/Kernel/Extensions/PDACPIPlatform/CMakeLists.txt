@@ -7,6 +7,8 @@ target_sources(PDACPIPlatform PRIVATE
     PDACPIPlatformExpert.cpp
     PDEFINVRAM.cpp
     PDACPIGlue.cpp
+    PDACPIKernel.cpp
+    PDACPIPower.cpp
     AppleI386CPU.cpp
     ${PDACPI_UACPI_SOURCES}
 )
@@ -14,8 +16,7 @@ target_sources(PDACPIPlatform PRIVATE
 target_include_directories(PDACPIPlatform PRIVATE uacpi/include)
 
 # uACPI is freestanding C: no libc, and the kernel has no <stdint.h> of the
-# hosted kind. UACPI_BAREBONES_MODE keeps it to table access only for now.
-target_compile_definitions(PDACPIPlatform PRIVATE UACPI_BAREBONES_MODE)
+# hosted kind. Full mode: the aml interpreter, sci, events and sleep states.
 set_source_files_properties(${PDACPI_UACPI_SOURCES} PROPERTIES
     COMPILE_OPTIONS "-std=c11;-ffreestanding")
 
