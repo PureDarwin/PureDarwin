@@ -8,10 +8,20 @@ class PDEcamPCI : public IOPCIBridge
 {
     OSDeclareDefaultStructors(PDEcamPCI)
 
+protected:
+    // the config window, ecam here and the buses below the host
     IOMemoryMap *ecamMap;
     volatile UInt8 *ecamBase;
     UInt8 busFirst;
     UInt8 busLast;
+
+    void readBusRange(IOService *provider);
+    // maps the config space the provider's reg describes. false when there isn't any
+    virtual bool mapConfigSpace(IOService *provider);
+    // a config register's address, NULL when nothing answers there
+    virtual volatile UInt8 *configAddress(IOPCIAddressSpace space, UInt8 offset) const;
+
+private:
     IODeviceMemory *ioSpace;
 
     // host bridge node properties the interrupt routing reads
@@ -20,8 +30,6 @@ class PDEcamPCI : public IOPCIBridge
     UInt32 addrCells;
     UInt32 intCells;
 
-    volatile UInt8 *configAddress(IOPCIAddressSpace space, UInt8 offset) const;
-    bool mapECAM(IOService *provider);
     void addWindows(IORegistryEntry *node);
     bool routeINTx(UInt32 bus, UInt32 device, UInt32 pin, UInt32 *phandle,
                    UInt32 *spec, UInt32 *specCells);

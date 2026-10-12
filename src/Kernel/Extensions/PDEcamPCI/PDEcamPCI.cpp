@@ -90,16 +90,10 @@ static IORegistryEntry *nodeForPHandle(UInt32 phandle)
     return found;
 }
 
-bool PDEcamPCI::mapECAM(IOService *provider)
+void PDEcamPCI::readBusRange(IOService *service)
 {
-    IODeviceMemory *mem = provider->getDeviceMemoryWithIndex(0);
     UInt32 range[2];
-    OSData *busRange = OSDynamicCast(OSData, provider->getProperty("bus-range"));
-
-    if (!mem || mem->getLength() < (1u << ECAM_BUS_SHIFT)) {
-        IOLog("PDEcamPCI: %s has no usable reg for the ecam window\n", provider->getName());
-        return false;
-    }
+    OSData *busRange = OSDynamicCast(OSData, service->getProperty("bus-range"));
 
     busFirst = 0;
     busLast = 255;
@@ -110,6 +104,18 @@ bool PDEcamPCI::mapECAM(IOService *provider)
             busLast = (UInt8)range[1];
         }
     }
+}
+
+bool PDEcamPCI::mapConfigSpace(IOService *provider)
+{
+    IODeviceMemory *mem = provider->getDeviceMemoryWithIndex(0);
+
+    if (!mem || mem->getLength() < (1u << ECAM_BUS_SHIFT)) {
+        IOLog("PDEcamPCI: %s has no usable reg for the ecam window\n", provider->getName());
+        return false;
+    }
+
+    readBusRange(provider);
 
     // the window starts at the first bus and may cover fewer buses than bus-range names
     UInt64 buses = mem->getLength() >> ECAM_BUS_SHIFT;
@@ -130,7 +136,7 @@ bool PDEcamPCI::start(IOService *provider)
     IORegistryEntry *node = provider;
     OSData *mask;
 
-    if (!mapECAM(provider))
+    if (!mapConfigSpace(provider))
         return false;
 
     addrCells = cellsOf(node, "#address-cells", PCI_ADDR_CELLS);
