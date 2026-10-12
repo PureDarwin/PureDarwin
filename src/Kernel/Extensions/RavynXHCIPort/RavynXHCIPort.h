@@ -145,18 +145,18 @@ private:
     UInt32                fContextSize; /* 32 or 64 bytes/context */
     IOLock              * fCmdLock;
 
-    /* MSI-driven event ring servicing. doCommand()/waitTransferEvent() still
-     * poll serviceEventRing() + IOSleep(1) themselves either way (identical
-     * to before), but when this is up the ISR also drains the ring and
-     * broadcasts fEventWaitChannel, so those waits usually resolve on the
-     * first iteration instead of a full 1ms tick. Falls back to pure polling
-     * (fInterruptsEnabled == false) if MSI registration fails. */
+    /* Interrupt-driven event ring servicing (MSI, or a device tree interrupt
+     * on the sc8280xp). doCommand()/waitTransferEvent() drain the ring
+     * themselves and then sleep on fEventWaitChannel until serviceEventRing()
+     * files something (fEventGeneration moves), their deadline, or a 20 ms
+     * backstop. Without an interrupt they fall back to 1 ms polling. */
     IOWorkLoop            * fWorkLoop;
     IOInterruptEventSource * fInterruptSource;
     bool                   fInterruptsEnabled;
     bool                   fPlatformInterrupt;
     IOLock               * fEventWaitLock;
     UInt32                 fEventWaitChannel;
+    UInt32                 fEventGeneration;    // under fEventWaitLock, bumped when events are filed
 
     /* IOUSBController-shaped view of this port, backing IOUSBDevice/
      * IOUSBInterface for any slot enumerateSlotDevice() doesn't already
@@ -388,6 +388,8 @@ private:
      * under fEventLock, recording each into fXferDone[][]/fCmdDone* for the
      * waiter that's looking for it. Safe to call from multiple threads. */
     void serviceEventRing();
+    UInt32 eventGeneration();
+    void sleepForEvent(UInt32 generation, uint64_t until);
 
     void interruptOccurred(IOInterruptEventSource *sender, int count);
     static void interruptOccurredStatic(OSObject *owner, IOInterruptEventSource *sender, int count);

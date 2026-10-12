@@ -614,6 +614,7 @@ bool RavynXHCIPort::start(IOService *provider)
     fPlatformInterrupt = false;
     fEventWaitLock = NULL;
     fEventWaitChannel = 0;
+    fEventGeneration = 0;
     fPortChangePending = false;
     fHotplugWaitChannel = 0;
     fUSBBus = NULL;
@@ -1169,8 +1170,6 @@ void RavynXHCIPort::interruptOccurred(IOInterruptEventSource *sender, int count)
     rtWrite32(XHCI_RT_IR0 + XHCI_IR_IMAN, iman);
 
     serviceEventRing();
-
-    IOLockWakeup(fEventWaitLock, &fEventWaitChannel, true);
 }
 
 void RavynXHCIPort::serviceEventRing()
@@ -1179,7 +1178,7 @@ void RavynXHCIPort::serviceEventRing()
      * event and files each completion into the per-(slot,DCI) transfer table
      * or the command-completion slot, so concurrent waiters (disk I/O + the
      * keyboard poll thread) never consume and discard each other's events. */
-    bool portChange = false;
+    bool portChange = false, filed = false;
 
     IOLockLock(fEventLock);
     for (;;) {
@@ -1196,11 +1195,13 @@ void RavynXHCIPort::serviceEventRing()
             fCmdDoneCC      = TRB_CC(evStatus);
             fCmdDoneSlot    = TRB_GET_SLOT(evControl);
             fCmdDonePending = true;
+            filed = true;
         } else if (type == TRB_TYPE_TRANSFER_EVENT) {
             UInt32 slot = TRB_GET_SLOT(evControl);
             UInt32 dci  = (evControl >> 16) & 0x1F; /* Endpoint ID field */
             if (slot < 64 && dci < 32 && fBulk[slot][dci]) {
                 recordBulkEvent(slot, dci, evParam, evStatus);
+                filed = true;   // the bulk thread sleeps on fEventWaitChannel too
             } else if (slot < 64 && dci < 32) {
                 if (dci == 1 && TRB_CC(evStatus) == TRB_CC_SHORT_PACKET) {
                     fXferDone[slot][dci].shortResidual = evStatus & 0xffffff;
@@ -1211,6 +1212,7 @@ void RavynXHCIPort::serviceEventRing()
                 fXferDone[slot][dci].status  = evStatus;
                 fXferDone[slot][dci].control = evControl;
                 fXferDone[slot][dci].pending = true;
+                filed = true;
             }
         } else if (type == TRB_TYPE_PORT_STATUS_CHG) {
             XHCI_Log("port status change event, port %u", (UInt32)(evParam >> 24) & 0xff);
@@ -1227,12 +1229,47 @@ void RavynXHCIPort::serviceEventRing()
     }
     IOLockUnlock(fEventLock);
 
-    if (portChange && fEventWaitLock) {
+    // every waiter wakes: a completion this thread filed may belong to any of them
+    if ((filed || portChange) && fEventWaitLock) {
         IOLockLock(fEventWaitLock);
-        fPortChangePending = true;
-        IOLockWakeup(fEventWaitLock, &fHotplugWaitChannel, true);
+        if (filed) {
+            fEventGeneration++;
+            IOLockWakeup(fEventWaitLock, &fEventWaitChannel, false);
+        }
+        if (portChange) {
+            fPortChangePending = true;
+            IOLockWakeup(fEventWaitLock, &fHotplugWaitChannel, true);
+        }
         IOLockUnlock(fEventWaitLock);
     }
+}
+
+UInt32 RavynXHCIPort::eventGeneration()
+{
+    if (!fEventWaitLock) return 0;
+    IOLockLock(fEventWaitLock);
+    UInt32 generation = fEventGeneration;
+    IOLockUnlock(fEventWaitLock);
+    return generation;
+}
+
+#define kEventWaitBackstopMs 20
+
+// read the generation before draining the ring: if anything is filed after that, the generation
+// has moved and this returns at once, so a wakeup between the check and the sleep isn't lost
+void RavynXHCIPort::sleepForEvent(UInt32 generation, uint64_t until)
+{
+    uint64_t backstop;
+
+    if (!fInterruptsEnabled) {
+        IOSleep(1);
+        return;
+    }
+    clock_interval_to_deadline(kEventWaitBackstopMs, kMillisecondScale, &backstop);
+    IOLockLock(fEventWaitLock);
+    if (fEventGeneration == generation)
+        IOLockSleepDeadline(fEventWaitLock, &fEventWaitChannel, until < backstop ? until : backstop, THREAD_UNINT);
+    IOLockUnlock(fEventWaitLock);
 }
 
 bool RavynXHCIPort::doCommand(UInt64 param, UInt32 status, UInt32 controlNoCycle,
@@ -1256,7 +1293,10 @@ bool RavynXHCIPort::doCommand(UInt64 param, UInt32 status, UInt32 controlNoCycle
     ringDoorbell(0, 0);
 
     bool ok = false;
-    for (UInt64 waited = 0; waited < timeoutMs; waited++) {
+    uint64_t deadline;
+    clock_interval_to_deadline((UInt32)timeoutMs, kMillisecondScale, &deadline);
+    for (;;) {
+        UInt32 generation = eventGeneration();
         serviceEventRing();
         if (fCmdDonePending && fCmdDoneParam == cmdTRBPhys) {
             if (outCC) *outCC = fCmdDoneCC;
@@ -1265,15 +1305,8 @@ bool RavynXHCIPort::doCommand(UInt64 param, UInt32 status, UInt32 controlNoCycle
             ok = true;
             break;
         }
-        if (fInterruptsEnabled) {
-            AbsoluteTime deadline;
-            clock_interval_to_deadline(1, kMillisecondScale, &deadline);
-            IOLockLock(fEventWaitLock);
-            IOLockSleepDeadline(fEventWaitLock, &fEventWaitChannel, deadline, THREAD_UNINT);
-            IOLockUnlock(fEventWaitLock);
-        } else {
-            IOSleep(1);
-        }
+        if (mach_absolute_time() >= deadline) break;
+        sleepForEvent(generation, deadline);
     }
     dmaFlushContexts();
     IOLockUnlock(fCmdLock);
@@ -1305,7 +1338,12 @@ bool RavynXHCIPort::waitTransferEvent(UInt32 slotId, UInt32 epDCI, UInt8 *outCC,
                                       UInt32 *outResidual, UInt64 *outTRB)
 {
     if (slotId >= 64 || epDCI >= 32) return false;
-    for (UInt32 waited = 0; waited < timeoutMs; waited++) {
+    uint64_t deadline, reringInterval, rering;
+    clock_interval_to_deadline(timeoutMs, kMillisecondScale, &deadline);
+    nanoseconds_to_absolutetime(50 * NSEC_PER_MSEC, &reringInterval);
+    rering = mach_absolute_time() + reringInterval;
+    for (;;) {
+        UInt32 generation = eventGeneration();
         serviceEventRing();
         IOLockLock(fEventLock);
         if (fXferDone[slotId][epDCI].pending) {
@@ -1323,19 +1361,14 @@ bool RavynXHCIPort::waitTransferEvent(UInt32 slotId, UInt32 epDCI, UInt8 *outCC,
          * controller saw an empty ring and went idle). Periodically re-ring
          * the doorbell for this endpoint so the controller re-examines the
          * ring. Harmless if the transfer is already progressing. */
-        if (waited && (waited % 50) == 0)
+        uint64_t now = mach_absolute_time();
+        if (now >= deadline) return false;
+        if (now >= rering) {
             ringDoorbell(slotId, epDCI);
-        if (fInterruptsEnabled) {
-            AbsoluteTime deadline;
-            clock_interval_to_deadline(1, kMillisecondScale, &deadline);
-            IOLockLock(fEventWaitLock);
-            IOLockSleepDeadline(fEventWaitLock, &fEventWaitChannel, deadline, THREAD_UNINT);
-            IOLockUnlock(fEventWaitLock);
-        } else {
-            IOSleep(1);
+            rering = now + reringInterval;
         }
+        sleepForEvent(generation, deadline < rering ? deadline : rering);
     }
-    return false;
 }
 
 void RavynXHCIPort::scanPorts()
