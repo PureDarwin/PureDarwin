@@ -64,16 +64,11 @@
 #define DMUB_FW_META_MAGIC  0x444d5542
 #define DMUB_FW_META_OFFSET 0x24
 #define kGpintStopFw        2
+#define kGpintStreamMask    8           // DMUB_GPINT__IDLE_OPT_NOTIFY_STREAM_MASK
 #define kGpintStopResponse  0xdeaddead
 #define kGfxFwTypeDmub      51
 #define kPspHeaderBytes     256
 
-// firmware stays an unmodified binary, LICENSE.amdgpu is installed with the kext
-__asm__(".section __TEXT,__const\n.p2align 4\n"
-        ".private_extern _pd_amd_dmcub_start\n_pd_amd_dmcub_start:\n"
-        ".incbin \"" PDAMDGPU_FW_DIR "/dcn_3_1_5_dmcub.bin\"\n"
-        ".private_extern _pd_amd_dmcub_end\n_pd_amd_dmcub_end:\n.text\n");
-extern "C" const uint8_t pd_amd_dmcub_start[], pd_amd_dmcub_end[];
 
 // carveout layout from dmubBase, each window on its own 4 KiB boundary
 #define kDmubMailboxOff     0x00000
@@ -84,8 +79,8 @@ extern "C" const uint8_t pd_amd_dmcub_start[], pd_amd_dmcub_end[];
 // the psp loads the instruction image into the tmr, the driver only owns the data windows
 bool PDAmdGPU::dmubLoad(void)
 {
-    const uint32_t *h = (const uint32_t *)pd_amd_dmcub_start;
-    uint32_t total = pd_amd_dmcub_end - pd_amd_dmcub_start;
+    const uint32_t *h = (const uint32_t *)chip->fw->dmcub.start;
+    uint32_t total = chip->fw->dmcub.end - chip->fw->dmcub.start;
 
     // dmcub_firmware_header_v1_0: the common header, then inst_const_bytes and bss_data_bytes
     uint32_t arrayOff = h[6], instBytes = h[8], bssBytes = h[9];
@@ -93,7 +88,7 @@ bool PDAmdGPU::dmubLoad(void)
         LOG("dmub: firmware image is malformed\n");
         return false;
     }
-    dmubInst = pd_amd_dmcub_start + arrayOff;
+    dmubInst = chip->fw->dmcub.start + arrayOff;
     dmubInstSize = instBytes;
     LOG("dmub: firmware v0x%08x, inst %u bytes, bss %u bytes\n", h[4], instBytes, bssBytes);
 
@@ -264,8 +259,8 @@ bool PDAmdGPU::dmubInit(void)
     wreg(regDMCUB_OUTBOX1_BASE, DMUB_CW4_BASE + DMUB_RB_SIZE);
     wreg(regDMCUB_OUTBOX1_SIZE, DMUB_RB_SIZE);
 
-    // no boot options on an apu without usb4, then dmub_dcn31_reset_release
-    wreg(regDMCUB_SCRATCH14, 0);
+    // amdgpu's boot options: enable_dpia only, then dmub_dcn31_reset_release
+    wreg(regDMCUB_SCRATCH14, 0x80);
     wreg(regMMHUBBUB_SOFT_RESET, rreg(regMMHUBBUB_SOFT_RESET) & ~kDmuifSoftReset);
     wreg(regDMCUB_SCRATCH15, 0);
     wreg(regDMCUB_CNTL, rreg(regDMCUB_CNTL) | kDmcubEnable | kDmcubTraceportEn);
@@ -436,13 +431,51 @@ bool PDAmdGPU::dmubTransmitter(uint8_t phy, uint8_t action, uint8_t mode, uint8_
     return ok;
 }
 
+#define kDmubCmdIdleOpt             72
+#define kIdleOptDcnRestore          0
+#define kIdleOptSetDcPowerState     3
+
+// dc_set_power_state's notice to the firmware, d0 before any display work and d3 before it is stopped
+bool PDAmdGPU::dmubDcPowerState(bool on)
+{
+    uint32_t cmd[16] = {};
+
+    // dcn31_z10_restore, only when the firmware's boot status asks for it
+    if (on && (rreg(regDMCUB_SCRATCH0) & 0x8)) {
+        cmd[0] = dmubHeader(kDmubCmdIdleOpt, kIdleOptDcnRestore, false, 0);
+        LOG("dmub: dcn restore %s\n", dmubCmd(cmd, false) ? "done" : "failed");
+        memset(cmd, 0, sizeof(cmd));
+    }
+    cmd[0] = dmubHeader(kDmubCmdIdleOpt, kIdleOptSetDcPowerState, false, 4);
+    cmd[1] = on ? 1 : 8;
+    bool ok = dmubCmd(cmd, false);
+    LOG("dmub: dc power state %s %s\n", on ? "d0" : "d3", ok ? "done" : "failed");
+    return ok;
+}
+
+// dc_dmub_srv_notify_stream_mask: tells the firmware which streams are live, done when it clears the status bit
+void PDAmdGPU::dmubNotifyStreamMask(uint16_t mask)
+{
+    uint32_t cmd = (kGpintStreamMask << 16) | mask;
+    wreg(regDMCUB_GPINT_DATAIN1, (1u << 28) | cmd);
+    int i = 0;
+    for (; i < 100000 && rreg(regDMCUB_GPINT_DATAIN1) != cmd; i++) IODelay(1);
+    LOG("dmub: stream mask 0x%x %s\n", mask, i < 100000 ? "acked" : "not acked");
+}
+
+// transmitter disable on uniphy a, as link_disable does before the pll is released
+void PDAmdGPU::hdmiLinkDown(void)
+{
+    dmubTransmitter(0, 0, 3, 4, 148500 / 10, 1, 0, 0x0c);
+}
+
 // the hdmi path from the display object table: uniphy a, dig 0, connector hdmi type a, hpd 1
 void PDAmdGPU::hdmiLinkUp(void)
 {
     const uint8_t phy = 0, hdmiMode = 3, conn = 0x0c, hpd = 1, encoderId = 0x1e, pll = 20;
     const uint32_t pixKhz = 148500;
 
-    dmubTransmitter(phy, 7, hdmiMode, 4, pixKhz / 10, hpd, 0, conn);                // init, as the link encoder hw_init does
+    // no transmitter init, as enc31_hw_init sends none
     dmubSetPixelClock(pixKhz * 10, pll, encoderId, hdmiMode, 0);                     // the phy pll for 1080p60
     dmubTransmitter(phy, 1, hdmiMode, 4, pixKhz / 10, hpd, 0, conn);                // enable tmds on the phy
     LOG("dmub: after link up SCRATCH0 0x%08x\n", rreg(regDMCUB_SCRATCH0));

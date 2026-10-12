@@ -6,16 +6,9 @@
 #define regBIF_BX0_PCIE_INDEX2  0x000e
 #define regBIF_BX0_PCIE_DATA2   0x000f
 
-// smu 13.0.5 mailbox, from smu_v13_0_5_ppt.c (MIT)
-#define mmMP1_C2PMSG_2          (0xbee142 + 0xb00000 / 4)
-#define mmMP1_C2PMSG_33         (0xbee261 + 0xb00000 / 4)
-#define mmMP1_C2PMSG_34         (0xbee262 + 0xb00000 / 4)
-
-// smu_v13_0_5_ppsmc.h
+// the same on every smu 13 apu, the mailbox and the other message numbers come from the chip table
 #define kSmuResultOk            0x1
 #define kSmuMsgGetSmuVersion    2
-#define kSmuMsgGfxDriverReset   10
-#define kSmuMsgDisallowGfxOff   23
 #define kSmuResetMode2          2
 
 uint32_t PDAmdGPU::rregAny(uint32_t idx)
@@ -47,9 +40,9 @@ void PDAmdGPU::wregAny(uint32_t idx, uint32_t v)
 // smu_cmn_send_smc_msg_with_param: wait for the last reply, clear it, post the argument and the message, wait again
 bool PDAmdGPU::smuSend(uint32_t msg, uint32_t arg, uint32_t *out)
 {
-    uint32_t msgReg = soc15(kHwMP1, 0, mmMP1_C2PMSG_2);
-    uint32_t respReg = soc15(kHwMP1, 0, mmMP1_C2PMSG_33);
-    uint32_t argReg = soc15(kHwMP1, 0, mmMP1_C2PMSG_34);
+    uint32_t msgReg = soc15(kHwMP1, 0, chip->smuMsg);
+    uint32_t respReg = soc15(kHwMP1, 0, chip->smuResp);
+    uint32_t argReg = soc15(kHwMP1, 0, chip->smuArg);
     uint32_t resp = 0;
 
     for (int i = 0; i < 1000 && (resp = rregAny(respReg)) == 0; i++)
@@ -81,13 +74,20 @@ void PDAmdGPU::smuInit(void)
 
 void PDAmdGPU::smuDisallowGfxOff(const char *when)
 {
-    bool ok = smuSend(kSmuMsgDisallowGfxOff, 0, nullptr);
+    bool ok = smuSend(chip->msgDisallowGfxOff, 0, nullptr);
     LOG("smu: gfxoff %s %s, response reg 0x%x\n", when, ok ? "disallowed" : "still allowed",
-        rregAny(soc15(kHwMP1, 0, mmMP1_C2PMSG_33)));
+        rregAny(soc15(kHwMP1, 0, chip->smuResp)));
 }
 
 void PDAmdGPU::smuMode2Reset(const char *when)
 {
-    bool ok = smuSend(kSmuMsgGfxDriverReset, kSmuResetMode2, nullptr);
+    bool ok = smuSend(chip->msgGfxReset, kSmuResetMode2, nullptr);
     LOG("smu: %s mode 2 reset %s\n", when, ok ? "done" : "failed");
+}
+
+// the one smu message amdgpu sends on its way down, without it the next driver finds the smu unresponsive
+void PDAmdGPU::smuPrepareUnload(void)
+{
+    bool ok = smuSend(chip->msgPrepareUnload, 0, nullptr);
+    LOG("smu: prepared for unload %s\n", ok ? "done" : "failed");
 }

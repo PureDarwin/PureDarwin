@@ -13,16 +13,25 @@ target_sources(PDAmdGPU.kext PRIVATE
     PDAmdKiq.cpp
     PDAmdIh.cpp
     PDAmdDmub.cpp
-    PDAmdClk.cpp)
+    PDAmdClk.cpp
+    PDAmdDisplay.cpp
+    PDAmdAtom.cpp
+    PDAmdFramebuffer.cpp
+    PDAmdFirmware.cpp
+    atom/atom.c)
 
-set_source_files_properties(PDAmdPsp.cpp PDAmdDmub.cpp PROPERTIES
+# every chip's firmware is embedded with .incbin, a changed file has to rebuild the object
+file(GLOB PDAMDGPU_FIRMWARE ${CMAKE_CURRENT_SOURCE_DIR}/firmware/*.bin)
+set_source_files_properties(PDAmdFirmware.cpp PROPERTIES
     COMPILE_DEFINITIONS "PDAMDGPU_FW_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/firmware\""
-    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/firmware/psp_13_0_5_toc.bin;${CMAKE_CURRENT_SOURCE_DIR}/firmware/sdma_5_2_6.bin;${CMAKE_CURRENT_SOURCE_DIR}/firmware/gc_10_3_6_ce.bin;${CMAKE_CURRENT_SOURCE_DIR}/firmware/gc_10_3_6_pfp.bin;${CMAKE_CURRENT_SOURCE_DIR}/firmware/gc_10_3_6_me.bin;${CMAKE_CURRENT_SOURCE_DIR}/firmware/gc_10_3_6_mec.bin;${CMAKE_CURRENT_SOURCE_DIR}/firmware/gc_10_3_6_rlc.bin;${CMAKE_CURRENT_SOURCE_DIR}/firmware/dcn_3_1_5_dmcub.bin")
+    OBJECT_DEPENDS "${PDAMDGPU_FIRMWARE}")
 install(FILES firmware/LICENSE.amdgpu
     DESTINATION System/Library/Extensions/PDAmdGPU.kext/Contents/Resources COMPONENT BaseSystem)
 
 target_include_directories(PDAmdGPU.kext PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../IOGraphicsFamily
+    ${CMAKE_CURRENT_SOURCE_DIR}/../IOHIDFamily/IOHIDSystem
     ${CMAKE_CURRENT_SOURCE_DIR}/../IOPCIFamily/include)
 target_link_libraries(PDAmdGPU.kext PRIVATE xnu_kernel_private_headers)
 target_compile_definitions(PDAmdGPU.kext PRIVATE __PRIVATE_SPI__)

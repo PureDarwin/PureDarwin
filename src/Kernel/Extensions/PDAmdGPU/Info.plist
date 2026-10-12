@@ -31,15 +31,28 @@
             <key>IOClass</key>
             <string>PDAmdGPU</string>
             <key>IOPCIPrimaryMatch</key>
-            <string>0x13c01002</string>
+            <string>0x13c01002 0x15061002</string>
             <key>IOProbeScore</key>
             <integer>6000</integer>
             <key>IOProviderClass</key>
             <string>IOPCIDevice</string>
         </dict>
+        <key>PDAmdFramebuffer</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>org.puredarwin.driver.PDAmdGPU</string>
+            <key>IOClass</key>
+            <string>PDAmdFramebuffer</string>
+            <key>IOMatchCategory</key>
+            <string>IOFramebuffer</string>
+            <key>IOProviderClass</key>
+            <string>PDAmdGPU</string>
+        </dict>
     </dict>
     <key>OSBundleLibraries</key>
     <dict>
+        <key>com.apple.iokit.IOGraphicsFamily</key>
+        <string>576.1</string>
         <key>com.apple.iokit.IOPCIFamily</key>
         <string>2.9</string>
         <key>com.apple.kpi.iokit</key>

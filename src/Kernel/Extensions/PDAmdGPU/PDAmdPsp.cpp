@@ -1,6 +1,7 @@
 #include "PDAmdGPU.h"
 
 #include <IOKit/IOLib.h>
+#include <pexpert/pexpert.h>
 #include <string.h>
 
 // mp 13.0.5 and gc 10.3 offsets from the amdgpu register headers (MIT)
@@ -44,22 +45,6 @@
 #define mmCP_STAT                   0x0f40
 #define mmRLC_RLCS_BOOTLOAD_STATUS  0x4e8d
 
-// firmware stays an unmodified binary, LICENSE.amdgpu is installed with the kext
-#define FW_BLOB(sym, file) \
-    ".p2align 4\n.private_extern _pd_amd_" #sym "_start\n_pd_amd_" #sym "_start:\n" \
-    ".incbin \"" PDAMDGPU_FW_DIR "/" file "\"\n" \
-    ".private_extern _pd_amd_" #sym "_end\n_pd_amd_" #sym "_end:\n"
-__asm__(".section __TEXT,__const\n"
-        FW_BLOB(toc, "psp_13_0_5_toc.bin")
-        FW_BLOB(sdma, "sdma_5_2_6.bin")
-        FW_BLOB(ce, "gc_10_3_6_ce.bin")
-        FW_BLOB(pfp, "gc_10_3_6_pfp.bin")
-        FW_BLOB(me, "gc_10_3_6_me.bin")
-        FW_BLOB(mec, "gc_10_3_6_mec.bin")
-        FW_BLOB(rlc, "gc_10_3_6_rlc.bin")
-        ".text\n");
-#define FW_DECL(sym) extern "C" const uint8_t pd_amd_##sym##_start[], pd_amd_##sym##_end[];
-FW_DECL(toc) FW_DECL(sdma) FW_DECL(ce) FW_DECL(pfp) FW_DECL(me) FW_DECL(mec) FW_DECL(rlc)
 
 // common_firmware_header from amdgpu_ucode.h
 struct AmdFwHeader {
@@ -176,14 +161,14 @@ bool PDAmdGPU::pspSubmit(const uint32_t *cmd, uint32_t words, uint32_t *resp, ui
 // hands the toc to the psp, which answers with the tmr size the firmware set needs
 void PDAmdGPU::pspLoadToc(void)
 {
-    const AmdFwHeader *h = (const AmdFwHeader *)pd_amd_toc_start;
-    uint32_t total = pd_amd_toc_end - pd_amd_toc_start;
+    const AmdFwHeader *h = (const AmdFwHeader *)chip->fw->toc.start;
+    uint32_t total = chip->fw->toc.end - chip->fw->toc.start;
 
     if (total < sizeof(*h) || h->ucode_array_offset_bytes + h->ucode_size_bytes > total) {
         LOG("psp: toc image is malformed\n");
         return;
     }
-    copyToVram(pspBase + kPspFwPriOff, pd_amd_toc_start + h->ucode_array_offset_bytes, h->ucode_size_bytes);
+    copyToVram(pspBase + kPspFwPriOff, chip->fw->toc.start + h->ucode_array_offset_bytes, h->ucode_size_bytes);
 
     uint64_t priMc = fbStart + pspBase + kPspFwPriOff;
     uint32_t cmd[kCmdBodyWord + 3] = {};
@@ -260,12 +245,12 @@ bool PDAmdGPU::pspSetupTmr(uint32_t size)
 void PDAmdGPU::pspLoadGfx(void)
 {
     struct { const char *name; uint32_t type; const uint8_t *start, *end; bool jt; } plain[] = {
-        { "sdma0", kFwSdma0, pd_amd_sdma_start, pd_amd_sdma_end, false },
-        { "cp ce", kFwCpCe, pd_amd_ce_start, pd_amd_ce_end, false },
-        { "cp pfp", kFwCpPfp, pd_amd_pfp_start, pd_amd_pfp_end, false },
-        { "cp me", kFwCpMe, pd_amd_me_start, pd_amd_me_end, false },
-        { "cp mec1", kFwCpMec, pd_amd_mec_start, pd_amd_mec_end, true },
-        { "cp mec2", kFwCpMec, pd_amd_mec_start, pd_amd_mec_end, true },
+        { "sdma0", kFwSdma0, chip->fw->sdma.start, chip->fw->sdma.end, false },
+        { "cp ce", kFwCpCe, chip->fw->ce.start, chip->fw->ce.end, false },
+        { "cp pfp", kFwCpPfp, chip->fw->pfp.start, chip->fw->pfp.end, false },
+        { "cp me", kFwCpMe, chip->fw->me.start, chip->fw->me.end, false },
+        { "cp mec1", kFwCpMec, chip->fw->mec.start, chip->fw->mec.end, true },
+        { "cp mec2", kFwCpMec, chip->fw->mec.start, chip->fw->mec.end, true },
     };
 
     for (auto &f : plain) {
@@ -278,7 +263,7 @@ void PDAmdGPU::pspLoadGfx(void)
         if (!pspLoadIpFw(f.name, f.type, data, size)) return;
     }
 
-    const uint32_t *rlc = (const uint32_t *)pd_amd_rlc_start;
+    const uint32_t *rlc = (const uint32_t *)chip->fw->rlc.start;
     const uint32_t *w = rlc + sizeof(AmdFwHeader) / 4;
     struct { const char *name; uint32_t type, size, off; } lists[] = {
         { "rlc restore cntl", kFwRlcSrmCntl, w[kRlcCntlSize], w[kRlcCntlOff] },
@@ -287,7 +272,7 @@ void PDAmdGPU::pspLoadGfx(void)
         { "rlc iram", kFwRlcIram, w[kRlcIramSize], w[kRlcIramOff] },
         { "rlc dram", kFwRlcDramBoot, w[kRlcDramSize], w[kRlcDramOff] },
     };
-    uint32_t rlcTotal = pd_amd_rlc_end - pd_amd_rlc_start;
+    uint32_t rlcTotal = chip->fw->rlc.end - chip->fw->rlc.start;
 
     for (auto &l : lists) {
         if (l.size == 0) continue;
@@ -295,12 +280,12 @@ void PDAmdGPU::pspLoadGfx(void)
             LOG("psp: %s runs past the rlc image\n", l.name);
             return;
         }
-        if (!pspLoadIpFw(l.name, l.type, pd_amd_rlc_start + l.off, l.size)) return;
+        if (!pspLoadIpFw(l.name, l.type, chip->fw->rlc.start + l.off, l.size)) return;
     }
 
     const uint8_t *data;
     uint32_t size;
-    if (!fwPayload(pd_amd_rlc_start, pd_amd_rlc_end, false, &data, &size) || !pspLoadIpFw("rlc g", kFwRlcG, data, size))
+    if (!fwPayload(chip->fw->rlc.start, chip->fw->rlc.end, false, &data, &size) || !pspLoadIpFw("rlc g", kFwRlcG, data, size))
         return;
 
     uint32_t cmd[kCmdBodyWord] = {};
@@ -320,7 +305,18 @@ void PDAmdGPU::pspLoadGfx(void)
     if (dmubLoad() && dmubInit()) {
         dmubQueryCaps();
         vbiosDisplayPaths();
-        if (clkInit()) hdmiLinkUp();
+        if (clkInit()) {
+            dmubDcPowerState(true);
+            displayQuiesce();
+            hdmiLinkUp();
+            displayInit();
+            displayUp = true;
+
+            // published as soon as the head scans out, so the compositor finds it before the boot framebuffer
+            int down = 0;
+            PE_parse_boot_argn("pdamdgpu_teardown", &down, sizeof(down));
+            if (!down) registerService();
+        }
     }
     LOG("gfx: autoload %s, CP_STAT 0x%08x RLC_RLCS_BOOTLOAD_STATUS 0x%08x\n",
         cpStat == 0 && (boot & 0x80000000) ? "complete" : "timed out", cpStat, boot);
@@ -386,25 +382,44 @@ void PDAmdGPU::probePsp(void)
     LOG("psp: km ring at mc 0x%llx %s, C2PMSG_64 0x%08x\n", ringMc, ok ? "created" : "failed", rreg(msg64));
     if (!ok) return;
     pspLoadToc();
-    teardown();
+
+    // pdamdgpu_teardown=1 ends the run with amdgpu's unload order for repeat tests, otherwise the display stays up
+    int down = 0;
+    PE_parse_boot_argn("pdamdgpu_teardown", &down, sizeof(down));
+    if (down) {
+        if (displayUp) IOSleep(15000);      // long enough for the capture card to show the frame
+        teardown(true);
+    } else {
+        running = true;
+    }
 }
 
 // amdgpu's hw_fini order: halt the cp and sdma engines, unload the tmr, destroy the rings,
 // so the next driver to run (ours or amdgpu) finds a psp that accepts SETUP_TMR and AUTOLOAD_RLC again
-void PDAmdGPU::teardown(void)
+void PDAmdGPU::teardown(bool reset)
 {
-    dmubStop();
+    // the stream goes down while dmub can still reach the phy, or the next boot finds the phy wedged
+    if (displayUp) {
+        displayQuiesce();
+        dmubDcPowerState(false);
+    }
+    smuPrepareUnload();
+    // amdgpu_pci_shutdown leaves the dmcub running after the d3 notice, stopping it mid power down strands the phy
+    if (reset) dmubStop();
     ihStop();
     irqStop();
     wreg(soc15(kHwGC, 0, 0x0f56), rreg(soc15(kHwGC, 0, 0x0f56)) | 0x15000000);     // CP_ME_CNTL ce, pfp, me halt
     wreg(soc15(kHwGC, 0, 0x0f55), rreg(soc15(kHwGC, 0, 0x0f55)) | 0x50000000);     // CP_MEC_CNTL me1, me2 halt
     wreg(soc15(kHwGC, 0, 0x002a), rreg(soc15(kHwGC, 0, 0x002a)) | 0x1);            // SDMA0_F32_CNTL halt
 
-    uint32_t cmd[kCmdBodyWord] = {};
-    uint32_t resp[1] = {};
-    cmd[kCmdIdWord] = kGfxCmdDestroyTmr;
-    bool tmr = pspSubmit(cmd, kCmdBodyWord, resp, 1);
-    LOG("teardown: destroy tmr %s, status 0x%x\n", tmr ? "sent" : "failed", resp[0]);
+    // amdgpu's shutdown only frees the tmr buffer, the unload before a reset destroys it in the psp too
+    if (reset) {
+        uint32_t cmd[kCmdBodyWord] = {};
+        uint32_t resp[1] = {};
+        cmd[kCmdIdWord] = kGfxCmdDestroyTmr;
+        bool tmr = pspSubmit(cmd, kCmdBodyWord, resp, 1);
+        LOG("teardown: destroy tmr %s, status 0x%x\n", tmr ? "sent" : "failed", resp[0]);
+    }
 
     uint32_t msg64 = soc15(kHwMP0, 0, regMP0_SMN_C2PMSG_64);
     wreg(msg64, kPspDestroyRings);
@@ -412,6 +427,8 @@ void PDAmdGPU::teardown(void)
     bool gone = waitReg(msg64, 0x80000000, 0x8000ffff, 2000);
     LOG("teardown: destroy rings %s, C2PMSG_64 0x%08x\n", gone ? "ok" : "failed", rreg(msg64));
 
-    // amdgpu_device_ip_fini_early: on apus below gc 11 the unload ends in an asic reset, since the psp never stops
-    smuMode2Reset("teardown");
+    // amdgpu_device_ip_fini_early: on apus below gc 11 the unload ends in an asic reset, since the psp never stops,
+    // while amdgpu_pci_shutdown only suspends
+    if (reset) smuMode2Reset("teardown");
+    LOG("teardown: done\n");
 }

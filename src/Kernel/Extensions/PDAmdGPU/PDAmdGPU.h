@@ -23,6 +23,7 @@
 #define kHwOSSSYS 40
 #define kHwNBIF 108
 #define kHwMP0  255
+#define kHwDMU  271
 
 struct AmdIp {
     uint16_t hw;
@@ -38,15 +39,48 @@ struct AmdIpTable {
     const AmdIp *find(uint16_t hw, uint8_t inst = 0) const;
 };
 
+// one chip's firmware images, each the unmodified linux-firmware file
+struct AmdFirmwareImage {
+    const uint8_t *start, *end;
+};
+
+struct AmdFirmware {
+    AmdFirmwareImage toc, sdma, ce, pfp, me, mec, rlc, dmcub;
+};
+
+extern const AmdFirmware kAmdFirmwareGraniteRidge, kAmdFirmwareMendocino;
+
+// what differs between the chips this driver knows, all register offsets are mp1 segment 0
+struct AmdChip {
+    const char        *name;
+    uint8_t            gc[3], mp0[3], dmu[3];
+    bool               bringUp;         // false: discovery is read and logged, nothing is programmed
+    const AmdFirmware *fw;
+
+    // the smu driver mailbox and the messages the driver sends through it
+    uint32_t smuMsg, smuArg, smuResp;
+    uint32_t msgGfxReset, msgDisallowGfxOff, msgPrepareUnload;
+
+    // the display clock mailbox, granite ridge's message register is an absolute index past the bar
+    uint32_t dispMsg, dispArg, dispResp;
+    bool     dispMsgAbsolute;
+};
+
+struct CeaMode;
+
 class PDAmdGPU : public IOService {
     OSDeclareDefaultStructors(PDAmdGPU);
 
 public:
     bool start(IOService *provider) override;
     void stop(IOService *provider) override;
+    void systemWillShutdown(IOOptionBits specifier) override;
 
     uint32_t rreg(uint32_t idx) { return regs[idx]; }
     void wreg(uint32_t idx, uint32_t v) { regs[idx] = v; }
+    uint32_t rregAny(uint32_t idx);
+    void wregAny(uint32_t idx, uint32_t v);
+    bool scanout(uint64_t *phys, uint32_t *w, uint32_t *h, uint32_t *rowBytes);
     void readVram(uint64_t pos, void *buf, uint32_t len);
     void writeVram(uint64_t pos, uint32_t v, uint32_t len);
     void copyToVram(uint64_t pos, const void *buf, uint32_t len);
@@ -59,11 +93,12 @@ public:
 
 private:
     IOPCIDevice       *pci;
-    IOMemoryMap       *regMap, *doorbellMap;
+    IOMemoryMap       *regMap, *doorbellMap, *vramMap;
     volatile uint32_t *regs;
     uint32_t           regCount;
     uint64_t           vramSize;
     AmdIpTable         ips;
+    const AmdChip     *chip;
 
     // psp ring, fence, command buffer and firmware staging, all in the carveout
     uint64_t           fbStart, fbOffset, pspBase;
@@ -85,8 +120,6 @@ private:
     void pspLoadGfx(void);
     bool pspSetupTmr(uint32_t size);
     uint32_t sdmaReg(uint32_t off);
-    uint32_t rregAny(uint32_t idx);
-    void wregAny(uint32_t idx, uint32_t v);
     bool smuSend(uint32_t msg, uint32_t arg, uint32_t *out);
     void smuInit(void);
     void smuDisallowGfxOff(const char *when);
@@ -101,7 +134,8 @@ private:
     void gfxhubInit(void);
     void rlcInit(void);
     void goldenInit(void);
-    void teardown(void);
+    void teardown(bool reset);
+    bool running;
     void ihInit(void);
     uint32_t ihDrain(const char *why);
     void ihStop(void);
@@ -112,6 +146,7 @@ private:
     void dmubStop(void);
     void dmubDump(const char *why);
     bool readVbios(void);
+    bool asicPost(bool force);
     bool dmubCmd(uint32_t *cmd, bool wantReply);
     bool dmubQueryCaps(void);
     void vbiosDisplayPaths(void);
@@ -119,6 +154,21 @@ private:
     bool dmubTransmitter(uint8_t phy, uint8_t action, uint8_t mode, uint8_t lanes, uint32_t symclk10khz, uint8_t hpd,
                          uint8_t digfe, uint8_t connector);
     void hdmiLinkUp(void);
+    void hdmiLinkDown(void);
+    bool dmubDcPowerState(bool on);
+    void dmubNotifyStreamMask(uint16_t mask);
+    void displayQuiesce(void);
+    bool displayUp;
+    bool pipePowerUp(void);
+    void pipePowerDown(void);
+    void smuPrepareUnload(void);
+    void dccgSetup(void);
+    void digSetup(void);
+    void otgSetup(const CeaMode &m);
+    void pipeSetup(const CeaMode &m);
+    void hubpSetup(const CeaMode &m, uint64_t surfMc);
+    void fillTestPattern(const CeaMode &m, uint64_t vramOff);
+    void displayInit(void);
     bool findRomHole(uint32_t size, uint32_t *outAddr);
     int32_t dispSmuSend(uint32_t msg, uint32_t arg);
     bool clkInit(void);
