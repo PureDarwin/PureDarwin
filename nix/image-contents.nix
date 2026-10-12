@@ -1408,11 +1408,13 @@ let
         mkdir -p $out/bin
         cp "$(find ${userlandNoxBuild} -path '*/bin/ps' | head -n 1)" $out/bin/ps
       '';
-      # the kernel log and the wifi tool, for bringing drivers up in the minimal image
+      # the kernel log, the wifi tool and the power daemon, for bringing drivers up in the minimal image
       diagToolsBuild = pkgs.runCommand "puredarwin-diag-tools" { } ''
-        mkdir -p $out/bin $out/usr/sbin
+        mkdir -p $out/bin $out/usr/sbin $out/System/Library/LaunchDaemons
         cp "$(find ${userlandNoxBuild} -path '*/bin/dmesg' | head -n 1)" $out/bin/dmesg
         cp "$(find ${userlandNoxBuild} -path '*/usr/sbin/wifiutil' | head -n 1)" $out/usr/sbin/wifiutil
+        cp "$(find ${userlandNoxBuild} -path '*/usr/sbin/pdpowerd' | head -n 1)" $out/usr/sbin/pdpowerd
+        cp "$(find ${userlandNoxBuild} -name org.puredarwin.pdpowerd.plist | head -n 1)" $out/System/Library/LaunchDaemons/
       '';
       # the Wayland counterpart of a minimal X11 session: neuswc with pdwm, and the
       # AppKit Terminal started by org.puredarwin.wayland-session.
