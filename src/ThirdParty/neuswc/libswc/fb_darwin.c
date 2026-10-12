@@ -57,15 +57,27 @@ open_framebuffer(io_connect_t *connection)
 		framebuffer_class = "IOFramebuffer";
 
 #ifdef _PD_IOKITLIB_H
-	char *matching = IOServiceMatching(framebuffer_class);
-	if (!matching || IOServiceGetMatchingService(darwin_fb.master_port,
-	                                             matching, &service) !=
-	                     KERN_SUCCESS) {
-		return IO_OBJECT_NULL;
+	// a hardware driver's framebuffer wins over the firmware's boot one, which is only the fallback
+	for (int pass = 0; pass < 2; pass++) {
+		io_iterator_t iterator;
+		char *matching = IOServiceMatching(framebuffer_class);
+
+		if (!matching || IOServiceGetMatchingServices(darwin_fb.master_port, matching, &iterator) != KERN_SUCCESS)
+			return IO_OBJECT_NULL;
+		while ((service = IOIteratorNext(iterator)) != IO_OBJECT_NULL) {
+			io_name_t name = "";
+			IOObjectGetClass(service, name);
+			bool boot = !strcmp(name, "IOGOPFramebuffer") || !strcmp(name, "IOBootFramebuffer");
+
+			if (boot == (pass == 1) && IOServiceOpen(service, mach_task_self(), 0, connection) == KERN_SUCCESS)
+				break;
+			IOObjectRelease(service);
+		}
+		IOObjectRelease(iterator);
+		if (service != IO_OBJECT_NULL)
+			return service;
 	}
-	if (IOServiceOpen(service, mach_task_self(), 0, connection) != KERN_SUCCESS)
-		return IO_OBJECT_NULL;
-	return service;
+	return IO_OBJECT_NULL;
 #else
 	io_iterator_t iterator;
 	CFDictionaryRef matching = IOServiceMatching(framebuffer_class);
@@ -109,7 +121,17 @@ framebuffer_initialize(struct swc_fb *fb)
 		ERROR("Could not obtain the IOKit master port\n");
 		return false;
 	}
+#ifdef _PD_IOKITLIB_H
+	// a gpu driver brings its head up inside start(), so let matching settle before choosing, as WindowServer does
+	mach_timespec_t settle = { 20, 0 };
+	IOKitWaitQuiet(darwin_fb.master_port, &settle);
+#endif
 	darwin_fb.service = open_framebuffer(&darwin_fb.connection);
+	if (darwin_fb.service != IO_OBJECT_NULL) {
+		io_name_t name = "";
+		IOObjectGetClass(darwin_fb.service, name);
+		fprintf(stderr, "neuswc: drawing to %s\n", name);
+	}
 	if (darwin_fb.service == IO_OBJECT_NULL) {
 		ERROR("Could not open an IOFramebuffer service\n");
 		goto error;

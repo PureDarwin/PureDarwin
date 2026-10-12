@@ -99,6 +99,9 @@ kern_return_t IOIteratorReset(io_iterator_t iterator);
 kern_return_t IORegistryGetRootEntry(mach_port_t masterPort,
     io_registry_entry_t *root);
 
+kern_return_t IOServiceWaitQuiet(io_service_t service, mach_timespec_t *waitTime);
+kern_return_t IOKitWaitQuiet(mach_port_t masterPort, mach_timespec_t *waitTime);
+
 kern_return_t IORegistryEntryGetName(io_registry_entry_t entry,
     io_name_t name);
 

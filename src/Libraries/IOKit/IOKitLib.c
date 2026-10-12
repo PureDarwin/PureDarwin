@@ -275,6 +275,26 @@ IORegistryGetRootEntry(mach_port_t masterPort, io_registry_entry_t *root)
 	return io_registry_get_root_entry(masterPort, root);
 }
 
+// waits until no driver below the service is still matching or starting, a zero wait time waits forever
+kern_return_t
+IOServiceWaitQuiet(io_service_t service, mach_timespec_t *waitTime)
+{
+	mach_timespec_t forever = { 0, 0 };
+	return io_service_wait_quiet(service, waitTime ? *waitTime : forever);
+}
+
+kern_return_t
+IOKitWaitQuiet(mach_port_t masterPort, mach_timespec_t *waitTime)
+{
+	io_registry_entry_t root;
+	kern_return_t kr = IORegistryGetRootEntry(masterPort, &root);
+	if (kr != KERN_SUCCESS)
+		return kr;
+	kr = IOServiceWaitQuiet(root, waitTime);
+	IOObjectRelease(root);
+	return kr;
+}
+
 kern_return_t
 IORegistryEntryGetName(io_registry_entry_t entry, io_name_t name)
 {
