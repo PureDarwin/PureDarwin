@@ -13579,12 +13579,7 @@ OSKext::loadKCFileSet(
 		return kOSKextReturnInvalidArgument;
 	}
 
-	/* Do not allow AuxKC to load if Pageable KC is not loaded */
-	if (!pageable && !pageableKCloaded) {
-		OSKextLog(/* kext */ NULL, kOSKextLogDebugLevel | kOSKextLogIPCFlag,
-		    "Trying to load the Aux KC without loading the Pageable KC");
-		return kOSKextReturnInvalidArgument;
-	}
+	// PureDarwin ships no pageable KC, so an aux KC may load without one and links against the boot KC alone
 
 	fileset_control = ubc_getobject_from_filename(filepath, &vp, &fsize);
 
@@ -14283,7 +14278,8 @@ OSKext::validateKCFileSetUUID(
 
 #if defined(__x86_64__) || defined(__i386__)
 	/* Check if the Aux KC is prelinked to correct Pageable KC */
-	if (type == KCKindAuxiliary) {
+	// with no pageable KC loaded there is nothing for it to match
+	if (type == KCKindAuxiliary && pageableKCloaded) {
 		if (!pageablekc_uuid_valid) {
 			OSKextLog(/* kext */ NULL, kOSKextLogErrorLevel | kOSKextLogArchiveFlag,
 			    "validateKCFileSetUUID Pageable KC UUID was not set while loading Pageable KC.");
