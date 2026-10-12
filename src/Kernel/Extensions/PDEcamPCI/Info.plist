@@ -17,6 +17,14 @@
       <key>IOProviderClass</key><string>IOPlatformDevice</string>
       <key>IOProbeScore</key><integer>80000</integer>
     </dict>
+    <key>PDDesignWarePCI</key>
+    <dict>
+      <key>CFBundleIdentifier</key><string>org.puredarwin.driver.PDEcamPCI</string>
+      <key>IOClass</key><string>PDDesignWarePCI</string>
+      <key>IONameMatch</key><string>qcom,pcie-sc8280xp</string>
+      <key>IOProviderClass</key><string>IOPlatformDevice</string>
+      <key>IOProbeScore</key><integer>90000</integer>
+    </dict>
   </dict>
   <key>OSBundleLibraries</key>
   <dict>
