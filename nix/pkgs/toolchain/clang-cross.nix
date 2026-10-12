@@ -118,6 +118,11 @@ stdenv.mkDerivation {
           "$out/usr/bin"/clang-offload-bundler "$out/usr/bin"/clang-offload-packager \
           "$out/usr/bin"/clang-sycl-linker
 
+    # native compiles on PureDarwin: the installed headers need the platform picked, and the default target is 26.5
+    for driver in clang clang++ clang-cpp; do
+      printf '%s\n' -DXNU_PLATFORM_MacOSX=1 -mmacosx-version-min=26.5 > "$out/usr/bin/$driver.cfg"
+    done
+
     INSTALL_NAME_TOOL="${nativeMesonTools}/bin/install_name_tool"
     for dylib in "$out"/usr/lib/*.dylib; do
       [ -e "$dylib" ] || continue
