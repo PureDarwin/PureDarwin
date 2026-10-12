@@ -337,6 +337,7 @@ struct ext4node {
 	int               e_alloc_wip;  /* vnode_create in progress; sleep on &e_vp */
 	int               e_unhashed;   /* already LIST_REMOVE'd from em_node_hash */
 	int               e_pending_free; /* unlinked while still open; free at reclaim */
+	uint32_t          e_xflags;     // BSD flags ext4 has no inode bit for, kept in trusted.bsdflags
 	uint32_t          e_dbg_last_lblk; /* diagnostic: last logical block logged */
 	void             *e_lock;       /* IOLock*: guards e_raw/e_size/e_vtype against
 	                                    the cache-hit refresh in ext4_vget() racing
@@ -369,7 +370,7 @@ void ext4_inode_init_extent_header(struct ext4_inode *inode);
 int  ext4_inode_append_extent(struct ext4mount *emp, ino_t ino,
                struct ext4_inode *inode, uint32_t lblk, uint64_t pblk);
 int  ext4_inode_free_extents(struct ext4mount *emp, struct ext4_inode *inode);
-int  ext4_inode_truncate_extents(struct ext4mount *emp, struct ext4_inode *inode,
+int  ext4_inode_truncate_extents(struct ext4mount *emp, ino_t ino, struct ext4_inode *inode,
                uint64_t keep_blocks);
 int  ext4_bmap(struct ext4mount *emp, ino_t ino, struct ext4_inode *inode,
                uint32_t lblk, uint64_t *pblk_out);
@@ -377,12 +378,20 @@ int  ext4_ino_is_live(struct ext4mount *emp, ino_t ino);
 int  ext4_indirect_lookup(struct ext4mount *emp, uint32_t blk, uint32_t lblk,
                int level, uint64_t *pblk_out);
 int  ext4_blkread(struct ext4mount *emp, uint64_t pblk, buf_t *bpp);
+// in-inode extended attributes (ext4_xattr.c), index 4 is Linux's trusted namespace
+#define EXT4_XATTR_INDEX_TRUSTED 4
+int  ext4_xattr_ibody_get(struct ext4mount *emp, ino_t ino, uint8_t index, const char *name,
+               void *value, uint32_t cap, uint32_t *out_size);
+int  ext4_xattr_ibody_set(struct ext4mount *emp, ino_t ino, uint8_t index, const char *name,
+               const void *value, uint32_t vsize);
 uint64_t ext4_gd_block_bitmap(struct ext4mount *emp, const struct ext4_group_desc *gd);
 uint64_t ext4_gd_inode_bitmap(struct ext4mount *emp, const struct ext4_group_desc *gd);
 int  ext4_bitmap_test(const uint8_t *map, uint32_t bit);
 void ext4_bitmap_set(uint8_t *map, uint32_t bit);
 enum vtype ext4_ft_to_vtype(uint8_t ft);
 enum vtype ext4_mode_to_vtype(uint16_t mode);
+dev_t ext4_inode_rdev(const struct ext4_inode *inode);
+void ext4_inode_set_rdev(struct ext4_inode *inode, dev_t rdev);
 
 /* ext4_csum.c - metadata checksums (metadata_csum / uninit_bg) */
 uint32_t ext4_crc32c(uint32_t crc, const void *buf, size_t len);
@@ -445,6 +454,10 @@ int  ext4_meta_bwrite(struct ext4mount *emp, buf_t bp);
 /* ext4_vnops.c */
 extern int (**ext4_vnodeop_p)(void *);
 extern struct vnodeopv_desc ext4_vnodeop_opv_desc;
+extern int (**ext4_fifoop_p)(void *);
+extern struct vnodeopv_desc ext4_fifoop_opv_desc;
+extern int (**ext4_specop_p)(void *);
+extern struct vnodeopv_desc ext4_specop_opv_desc;
 int  ext4_vget(struct ext4mount *emp, ino_t ino, vnode_t dvp, vnode_t *vpp,
                struct componentname *cnp);
 

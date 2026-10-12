@@ -9,6 +9,7 @@ target_sources(ext4.kext PRIVATE
     ext4_jbd.c
     ext4_vfsops.c
     ext4_vnops.c
+    ext4_xattr.c
     ext4_iokit.cpp
 )
 

@@ -372,7 +372,7 @@ int
 ext4_vfs_register(void)
 {
 	struct vfs_fsentry vfe;
-	struct vnodeopv_desc *opv[1];
+	struct vnodeopv_desc *opv[3];
 	int error;
 
 	if (ext4_vfsconf != NULL)
@@ -380,9 +380,11 @@ ext4_vfs_register(void)
 
 	memset(&vfe, 0, sizeof(vfe));
 	opv[0] = &ext4_vnodeop_opv_desc;
+	opv[1] = &ext4_fifoop_opv_desc;
+	opv[2] = &ext4_specop_opv_desc;
 
 	vfe.vfe_vfsops   = &ext4_vfsops;
-	vfe.vfe_vopcnt   = 1;
+	vfe.vfe_vopcnt   = 3;
 	vfe.vfe_opvdescs = opv;
 	strlcpy(vfe.vfe_fsname, "ext4", sizeof(vfe.vfe_fsname));
 	// VFS_TBLCANMOUNTROOT makes vfs_mountroot() try ext4, otherwise the root never reaches

@@ -18,6 +18,9 @@
 #include <string.h>
 #include <vm/vm_kern.h>
 #include <IOKit/IOLocks.h>
+#include <miscfs/fifofs/fifo.h>
+#include <sys/stat.h>
+#include <miscfs/specfs/specdev.h>
 
 /*
  * ext4's on-disk directory-entry file types are numbered independently of BSD's
@@ -138,6 +141,12 @@ restart:
 	ep->e_raw   = raw;
 	ep->e_size  = size;
 	ep->e_vtype = vtype;
+	{
+		uint32_t xv = 0, xs = 0;
+		if (ext4_xattr_ibody_get(emp, ino, EXT4_XATTR_INDEX_TRUSTED, "bsdflags", &xv, sizeof(xv), &xs) == 0 &&
+		    xs == sizeof(xv))
+			ep->e_xflags = le32(xv);
+	}
 
 	memset(&vfsp, 0, sizeof(vfsp));
 	vfsp.vnfs_mp        = emp->em_mp;
@@ -145,10 +154,11 @@ restart:
 	vfsp.vnfs_str       = "ext4";
 	vfsp.vnfs_dvp       = dvp;
 	vfsp.vnfs_fsnode    = ep;
-	vfsp.vnfs_vops      = ext4_vnodeop_p;
+	vfsp.vnfs_vops      = vtype == VFIFO ? ext4_fifoop_p :
+	    (vtype == VCHR || vtype == VBLK) ? ext4_specop_p : ext4_vnodeop_p;
 	vfsp.vnfs_markroot  = (ino == EXT4_ROOT_INO);
 	vfsp.vnfs_marksystem = 0;
-	vfsp.vnfs_rdev      = 0;
+	vfsp.vnfs_rdev      = (vtype == VCHR || vtype == VBLK) ? ext4_inode_rdev(&raw) : 0;
 	vfsp.vnfs_filesize  = size;
 	vfsp.vnfs_cnp       = cnp;
 	vfsp.vnfs_flags     = VNFS_ADDFSREF;
@@ -263,6 +273,51 @@ ext4_vnop_lookup_impl(struct vnop_lookup_args *ap)
 	return ext4_vget(dep->e_mount, ino, dvp, vpp, cnp);
 }
 
+// BSD file flags: the three Linux ext4 has bits for live in i_flags, the rest in trusted.bsdflags
+#define EXT4_IMMUTABLE_FL 0x00000010u
+#define EXT4_APPEND_FL    0x00000020u
+#define EXT4_NODUMP_FL    0x00000040u
+#define EXT4_NATIVE_BSD_FLAGS (SF_IMMUTABLE | SF_APPEND | UF_NODUMP)
+
+static uint32_t
+ext4_bsd_flags(const struct ext4node *ep)
+{
+	uint32_t f = le32(ep->e_raw.i_flags), out = ep->e_xflags;
+
+	if (f & EXT4_IMMUTABLE_FL)
+		out |= SF_IMMUTABLE;
+	if (f & EXT4_APPEND_FL)
+		out |= SF_APPEND;
+	if (f & EXT4_NODUMP_FL)
+		out |= UF_NODUMP;
+	return out;
+}
+
+// updates the inode bits in e_raw (the caller writes the inode) and the attribute right away
+static int
+ext4_set_bsd_flags(struct ext4node *ep, uint32_t flags)
+{
+	uint32_t f = le32(ep->e_raw.i_flags) & ~(EXT4_IMMUTABLE_FL | EXT4_APPEND_FL | EXT4_NODUMP_FL);
+	uint32_t extra = flags & ~EXT4_NATIVE_BSD_FLAGS;
+
+	if (flags & SF_IMMUTABLE)
+		f |= EXT4_IMMUTABLE_FL;
+	if (flags & SF_APPEND)
+		f |= EXT4_APPEND_FL;
+	if (flags & UF_NODUMP)
+		f |= EXT4_NODUMP_FL;
+	if (extra != ep->e_xflags) {
+		uint32_t v = le32(extra);
+		int error = ext4_xattr_ibody_set(ep->e_mount, ep->e_ino, EXT4_XATTR_INDEX_TRUSTED, "bsdflags",
+		    extra ? &v : NULL, sizeof(v));
+		if (error)
+			return error;
+		ep->e_xflags = extra;
+	}
+	ep->e_raw.i_flags = le32(f);
+	return 0;
+}
+
 static int
 ext4_vnop_getattr_impl(struct vnop_getattr_args *ap)
 {
@@ -271,7 +326,7 @@ ext4_vnop_getattr_impl(struct vnop_getattr_args *ap)
 	struct ext4_inode *ri = &ep->e_raw;
 	struct ext4mount *emp = ep->e_mount;
 
-	VATTR_RETURN(vap, va_rdev, 0);
+	VATTR_RETURN(vap, va_rdev, (ep->e_vtype == VCHR || ep->e_vtype == VBLK) ? ext4_inode_rdev(ri) : 0);
 	VATTR_RETURN(vap, va_nlink, le16(ri->i_links_count));
 	VATTR_RETURN(vap, va_data_size, ep->e_size);
 	VATTR_RETURN(vap, va_total_size, ep->e_size);
@@ -282,7 +337,7 @@ ext4_vnop_getattr_impl(struct vnop_getattr_args *ap)
 	VATTR_RETURN(vap, va_mode, le16(ri->i_mode) & 07777);
 	VATTR_RETURN(vap, va_fileid, (uint64_t)ep->e_ino);
 	VATTR_RETURN(vap, va_type, ep->e_vtype);
-	VATTR_RETURN(vap, va_flags, 0);
+	VATTR_RETURN(vap, va_flags, ext4_bsd_flags(ep));
 	VATTR_RETURN(vap, va_gen, le32(ri->i_generation));
 
 	if (VATTR_IS_ACTIVE(vap, va_access_time)) {
@@ -1246,7 +1301,7 @@ ext4_resize_file(struct ext4node *ep, uint64_t new_size)
 					return error;
 			}
 		}
-		error = ext4_inode_truncate_extents(emp, &ep->e_raw, new_blocks);
+		error = ext4_inode_truncate_extents(emp, ep->e_ino, &ep->e_raw, new_blocks);
 		if (error)
 			return error;
 	} else if (new_blocks > old_blocks || new_size > old_size) {
@@ -1313,6 +1368,12 @@ ext4_vnop_setattr_impl(struct vnop_setattr_args *ap)
 		ep->e_raw.i_mtime = le32((uint32_t)vap->va_modify_time.tv_sec);
 		VATTR_SET_SUPPORTED(vap, va_modify_time);
 	}
+	if (VATTR_IS_ACTIVE(vap, va_flags)) {
+		error = ext4_set_bsd_flags(ep, vap->va_flags);
+		if (error)
+			return error;
+		VATTR_SET_SUPPORTED(vap, va_flags);
+	}
 	ext4_touch_ctime(&ep->e_raw);
 	return ext4_write_inode(ep->e_mount, ep->e_ino, &ep->e_raw);
 }
@@ -1341,8 +1402,10 @@ ext4_vnop_create_impl(struct vnop_create_args *ap)
 		return ENOTDIR;
 	if (VATTR_IS_ACTIVE(vap, va_type))
 		vtype = vap->va_type;
-	if (vtype != VREG && vtype != VSOCK)
+	if (vtype != VREG && vtype != VSOCK && vtype != VFIFO && vtype != VCHR && vtype != VBLK)
 		return ENOTSUP;
+	if ((vtype == VCHR || vtype == VBLK) && !VATTR_IS_ACTIVE(vap, va_rdev))
+		return EINVAL;
 	if (cnp->cn_namelen == 0 || cnp->cn_namelen > 255)
 		return ENAMETOOLONG;
 
@@ -1366,7 +1429,8 @@ ext4_vnop_create_impl(struct vnop_create_args *ap)
 	memset(&raw, 0, sizeof(raw));
 	microtime(&tv);
 	{
-		uint16_t fmt = (vtype == VSOCK) ? EXT4_S_IFSOCK : EXT4_S_IFREG;
+		uint16_t fmt = vtype == VSOCK ? EXT4_S_IFSOCK : vtype == VFIFO ? EXT4_S_IFIFO :
+		    vtype == VCHR ? EXT4_S_IFCHR : vtype == VBLK ? EXT4_S_IFBLK : EXT4_S_IFREG;
 		raw.i_mode = le16((uint16_t)(fmt | mode));
 	}
 	raw.i_uid = le16((uint16_t)uid);
@@ -1382,6 +1446,8 @@ ext4_vnop_create_impl(struct vnop_create_args *ap)
 	 * call it "an illegal socket" and then want the parent's dirent
 	 * filetype cleared along with it.
 	 */
+	if (vtype == VCHR || vtype == VBLK)
+		ext4_inode_set_rdev(&raw, vap->va_rdev);
 	if (vtype == VREG) {
 		raw.i_flags = le32(EXT4_EXTENTS_FL);
 		(void)ext4_inode_append_extent(emp, ino, &raw, 0, 0);
@@ -1409,6 +1475,8 @@ ext4_vnop_create_impl(struct vnop_create_args *ap)
 	VATTR_SET_SUPPORTED(vap, va_mode);
 	VATTR_SET_SUPPORTED(vap, va_uid);
 	VATTR_SET_SUPPORTED(vap, va_gid);
+	if (vtype == VCHR || vtype == VBLK)
+		VATTR_SET_SUPPORTED(vap, va_rdev);
 
 	return ext4_vget(emp, ino, dvp, vpp, cnp);
 }
@@ -2612,4 +2680,81 @@ static const struct vnodeopv_entry_desc ext4_vnodeop_entries[] = {
 
 struct vnodeopv_desc ext4_vnodeop_opv_desc = {
 	&ext4_vnodeop_p, ext4_vnodeop_entries
+};
+
+// fifos and device nodes keep their inode here, their I/O goes to fifofs and specfs
+int (**ext4_fifoop_p)(void *);
+
+static const struct vnodeopv_entry_desc ext4_fifoop_entries[] = {
+	{ &vnop_default_desc,  (VOPFUNC)vn_default_error },
+	{ &vnop_lookup_desc,   (VOPFUNC)fifo_lookup },
+	{ &vnop_create_desc,   (VOPFUNC)fifo_create },
+	{ &vnop_mknod_desc,    (VOPFUNC)fifo_mknod },
+	{ &vnop_open_desc,     (VOPFUNC)fifo_open },
+	{ &vnop_close_desc,    (VOPFUNC)fifo_close },
+	{ &vnop_getattr_desc,  (VOPFUNC)ext4_vnop_getattr },
+	{ &vnop_setattr_desc,  (VOPFUNC)ext4_vnop_setattr },
+	{ &vnop_read_desc,     (VOPFUNC)fifo_read },
+	{ &vnop_write_desc,    (VOPFUNC)fifo_write },
+	{ &vnop_ioctl_desc,    (VOPFUNC)fifo_ioctl },
+	{ &vnop_select_desc,   (VOPFUNC)fifo_select },
+	{ &vnop_revoke_desc,   (VOPFUNC)fifo_revoke },
+	{ &vnop_mmap_desc,     (VOPFUNC)fifo_mmap },
+	{ &vnop_fsync_desc,    (VOPFUNC)ext4_vnop_fsync },
+	{ &vnop_remove_desc,   (VOPFUNC)fifo_remove },
+	{ &vnop_link_desc,     (VOPFUNC)fifo_link },
+	{ &vnop_rename_desc,   (VOPFUNC)fifo_rename },
+	{ &vnop_mkdir_desc,    (VOPFUNC)fifo_mkdir },
+	{ &vnop_rmdir_desc,    (VOPFUNC)fifo_rmdir },
+	{ &vnop_symlink_desc,  (VOPFUNC)fifo_symlink },
+	{ &vnop_readdir_desc,  (VOPFUNC)fifo_readdir },
+	{ &vnop_readlink_desc, (VOPFUNC)fifo_readlink },
+	{ &vnop_inactive_desc, (VOPFUNC)ext4_vnop_inactive },
+	{ &vnop_reclaim_desc,  (VOPFUNC)ext4_vnop_reclaim },
+	{ &vnop_strategy_desc, (VOPFUNC)fifo_strategy },
+	{ &vnop_pathconf_desc, (VOPFUNC)fifo_pathconf },
+	{ &vnop_advlock_desc,  (VOPFUNC)err_advlock },
+	{ NULL, NULL }
+};
+
+struct vnodeopv_desc ext4_fifoop_opv_desc = {
+	&ext4_fifoop_p, ext4_fifoop_entries
+};
+
+int (**ext4_specop_p)(void *);
+
+static const struct vnodeopv_entry_desc ext4_specop_entries[] = {
+	{ &vnop_default_desc,  (VOPFUNC)vn_default_error },
+	{ &vnop_lookup_desc,   (VOPFUNC)spec_lookup },
+	{ &vnop_create_desc,   (VOPFUNC)spec_create },
+	{ &vnop_mknod_desc,    (VOPFUNC)spec_mknod },
+	{ &vnop_open_desc,     (VOPFUNC)spec_open },
+	{ &vnop_close_desc,    (VOPFUNC)spec_close },
+	{ &vnop_getattr_desc,  (VOPFUNC)ext4_vnop_getattr },
+	{ &vnop_setattr_desc,  (VOPFUNC)ext4_vnop_setattr },
+	{ &vnop_read_desc,     (VOPFUNC)spec_read },
+	{ &vnop_write_desc,    (VOPFUNC)spec_write },
+	{ &vnop_ioctl_desc,    (VOPFUNC)spec_ioctl },
+	{ &vnop_select_desc,   (VOPFUNC)spec_select },
+	{ &vnop_revoke_desc,   (VOPFUNC)spec_revoke },
+	{ &vnop_mmap_desc,     (VOPFUNC)spec_mmap },
+	{ &vnop_fsync_desc,    (VOPFUNC)ext4_vnop_fsync },
+	{ &vnop_remove_desc,   (VOPFUNC)spec_remove },
+	{ &vnop_link_desc,     (VOPFUNC)spec_link },
+	{ &vnop_rename_desc,   (VOPFUNC)spec_rename },
+	{ &vnop_mkdir_desc,    (VOPFUNC)spec_mkdir },
+	{ &vnop_rmdir_desc,    (VOPFUNC)spec_rmdir },
+	{ &vnop_symlink_desc,  (VOPFUNC)spec_symlink },
+	{ &vnop_readdir_desc,  (VOPFUNC)spec_readdir },
+	{ &vnop_readlink_desc, (VOPFUNC)spec_readlink },
+	{ &vnop_inactive_desc, (VOPFUNC)ext4_vnop_inactive },
+	{ &vnop_reclaim_desc,  (VOPFUNC)ext4_vnop_reclaim },
+	{ &vnop_strategy_desc, (VOPFUNC)spec_strategy },
+	{ &vnop_pathconf_desc, (VOPFUNC)spec_pathconf },
+	{ &vnop_advlock_desc,  (VOPFUNC)err_advlock },
+	{ NULL, NULL }
+};
+
+struct vnodeopv_desc ext4_specop_opv_desc = {
+	&ext4_specop_p, ext4_specop_entries
 };
