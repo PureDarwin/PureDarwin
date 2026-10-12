@@ -4,6 +4,8 @@
 , kernel
 , kernelSource
 , kexts
+# out-of-tree kexts, by bundle name, linked into an auxiliary KC against this boot KC
+, auxKexts ? [ ]
 }:
 
 let
@@ -43,10 +45,14 @@ stdenv.mkDerivation {
       codeless+=( -codeless "$CODELESS_DIR/$name" )
     done
 
+    # out-of-tree kexts go into an auxiliary KC linked against this one
+    aux=(${lib.concatMapStringsSep " " (k: "-aux-kext \"$KEXTS/" + k + "\"") auxKexts}${lib.optionalString (auxKexts != [ ]) " -aux-o aux.kc"})
+
     ${kcTools}/bin/kc-builder \
       -kernel "$KERNEL_BIN" \
 ${lib.concatMapStringsSep "\n" (k: "      -kext \"$KEXTS/" + k + "\" \\") kextList}
       "''${codeless[@]}" \
+      "''${aux[@]}" \
       -o kernel
     runHook postBuild
   '';
@@ -55,6 +61,7 @@ ${lib.concatMapStringsSep "\n" (k: "      -kext \"$KEXTS/" + k + "\" \\") kextLi
     runHook preInstall
     mkdir -p $out
     cp kernel $out/kernel
+    ${lib.optionalString (auxKexts != [ ]) "cp aux.kc $out/aux.kc"}
     runHook postInstall
   '';
 

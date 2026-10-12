@@ -220,10 +220,10 @@
             compilerRtRiscv64 = compilerRtRiscv64Build;
           } // args);
 
-          userlandBuild = mkPureDarwinBuild {
+          userlandBuild = (mkPureDarwinBuild {
             pname = "puredarwin-userland";
             src = userlandSource;
-            buildTargets = [ "sw_vers" "ps" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "pcmplay" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" ]
+            buildTargets = [ "sw_vers" "ps" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "pcmplay" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" "pdkext" ]
               # shell_cmds (+ tsort/uuencode/uudecode)
               ++ [ "basename" "chown" "dirname" "echo" "false" "getopt" "hostname" "jot" "kill" "logname" "mktemp" "nice" "nohup" "passwd" "printenv" "pwd" "renice" "seq" "shlock" "sleep" "tee" "test_cmd" "true" "tsort" "uname" "yes" "uuencode" "uudecode" ]
               # text_cmds
@@ -242,7 +242,13 @@
               "${lib.getDev pkgs.xorgproto}/include"
               "${xvfbPixmanBuild}/include/pixman-1"
             ];
-          };
+          }).overrideAttrs (old: {
+            # the kernel only takes an aux KC from a process holding this entitlement
+            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.ldid ];
+            postInstall = (old.postInstall or "") + ''
+              ldid -S${./src/Userspace/pdkext/pdkext.entitlements} "$out"/usr/sbin/pdkext
+            '';
+          });
           # Wayland-only image: the same userland without the Xorg DDX drivers,
           # which are what drag the whole Xorg tree into the build graph.
           # startx stays in the target list - it is plain libSystem and only
@@ -252,7 +258,7 @@
           userlandNoxBuild = mkPureDarwinBuild {
             pname = "puredarwin-userland-nox";
             src = userlandSource;
-            buildTargets = [ "sw_vers" "ps" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "pcmplay" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" ]
+            buildTargets = [ "sw_vers" "ps" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "pcmplay" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" "pdkext" ]
               ++ [ "basename" "chown" "dirname" "echo" "false" "getopt" "hostname" "jot" "kill" "logname" "mktemp" "nice" "nohup" "passwd" "printenv" "pwd" "renice" "seq" "shlock" "sleep" "tee" "test_cmd" "true" "tsort" "uname" "yes" "uuencode" "uudecode" ]
               ++ [ "banner" "cat" "colrm" "comm" "cut" "expand" "fold" "head" "lam" "look" "nl" "paste" "rev" "split" "tail" "tr" "unexpand" "uniq" "wc" ];
             enableProjects = false;
