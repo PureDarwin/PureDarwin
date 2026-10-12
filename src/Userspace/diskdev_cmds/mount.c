@@ -22,6 +22,15 @@ struct msdosfs_args {
     uint8_t label[64];
 };
 
+// matches the cd9660 kext's struct iso_args, the kernel takes fspec off the front
+struct iso_args {
+    char *fspec;
+    int flags;
+    int ssector;
+    int toc_length;
+    void *toc;
+};
+
 struct generic_mount_args {
     char *fspec;
 };
@@ -133,6 +142,18 @@ mount_hfs(const char *device, const char *dir, int flags)
     return mount("hfs", dir, flags, &args);
 }
 
+// rock ridge and joliet stay on, the first session, no TOC from IOCDMedia
+static int
+mount_cd9660(const char *device, const char *dir, int flags)
+{
+    struct iso_args args;
+
+    memset(&args, 0, sizeof(args));
+    args.fspec = (char *)device;
+
+    return mount("cd9660", dir, flags | MNT_RDONLY, &args);
+}
+
 static int
 mount_generic(const char *type, const char *device, const char *dir, int flags)
 {
@@ -159,6 +180,8 @@ mount_one(const char *type, const char *device, const char *dir, int flags,
         rc = mount_msdos(device, dir, flags);
     else if (strcmp(type, "hfs") == 0)
         rc = mount_hfs(device, dir, flags);
+    else if (strcmp(type, "cd9660") == 0)
+        rc = mount_cd9660(device, dir, flags);
     else
         rc = mount_generic(type, device, dir, flags);
 

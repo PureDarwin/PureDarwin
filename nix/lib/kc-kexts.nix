@@ -21,6 +21,7 @@
     "IOATABlockStorage.kext"
     "ext4.kext"
     "msdosfs.kext"
+    "cd9660.kext"
     "apfs.kext"
     "HFSEncodings.kext"
     "hfs.kext"

@@ -66,6 +66,7 @@ add_subdirectory(IOAudioFamily)
 add_subdirectory(RavynHDAudio)
 add_subdirectory(corecrypto)
 add_subdirectory(ext4)
+add_subdirectory(cd9660)
 add_subdirectory(msdosfs)
 add_subdirectory(apfs)
 add_subdirectory(HFSEncodings)
@@ -100,7 +101,7 @@ add_dependencies(kexts
     IOHIDFamily.kext IONetworkingFamily.kext PDE1000.kext PDRealtek8111.kext
     IO80211Family.kext PDRalinkUSB.kext
     IOAudioFamily.kext RavynHDAudio.kext
-    corecrypto.kext ext4.kext msdosfs.kext apfs.kext HFSEncodings.kext hfs.kext
+    corecrypto.kext ext4.kext msdosfs.kext cd9660.kext apfs.kext HFSEncodings.kext hfs.kext
     AppleFileSystemDriver.kext Ext4FileSystemDriver.kext ApfsFileSystemDriver.kext
 )
 if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32)
