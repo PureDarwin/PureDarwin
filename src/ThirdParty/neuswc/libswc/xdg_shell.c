@@ -499,6 +499,19 @@ set_minimized(struct wl_client *client, struct wl_resource *resource)
 	swc_window_hide(&toplevel->window.base);
 }
 
+static const struct xdg_toplevel_interface toplevel_impl;
+
+struct window *
+xdg_toplevel_window(struct wl_resource *resource)
+{
+	struct xdg_toplevel *toplevel;
+
+	if (!resource || !wl_resource_instance_of(resource, &xdg_toplevel_interface, &toplevel_impl))
+		return NULL;
+	toplevel = wl_resource_get_user_data(resource);
+	return toplevel ? &toplevel->window : NULL;
+}
+
 static const struct xdg_toplevel_interface toplevel_impl = {
     .destroy = destroy_resource,
     .set_parent = set_parent,

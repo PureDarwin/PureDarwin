@@ -21,6 +21,7 @@
  * SOFTWARE.
  */
 
+#include "pd_decoration.h"
 #include "window.h"
 #include "compositor.h"
 #include "event.h"
@@ -491,6 +492,10 @@ handle_attach(struct view_handler *handler)
 		window->handler->unmapped(window->handler_data);
 	else if (has_buffer && window->handler->mapped)
 		window->handler->mapped(window->handler_data);
+	if (has_buffer)
+		pd_decoration_window_mapped(window);
+	else
+		pd_decoration_window_unmapped(window);
 }
 
 static void
@@ -499,6 +504,9 @@ handle_resize(struct view_handler *handler, uint32_t old_width,
 {
 	struct window *window = wl_container_of(handler, window, view_handler);
 
+	// the strip is redrawn at the new width
+	if (window->view->base.geometry.width != old_width)
+		pd_decoration_window_changed(window);
 	if (window->resize.interaction.active &&
 	    window->resize.edges & (SWC_WINDOW_EDGE_TOP | SWC_WINDOW_EDGE_LEFT)) {
 		const struct swc_rectangle *geometry = &window->view->base.geometry;
@@ -553,6 +561,9 @@ window_initialize(struct window *window, const struct window_impl *impl,
 	window->base.max_width = 0;
 	window->base.max_height = 0;
 	window->managed = false;
+	window->frame.wanted = false;
+	window->frame.height = 0;
+	window->frame.zoomed = false;
 	window->mode = WINDOW_MODE_STACKED;
 	window->move.pending = false;
 	window->move.last_time = 0;
@@ -581,6 +592,7 @@ window_finalize(struct window *window)
 {
 	DEBUG("Finalizing window, %p\n", window);
 
+	pd_decoration_window_destroyed(window);
 	window_unmanage(window);
 	compositor_view_destroy(window->view);
 	free(window->base.title);
@@ -621,6 +633,7 @@ window_set_title(struct window *window, const char *title, size_t length)
 	if (window->handler->title_changed) {
 		window->handler->title_changed(window->handler_data);
 	}
+	pd_decoration_window_changed(window);
 }
 
 void

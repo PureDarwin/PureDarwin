@@ -1593,6 +1593,31 @@
               mesa = mesaNoxBuild;
               src = ./src/Userspace/MenuBar;
             };
+          # title bars for Wayland windows that are not AppKit's, drawn with AppKit's frame code
+          pddecorBuild =
+            pkgs.callPackage ./nix/pkgs/apps/pddecor.nix {
+              iokit = iokitBuild;
+              iokitHeaders = iokitCFStaticBuild;
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              appkit = appkitBuild;
+              onyx2d = onyx2dBuild;
+              coretext = coretextBuild;
+              quartzcore = quartzcoreBuild;
+              coregraphics = coregraphicsBuild;
+              applicationservices = applicationservicesBuild;
+              coreservices = coreServicesBuild;
+              windowserver = windowserverBuild;
+              openglFramework = openglFrameworkNoxBuild;
+              mesa = mesaNoxBuild;
+              wayland = waylandBuild;
+              waylandScanner = pkgs.wayland-scanner;
+              src = ./src/Userspace/pddecor;
+              protocol = ./src/ThirdParty/neuswc/protocol/pd-decoration-v1.xml;
+            };
           # the desktop picture and the dock bar
           dockBuild =
             pkgs.callPackage ./nix/pkgs/apps/dock.nix {
@@ -4473,7 +4498,7 @@
           # Image contents (see nix/image-contents.nix).
           imageContents = import ./nix/image-contents.nix {
             inherit
-              appkitBuild windowserverBuild applicationservicesBuild terminalBuild menubarBuild dockBuild finderBuild systemInformationBuild calculatorBuild installerBuild settingsBuild waylandSessionBuild
+              appkitBuild windowserverBuild applicationservicesBuild terminalBuild menubarBuild dockBuild finderBuild systemInformationBuild calculatorBuild installerBuild pddecorBuild settingsBuild waylandSessionBuild
               nixPortPackages
               atspi2CoreBuild autoconfBuild automakeBuild bisonBuild bmakeBuild cairoBuild
               cairoGobjectBuild cctoolsBuild coreFoundationBuild curlBuild darwinCrossToolchain
@@ -4636,6 +4661,7 @@
             system-information = systemInformationBuild;
             calculator = calculatorBuild;
             installer = installerBuild;
+            pddecor = pddecorBuild;
             settings = settingsBuild;
             wayland-session = waylandSessionBuild;
           };

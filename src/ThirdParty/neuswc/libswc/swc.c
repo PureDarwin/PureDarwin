@@ -39,6 +39,7 @@
 #include "output_management.h"
 #include "background_effect.h"
 #include "window_position.h"
+#include "pd_decoration.h"
 #include "panel_manager.h"
 #include "pointer.h"
 #include "screen.h"
@@ -257,6 +258,10 @@ swc_initialize(struct wl_display *display, struct wl_event_loop *event_loop,
 	swc.background_effect = background_effect_create(display);
 	if (!swc.background_effect)
 		WARNING("Could not initialize background effects\n");
+
+	// optional, without a decorator a window that asked for decorations simply has none
+	if (!pd_decoration_create(display))
+		WARNING("Could not create the decorator global\n");
 
 	// optional, without it AppKit windows only know the position they asked for
 	if (!window_position_create(display))

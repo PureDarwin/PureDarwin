@@ -23,6 +23,8 @@
 
 #include "xdg_decoration.h"
 #include "util.h"
+#include "pd_decoration.h"
+#include "xdg_shell.h"
 
 #include "xdg-decoration-unstable-v1-server-protocol.h"
 #include <wayland-server.h>
@@ -72,6 +74,7 @@ get_toplevel_decoration(struct wl_client *client, struct wl_resource *resource,
                         uint32_t id, struct wl_resource *toplevel_resource)
 {
 	struct xdg_toplevel_decoration *decoration;
+	struct window *window;
 
 	decoration = malloc(sizeof(*decoration));
 	if (!decoration) {
@@ -90,6 +93,10 @@ get_toplevel_decoration(struct wl_client *client, struct wl_resource *resource,
 	                               decoration, decoration_destroy);
 	zxdg_toplevel_decoration_v1_send_configure(
 	    decoration->resource, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+	// the client takes server side decorations, so the decorator draws its frame
+	window = xdg_toplevel_window(toplevel_resource);
+	if (window)
+		pd_decoration_window_wanted(window);
 	return;
 
 error1:

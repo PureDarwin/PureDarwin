@@ -296,6 +296,11 @@ static void drawWindowControl(O2Context *context, CGRect rect,
 }
 
 -(void)drawRect:(NSRect)rect {
+    [self _pdDrawFrameInContext:[[[self window] graphicsContext] graphicsPort]];
+}
+
+// the frame drawn into any context, so a frame for a window AppKit does not own can be rendered offscreen
+-(void)_pdDrawFrameInContext:(O2Context *)_context {
     NSRect bounds = [NSWindow contentRectForFrameRect:[self bounds]
         styleMask:[[self window] styleMask]];
     float cheatSheet = 0;
@@ -319,7 +324,6 @@ static void drawWindowControl(O2Context *context, CGRect rect,
     }
 
     NSWindow *window = [self window];
-    O2Context *_context = [[window graphicsContext] graphicsPort];
     CGFloat r, g, b, a;
     [[[self window] backgroundColor] getRed:&r green:&g blue:&b alpha:&a];
     O2ContextSetRGBStrokeColor(_context, r, g, b, a);
@@ -347,26 +351,20 @@ static void drawWindowControl(O2Context *context, CGRect rect,
         O2ContextSetGrayFillColor(_context, bar, 1);
     O2ContextSetGrayStrokeColor(_context, bar, 1);
 
-    // let's round these corners
+    // let's round these corners, with cubic quarter circles: the arc call wraps its angles and squared the top ones
     float radius = _pdWindowCornersSquare() ? 0 : NSWindowCornerRadius;
+    CGFloat x0 = _frame.origin.x, y0 = _frame.origin.y, x1 = NSMaxX(_frame), y1 = NSMaxY(_frame);
+    CGFloat k = radius * 0.4477;
     O2ContextBeginPath(_context);
-    O2ContextMoveToPoint(_context, _frame.origin.x+radius, NSMaxY(_frame));
-    O2ContextAddArc(_context, _frame.origin.x + _frame.size.width - radius,
-        _frame.origin.y + _frame.size.height - radius, radius, 1.5708 /*radians*/,
-        0 /*radians*/, YES);
-    O2ContextAddLineToPoint(_context, _frame.origin.x + _frame.size.width,
-        _frame.origin.y);
-    O2ContextAddArc(_context, _frame.origin.x + _frame.size.width - radius,
-        _frame.origin.y + radius, radius, 6.28319 /*radians*/, 4.71239 /*radians*/,
-        YES);
-    O2ContextAddLineToPoint(_context, _frame.origin.x, _frame.origin.y);
-    O2ContextAddArc(_context, _frame.origin.x + radius, _frame.origin.y + radius,
-        radius, 4.71239, 3.14159, YES);
-    O2ContextAddLineToPoint(_context, _frame.origin.x,
-        _frame.origin.y + _frame.size.height);
-    O2ContextAddArc(_context, _frame.origin.x + radius, _frame.origin.y +
-        _frame.size.height - radius, radius, 3.14159, 1.5708, YES);
-    O2ContextAddLineToPoint(_context, _frame.origin.x, NSMaxY(_frame));
+    O2ContextMoveToPoint(_context, x0 + radius, y1);
+    O2ContextAddLineToPoint(_context, x1 - radius, y1);
+    O2ContextAddCurveToPoint(_context, x1 - k, y1, x1, y1 - k, x1, y1 - radius);
+    O2ContextAddLineToPoint(_context, x1, y0 + radius);
+    O2ContextAddCurveToPoint(_context, x1, y0 + k, x1 - k, y0, x1 - radius, y0);
+    O2ContextAddLineToPoint(_context, x0 + radius, y0);
+    O2ContextAddCurveToPoint(_context, x0 + k, y0, x0, y0 + k, x0, y0 + radius);
+    O2ContextAddLineToPoint(_context, x0, y1 - radius);
+    O2ContextAddCurveToPoint(_context, x0, y1 - k, x0 + k, y1, x0 + radius, y1);
     O2ContextClosePath(_context);
     O2ContextFillPath(_context);
 
@@ -391,7 +389,16 @@ static void drawWindowControl(O2Context *context, CGRect rect,
             NSFontAttributeName : titleFont,
             NSForegroundColorAttributeName : titleColor
         };
-        NSAttributedString *title = [[NSAttributedString alloc] initWithString:t attributes:attrs];
+        // centred, and cut with an ellipsis where it would reach the lights, mirrored on the right
+        CGFloat room = _frame.size.width - 2 * (NSMaxX(_zoomButtonRect) + 12);
+        NSString *shown = t;
+        if (room > 0 && [shown sizeWithAttributes:attrs].width > room) {
+            NSUInteger n = [t length];
+            while (n > 0 && [[[t substringToIndex:n] stringByAppendingString:@"…"] sizeWithAttributes:attrs].width > room)
+                n--;
+            shown = [[t substringToIndex:n] stringByAppendingString:@"…"];
+        }
+        NSAttributedString *title = [[NSAttributedString alloc] initWithString:shown attributes:attrs];
         NSSize size = [title size];
         // the typesetter puts the baseline ceil(ascender) below the rect top, and Inter's
         // glyphs still land 2px under the lights' centre line as measured on PD

@@ -19,6 +19,7 @@ libswc_src = files(
   'output.c',
   'panel.c',
   'panel_manager.c',
+  'pd_decoration.c',
   'pointer.c',
   'primary_plane.c',
   'region.c',

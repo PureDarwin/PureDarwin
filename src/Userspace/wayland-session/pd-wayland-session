@@ -20,6 +20,8 @@ export WAYLAND_DISPLAY
 # the Dock draws the desktop picture, the menu bar serves every app's menus, both before the first client
 /System/Library/CoreServices/Dock.app/Contents/MacOS/Dock &
 dock=$!
+# title bars for windows that ask the compositor to draw them, foot, Qt, SDL and Wine
+/System/Library/CoreServices/pddecor.app/Contents/MacOS/pddecor 2>/dev/console &
 /System/Library/CoreServices/MenuBar.app/Contents/MacOS/MenuBar &
 menubar=$!
 

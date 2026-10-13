@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="pd_decoration_v1">
+  <copyright>
+    Copyright (c) 2026 The PureDarwin Project
+
+    SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+  </copyright>
+
+  <description summary="frames for windows that asked the compositor to decorate them">
+    Clients that are not AppKit, such as foot, Qt, SDL or Wine, ask for server
+    side decorations through xdg-decoration. The compositor does not draw those
+    frames itself: it reports each such window to the one client that binds this
+    global, the decorator, which renders the title strip with AppKit's own
+    window frame code and hands it back as a buffer. The compositor shows the
+    strip above the window, moves the window when the strip is dragged, and acts
+    on the window buttons at the positions the decorator gave.
+  </description>
+
+  <interface name="pd_decorator_v1" version="1">
+    <description summary="the decorator's view of the decorated windows">
+      Only one client may bind this global at a time, later binds are inert.
+    </description>
+
+    <request name="destroy" type="destructor"/>
+
+    <event name="window">
+      <description summary="a window wants a frame">
+        A new decorated window. The id stays valid until the removed event.
+        Its state follows in title, width and active events, then done.
+      </description>
+      <arg name="id" type="uint"/>
+    </event>
+
+    <event name="title">
+      <arg name="id" type="uint"/>
+      <arg name="title" type="string"/>
+    </event>
+
+    <event name="width">
+      <description summary="the window's width in pixels, the strip's width"/>
+      <arg name="id" type="uint"/>
+      <arg name="width" type="uint"/>
+    </event>
+
+    <event name="active">
+      <description summary="whether the window has keyboard focus, 1 or 0"/>
+      <arg name="id" type="uint"/>
+      <arg name="active" type="uint"/>
+    </event>
+
+    <event name="done">
+      <description summary="the state since the last done is complete, render now"/>
+      <arg name="id" type="uint"/>
+    </event>
+
+    <event name="removed">
+      <description summary="the window is gone, its last frame buffer is no longer used"/>
+      <arg name="id" type="uint"/>
+    </event>
+
+    <request name="set_frame">
+      <description summary="the title strip for a window">
+        A buffer as wide as the last width event and height pixels tall, shown
+        directly above the window. The buttons are three squares of the given
+        size, their top edge at button_y in the strip, their left edges at
+        close_x, mini_x and zoom_x. The compositor reads the buffer until the
+        next set_frame for this id or the removed event, then releases it.
+      </description>
+      <arg name="id" type="uint"/>
+      <arg name="buffer" type="object" interface="wl_buffer"/>
+      <arg name="height" type="uint"/>
+      <arg name="button_y" type="uint"/>
+      <arg name="button_size" type="uint"/>
+      <arg name="close_x" type="uint"/>
+      <arg name="mini_x" type="uint"/>
+      <arg name="zoom_x" type="uint"/>
+    </request>
+  </interface>
+</protocol>

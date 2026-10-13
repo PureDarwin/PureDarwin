@@ -25,8 +25,13 @@
 #define SWC_XDG_SHELL_H
 
 struct wl_display;
+struct wl_resource;
 
 struct wl_global *
 xdg_shell_create(struct wl_display *display);
+
+// the window behind an xdg_toplevel resource, for protocols that extend a toplevel
+struct window *
+xdg_toplevel_window(struct wl_resource *resource);
 
 #endif

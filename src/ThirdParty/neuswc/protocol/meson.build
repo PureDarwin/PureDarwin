@@ -10,6 +10,7 @@ foreach proto : [
   'wlr-layer-shell-unstable-v1.xml',
   'wlr-output-management-unstable-v1.xml',
   'pd-window-position-v1.xml',
+  'pd-decoration-v1.xml',
   'wayland-drm.xml',
   wl.find_protocol('xdg-shell', state: 'stable'),
   wl.find_protocol('ext-background-effect', state: 'staging', version: 1),

@@ -168,6 +168,7 @@
 , systemInformationBuild
 , calculatorBuild
 , installerBuild
+, pddecorBuild
 , settingsBuild
 , waylandSessionBuild
 , wlrootsBuild
@@ -1256,7 +1257,7 @@ let
           waylandBuild xkbcommonNoxBuild xkeyboardConfigBuild neuswcBuild
           quartzcoreBuild corevideoBuild applicationservicesBuild windowserverBuild appkitBuild coredataBuild cocoaBuild appFrameworksBuild mpsNoxBuild
           openglFrameworkNoxBuild mesaNoxBuild gluNoxBuild llvmCrossBuild pdVirglShimBuild
-          terminalBuild menubarBuild dockBuild finderBuild systemInformationBuild calculatorBuild settingsBuild waylandSessionBuild psOnlyBuild diagToolsBuild
+          terminalBuild menubarBuild pddecorBuild dockBuild finderBuild systemInformationBuild calculatorBuild settingsBuild waylandSessionBuild psOnlyBuild diagToolsBuild
           # Inter and the other system faces the window chrome and menu bar are drawn in
           systemFontsBuild
           # something full-screen to run in it

@@ -84,6 +84,16 @@ struct window {
 		bool pending, acknowledged;
 		uint32_t width, height;
 	} configure;
+
+	// a client that asked for server side decorations gets a title strip from the decorator
+	struct {
+		bool wanted;
+		uint32_t id;
+		struct wl_list link;
+		uint32_t height, button_y, button_size, close_x, mini_x, zoom_x;
+		bool zoomed;
+		struct swc_rectangle unzoomed;
+	} frame;
 };
 
 struct window_impl {

@@ -28,6 +28,7 @@
  */
 
 #include "compositor.h"
+#include "pd_decoration.h"
 
 // how far the background blur reaches, as the demo blur(30px)
 #define BLUR_RADIUS 30
@@ -373,8 +374,11 @@ corner_region(struct compositor_view *view, pixman_region32_t *corners)
 	pixman_region32_init(corners);
 	if (r == 0 || g->width < 2 * (uint32_t)r || g->height < 2 * (uint32_t)r)
 		return;
-	pixman_region32_union_rect(corners, corners, g->x, g->y, r, r);
-	pixman_region32_union_rect(corners, corners, g->x + g->width - r, g->y, r, r);
+	// a title strip above the content brings its own rounded top corners
+	if (!view->decor.top) {
+		pixman_region32_union_rect(corners, corners, g->x, g->y, r, r);
+		pixman_region32_union_rect(corners, corners, g->x + g->width - r, g->y, r, r);
+	}
 	pixman_region32_union_rect(corners, corners, g->x, g->y + g->height - r, r, r);
 	pixman_region32_union_rect(corners, corners, g->x + g->width - r, g->y + g->height - r, r, r);
 }
@@ -433,8 +437,10 @@ repaint_view(struct target *target, struct compositor_view *view,
 		pixman_region32_init(&shadow);
 		pixman_region32_copy(&shadow, &view_damage);
 		pixman_region32_translate(&shadow, -target_geom->x, -target_geom->y);
-		wld_draw_shadow(swc.backend->renderer, &shadow, geom->x - target_geom->x, geom->y - target_geom->y,
-		                geom->width, geom->height, view->corner_radius, WINDOW_SHADOW_BLUR,
+		// the shadow falls under the title strip and the content as one window
+		wld_draw_shadow(swc.backend->renderer, &shadow, geom->x - target_geom->x,
+		                geom->y - (int32_t)view->decor.top - target_geom->y,
+		                geom->width, geom->height + view->decor.top, view->corner_radius, WINDOW_SHADOW_BLUR,
 		                WINDOW_SHADOW_OFFSET, WINDOW_SHADOW_ALPHA);
 		pixman_region32_fini(&shadow);
 	}
@@ -2025,6 +2031,27 @@ perform_update(void *data)
 	compositor.updating = false;
 }
 
+// the window whose title strip is under the point, if nothing above it covers the point
+static struct compositor_view *
+strip_at(int32_t x, int32_t y)
+{
+	struct compositor_view *view;
+
+	wl_list_for_each(view, &compositor.views, link) {
+		const struct swc_rectangle *g = &view->base.geometry;
+
+		if (!view->visible)
+			continue;
+		if (view->window && view->window->frame.height &&
+		    x >= g->x && x < g->x + (int32_t)g->width &&
+		    y >= g->y - (int32_t)view->window->frame.height && y < g->y)
+			return view;
+		if (rectangle_contains_point(g, x, y))
+			return NULL;
+	}
+	return NULL;
+}
+
 bool
 handle_motion(struct pointer_handler *handler, uint32_t time, wl_fixed_t fx,
               wl_fixed_t fy)
@@ -2036,7 +2063,8 @@ handle_motion(struct pointer_handler *handler, uint32_t time, wl_fixed_t fx,
 		return false;
 	}
 
-	struct compositor_view *view = view_at(x, y);
+	// over a title strip no client has the pointer, the cursor stays the default one
+	struct compositor_view *view = strip_at(x, y) ? NULL : view_at(x, y);
 
 	pointer_set_focus(swc.seat->pointer, view);
 
@@ -2057,6 +2085,20 @@ handle_button(struct pointer_handler *handler, uint32_t time,
 
 	int32_t x = wl_fixed_to_int(swc.seat->pointer->x);
 	int32_t y = wl_fixed_to_int(swc.seat->pointer->y);
+	struct compositor_view *strip = strip_at(x, y);
+
+	// a press on a title strip focuses and raises its window, then is a button or a move.
+	// the compositor owns the button first so a move hands its release back here and ends,
+	// and false keeps pointer_handle_button from taking the button back off the move
+	if (strip) {
+		pointer_set_focus(swc.seat->pointer, NULL);
+		window_clicked(strip->window);
+		raise_window(strip);
+		button->handler = &pointer_handler;
+		pd_decoration_button(strip->window, button, x, y);
+		return false;
+	}
+
 	struct compositor_view *view = view_at(x, y);
 
 	pointer_set_focus(swc.seat->pointer, view);
