@@ -2338,6 +2338,16 @@ bool RavynXHCIPort::bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
                 (unsigned)((deviceEp(dc, dci)->dword1 >> EP_CTX_TYPE_SHIFT) & 0x7),
                 (unsigned long long)deviceEp(dc, dci)->trDequeuePtr,
                 (unsigned long long)pushedPhys, enqueue, opRead32(XHCI_USBSTS));
+        UInt32 sts = opRead32(XHCI_USBSTS);
+        if (sts & XHCI_USBSTS_HCH) {
+            // a halted controller does no dma, so the caller may free the buffer
+            XHCI_Log("controller halted%s%s, USBSTS=%08x", (sts & XHCI_USBSTS_HCE) ? ", host controller error" : "",
+                     (sts & XHCI_USBSTS_HSE) ? ", host system error" : "", sts);
+        } else if (!stopRing(slotId, dci, pushedPhys + (UInt64)enqueue * sizeof(XHCITRB), cycle)) {
+            // the controller may still write it. leak the buffer rather than let it be reused
+            xferMem->retain();
+            XHCI_Log("slot %u dci %u did not stop, keeping its %u-byte buffer", slotId, dci, len);
+        }
         return false;
     }
     if (cc != TRB_CC_SUCCESS && cc != TRB_CC_SHORT_PACKET) {
@@ -2356,6 +2366,27 @@ void RavynXHCIPort::resetHaltedRing(UInt32 slotId, UInt32 dci, UInt64 deq, UInt8
     doCommand(0, 0, TRB_SET_TYPE(TRB_TYPE_RESET_EP) | TRB_SET_SLOT(slotId) | TRB_SET_EP(dci), cc1, &slotOut, 500);
     doCommand(deq | cycle, 0, TRB_SET_TYPE(TRB_TYPE_SET_TR_DEQUEUE) | TRB_SET_SLOT(slotId) | TRB_SET_EP(dci),
               cc2, &slotOut, 500);
+}
+
+// take a running endpoint's TDs back: stop it, then move its dequeue pointer past them
+bool RavynXHCIPort::stopRing(UInt32 slotId, UInt32 dci, UInt64 deq, UInt8 cycle)
+{
+    UInt32 slotOut = 0;
+    UInt8 cc = 0;
+
+    if (!doCommand(0, 0, TRB_SET_TYPE(TRB_TYPE_STOP_EP) | TRB_SET_SLOT(slotId) | TRB_SET_EP(dci), &cc, &slotOut, 1000))
+        return false;
+    // a context state error means the endpoint had already left the running state
+    if (cc != TRB_CC_SUCCESS && cc != TRB_CC_CONTEXT_STATE)
+        return false;
+    if (!doCommand(deq | cycle, 0, TRB_SET_TYPE(TRB_TYPE_SET_TR_DEQUEUE) | TRB_SET_SLOT(slotId) | TRB_SET_EP(dci),
+                   &cc, &slotOut, 1000) || cc != TRB_CC_SUCCESS)
+        return false;
+    serviceEventRing();
+    IOLockLock(fEventLock);
+    fXferDone[slotId][dci].pending = false;
+    IOLockUnlock(fEventLock);
+    return true;
 }
 
 void RavynXHCIPort::recoverHaltedEndpoint(UInt32 slotId, UInt8 epNum, bool in)
