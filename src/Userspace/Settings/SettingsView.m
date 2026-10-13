@@ -275,19 +275,19 @@ static NSColor *accent(void)
 static NSArray *sections(void)
 {
     return @[
-        @[ @"You", @[ @[ @"appearance", @"Appearance", @"Theme, wallpaper and dock", @"pref-display" ],
-                      @[ @"users", @"Account", @"Name and picture", @"pref-user" ] ] ],
-        @[ @"System", @[ @[ @"boot", @"Startup & Boot", @"Boot args and disk", @"settings" ],
-                         @[ @"services", @"Services", @"launchd daemons", @"terminal" ],
-                         @[ @"kexts", @"Kernel Extensions", @"Kernel collection", @"folder" ],
-                         @[ @"session", @"Session", @"Compositor and windows", @"pref-software" ] ] ],
-        @[ @"Hardware", @[ @[ @"displays", @"Displays", @"Resolution", @"pref-display" ],
-                           @[ @"network", @"Network", @"Wi-Fi and Ethernet", @"wifi", @"3d8fe6" ],
-                           @[ @"sound", @"Sound", @"Output devices", @"volume", @"e2777a" ],
-                           @[ @"power", @"Power", @"Battery and sleep", @"pref-power" ],
-                           @[ @"input", @"Mouse & Keyboard", @"Pointer and keys", @"pref-mouse" ] ] ],
-        @[ @"Region", @[ @[ @"clock", @"Date & Time", @"Clock and time zone", @"pref-locale" ],
-                         @[ @"about", @"About", @"Darwin and xnu", @"settings" ] ] ],
+        @[ NSLocalizedString(@"You", @""), @[ @[ @"appearance", NSLocalizedString(@"Appearance", @""), NSLocalizedString(@"Theme, wallpaper and dock", @""), @"pref-display" ],
+                      @[ @"users", NSLocalizedString(@"Account", @""), NSLocalizedString(@"Name and picture", @""), @"pref-user" ] ] ],
+        @[ NSLocalizedString(@"System", @""), @[ @[ @"boot", NSLocalizedString(@"Startup & Boot", @""), NSLocalizedString(@"Boot args and disk", @""), @"settings" ],
+                         @[ @"services", NSLocalizedString(@"Services", @""), NSLocalizedString(@"launchd daemons", @""), @"terminal" ],
+                         @[ @"kexts", NSLocalizedString(@"Kernel Extensions", @""), NSLocalizedString(@"Kernel collection", @""), @"folder" ],
+                         @[ @"session", NSLocalizedString(@"Session", @""), NSLocalizedString(@"Compositor and windows", @""), @"pref-software" ] ] ],
+        @[ NSLocalizedString(@"Hardware", @""), @[ @[ @"displays", NSLocalizedString(@"Displays", @""), NSLocalizedString(@"Resolution", @""), @"pref-display" ],
+                           @[ @"network", NSLocalizedString(@"Network", @""), NSLocalizedString(@"Wi-Fi and Ethernet", @""), @"wifi", @"3d8fe6" ],
+                           @[ @"sound", NSLocalizedString(@"Sound", @""), NSLocalizedString(@"Output devices", @""), @"volume", @"e2777a" ],
+                           @[ @"power", NSLocalizedString(@"Power", @""), NSLocalizedString(@"Battery and sleep", @""), @"pref-power" ],
+                           @[ @"input", NSLocalizedString(@"Mouse & Keyboard", @""), NSLocalizedString(@"Pointer and keys", @""), @"pref-mouse" ] ] ],
+        @[ NSLocalizedString(@"Region", @""), @[ @[ @"clock", NSLocalizedString(@"Date & Time", @""), NSLocalizedString(@"Clock and time zone", @""), @"pref-locale" ],
+                         @[ @"about", NSLocalizedString(@"About", @""), NSLocalizedString(@"Darwin and xnu", @""), @"settings" ] ] ],
     ];
 }
 
@@ -729,9 +729,9 @@ static NSArray *paneInfo(NSString *pane)
     [[NSBezierPath bezierPathWithRect:r] fill];
     [logo drawInRect:NSMakeRect(NSMaxX(r) - 170, NSMaxY(r) - 160, 200, 200) fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:0.14 respectFlipped:YES hints:nil];
     [logo drawInRect:NSMakeRect(NSMinX(r) + 26, NSMidY(r) - 28, 56, 56) fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1 respectFlipped:YES hints:nil];
-    [[NSString stringWithFormat:@"PureDarwin %@", PDSystemVersion()] drawAtPoint:NSMakePoint(NSMinX(r) + 100, NSMinY(r) + 22)
+    [[NSString stringWithFormat:NSLocalizedString(@"PureDarwin %@", @""), PDSystemVersion()] drawAtPoint:NSMakePoint(NSMinX(r) + 100, NSMinY(r) + 22)
                                                                   withAttributes:attrs(@"Inter-Bold", 22, [NSColor whiteColor])];
-    [[NSString stringWithFormat:@"%@ · %@ · %@ · build %@", PDKernelVersion(), PDXNUTag(), PDProcessor(), PDBuildVersion()]
+    [[NSString stringWithFormat:NSLocalizedString(@"%1$@ · %2$@ · %3$@ · build %4$@", @""), PDKernelVersion(), PDXNUTag(), PDProcessor(), PDBuildVersion()]
         drawAtPoint:NSMakePoint(NSMinX(r) + 100, NSMinY(r) + 52) withAttributes:white];
     [[NSColor colorWithCalibratedWhite:1 alpha:0.18] setFill];
     [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(NSMinX(r) + 100, NSMinY(r) + 74, hs.width + 18, 22) xRadius:11 yRadius:11] fill];
@@ -812,7 +812,7 @@ static NSArray *paneInfo(NSString *pane)
         y += ((([tiles count] + cols - 1) / cols)) * (TILE_H + TILE_GAP) + 10;
     }
     if (!any)
-        [[NSString stringWithFormat:@"No settings match “%@”.", _search] drawAtPoint:NSMakePoint(PAD, y)
+        [[NSString stringWithFormat:NSLocalizedString(@"No settings match “%@”.", @""), _search] drawAtPoint:NSMakePoint(PAD, y)
                                                                              withAttributes:attrs(@"Inter-Regular", 13, rgb(0x6e, 0x6e, 0x6e))];
     return y;
 }
@@ -824,13 +824,13 @@ static NSArray *paneInfo(NSString *pane)
     CGFloat size = PDPref(PDDockDomain, @"TileSize") ? [PDPref(PDDockDomain, @"TileSize") doubleValue] : 48;
     BOOL magnify = PDPref(PDDockDomain, @"Magnify") ? [PDPref(PDDockDomain, @"Magnify") boolValue] : YES;
 
-    y = [self title:@"Theme" at:y];
+    y = [self title:NSLocalizedString(@"Theme", @"") at:y];
     y = [self card:@[
         [self row:72 draw:^(NSRect r) {
-            NSArray *looks = @[ @[ @"light", @"Light" ], @[ @"dark", @"Dark" ], @[ @"auto", @"Auto" ] ];
+            NSArray *looks = @[ @[ @"light", NSLocalizedString(@"Light", @"") ], @[ @"dark", NSLocalizedString(@"Dark", @"") ], @[ @"auto", NSLocalizedString(@"Auto", @"") ] ];
             CGFloat x = NSMaxX(r) - 12 - 3 * 64 - 2 * 16;
 
-            [self drawLabel:@"Mode" sub:nil in:NSMakeRect(NSMinX(r) + 12, NSMinY(r), 200, NSHeight(r)) code:NO];
+            [self drawLabel:NSLocalizedString(@"Mode", @"") sub:nil in:NSMakeRect(NSMinX(r) + 12, NSMinY(r), 200, NSHeight(r)) code:NO];
             for (NSArray *l in looks) {
                 NSRect p = NSMakeRect(x, NSMinY(r) + 8, 64, 42);
                 NSDictionary *a = attrs(@"Inter-Regular", 11, rgb(0x4a, 0x4a, 0x4a));
@@ -873,7 +873,7 @@ static NSArray *paneInfo(NSString *pane)
         [self row:ROW_MIN draw:^(NSRect r) {
             CGFloat x = NSMaxX(r) - 12 - 8 * 16 - 7 * 8;
 
-            [self drawLabel:@"Accent" sub:nil in:NSMakeRect(NSMinX(r) + 12, NSMinY(r), 200, NSHeight(r)) code:NO];
+            [self drawLabel:NSLocalizedString(@"Accent", @"") sub:nil in:NSMakeRect(NSMinX(r) + 12, NSMinY(r), 200, NSHeight(r)) code:NO];
             for (unsigned i = 0; i < sizeof(accents) / sizeof(accents[0]); i++) {
                 NSRect dot = NSMakeRect(x, NSMidY(r) - 8, 16, 16);
                 int value = accents[i].value;
@@ -907,10 +907,10 @@ static NSArray *paneInfo(NSString *pane)
         }],
     ] at:y];
 
-    y = [self title:@"Wallpaper" at:y];
+    y = [self title:NSLocalizedString(@"Wallpaper", @"") at:y];
     y = [self card:@[
         [self row:126 draw:^(NSRect r) {
-            NSArray *walls = @[ @"Sunset", @"Lagoon", @"Dusk", @"Graphite" ];
+            NSArray *walls = @[ NSLocalizedString(@"Sunset", @""), NSLocalizedString(@"Lagoon", @""), NSLocalizedString(@"Dusk", @""), NSLocalizedString(@"Graphite", @"") ];
             CGFloat gap = 10, w = floor((NSWidth(r) - 24 - 3 * gap) / 4);
 
             for (NSUInteger i = 0; i < [walls count]; i++) {
@@ -936,19 +936,19 @@ static NSArray *paneInfo(NSString *pane)
         }],
     ] at:y];
 
-    y = [self title:@"Dock" at:y];
+    y = [self title:NSLocalizedString(@"Dock", @"") at:y];
     y = [self card:@[
-        [self sliderRow:@"Size" value:(size - 32) / 40 change:^(CGFloat v, BOOL dragging) {
+        [self sliderRow:NSLocalizedString(@"Size", @"") value:(size - 32) / 40 change:^(CGFloat v, BOOL dragging) {
             PDSetPref(PDDockDomain, @"TileSize", @(round(32 + v * 40)));
             [self setNeedsDisplay:YES];
         }],
-        [self switchRow:@"Magnify on hover" sub:nil code:NO dot:nil on:magnify enabled:YES toggle:^(BOOL on) {
+        [self switchRow:NSLocalizedString(@"Magnify on hover", @"") sub:nil code:NO dot:nil on:magnify enabled:YES toggle:^(BOOL on) {
             PDSetPref(PDDockDomain, @"Magnify", @(on));
             [self setNeedsDisplay:YES];
         }],
     ] at:y];
     if (![look isEqualToString:@"light"])
-        y = [self lead:@"Dark mode is saved, apps draw it once AppKit has a dark appearance." at:y];
+        y = [self lead:NSLocalizedString(@"Dark mode is saved, apps draw it once AppKit has a dark appearance.", @"") at:y];
     return y;
 }
 
@@ -957,11 +957,11 @@ static NSArray *paneInfo(NSString *pane)
     NSDictionary *a = PDAccount();
 
     return [self card:@[
-        [self valueRow:@"Full name" value:a[@"name"]],
-        [self valueRow:@"Account name" value:a[@"short"]],
-        [self valueRow:@"Account" value:[a[@"uid"] intValue] == 0 ? @"Administrator, uid 0" : [NSString stringWithFormat:@"Standard, uid %@", a[@"uid"]]],
-        [self valueRow:@"Home" value:a[@"home"]],
-        [self valueRow:@"Shell" value:a[@"shell"]],
+        [self valueRow:NSLocalizedString(@"Full name", @"") value:a[@"name"]],
+        [self valueRow:NSLocalizedString(@"Account name", @"") value:a[@"short"]],
+        [self valueRow:NSLocalizedString(@"Account", @"") value:[a[@"uid"] intValue] == 0 ? NSLocalizedString(@"Administrator, uid 0", @"") : [NSString stringWithFormat:NSLocalizedString(@"Standard, uid %@", @""), a[@"uid"]]],
+        [self valueRow:NSLocalizedString(@"Home", @"") value:a[@"home"]],
+        [self valueRow:NSLocalizedString(@"Shell", @"") value:a[@"shell"]],
     ] at:y];
 }
 
@@ -977,8 +977,8 @@ static NSArray *paneInfo(NSString *pane)
         if (![chips containsObject:a])
             [chips addObject:a];
     }
-    y = [self lead:@"Arguments passed to xnu at the next start, kept in boot-args.txt on the EFI partition." at:y];
-    y = [self title:@"Boot arguments" at:y];
+    y = [self lead:NSLocalizedString(@"Arguments passed to xnu at the next start, kept in boot-args.txt on the EFI partition.", @"") at:y];
+    y = [self title:NSLocalizedString(@"Boot arguments", @"") at:y];
     y = [self card:@[
         [self row:0 draw:^(NSRect r) {}],
         [self row:(CGFloat)(28 * ceil([chips count] / 7.0) + 16) draw:^(NSRect r) {
@@ -1024,20 +1024,20 @@ static NSArray *paneInfo(NSString *pane)
             [rgb(0x1f, 0x20, 0x23) setFill];
             [[NSBezierPath bezierPathWithRoundedRect:box xRadius:6 yRadius:6] fill];
             [@"boot-args" drawAtPoint:NSMakePoint(NSMinX(box) + 9, NSMinY(box) + 7) withAttributes:monoBold];
-            [fitted([NSString stringWithFormat:@"= %@", [line length] > 0 ? line : @"(none)"], mono, NSWidth(box) - 100)
+            [fitted([NSString stringWithFormat:@"= %@", [line length] > 0 ? line : NSLocalizedString(@"(none)", @"")], mono, NSWidth(box) - 100)
                 drawAtPoint:NSMakePoint(NSMinX(box) + 9 + [@"boot-args " sizeWithAttributes:monoBold].width, NSMinY(box) + 7) withAttributes:mono];
         }],
-        [self buttonRow:@"Save" note:_message ?: (changed ? @"Not saved yet." : @"Matches the running system.") action:^{
+        [self buttonRow:NSLocalizedString(@"Save", @"") note:_message ?: (changed ? NSLocalizedString(@"Not saved yet.", @"") : NSLocalizedString(@"Matches the running system.", @"")) action:^{
             NSString *error = PDWriteBootArgs([_bootArgs componentsJoinedByString:@" "]);
 
-            [self setMessage:error ?: @"Saved, used at the next start."];
+            [self setMessage:error ?: NSLocalizedString(@"Saved, used at the next start.", @"")];
             [self setNeedsDisplay:YES];
         }],
     ] at:y];
-    y = [self title:@"Startup" at:y];
+    y = [self title:NSLocalizedString(@"Startup", @"") at:y];
     return [self card:@[
-        [self valueRow:@"Startup disk" value:PDStartupDisk()],
-        [self valueRow:@"Firmware" value:@"UEFI, legacy BIOS supported"],
+        [self valueRow:NSLocalizedString(@"Startup disk", @"") value:PDStartupDisk()],
+        [self valueRow:NSLocalizedString(@"Firmware", @"") value:NSLocalizedString(@"UEFI, legacy BIOS supported", @"")],
         [self valueRow:@"Kernel collection" value:@"BootKernelExtensions.kc"],
     ] at:y];
 }
@@ -1046,7 +1046,7 @@ static NSArray *paneInfo(NSString *pane)
 {
     NSMutableArray *rows = [NSMutableArray array];
 
-    y = [self lead:@"Daemons launchd starts at boot. Changes apply after a restart." at:y];
+    y = [self lead:NSLocalizedString(@"Daemons launchd starts at boot. Changes apply after a restart.", @"") at:y];
     for (NSDictionary *d in _daemons) {
         BOOL on = ![d[@"disabled"] boolValue];
         NSColor *dot = [d[@"running"] boolValue] ? rgb(0x4c, 0xae, 0x4f) : rgb(0xc9, 0xc2, 0xbb);
@@ -1058,7 +1058,7 @@ static NSArray *paneInfo(NSString *pane)
         }]];
     }
     if ([rows count] == 0)
-        [rows addObject:[self valueRow:@"No launch daemons found" value:@""]];
+        [rows addObject:[self valueRow:NSLocalizedString(@"No launch daemons found", @"") value:@""]];
     return [self card:rows at:y];
 }
 
@@ -1086,8 +1086,8 @@ static NSArray *paneInfo(NSString *pane)
         } copy] autorelease];
     };
 
-    y = [self lead:@"Extensions on this system, and whether a driver of theirs is running." at:y];
-    [rows addObject:[self row:30 draw:grid(@[ @"Name", @"Family", @"State" ], YES)]];
+    y = [self lead:NSLocalizedString(@"Extensions on this system, and whether a driver of theirs is running.", @"") at:y];
+    [rows addObject:[self row:30 draw:grid(@[ NSLocalizedString(@"Name", @""), NSLocalizedString(@"Family", @""), NSLocalizedString(@"State", @"") ], YES)]];
     for (NSDictionary *k in _kexts)
         [rows addObject:[self row:30 draw:grid(@[ k[@"name"], k[@"family"], k[@"state"] ], NO)]];
     return [self card:rows at:y];
@@ -1101,17 +1101,17 @@ static NSArray *paneInfo(NSString *pane)
         if ([running containsObject:n])
             return @"running";
     }
-    return @"not running";
+    return NSLocalizedString(@"not running", @"");
 }
 
 - (CGFloat)drawSessionAt:(CGFloat)y
 {
     return [self card:@[
         [self valueRow:@"Display server" value:@"Wayland"],
-        [self valueRow:@"Compositor" value:[NSString stringWithFormat:@"neuswc with pdwm, %@", [self processState:@[ @"neuswc", @"pdwm", @"swc-launch" ]]]],
-        [self valueRow:@"Window server" value:@"AppKit over WindowServer"],
-        [self valueRow:@"Menu bar" value:[NSString stringWithFormat:@"MenuBar, %@", [self processState:@[ @"MenuBar" ]]]],
-        [self valueRow:@"Dock" value:[NSString stringWithFormat:@"Dock, %@", [self processState:@[ @"Dock" ]]]],
+        [self valueRow:NSLocalizedString(@"Compositor", @"") value:[NSString stringWithFormat:NSLocalizedString(@"neuswc with pdwm, %@", @""), [self processState:@[ @"neuswc", @"pdwm", @"swc-launch" ]]]],
+        [self valueRow:NSLocalizedString(@"Window server", @"") value:NSLocalizedString(@"AppKit over WindowServer", @"")],
+        [self valueRow:NSLocalizedString(@"Menu bar", @"") value:[NSString stringWithFormat:NSLocalizedString(@"MenuBar, %@", @""), [self processState:@[ @"MenuBar" ]]]],
+        [self valueRow:NSLocalizedString(@"Dock", @"") value:[NSString stringWithFormat:NSLocalizedString(@"Dock, %@", @""), [self processState:@[ @"Dock" ]]]],
     ] at:y];
 }
 
@@ -1148,12 +1148,12 @@ static NSArray *paneInfo(NSString *pane)
 
         if (sz.width == currentW && sz.height == currentH)
             sizeIndex = [sizeNames count];
-        [sizeNames addObject:[NSString stringWithFormat:@"%.0f × %.0f", sz.width, sz.height]];
+        [sizeNames addObject:[NSString stringWithFormat:NSLocalizedString(@"%1$.0f × %2$.0f", @""), sz.width, sz.height]];
     }
     for (NSNumber *hz in rates) {
         if ([hz doubleValue] == round(currentHz))
             rateIndex = [rateNames count];
-        [rateNames addObject:[NSString stringWithFormat:@"%@ Hz", hz]];
+        [rateNames addObject:[NSString stringWithFormat:NSLocalizedString(@"%@ Hz", @""), hz]];
     }
 
     // the mode with this size and rate, or the fastest one at this size
@@ -1174,14 +1174,14 @@ static NSArray *paneInfo(NSString *pane)
     };
     void (^apply)(CGDisplayModeRef) = ^(CGDisplayModeRef mode) {
         if (mode != NULL && CGDisplaySetDisplayMode(CGMainDisplayID(), mode, NULL) != kCGErrorSuccess)
-            [self setMessage:@"The compositor did not accept that resolution."];
+            [self setMessage:NSLocalizedString(@"The compositor did not accept that resolution.", @"")];
         [self setNeedsDisplay:YES];
     };
 
     if (count == 0) {
         return [self card:@[
-            [self valueRow:@"Display" value:PDGraphics()],
-            [self valueRow:@"Resolution" value:[NSString stringWithFormat:@"%zu × %zu", currentW, currentH]],
+            [self valueRow:NSLocalizedString(@"Display", @"") value:PDGraphics()],
+            [self valueRow:NSLocalizedString(@"Resolution", @"") value:[NSString stringWithFormat:NSLocalizedString(@"%zu × %zu", @""), currentW, currentH]],
         ] at:y];
     }
     // five sizes from Larger Text to More Space, each a little desktop drawn at that mode's scale
@@ -1215,7 +1215,7 @@ static NSArray *paneInfo(NSString *pane)
                 BOOL on = mode.width == currentW && mode.height == currentH;
                 NSRect win = NSMakeRect(NSMinX(t) + 40 * f, NSMinY(t) + 70 * f, MIN(700 * f, tileW - 8), MIN(450 * f, tileH - 10));
                 NSRect dock = NSMakeRect(NSMidX(t) - 200 * f, NSMaxY(t) - 70 * f, 400 * f, 60 * f);
-                NSString *name = [NSString stringWithFormat:@"%.0f × %.0f", mode.width, mode.height];
+                NSString *name = [NSString stringWithFormat:NSLocalizedString(@"%1$.0f × %2$.0f", @""), mode.width, mode.height];
                 NSSize ns = [name sizeWithAttributes:a];
 
                 if (on) {
@@ -1238,7 +1238,7 @@ static NSArray *paneInfo(NSString *pane)
                 [NSGraphicsContext restoreGraphicsState];
                 [name drawAtPoint:NSMakePoint(NSMidX(t) - ns.width / 2, NSMinY(r) + 84) withAttributes:a];
                 if (k == 0 || k == n - 1) {
-                    NSString *hint = k == 0 ? @"Larger Text" : @"More Space";
+                    NSString *hint = k == 0 ? NSLocalizedString(@"Larger Text", @"") : NSLocalizedString(@"More Space", @"");
                     NSDictionary *h = attrs(@"Inter-Regular", 10, rgb(0x8a, 0x8a, 0x8a));
                     NSSize hs = [hint sizeWithAttributes:h];
 
@@ -1254,11 +1254,11 @@ static NSArray *paneInfo(NSString *pane)
     ] at:y];
 
     return [self card:@[
-        [self valueRow:@"Display" value:PDGraphics()],
-        [self popupRow:@"Resolution" items:sizeNames selected:sizeIndex pick:^(NSUInteger i) {
+        [self valueRow:NSLocalizedString(@"Display", @"") value:PDGraphics()],
+        [self popupRow:NSLocalizedString(@"Resolution", @"") items:sizeNames selected:sizeIndex pick:^(NSUInteger i) {
             apply(find([sizes[i] sizeValue], currentHz));
         }],
-        [self popupRow:@"Refresh rate" items:rateNames selected:rateIndex pick:^(NSUInteger i) {
+        [self popupRow:NSLocalizedString(@"Refresh rate", @"") items:rateNames selected:rateIndex pick:^(NSUInteger i) {
             apply(find(NSMakeSize(currentW, currentH), [rates[i] doubleValue]));
         }],
     ] at:y];
@@ -1331,27 +1331,27 @@ static NSArray *paneInfo(NSString *pane)
     }
 
     if (!w.hardware) {
-        y = [self card:@[ [self valueRow:@"Wi-Fi" value:@"No Wi-Fi hardware"] ] at:y];
+        y = [self card:@[ [self valueRow:@"Wi-Fi" value:NSLocalizedString(@"No Wi-Fi hardware", @"")] ] at:y];
     } else {
-        NSString *state = !w.powered ? @"Off" : cur ? [NSString stringWithFormat:@"Connected to %@", cur.ssid]
-                        : w.busy ? [NSString stringWithFormat:@"Joining %@…", w.busy] : w.lastError ?: @"Not connected";
+        NSString *state = !w.powered ? NSLocalizedString(@"Off", @"") : cur ? [NSString stringWithFormat:NSLocalizedString(@"Connected to %@", @""), cur.ssid]
+                        : w.busy ? [NSString stringWithFormat:NSLocalizedString(@"Joining %@…", @""), w.busy] : w.lastError ?: NSLocalizedString(@"Not connected", @"");
         [rows addObject:[self switchRow:@"Wi-Fi" sub:state code:NO dot:nil on:w.powered enabled:YES toggle:^(BOOL on) {
             [w setPower:on];
         }]];
         if (cur) {
-            NSString *sub = cur.security ? [NSString stringWithFormat:@"Connected · %@ Personal", cur.security] : @"Connected";
+            NSString *sub = cur.security ? [NSString stringWithFormat:NSLocalizedString(@"Connected · %@ Personal", @""), cur.security] : NSLocalizedString(@"Connected", @"");
             [rows addObject:[self wifiRow:cur.ssid sub:sub level:[cur bars] on:YES lock:NO actions:@[
-                @[ _wifiDetails ? @"Hide Details" : @"Details…", @NO, ^{ _wifiDetails = !_wifiDetails; [self setNeedsDisplay:YES]; } ],
-                @[ @"Disconnect", @YES, ^{ [w leave]; } ],
+                @[ _wifiDetails ? NSLocalizedString(@"Hide Details", @"") : NSLocalizedString(@"Details…", @""), @NO, ^{ _wifiDetails = !_wifiDetails; [self setNeedsDisplay:YES]; } ],
+                @[ NSLocalizedString(@"Disconnect", @""), @YES, ^{ [w leave]; } ],
             ]]];
             if (_wifiDetails) {
                 NSArray *facts = @[
-                    @[ @"IP address", wifiIP ?: @"Waiting for DHCP" ],
-                    @[ @"Security", cur.security ? [cur.security stringByAppendingString:@" Personal"] : @"None" ],
-                    @[ @"Channel", [NSString stringWithFormat:@"%u (%@ GHz)", cur.channel, cur.channel > 14 ? @"5" : @"2.4"] ],
-                    @[ @"Signal", [NSString stringWithFormat:@"%d dBm", cur.rssi] ],
-                    @[ @"Wi-Fi address", w.hardwareAddress ?: @"" ],
-                    @[ @"Interface", w.interface ?: @"" ],
+                    @[ NSLocalizedString(@"IP address", @""), wifiIP ?: NSLocalizedString(@"Waiting for DHCP", @"") ],
+                    @[ NSLocalizedString(@"Security", @""), cur.security ? [cur.security stringByAppendingString:NSLocalizedString(@" Personal", @"")] : NSLocalizedString(@"None", @"") ],
+                    @[ NSLocalizedString(@"Channel", @""), [NSString stringWithFormat:NSLocalizedString(@"%1$u (%2$@ GHz)", @""), cur.channel, cur.channel > 14 ? @"5" : @"2.4"] ],
+                    @[ NSLocalizedString(@"Signal", @""), [NSString stringWithFormat:NSLocalizedString(@"%d dBm", @""), cur.rssi] ],
+                    @[ NSLocalizedString(@"Wi-Fi address", @""), w.hardwareAddress ?: @"" ],
+                    @[ NSLocalizedString(@"Interface", @""), w.interface ?: @"" ],
                 ];
                 [rows addObject:[self row:[facts count] * 19 + 14 draw:^(NSRect r) {
                     CGFloat fy = NSMinY(r) + 8;
@@ -1373,31 +1373,31 @@ static NSArray *paneInfo(NSString *pane)
                 inRange[n.ssid] = n;
             for (NSString *k in w.known) {
                 PDWiFiNetwork *n = inRange[k];
-                NSMutableArray *acts = [NSMutableArray arrayWithObject:@[ @"Forget", @NO, ^{ [w forget:k]; } ]];
+                NSMutableArray *acts = [NSMutableArray arrayWithObject:@[ NSLocalizedString(@"Forget", @""), @NO, ^{ [w forget:k]; } ]];
                 if (cur && [cur.ssid isEqualToString:k])
                     continue;
                 if (n)
-                    [acts addObject:@[ @"Join", @YES, ^{ [w pick:n accent:tint]; } ]];
-                [known addObject:[self wifiRow:k sub:n ? @"In range" : @"Not in range" level:n ? [n bars] : 0 on:NO lock:NO actions:acts]];
+                    [acts addObject:@[ NSLocalizedString(@"Join", @""), @YES, ^{ [w pick:n accent:tint]; } ]];
+                [known addObject:[self wifiRow:k sub:n ? NSLocalizedString(@"In range", @"") : NSLocalizedString(@"Not in range", @"") level:n ? [n bars] : 0 on:NO lock:NO actions:acts]];
             }
             if ([known count]) {
-                y = [self title:@"Known Networks" at:y];
+                y = [self title:NSLocalizedString(@"Known Networks", @"") at:y];
                 y = [self card:known at:y];
             }
             for (PDWiFiNetwork *n in w.inRange) {
                 if (n.known || (cur && [cur.ssid isEqualToString:n.ssid]))
                     continue;
                 [other addObject:[self wifiRow:n.ssid sub:nil level:[n bars] on:NO lock:n.security != nil actions:@[
-                    @[ @"Join", @YES, ^{ [w pick:n accent:tint]; } ],
+                    @[ NSLocalizedString(@"Join", @""), @YES, ^{ [w pick:n accent:tint]; } ],
                 ]]];
             }
             if ([other count] == 0)
-                [other addObject:[self valueRow:w.scanning ? @"Looking for networks…" : @"No other networks in range" value:@""]];
+                [other addObject:[self valueRow:w.scanning ? NSLocalizedString(@"Looking for networks…", @"") : NSLocalizedString(@"No other networks in range", @"") value:@""]];
             [other addObject:[self row:ROW_MIN draw:^(NSRect r) {
-                [self wifiControl:@"Other Network…" button:NO right:NSMinX(r) + 12 + [@"Other Network…" sizeWithAttributes:attrs(@"Inter-Regular", 12, accent())].width
+                [self wifiControl:NSLocalizedString(@"Other Network…", @"") button:NO right:NSMinX(r) + 12 + [NSLocalizedString(@"Other Network…", @"") sizeWithAttributes:attrs(@"Inter-Regular", 12, accent())].width
                               mid:NSMidY(r) action:^{ [w joinOther:tint]; }];
             }]];
-            y = [self title:@"Other Networks" at:y];
+            y = [self title:NSLocalizedString(@"Other Networks", @"") at:y];
             y = [self card:other at:y];
         }
     }
@@ -1407,9 +1407,9 @@ static NSArray *paneInfo(NSString *pane)
     for (NSArray *i in eth)
         [er addObject:[self valueRow:i[0] value:i[1]]];
     if ([er count] == 0)
-        [er addObject:[self valueRow:@"Ethernet" value:@"No cable connected"]];
+        [er addObject:[self valueRow:NSLocalizedString(@"Ethernet", @"") value:NSLocalizedString(@"No cable connected", @"")]];
     [er addObject:[self valueRow:@"DNS" value:[dns count] > 0 ? [dns componentsJoinedByString:@", "] : @"mDNSResponder"]];
-    y = [self title:@"Ethernet" at:y];
+    y = [self title:NSLocalizedString(@"Ethernet", @"") at:y];
     return [self card:er at:y];
 }
 
@@ -1420,7 +1420,7 @@ static NSArray *paneInfo(NSString *pane)
     for (NSArray *d in PDAudioDevices())
         [rows addObject:[self valueRow:d[0] value:d[1]]];
     if ([rows count] == 0)
-        [rows addObject:[self valueRow:@"Output" value:@"No audio device"]];
+        [rows addObject:[self valueRow:NSLocalizedString(@"Output", @"") value:NSLocalizedString(@"No audio device", @"")]];
     return [self card:rows at:y];
 }
 
@@ -1429,9 +1429,9 @@ static NSArray *paneInfo(NSString *pane)
     NSDictionary *b = PDBattery();
 
     return [self card:@[
-        [self valueRow:@"Battery" value:b != nil ? [NSString stringWithFormat:@"%@%%%@", b[@"percent"], [b[@"charging"] boolValue] ? @", charging" : @""]
-                                              : @"None, on AC power"],
-        [self valueRow:@"Sleep after" value:@"Never"],
+        [self valueRow:NSLocalizedString(@"Battery", @"") value:b != nil ? [NSString stringWithFormat:@"%@%%%@", b[@"percent"], [b[@"charging"] boolValue] ? NSLocalizedString(@", charging", @"") : @""]
+                                              : NSLocalizedString(@"None, on AC power", @"")],
+        [self valueRow:NSLocalizedString(@"Sleep after", @"") value:NSLocalizedString(@"Never", @"")],
     ] at:y];
 }
 
@@ -1441,7 +1441,7 @@ static NSArray *paneInfo(NSString *pane)
 
     for (NSArray *d in PDInputDevices())
         [rows addObject:[self valueRow:d[0] value:d[1]]];
-    [rows addObject:[self valueRow:@"Keyboard layout" value:@"U.S."]];
+    [rows addObject:[self valueRow:NSLocalizedString(@"Keyboard layout", @"") value:NSLocalizedString(@"U.S.", @"")]];
     return [self card:rows at:y];
 }
 
@@ -1454,33 +1454,33 @@ static NSArray *paneInfo(NSString *pane)
 
     [f setDateFormat:iso ? @"yyyy-MM-dd'T'HH:mm:ssZZZZZ" : h24 ? @"EEEE, d MMMM yyyy, HH:mm" : @"EEEE, d MMMM yyyy, h:mm a"];
     return [self card:@[
-        [self switchRow:@"ISO 8601" sub:@"Dates as 2026-10-10, times as 14:05" code:NO dot:nil on:iso enabled:YES toggle:^(BOOL on) {
+        [self switchRow:NSLocalizedString(@"ISO 8601", @"") sub:NSLocalizedString(@"Dates as 2026-10-10, times as 14:05", @"") code:NO dot:nil on:iso enabled:YES toggle:^(BOOL on) {
             PDSetPref(PDMenuBarDomain, @"ISO8601", @(on));
             [self setNeedsDisplay:YES];
         }],
-        [self switchRow:@"24-hour clock" sub:nil code:NO dot:nil on:h24 || iso enabled:!iso toggle:^(BOOL on) {
+        [self switchRow:NSLocalizedString(@"24-hour clock", @"") sub:nil code:NO dot:nil on:h24 || iso enabled:!iso toggle:^(BOOL on) {
             PDSetPref(PDMenuBarDomain, @"Clock24", @(on));
             [self setNeedsDisplay:YES];
         }],
-        [self switchRow:@"Date in the menu bar" sub:nil code:NO dot:nil on:date enabled:YES toggle:^(BOOL on) {
+        [self switchRow:NSLocalizedString(@"Date in the menu bar", @"") sub:nil code:NO dot:nil on:date enabled:YES toggle:^(BOOL on) {
             PDSetPref(PDMenuBarDomain, @"ShowDate", @(on));
             [self setNeedsDisplay:YES];
         }],
-        [self valueRow:@"Time zone" value:PDTimeZone()],
-        [self valueRow:@"Now" value:[f stringFromDate:[NSDate date]]],
+        [self valueRow:NSLocalizedString(@"Time zone", @"") value:PDTimeZone()],
+        [self valueRow:NSLocalizedString(@"Now", @"") value:[f stringFromDate:[NSDate date]]],
     ] at:y];
 }
 
 - (CGFloat)drawAboutAt:(CGFloat)y
 {
     return [self card:@[
-        [self valueRow:@"Version" value:[NSString stringWithFormat:@"PureDarwin %@ (%@)", PDSystemVersion(), PDBuildVersion()]],
-        [self valueRow:@"Kernel" value:[NSString stringWithFormat:@"%@, %@", PDKernelVersion(), PDXNUTag()]],
-        [self valueRow:@"Processor" value:PDProcessor()],
-        [self valueRow:@"Memory" value:PDMemory()],
-        [self valueRow:@"Graphics" value:PDGraphics()],
+        [self valueRow:NSLocalizedString(@"Version", @"") value:[NSString stringWithFormat:NSLocalizedString(@"PureDarwin %1$@ (%2$@)", @""), PDSystemVersion(), PDBuildVersion()]],
+        [self valueRow:NSLocalizedString(@"Kernel", @"") value:[NSString stringWithFormat:@"%@, %@", PDKernelVersion(), PDXNUTag()]],
+        [self valueRow:NSLocalizedString(@"Processor", @"") value:PDProcessor()],
+        [self valueRow:NSLocalizedString(@"Memory", @"") value:PDMemory()],
+        [self valueRow:NSLocalizedString(@"Graphics", @"") value:PDGraphics()],
         [self valueRow:@"Source" value:@"github.com/PureDarwin"],
-        [self buttonRow:@"System Report…" note:nil action:^{
+        [self buttonRow:NSLocalizedString(@"System Report…", @"") note:nil action:^{
             [[NSWorkspace sharedWorkspace] launchApplication:@"/Applications/Utilities/System Information.app"];
         }],
     ] at:y];
@@ -1528,7 +1528,7 @@ static NSArray *paneInfo(NSString *pane)
 
 - (NSRect)crumbHomeRect
 {
-    NSSize s = [@"Settings" sizeWithAttributes:attrs(@"Inter-SemiBold", 13, rgb(0x1b, 0x1b, 0x1b))];
+    NSSize s = [NSLocalizedString(@"Settings", @"") sizeWithAttributes:attrs(@"Inter-SemiBold", 13, rgb(0x1b, 0x1b, 0x1b))];
 
     return NSMakeRect(NSMaxX([self backRect]) + 8, (TB_H - 20) / 2, s.width, 20);
 }
@@ -1540,7 +1540,7 @@ static NSArray *paneInfo(NSString *pane)
     NSDictionary *crumb = attrs(@"Inter-SemiBold", 13, info != nil ? rgb(0x8a, 0x7d, 0x72) : rgb(0x1b, 0x1b, 0x1b));
     NSDictionary *crumbOn = attrs(@"Inter-SemiBold", 13, rgb(0x1b, 0x1b, 0x1b));
     NSDictionary *field = attrs(@"Inter-Regular", 12, [_search length] > 0 ? rgb(0x1b, 0x1b, 0x1b) : rgb(0x8a, 0x8a, 0x8a));
-    NSString *placeholder = [_search length] > 0 ? _search : @"Search settings";
+    NSString *placeholder = [_search length] > 0 ? _search : NSLocalizedString(@"Search settings", @"");
     CGFloat x = NSMinX([self crumbHomeRect]);
     NSBezierPath *chev = [NSBezierPath bezierPath];
     NSSize s;
@@ -1562,8 +1562,8 @@ static NSArray *paneInfo(NSString *pane)
     [([_history count] > 0 ? rgb(0x55, 0x55, 0x55) : rgb(0xc4, 0xc4, 0xc4)) setStroke];
     [chev stroke];
 
-    s = [@"Settings" sizeWithAttributes:crumb];
-    [@"Settings" drawAtPoint:NSMakePoint(x, floor((TB_H - s.height) / 2)) withAttributes:crumb];
+    s = [NSLocalizedString(@"Settings", @"") sizeWithAttributes:crumb];
+    [NSLocalizedString(@"Settings", @"") drawAtPoint:NSMakePoint(x, floor((TB_H - s.height) / 2)) withAttributes:crumb];
     if (info != nil) {
         x += s.width + 6;
         [@"›" drawAtPoint:NSMakePoint(x, floor((TB_H - s.height) / 2)) withAttributes:attrs(@"Inter-SemiBold", 13, rgb(0xb9, 0xae, 0xa4))];

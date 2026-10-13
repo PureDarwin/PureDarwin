@@ -161,13 +161,13 @@ static NSString *iconForPath(NSString *path)
     _forward = [[NSMutableArray alloc] init];
     // a nil path marks a section heading
     _places = [@[
-        @[ @"Favorites" ],
-        @[ @"Home", home ],
-        @[ @"Desktop", [home stringByAppendingPathComponent:@"Desktop"] ],
-        @[ @"Documents", [home stringByAppendingPathComponent:@"Documents"] ],
-        @[ @"Downloads", [home stringByAppendingPathComponent:@"Downloads"] ],
-        @[ @"Applications", @"/Applications" ],
-        @[ @"Locations" ],
+        @[ NSLocalizedString(@"Favorites", @"") ],
+        @[ NSLocalizedString(@"Home", @""), home ],
+        @[ NSLocalizedString(@"Desktop", @""), [home stringByAppendingPathComponent:@"Desktop"] ],
+        @[ NSLocalizedString(@"Documents", @""), [home stringByAppendingPathComponent:@"Documents"] ],
+        @[ NSLocalizedString(@"Downloads", @""), [home stringByAppendingPathComponent:@"Downloads"] ],
+        @[ NSLocalizedString(@"Applications", @""), @"/Applications" ],
+        @[ NSLocalizedString(@"Locations", @"") ],
         @[ @"PureDarwin", @"/" ],
     ] retain];
     [self setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
@@ -482,7 +482,7 @@ static NSString *iconForPath(NSString *path)
     CGFloat x = [self mainX];
     NSDictionary *attrs = @{ NSFontAttributeName: font(@"Inter-Regular", 11), NSForegroundColorAttributeName: rgb(0x77, 0x77, 0x77) };
     NSUInteger n = [_entries count];
-    NSString *text = [NSString stringWithFormat:@"%lu %@", (unsigned long)n, n == 1 ? @"item" : @"items"];
+    NSString *text = [NSString stringWithFormat:n == 1 ? NSLocalizedString(@"%lu item", @"") : NSLocalizedString(@"%lu items", @""), (unsigned long)n];
     NSSize size = [text sizeWithAttributes:attrs];
     CGFloat top = NSHeight(b) - STATUS_H;
 
@@ -647,7 +647,7 @@ static NSString *iconForPath(NSString *path)
 - (IBAction)newFolder:(id)sender
 {
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSString *name = @"untitled folder";
+    NSString *name = NSLocalizedString(@"untitled folder", @"");
     NSString *full = [_path stringByAppendingPathComponent:name];
     NSUInteger i;
     int n = 2;
@@ -687,7 +687,7 @@ static NSString *iconForPath(NSString *path)
     if (action == @selector(openSelection:))
         return [_selection count] > 0;
     if (action == @selector(toggleSidebar:))
-        [item setTitle:_sidebarHidden ? @"Show Sidebar" : @"Hide Sidebar"];
+        [item setTitle:_sidebarHidden ? NSLocalizedString(@"Show Sidebar", @"") : NSLocalizedString(@"Hide Sidebar", @"")];
     return YES;
 }
 

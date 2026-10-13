@@ -60,10 +60,10 @@ static NSString *sizeString(unsigned long long bytes)
 {
     double gb = bytes / 1e9;
     if (gb >= 1000)
-        return [NSString stringWithFormat:@"%.1f TB", gb / 1000];
+        return [NSString stringWithFormat:NSLocalizedString(@"%.1f TB", @""), gb / 1000];
     if (gb < 1)
-        return [NSString stringWithFormat:@"%.0f MB", bytes / 1e6];
-    return [NSString stringWithFormat:gb < 10 ? @"%.1f GB" : @"%.0f GB", gb];
+        return [NSString stringWithFormat:NSLocalizedString(@"%.0f MB", @""), bytes / 1e6];
+    return [NSString stringWithFormat:gb < 10 ? NSLocalizedString(@"%.1f GB", @"") : NSLocalizedString(@"%.0f GB", @""), gb];
 }
 
 static NSString *sysctlString(const char *name)
@@ -120,6 +120,7 @@ static NSColor *accent(void)
 
 typedef enum { StepIntro, StepLicence, StepNetwork, StepDestination, StepType, StepInstall, StepDone, StepCount } Step;
 
+// translated where drawn, a static initialiser cannot call NSLocalizedString
 static NSString *const stepNames[StepCount] = { @"Introduction", @"Licence", @"Network", @"Destination", @"Installation Type",
                                                 @"Installation", @"Summary" };
 
@@ -190,7 +191,7 @@ static NSString *const stepNames[StepCount] = { @"Introduction", @"Licence", @"N
 {
     NSMutableArray *a = [NSMutableArray arrayWithArray:_parts];
     if (_freeBytes)
-        [a addObject:[Slice kind:@"free" label:@"Free" start:_freeStart bytes:_freeBytes]];
+        [a addObject:[Slice kind:@"free" label:NSLocalizedString(@"Free", @"") start:_freeStart bytes:_freeBytes]];
     [a sortUsingComparator:^NSComparisonResult(Slice *x, Slice *y) {
         return x.start < y.start ? NSOrderedAscending : x.start > y.start ? NSOrderedDescending : NSOrderedSame;
     }];
@@ -203,7 +204,7 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
 {
     if ([type rangeOfString:@"EFI System"].location != NSNotFound)
         return [Slice kind:@"esp" label:@"EFI" start:start bytes:bytes];
-    NSString *label = @"Partition";
+    NSString *label = NSLocalizedString(@"Partition", @"");
     if ([type rangeOfString:@"Microsoft"].location != NSNotFound || [type rangeOfString:@"Windows"].location != NSNotFound)
         label = @"Windows";
     else if ([type rangeOfString:@"Linux"].location != NSNotFound)
@@ -307,11 +308,11 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
         xnu = end.location != NSNotFound ? [rest substringToIndex:end.location] : rest;
     }
     brand = [brand stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-    _cpu = [[NSString stringWithFormat:@"%@%@", brand ?: @"Unknown processor",
-             cores ? [NSString stringWithFormat:@", %llu cores", cores] : @""] retain];
-    _memory = [(mem ? [NSString stringWithFormat:@"%.0f GB", mem / 1073741824.0] : @"Unknown") retain];
-    _version = [[NSString stringWithFormat:@"PureDarwin %@", sv[@"ProductVersion"] ?: @""] retain];
-    _facts = [[NSString stringWithFormat:@"Darwin %@ · %@ · build %@", sysctlString("kern.osrelease") ?: @"",
+    _cpu = [[NSString stringWithFormat:@"%@%@", brand ?: NSLocalizedString(@"Unknown processor", @""),
+             cores ? [NSString stringWithFormat:NSLocalizedString(@", %llu cores", @""), cores] : @""] retain];
+    _memory = [(mem ? [NSString stringWithFormat:NSLocalizedString(@"%.0f GB", @""), mem / 1073741824.0] : NSLocalizedString(@"Unknown", @"")) retain];
+    _version = [[NSString stringWithFormat:NSLocalizedString(@"PureDarwin %@", @""), sv[@"ProductVersion"] ?: @""] retain];
+    _facts = [[NSString stringWithFormat:NSLocalizedString(@"Darwin %1$@ · %2$@ · build %3$@", @""), sysctlString("kern.osrelease") ?: @"",
                xnu, sysctlString("kern.osversion") ?: @""] retain];
 }
 
@@ -595,7 +596,7 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
         total += s.bytes;
     if (total == 0) {
         [self fillRound:r radius:6 colour:[self sliceColour:@"free"]];
-        [@"Empty" drawAtPoint:NSMakePoint(NSMidX(r) - 16, NSMinY(r) + 6) withAttributes:text(@"Inter-SemiBold", 10.5, P.muted)];
+        [NSLocalizedString(@"Empty", @"") drawAtPoint:NSMakePoint(NSMidX(r) - 16, NSMinY(r) + 6) withAttributes:text(@"Inter-SemiBold", 10.5, P.muted)];
         return;
     }
     [NSGraphicsContext saveGraphicsState];
@@ -699,44 +700,44 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     [_version drawAtPoint:NSMakePoint(tx, y + 18) withAttributes:text(@"Inter-Bold", 22, [NSColor whiteColor])];
     [_facts drawAtPoint:NSMakePoint(tx, y + 48) withAttributes:text(@"Inter-Regular", 12, rgba(255, 255, 255, 0.9))];
     NSDictionary *pa = text(@"Inter-Regular", 11.5, [NSColor whiteColor]);
-    NSString *pill = @"from the install drive";
+    NSString *pill = NSLocalizedString(@"from the install drive", @"");
     NSSize ps = [pill sizeWithAttributes:pa];
     [self fillRound:NSMakeRect(tx, y + 68, ps.width + 18, 20) radius:10 colour:rgba(255, 255, 255, 0.18)];
     [pill drawAtPoint:NSMakePoint(tx + 9, y + 70) withAttributes:pa];
     y += 114;
 
-    y = [self lead:@"This puts PureDarwin on a disk in this computer. You'll pick the disk, then it takes a few minutes. Nothing "
-                   @"changes until you choose Install." at:y];
-    y = [self cardTitle:@"This computer" at:y];
+    y = [self lead:NSLocalizedString(@"This puts PureDarwin on a disk in this computer. You'll pick the disk, then it takes a few minutes. Nothing "
+                   @"changes until you choose Install.", @"") at:y];
+    y = [self cardTitle:NSLocalizedString(@"This computer", @"") at:y];
     NSMutableArray *names = [NSMutableArray array];
     for (NSArray *n in _nets)
         [names addObject:n[0]];
-    NSString *net = [names count] ? [names componentsJoinedByString:@", "] : @"No network hardware found";
-    NSString *rows[][2] = { { @"Processor", _cpu }, { @"Memory", _memory }, { @"Firmware", @"UEFI" },
-                            { @"Graphics", @"The firmware's framebuffer, basic display only" }, { @"Network", net } };
+    NSString *net = [names count] ? [names componentsJoinedByString:@", "] : NSLocalizedString(@"No network hardware found", @"");
+    NSString *rows[][2] = { { NSLocalizedString(@"Processor", @""), _cpu }, { NSLocalizedString(@"Memory", @""), _memory }, { NSLocalizedString(@"Firmware", @""), @"UEFI" },
+                            { NSLocalizedString(@"Graphics", @""), NSLocalizedString(@"The firmware's framebuffer, basic display only", @"") }, { NSLocalizedString(@"Network", @""), net } };
     BOOL ok[] = { YES, YES, YES, NO, [names count] > 0 };
     [self card:NSMakeRect(x, y, w, 5 * 41)];
     for (int i = 0; i < 5; i++) {
         NSRect r = NSMakeRect(x, y + i * 41, w, 41);
         [self row:r title:rows[i][0] sub:rows[i][1] divider:i > 0];
-        [self status:ok[i] ? @"Supported" : i == 3 ? @"Partly supported" : @"Not found" ok:ok[i] in:r];
+        [self status:ok[i] ? NSLocalizedString(@"Supported", @"") : i == 3 ? NSLocalizedString(@"Partly supported", @"") : NSLocalizedString(@"Not found", @"") ok:ok[i] in:r];
     }
 }
 
 - (void)drawLicence:(CGFloat)y
 {
     CGFloat x = [self contentX], w = [self contentW];
-    y = [self lead:@"PureDarwin is free software. Read how you can use and share it." at:y];
+    y = [self lead:NSLocalizedString(@"PureDarwin is free software. Read how you can use and share it.", @"") at:y];
     struct { NSString *head, *body; } parts[] = {
-        { @"Apple Public Source License 2.0", @"The kernel, launchd and most of the core system are Apple's open source releases "
+        { @"Apple Public Source License 2.0", NSLocalizedString(@"The kernel, launchd and most of the core system are Apple's open source releases "
           @"under the APSL 2.0. You may use, study, change and share them. If you share a changed version, its source has "
-          @"to be available too." },
-        { @"Other components", @"Parts of the system come from other projects under their own licences, among them BSD, "
-          @"MIT, LGPL and GPL. Each component's licence ships with it." },
-        { @"Vendor firmware", @"Some devices only work with firmware supplied by their vendor. PureDarwin includes it only "
-          @"where the vendor allows it to be shared, under the vendor's own terms." },
-        { @"No warranty", @"PureDarwin comes as is, without warranty of any kind. Back up anything you care about before "
-          @"installing." },
+          @"to be available too.", @"") },
+        { NSLocalizedString(@"Other components", @""), NSLocalizedString(@"Parts of the system come from other projects under their own licences, among them BSD, "
+          @"MIT, LGPL and GPL. Each component's licence ships with it.", @"") },
+        { NSLocalizedString(@"Vendor firmware", @""), NSLocalizedString(@"Some devices only work with firmware supplied by their vendor. PureDarwin includes it only "
+          @"where the vendor allows it to be shared, under the vendor's own terms.", @"") },
+        { NSLocalizedString(@"No warranty", @""), NSLocalizedString(@"PureDarwin comes as is, without warranty of any kind. Back up anything you care about before "
+          @"installing.", @"") },
     };
     [self card:NSMakeRect(x, y, w, WIN_H - BAR_H - 16 - y)];
     CGFloat ty = y + 14;
@@ -787,29 +788,29 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     PDWiFiNetwork *cur = wifi.current;
     NSMutableArray *wired = [NSMutableArray array];
 
-    y = [self lead:@"The install doesn't need a network, everything comes from the install drive. Connecting now carries the "
-                   @"network over, so the installed system joins it on first start." at:y];
+    y = [self lead:NSLocalizedString(@"The install doesn't need a network, everything comes from the install drive. Connecting now carries the "
+                   @"network over, so the installed system joins it on first start.", @"") at:y];
     for (NSArray *n in _nets) {
         if (!wifi.interface || ![n[0] isEqualToString:wifi.interface])
             [wired addObject:n];
     }
-    y = [self cardTitle:@"Ethernet" at:y];
+    y = [self cardTitle:NSLocalizedString(@"Ethernet", @"") at:y];
     NSUInteger en = MAX([wired count], 1);
     [self card:NSMakeRect(x, y, w, en * 40)];
     if ([wired count] == 0)
-        [self row:NSMakeRect(x, y, w, 40) title:@"No cable connected" sub:nil divider:NO];
+        [self row:NSMakeRect(x, y, w, 40) title:NSLocalizedString(@"No cable connected", @"") sub:nil divider:NO];
     for (NSUInteger i = 0; i < [wired count]; i++) {
         NSRect r = NSMakeRect(x, y + i * 40, w, 40);
         BOOL up = [wired[i][1] length] > 0;
         [self row:r title:wired[i][0] sub:nil divider:i > 0];
-        [self status:up ? [NSString stringWithFormat:@"Connected, %@", wired[i][1]] : @"No cable connected" ok:up in:r];
+        [self status:up ? [NSString stringWithFormat:NSLocalizedString(@"Connected, %@", @""), wired[i][1]] : NSLocalizedString(@"No cable connected", @"") ok:up in:r];
     }
     y += en * 40 + 18;
 
     y = [self cardTitle:@"Wi-Fi" at:y];
     if (!wifi.hardware) {
         [self card:NSMakeRect(x, y, w, 40)];
-        [self row:NSMakeRect(x, y, w, 40) title:@"No Wi-Fi hardware found" sub:nil divider:NO];
+        [self row:NSMakeRect(x, y, w, 40) title:NSLocalizedString(@"No Wi-Fi hardware found", @"") sub:nil divider:NO];
         return;
     }
     // the switch, the joined network, then as many others as fit, then Other Network
@@ -826,8 +827,8 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     [self card:NSMakeRect(x, y, w, h)];
 
     NSRect r = NSMakeRect(x, y, w, 44);
-    NSString *state = !wifi.powered ? @"Off" : cur ? [NSString stringWithFormat:@"Connected to %@", cur.ssid]
-                    : wifi.busy ? [NSString stringWithFormat:@"Joining %@…", wifi.busy] : wifi.lastError ?: @"Not connected";
+    NSString *state = !wifi.powered ? NSLocalizedString(@"Off", @"") : cur ? [NSString stringWithFormat:NSLocalizedString(@"Connected to %@", @""), cur.ssid]
+                    : wifi.busy ? [NSString stringWithFormat:NSLocalizedString(@"Joining %@…", @""), wifi.busy] : wifi.lastError ?: NSLocalizedString(@"Not connected", @"");
     [self row:r title:@"Wi-Fi" sub:state divider:NO];
     NSRect sw = NSMakeRect(NSMaxX(r) - 12 - 32, NSMidY(r) - 9.5, 32, 19);
     [self fillRound:sw radius:9.5 colour:wifi.powered ? accent() : rgba(127, 127, 127, 0.35)];
@@ -838,9 +839,9 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
 
     if (cur) {
         r = NSMakeRect(x, y, w, 44);
-        [self wifiRow:r name:cur.ssid sub:cur.security ? [NSString stringWithFormat:@"Connected · %@ Personal", cur.security] : @"Connected"
+        [self wifiRow:r name:cur.ssid sub:cur.security ? [NSString stringWithFormat:NSLocalizedString(@"Connected · %@ Personal", @""), cur.security] : NSLocalizedString(@"Connected", @"")
                 level:[cur bars] on:YES lock:NO divider:YES];
-        [self mini:@"Disconnect" right:NSMaxX(r) - 12 mid:NSMidY(r) action:^{ [wifi leave]; }];
+        [self mini:NSLocalizedString(@"Disconnect", @"") right:NSMaxX(r) - 12 mid:NSMidY(r) action:^{ [wifi leave]; }];
         y += 44;
     }
     if (!wifi.powered)
@@ -853,19 +854,19 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
             PDDrawWiFiSpinner(NSMakeRect(NSMaxX(r) - 28, NSMidY(r) - 7, 14, 14), accent());
             [self setNeedsDisplay:YES];
         } else {
-            [self mini:@"Join" right:NSMaxX(r) - 12 mid:NSMidY(r) action:^{ [wifi pick:n accent:accent()]; }];
+            [self mini:NSLocalizedString(@"Join", @"") right:NSMaxX(r) - 12 mid:NSMidY(r) action:^{ [wifi pick:n accent:accent()]; }];
         }
         y += 38;
     }
     if (looking && fit > 0) {
-        [self row:NSMakeRect(x, y, w, 38) title:wifi.scanning ? @"Looking for networks…" : @"No networks in range" sub:nil divider:YES];
+        [self row:NSMakeRect(x, y, w, 38) title:wifi.scanning ? NSLocalizedString(@"Looking for networks…", @"") : NSLocalizedString(@"No networks in range", @"") sub:nil divider:YES];
         y += 38;
     }
     r = NSMakeRect(x, y, w, 36);
     [P.cardLine setFill];
     NSRectFill(NSMakeRect(x, y, w, 1));
     NSDictionary *la = text(@"Inter-Regular", 12, accent());
-    NSString *l = @"Other Network…";
+    NSString *l = NSLocalizedString(@"Other Network…", @"");
     [l drawAtPoint:NSMakePoint(x + 12, NSMidY(r) - 8) withAttributes:la];
     [self hit:NSMakeRect(x + 8, NSMinY(r) + 4, [l sizeWithAttributes:la].width + 8, 28) action:^{ [wifi joinOther:accent()]; }];
 }
@@ -873,7 +874,7 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
 - (void)drawDestination:(CGFloat)y
 {
     CGFloat x = [self contentX], w = [self contentW];
-    y = [self lead:@"Choose the disk to install on. The bar shows what it holds now." at:y];
+    y = [self lead:NSLocalizedString(@"Choose the disk to install on. The bar shows what it holds now.", @"") at:y];
     NSUInteger count = MIN([_disks count], 6);
     CGFloat tw = floor((w - 2 * 10) / 3);
     for (NSUInteger i = 0; i < count; i++) {
@@ -886,13 +887,13 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
         [self drive:d.removable centre:NSMakePoint(NSMidX(r), NSMinY(r) + 34) dim:d.boot];
         NSColor *fg = d.boot ? P.muted : P.fg;
         NSDictionary *na = text(@"Inter-SemiBold", 12.5, fg), *sa = text(@"Inter-Regular", 11, P.muted);
-        NSString *name = d.boot ? @"Install drive" : d.removable ? @"External disk" : @"Internal disk";
+        NSString *name = d.boot ? NSLocalizedString(@"Install drive", @"") : d.removable ? NSLocalizedString(@"External disk", @"") : NSLocalizedString(@"Internal disk", @"");
         NSString *sub = [NSString stringWithFormat:@"%@ · %@", sizeString(d.size), d.name];
         [name drawAtPoint:NSMakePoint(floor(NSMidX(r) - [name sizeWithAttributes:na].width / 2), NSMinY(r) + 64) withAttributes:na];
         [sub drawAtPoint:NSMakePoint(floor(NSMidX(r) - [sub sizeWithAttributes:sa].width / 2), NSMinY(r) + 82) withAttributes:sa];
     }
     if (count == 0) {
-        [@"No disks found." drawAtPoint:NSMakePoint(x, y) withAttributes:text(@"Inter-Regular", 12.5, P.muted)];
+        [NSLocalizedString(@"No disks found.", @"") drawAtPoint:NSMakePoint(x, y) withAttributes:text(@"Inter-Regular", 12.5, P.muted)];
         return;
     }
     y += ((count + 2) / 3) * 112 + 6;
@@ -902,40 +903,40 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
         return;
     [self card:NSMakeRect(x, y, w, 96)];
     [self diskBar:[d slices] in:NSMakeRect(x + 12, y + 12, w - 24, 26)];
-    [self barKey:@[ @[ @"EFI", [self sliceColour:@"esp"] ], @[ @"In use", [self sliceColour:@"keep"] ],
-                    @[ [NSString stringWithFormat:@"Free, %@", sizeString(d.freeBytes)], rgb(0xb9, 0xb4, 0xaf) ] ]
+    [self barKey:@[ @[ @"EFI", [self sliceColour:@"esp"] ], @[ NSLocalizedString(@"In use", @""), [self sliceColour:@"keep"] ],
+                    @[ [NSString stringWithFormat:NSLocalizedString(@"Free, %@", @""), sizeString(d.freeBytes)], rgb(0xb9, 0xb4, 0xaf) ] ]
                y:y + 44 x:x + 12];
     NSRect r = NSMakeRect(x, y + 60, w, 36);
-    NSString *sub = d.boot ? @"PureDarwin is running from this drive"
-                  : _useFree ? @"What's on the disk stays where it is" : @"Everything on the disk is deleted";
+    NSString *sub = d.boot ? NSLocalizedString(@"PureDarwin is running from this drive", @"")
+                  : _useFree ? NSLocalizedString(@"What's on the disk stays where it is", @"") : NSLocalizedString(@"Everything on the disk is deleted", @"");
     [P.cardLine setFill];
     NSRectFill(NSMakeRect(x, NSMinY(r), w, 1));
-    [@"Use" drawAtPoint:NSMakePoint(x + 12, NSMinY(r) + 2) withAttributes:text(@"Inter-Regular", 13, P.fg)];
+    [NSLocalizedString(@"Use", @"") drawAtPoint:NSMakePoint(x + 12, NSMinY(r) + 2) withAttributes:text(@"Inter-Regular", 13, P.fg)];
     [sub drawAtPoint:NSMakePoint(x + 12, NSMinY(r) + 19) withAttributes:text(@"Inter-Regular", 11, P.muted)];
-    [self segment:@[ @"Free Space", @"Whole Disk" ] on:_useFree ? 0 : 1 enabled:@[ @([d canUseFree]), @(!d.boot) ] in:r rects:_segRects];
+    [self segment:@[ NSLocalizedString(@"Free Space", @""), NSLocalizedString(@"Whole Disk", @"") ] on:_useFree ? 0 : 1 enabled:@[ @([d canUseFree]), @(!d.boot) ] in:r rects:_segRects];
 }
 
 - (void)drawType:(CGFloat)y
 {
     CGFloat x = [self contentX], w = [self contentW];
     Disk *d = [self selectedDisk];
-    y = [self cardTitle:@"Disk" at:y];
+    y = [self cardTitle:NSLocalizedString(@"Disk", @"") at:y];
     [self card:NSMakeRect(x, y, w, 60 + 44)];
     [self diskBar:[self plannedSlices] in:NSMakeRect(x + 12, y + 12, w - 24, 26)];
-    [self barKey:@[ @[ @"EFI", [self sliceColour:@"esp"] ], @[ @"Kept", [self sliceColour:@"keep"] ],
-                    @[ [NSString stringWithFormat:@"PureDarwin, %@", sizeString([self plannedBytes])], accent() ] ]
+    [self barKey:@[ @[ @"EFI", [self sliceColour:@"esp"] ], @[ NSLocalizedString(@"Kept", @""), [self sliceColour:@"keep"] ],
+                    @[ [NSString stringWithFormat:NSLocalizedString(@"PureDarwin, %@", @""), sizeString([self plannedBytes])], accent() ] ]
                y:y + 44 x:x + 12];
     NSRect r = NSMakeRect(x, y + 60, w, 44);
-    [self row:r title:@"Format" sub:@"ext4, journaled, readable from Linux" divider:YES];
+    [self row:r title:NSLocalizedString(@"Format", @"") sub:NSLocalizedString(@"ext4, journaled, readable from Linux", @"") divider:YES];
     [self segment:@[ @"ext4", @"APFS" ] on:0 enabled:@[ @YES, @NO ] in:r rects:NULL];
     y += 104 + 18;
 
-    y = [self cardTitle:@"What happens" at:y];
+    y = [self cardTitle:NSLocalizedString(@"What happens", @"") at:y];
     NSArray *steps = _useFree
-        ? @[ [NSString stringWithFormat:@"A new partition is made in the %@ of free space on %@", sizeString(d.freeBytes), d.name],
-             @"The system on this drive is copied onto it", @"The loader goes next to the other systems' in the EFI partition" ]
-        : @[ [NSString stringWithFormat:@"%@ is erased and gets a new partition table", d.name],
-             @"The system on this drive is copied onto it", @"The loader is installed, so the firmware can start it" ];
+        ? @[ [NSString stringWithFormat:NSLocalizedString(@"A new partition is made in the %1$@ of free space on %2$@", @""), sizeString(d.freeBytes), d.name],
+             NSLocalizedString(@"The system on this drive is copied onto it", @""), NSLocalizedString(@"The loader goes next to the other systems' in the EFI partition", @"") ]
+        : @[ [NSString stringWithFormat:NSLocalizedString(@"%@ is erased and gets a new partition table", @""), d.name],
+             NSLocalizedString(@"The system on this drive is copied onto it", @""), NSLocalizedString(@"The loader is installed, so the firmware can start it", @"") ];
     [self card:NSMakeRect(x, y, w, [steps count] * 36)];
     for (NSUInteger i = 0; i < [steps count]; i++)
         [self row:NSMakeRect(x, y + i * 36, w, 36) title:steps[i] sub:nil divider:i > 0];
@@ -944,17 +945,17 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
 - (void)drawInstall:(CGFloat)y
 {
     CGFloat x = [self contentX], w = [self contentW];
-    y = [self lead:@"You can keep using the desktop while this runs. Don't remove the install drive." at:y];
+    y = [self lead:NSLocalizedString(@"You can keep using the desktop while this runs. Don't remove the install drive.", @"") at:y];
     NSDictionary *na = text(@"Inter-Regular", 12.5, P.fg), *pa = text(@"Inter-Regular", 12.5, P.muted);
-    [(_now ?: @"Preparing…") drawAtPoint:NSMakePoint(x, y) withAttributes:na];
-    NSString *pct = [NSString stringWithFormat:@"%.0f%%", _progress];
+    [(_now ?: NSLocalizedString(@"Preparing…", @"")) drawAtPoint:NSMakePoint(x, y) withAttributes:na];
+    NSString *pct = [NSString stringWithFormat:NSLocalizedString(@"%.0f%%", @""), _progress];
     [pct drawAtPoint:NSMakePoint(x + w - [pct sizeWithAttributes:pa].width, y) withAttributes:pa];
     y += 24;
     [self fillRound:NSMakeRect(x, y, w, 6) radius:3 colour:rgba(127, 127, 127, 0.18)];
     if (_progress > 0)
         [self fillRound:NSMakeRect(x, y, MAX(6, w * _progress / 100.0), 6) radius:3 colour:accent()];
     y += 20;
-    NSString *t = _details ? @"▾ Hide Details" : @"▸ Show Details";
+    NSString *t = _details ? NSLocalizedString(@"▾ Hide Details", @"") : NSLocalizedString(@"▸ Show Details", @"");
     NSDictionary *ta = text(@"Inter-Regular", 12, accent());
     [t drawAtPoint:NSMakePoint(x, y) withAttributes:ta];
     _detailsRect = NSMakeRect(x, y, [t sizeWithAttributes:ta].width, 18);
@@ -1007,11 +1008,11 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     [mark stroke];
     y += 98;
 
-    NSString *head = _error ? @"The install did not finish" : @"PureDarwin is installed";
+    NSString *head = _error ? NSLocalizedString(@"The install did not finish", @"") : NSLocalizedString(@"PureDarwin is installed", @"");
     NSDictionary *ha = text(@"Inter-Bold", 20, P.fg);
     [head drawAtPoint:NSMakePoint(floor(x + w / 2 - [head sizeWithAttributes:ha].width / 2), y) withAttributes:ha];
     y += 36;
-    NSString *body = _error ?: @"Remove the install drive and restart. The firmware starts the new system from its PureDarwin entry.";
+    NSString *body = _error ?: NSLocalizedString(@"Remove the install drive and restart. The firmware starts the new system from its PureDarwin entry.", @"");
     NSDictionary *ba = text(@"Inter-Regular", 13, P.lead);
     CGFloat bw = MIN(w, 380), by = y;
     // centred lines: wrap off screen width first, then draw each line centred
@@ -1034,8 +1035,8 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     y = by + 18;
 
     Disk *d = [self selectedDisk];
-    NSArray *rows = _error ? @[ @[ @"Log", @"/tmp/pdinstall.log" ] ]
-                           : @[ @[ @"Installed on", _result ?: d.name ?: @"" ], @[ @"Format", @"ext4, journaled" ] ];
+    NSArray *rows = _error ? @[ @[ NSLocalizedString(@"Log", @""), @"/tmp/pdinstall.log" ] ]
+                           : @[ @[ NSLocalizedString(@"Installed on", @""), _result ?: d.name ?: @"" ], @[ NSLocalizedString(@"Format", @""), NSLocalizedString(@"ext4, journaled", @"") ] ];
     [self card:NSMakeRect(x, y, w, [rows count] * 38)];
     for (NSUInteger i = 0; i < [rows count]; i++) {
         NSRect r = NSMakeRect(x, y + i * 38, w, 38);
@@ -1052,9 +1053,9 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     NSRect s = NSMakeRect(WIN_W / 2 - 210, 0, 420, 128);
     [self fillRound:NSOffsetRect(s, 0, 4) radius:12 colour:rgba(0, 0, 0, 0.18)];
     [self fillRound:s radius:12 colour:P.bg];
-    [@"To continue, agree to the terms of the licence." drawAtPoint:NSMakePoint(NSMinX(s) + 20, 20)
+    [NSLocalizedString(@"To continue, agree to the terms of the licence.", @"") drawAtPoint:NSMakePoint(NSMinX(s) + 20, 20)
                                                     withAttributes:text(@"Inter-SemiBold", 13, P.fg)];
-    [self wrap:@"Choose Agree to carry on with the install, or Disagree to stop and keep using PureDarwin from the install drive."
+    [self wrap:NSLocalizedString(@"Choose Agree to carry on with the install, or Disagree to stop and keep using PureDarwin from the install drive.", @"")
              x:NSMinX(s) + 20 y:42 width:380 attrs:text(@"Inter-Regular", 12, P.lead) lineHeight:18];
     NSDictionary *pa = text(@"Inter-Regular", 13, [NSColor whiteColor]), *da = text(@"Inter-Regular", 13, P.fg);
     _agreeRect = NSMakeRect(NSMaxX(s) - 20 - 92, 88, 92, 28);
@@ -1062,18 +1063,18 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     [self fillRound:NSInsetRect(_disagreeRect, -1, -1) radius:7 colour:rgba(0, 0, 0, 0.15)];
     [self fillRound:_disagreeRect radius:6 colour:P.button];
     [self fillRound:_agreeRect radius:6 colour:accent()];
-    [@"Disagree" drawAtPoint:NSMakePoint(NSMidX(_disagreeRect) - [@"Disagree" sizeWithAttributes:da].width / 2, 93) withAttributes:da];
-    [@"Agree" drawAtPoint:NSMakePoint(NSMidX(_agreeRect) - [@"Agree" sizeWithAttributes:pa].width / 2, 93) withAttributes:pa];
+    [NSLocalizedString(@"Disagree", @"") drawAtPoint:NSMakePoint(NSMidX(_disagreeRect) - [NSLocalizedString(@"Disagree", @"") sizeWithAttributes:da].width / 2, 93) withAttributes:da];
+    [NSLocalizedString(@"Agree", @"") drawAtPoint:NSMakePoint(NSMidX(_agreeRect) - [NSLocalizedString(@"Agree", @"") sizeWithAttributes:pa].width / 2, 93) withAttributes:pa];
 }
 
 - (NSString *)goTitle
 {
     switch (_step) {
-    case StepNetwork: return [self connected] ? @"Continue" : @"Continue Without a Network";
-    case StepType: return _useFree ? @"Install" : @"Erase and Install";
-    case StepInstall: return @"Continue";
-    case StepDone: return _error ? @"Quit" : @"Restart";
-    default: return @"Continue";
+    case StepNetwork: return [self connected] ? NSLocalizedString(@"Continue", @"") : NSLocalizedString(@"Continue Without a Network", @"");
+    case StepType: return _useFree ? NSLocalizedString(@"Install", @"") : NSLocalizedString(@"Erase and Install", @"");
+    case StepInstall: return NSLocalizedString(@"Continue", @"");
+    case StepDone: return _error ? NSLocalizedString(@"Quit", @"") : NSLocalizedString(@"Restart", @"");
+    default: return NSLocalizedString(@"Continue", @"");
     }
 }
 
@@ -1095,13 +1096,13 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
 {
     Disk *d = [self selectedDisk];
     if (_step == StepNetwork && ![self connected])
-        return @"You can connect later in Settings.";
+        return NSLocalizedString(@"You can connect later in Settings.", @"");
     if (_step == StepDestination && d != nil && d.boot)
-        return @"Pick another disk.";
+        return NSLocalizedString(@"Pick another disk.", @"");
     if (_step == StepDestination && d != nil && ![self destinationOK])
-        return @"Not enough free space on this disk.";
+        return NSLocalizedString(@"Not enough free space on this disk.", @"");
     if (_step == StepType && !_useFree)
-        return [NSString stringWithFormat:@"Everything on %@ is deleted.", d.name];
+        return [NSString stringWithFormat:NSLocalizedString(@"Everything on %@ is deleted.", @""), d.name];
     return @"";
 }
 
@@ -1145,7 +1146,7 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
             [[c colorWithAlphaComponent:0.7] setStroke];
             [ring stroke];
         }
-        [stepNames[i] drawAtPoint:NSMakePoint(46, y + 5) withAttributes:text(now ? @"Inter-SemiBold" : @"Inter-Regular", 13, c)];
+        [[[NSBundle mainBundle] localizedStringForKey:stepNames[i] value:nil table:nil] drawAtPoint:NSMakePoint(46, y + 5) withAttributes:text(now ? @"Inter-SemiBold" : @"Inter-Regular", 13, c)];
     }
     [_footLogo drawInRect:NSMakeRect(20, WIN_H - 32, 18, 18) fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:0.55
            respectFlipped:YES hints:nil];
@@ -1155,10 +1156,10 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     [P.line setFill];
     NSRectFill(NSMakeRect(SIDE_W, HEAD_H - 1, WIN_W - SIDE_W, 1));
     NSRectFill(NSMakeRect(SIDE_W, WIN_H - BAR_H, WIN_W - SIDE_W, 1));
-    NSString *titles[StepCount] = { @"Welcome to PureDarwin", @"Licence", @"Connect to a Network", @"Select a Destination",
-                                    @"Installation Type", @"Installing", @"Summary" };
+    NSString *titles[StepCount] = { NSLocalizedString(@"Welcome to PureDarwin", @""), NSLocalizedString(@"Licence", @""), NSLocalizedString(@"Connect to a Network", @""), NSLocalizedString(@"Select a Destination", @""),
+                                    NSLocalizedString(@"Installation Type", @""), NSLocalizedString(@"Installing", @""), NSLocalizedString(@"Summary", @"") };
     [titles[_step] drawAtPoint:NSMakePoint(SIDE_W + PAD, 17) withAttributes:text(@"Inter-Bold", 14, P.fg)];
-    NSString *count = [NSString stringWithFormat:@"Step %d of %d", _step + 1, StepCount];
+    NSString *count = [NSString stringWithFormat:NSLocalizedString(@"Step %1$d of %2$d", @""), _step + 1, StepCount];
     NSDictionary *ca = text(@"Inter-Regular", 12, P.muted);
     [count drawAtPoint:NSMakePoint(WIN_W - PAD - [count sizeWithAttributes:ca].width, 18) withAttributes:ca];
 
@@ -1176,7 +1177,7 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     _goRect = [self button:[self goTitle] rightEdge:WIN_W - 18 primary:YES enabled:[self goEnabled]];
     _backRect = NSZeroRect;
     if ([self backEnabled])
-        _backRect = [self button:@"Go Back" rightEdge:NSMinX(_goRect) - 8 primary:NO enabled:YES];
+        _backRect = [self button:NSLocalizedString(@"Go Back", @"") rightEdge:NSMinX(_goRect) - 8 primary:NO enabled:YES];
     NSString *note = [self note];
     if ([note length])
         [note drawAtPoint:NSMakePoint(SIDE_W + 18, WIN_H - BAR_H + 19) withAttributes:text(@"Inter-Regular", 12, P.muted)];
@@ -1229,7 +1230,7 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     waitpid(_child, &status, 0);
     close(fd);
     if (!_error && (!WIFEXITED(status) || WEXITSTATUS(status) != 0 || !_result))
-        _error = [@"pdinstall stopped before it finished." retain];
+        _error = [NSLocalizedString(@"pdinstall stopped before it finished.", @"") retain];
     _step = StepDone;
     [self setNeedsDisplay:YES];
 }
@@ -1252,7 +1253,7 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     close(fds[1]);
     if (rc != 0) {
         close(fds[0]);
-        _error = [[NSString stringWithFormat:@"pdinstall could not be started (%s).", strerror(rc)] retain];
+        _error = [[NSString stringWithFormat:NSLocalizedString(@"pdinstall could not be started (%s).", @""), strerror(rc)] retain];
         _step = StepDone;
         return;
     }
@@ -1423,9 +1424,9 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
 - (void)buildMenu
 {
     NSMenu *mainMenu = [[NSMenu alloc] initWithTitle:@"MainMenu"];
-    NSMenu *app = [[NSMenu alloc] initWithTitle:@"Install PureDarwin"];
-    NSMenuItem *top = [[NSMenuItem alloc] initWithTitle:@"Install PureDarwin" action:NULL keyEquivalent:@""];
-    NSMenuItem *quit = [[NSMenuItem alloc] initWithTitle:@"Quit Install PureDarwin" action:@selector(terminate:) keyEquivalent:@"q"];
+    NSMenu *app = [[NSMenu alloc] initWithTitle:NSLocalizedString(@"Install PureDarwin", @"")];
+    NSMenuItem *top = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Install PureDarwin", @"") action:NULL keyEquivalent:@""];
+    NSMenuItem *quit = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Quit Install PureDarwin", @"") action:@selector(terminate:) keyEquivalent:@"q"];
 
     [app addItem:quit];
     [top setSubmenu:app];
@@ -1449,7 +1450,7 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
                                                     NSFullSizeContentViewWindowMask
                                             backing:NSBackingStoreBuffered
                                               defer:NO];
-    [_window setTitle:@"Install PureDarwin"];
+    [_window setTitle:NSLocalizedString(@"Install PureDarwin", @"")];
     [_window setTitlebarAppearsTransparent:YES];
     [_window setTitleVisibility:NSWindowTitleHidden];
     [_window setBackgroundColor:P.bg];

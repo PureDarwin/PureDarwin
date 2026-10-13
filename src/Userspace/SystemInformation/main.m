@@ -131,7 +131,7 @@ static NSFont *font(NSString *name, CGFloat size)
     NSRectFill(NSMakeRect(0, 0, SIDE_W, NSHeight([self bounds])));
     [grey(0xd6) setFill];
     NSRectFill(NSMakeRect(SIDE_W, 0, 1, NSHeight([self bounds])));
-    [@"Report" drawAtPoint:NSMakePoint(18, y) withAttributes:head];
+    [NSLocalizedString(@"Report", @"") drawAtPoint:NSMakePoint(18, y) withAttributes:head];
     y += 18;
     for (i = 0; i < [_report count]; i++) {
         NSRect r = NSMakeRect(10, y, SIDE_W - 20, ROW_H);
@@ -186,7 +186,7 @@ static NSFont *font(NSString *name, CGFloat size)
     [NSGraphicsContext saveGraphicsState];
     [NSBezierPath clipRect:main];
     if ([groups count] == 0)
-        [@"Nothing found." drawAtPoint:NSMakePoint(x, y) withAttributes:empty];
+        [NSLocalizedString(@"Nothing found.", @"") drawAtPoint:NSMakePoint(x, y) withAttributes:empty];
     for (NSDictionary *g in groups) {
         if (g[@"title"] != nil) {
             [g[@"title"] drawAtPoint:NSMakePoint(x, y) withAttributes:groupTitle];
@@ -298,16 +298,16 @@ static NSMenu *addMenu(NSMenu *mainMenu, NSString *title)
 - (void)buildMenu
 {
     NSMenu *mainMenu = [[NSMenu alloc] initWithTitle:@"MainMenu"];
-    NSMenu *app = addMenu(mainMenu, @"System Information");
-    NSMenu *file = addMenu(mainMenu, @"File");
-    NSMenu *view = addMenu(mainMenu, @"View");
-    NSMenu *window = addMenu(mainMenu, @"Window");
+    NSMenu *app = addMenu(mainMenu, NSLocalizedString(@"System Information", @""));
+    NSMenu *file = addMenu(mainMenu, NSLocalizedString(@"File", @""));
+    NSMenu *view = addMenu(mainMenu, NSLocalizedString(@"View", @""));
+    NSMenu *window = addMenu(mainMenu, NSLocalizedString(@"Window", @""));
 
-    addItem(app, @"Quit System Information", @selector(terminate:), @"q");
-    addItem(file, @"Close", @selector(performClose:), @"w");
-    addItem(view, @"Refresh", @selector(refresh:), @"r");
-    addItem(window, @"Minimize", @selector(performMiniaturize:), @"m");
-    addItem(window, @"Zoom", @selector(performZoom:), @"");
+    addItem(app, NSLocalizedString(@"Quit System Information", @""), @selector(terminate:), @"q");
+    addItem(file, NSLocalizedString(@"Close", @""), @selector(performClose:), @"w");
+    addItem(view, NSLocalizedString(@"Refresh", @""), @selector(refresh:), @"r");
+    addItem(window, NSLocalizedString(@"Minimize", @""), @selector(performMiniaturize:), @"m");
+    addItem(window, NSLocalizedString(@"Zoom", @""), @selector(performZoom:), @"");
     [NSApp setMainMenu:mainMenu];
     [mainMenu release];
 }

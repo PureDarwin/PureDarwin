@@ -58,6 +58,7 @@ stdenv.mkDerivation {
     app="$out/System/Library/CoreServices/Dock.app/Contents"
     install -Dm755 Dock "$app/MacOS/Dock"
     install -Dm644 Info.plist "$app/Info.plist"
+    for l in *.lproj; do install -Dm644 -t "$app/Resources/$l" $l/*.strings; done
     install -Dm644 -t "$app/Resources" png/*.png
     install -Dm644 Resources/TRENTA-LICENSE "$app/Resources/TRENTA-LICENSE"
     install -Dm644 -t "$out/System/Library/Desktop Pictures" DesktopPictures/*.jpg

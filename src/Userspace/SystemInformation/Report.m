@@ -53,8 +53,8 @@ static NSString *bytes(uint64_t n)
         u++;
     }
     if (u == 0)
-        return [NSString stringWithFormat:@"%llu bytes", (unsigned long long)n];
-    return [NSString stringWithFormat:v >= 100 || v == floor(v) ? @"%.0f %s" : @"%.1f %s", v, units[u]];
+        return [NSString stringWithFormat:NSLocalizedString(@"%llu bytes", @""), (unsigned long long)n];
+    return [NSString stringWithFormat:v >= 100 || v == floor(v) ? NSLocalizedString(@"%1$.0f %2$s", @"") : NSLocalizedString(@"%1$.1f %2$s", @""), v, units[u]];
 }
 
 static NSString *hex(uint32_t v, int digits)
@@ -173,7 +173,7 @@ static NSString *driverFor(io_registry_entry_t entry)
     NSString *cls;
 
     if (IORegistryEntryGetChildEntry(entry, kIOServicePlane, &child) != KERN_SUCCESS)
-        return @"None";
+        return NSLocalizedString(@"None", @"");
     cls = entryClass(child);
     IOObjectRelease(child);
     return cls;
@@ -204,18 +204,18 @@ static NSString *pciVendor(uint32_t vendor)
 static NSString *pciClass(uint32_t code)
 {
     switch (code >> 16) {
-        case 0x00: return @"Unclassified";
-        case 0x01: return (code >> 8 & 0xff) == 0x06 ? @"SATA controller" : (code >> 8 & 0xff) == 0x08 ? @"NVMe controller" : @"Storage controller";
-        case 0x02: return @"Network controller";
-        case 0x03: return @"Display controller";
-        case 0x04: return @"Multimedia controller";
-        case 0x05: return @"Memory controller";
-        case 0x06: return @"Bridge";
-        case 0x07: return @"Communication controller";
-        case 0x08: return @"System peripheral";
-        case 0x0c: return (code >> 8 & 0xff) == 0x03 ? @"USB controller" : @"Serial bus controller";
-        case 0x0d: return @"Wireless controller";
-        default: return [NSString stringWithFormat:@"Class %@", hex(code >> 16, 2)];
+        case 0x00: return NSLocalizedString(@"Unclassified", @"");
+        case 0x01: return (code >> 8 & 0xff) == 0x06 ? NSLocalizedString(@"SATA controller", @"") : (code >> 8 & 0xff) == 0x08 ? NSLocalizedString(@"NVMe controller", @"") : NSLocalizedString(@"Storage controller", @"");
+        case 0x02: return NSLocalizedString(@"Network controller", @"");
+        case 0x03: return NSLocalizedString(@"Display controller", @"");
+        case 0x04: return NSLocalizedString(@"Multimedia controller", @"");
+        case 0x05: return NSLocalizedString(@"Memory controller", @"");
+        case 0x06: return NSLocalizedString(@"Bridge", @"");
+        case 0x07: return NSLocalizedString(@"Communication controller", @"");
+        case 0x08: return NSLocalizedString(@"System peripheral", @"");
+        case 0x0c: return (code >> 8 & 0xff) == 0x03 ? NSLocalizedString(@"USB controller", @"") : NSLocalizedString(@"Serial bus controller", @"");
+        case 0x0d: return NSLocalizedString(@"Wireless controller", @"");
+        default: return [NSString stringWithFormat:NSLocalizedString(@"Class %@", @""), hex(code >> 16, 2)];
     }
 }
 
@@ -247,29 +247,29 @@ static NSArray *overview(void)
     struct utsname u;
 
     uname(&u);
-    [rows addObject:@[ @"Model Identifier", model ?: @"Unknown" ]];
-    [rows addObject:@[ @"Processor Name", cpu ?: [NSString stringWithUTF8String:u.machine] ]];
-    [rows addObject:@[ @"Architecture", [NSString stringWithUTF8String:u.machine] ]];
-    [rows addObject:@[ @"Total Number of Cores", [NSString stringWithFormat:@"%llu", sysctlNumber("hw.physicalcpu")] ]];
-    [rows addObject:@[ @"Threads", [NSString stringWithFormat:@"%llu", sysctlNumber("hw.logicalcpu")] ]];
+    [rows addObject:@[ NSLocalizedString(@"Model Identifier", @""), model ?: NSLocalizedString(@"Unknown", @"") ]];
+    [rows addObject:@[ NSLocalizedString(@"Processor Name", @""), cpu ?: [NSString stringWithUTF8String:u.machine] ]];
+    [rows addObject:@[ NSLocalizedString(@"Architecture", @""), [NSString stringWithUTF8String:u.machine] ]];
+    [rows addObject:@[ NSLocalizedString(@"Total Number of Cores", @""), [NSString stringWithFormat:@"%llu", sysctlNumber("hw.physicalcpu")] ]];
+    [rows addObject:@[ NSLocalizedString(@"Threads", @""), [NSString stringWithFormat:@"%llu", sysctlNumber("hw.logicalcpu")] ]];
     if (sysctlNumber("hw.cpufrequency") > 0)
-        [rows addObject:@[ @"Processor Speed", [NSString stringWithFormat:@"%.2f GHz", sysctlNumber("hw.cpufrequency") / 1e9] ]];
+        [rows addObject:@[ NSLocalizedString(@"Processor Speed", @""), [NSString stringWithFormat:NSLocalizedString(@"%.2f GHz", @""), sysctlNumber("hw.cpufrequency") / 1e9] ]];
     if (sysctlNumber("hw.l2cachesize") > 0)
-        [rows addObject:@[ @"L2 Cache", bytes(sysctlNumber("hw.l2cachesize")) ]];
+        [rows addObject:@[ NSLocalizedString(@"L2 Cache", @""), bytes(sysctlNumber("hw.l2cachesize")) ]];
     if (sysctlNumber("hw.l3cachesize") > 0)
-        [rows addObject:@[ @"L3 Cache", bytes(sysctlNumber("hw.l3cachesize")) ]];
-    [rows addObject:@[ @"Memory", bytes(sysctlNumber("hw.memsize")) ]];
+        [rows addObject:@[ NSLocalizedString(@"L3 Cache", @""), bytes(sysctlNumber("hw.l3cachesize")) ]];
+    [rows addObject:@[ NSLocalizedString(@"Memory", @""), bytes(sysctlNumber("hw.memsize")) ]];
     if (efi != IO_OBJECT_NULL) {
         NSString *vendor = stringProperty(efi, "firmware-vendor");
         uint32_t rev = wordProperty(efi, "firmware-revision");
         NSString *abi = stringProperty(efi, "firmware-abi");
 
         if (vendor != nil)
-            [rows addObject:@[ @"Firmware Vendor", vendor ]];
+            [rows addObject:@[ NSLocalizedString(@"Firmware Vendor", @""), vendor ]];
         if (rev != 0)
-            [rows addObject:@[ @"Firmware Revision", hex(rev, 8) ]];
+            [rows addObject:@[ NSLocalizedString(@"Firmware Revision", @""), hex(rev, 8) ]];
         if ([abi length] > 0)
-            [rows addObject:@[ @"Firmware ABI", abi ]];
+            [rows addObject:@[ NSLocalizedString(@"Firmware ABI", @""), abi ]];
         IOObjectRelease(efi);
     }
     if (platform != IO_OBJECT_NULL) {
@@ -277,9 +277,9 @@ static NSArray *overview(void)
         NSString *uuid = stringProperty(platform, "IOPlatformUUID");
 
         if ([serial length] > 0)
-            [rows addObject:@[ @"Serial Number", serial ]];
+            [rows addObject:@[ NSLocalizedString(@"Serial Number", @""), serial ]];
         if ([uuid length] > 0)
-            [rows addObject:@[ @"Hardware UUID", uuid ]];
+            [rows addObject:@[ NSLocalizedString(@"Hardware UUID", @""), uuid ]];
         IOObjectRelease(platform);
     }
     return @[ group(nil, rows) ];
@@ -294,13 +294,13 @@ static NSArray *graphics(void)
         if (cls >> 16 != 0x03)
             return nil;
         return group([model length] > 0 ? model : entryName(d), @[
-            @[ @"Chipset Model", [model length] > 0 ? model : pciClass(cls) ],
-            @[ @"Type", @"GPU" ],
-            @[ @"Bus", @"PCI" ],
-            @[ @"Vendor", vendorText(wordProperty(d, "vendor-id") & 0xffff) ],
-            @[ @"Device ID", hex(wordProperty(d, "device-id") & 0xffff, 4) ],
-            @[ @"Revision ID", hex(wordProperty(d, "revision-id") & 0xff, 4) ],
-            @[ @"Driver", driverFor(d) ],
+            @[ NSLocalizedString(@"Chipset Model", @""), [model length] > 0 ? model : pciClass(cls) ],
+            @[ NSLocalizedString(@"Type", @""), @"GPU" ],
+            @[ NSLocalizedString(@"Bus", @""), @"PCI" ],
+            @[ NSLocalizedString(@"Vendor", @""), vendorText(wordProperty(d, "vendor-id") & 0xffff) ],
+            @[ NSLocalizedString(@"Device ID", @""), hex(wordProperty(d, "device-id") & 0xffff, 4) ],
+            @[ NSLocalizedString(@"Revision ID", @""), hex(wordProperty(d, "revision-id") & 0xff, 4) ],
+            @[ NSLocalizedString(@"Driver", @""), driverFor(d) ],
         ]);
     });
 }
@@ -310,15 +310,15 @@ static NSArray *memoryInfo(void)
     vm_statistics64_data_t vm;
     mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
     uint64_t page = sysctlNumber("hw.pagesize");
-    NSMutableArray *rows = [NSMutableArray arrayWithObject:@[ @"Memory", bytes(sysctlNumber("hw.memsize")) ]];
+    NSMutableArray *rows = [NSMutableArray arrayWithObject:@[ NSLocalizedString(@"Memory", @""), bytes(sysctlNumber("hw.memsize")) ]];
 
-    [rows addObject:@[ @"Page Size", bytes(page) ]];
+    [rows addObject:@[ NSLocalizedString(@"Page Size", @""), bytes(page) ]];
     if (host_statistics64(mach_host_self(), HOST_VM_INFO64, (host_info64_t)&vm, &count) == KERN_SUCCESS) {
-        [rows addObject:@[ @"Free", bytes(vm.free_count * page) ]];
-        [rows addObject:@[ @"Active", bytes(vm.active_count * page) ]];
-        [rows addObject:@[ @"Inactive", bytes(vm.inactive_count * page) ]];
-        [rows addObject:@[ @"Wired", bytes(vm.wire_count * page) ]];
-        [rows addObject:@[ @"Compressed", bytes(vm.compressor_page_count * page) ]];
+        [rows addObject:@[ NSLocalizedString(@"Free", @""), bytes(vm.free_count * page) ]];
+        [rows addObject:@[ NSLocalizedString(@"Active", @""), bytes(vm.active_count * page) ]];
+        [rows addObject:@[ NSLocalizedString(@"Inactive", @""), bytes(vm.inactive_count * page) ]];
+        [rows addObject:@[ NSLocalizedString(@"Wired", @""), bytes(vm.wire_count * page) ]];
+        [rows addObject:@[ NSLocalizedString(@"Compressed", @""), bytes(vm.compressor_page_count * page) ]];
     }
     return @[ group(nil, rows) ];
 }
@@ -329,18 +329,18 @@ static NSArray *pci(void)
         uint32_t cls = wordProperty(d, "class-code");
         uint32_t vendor = wordProperty(d, "vendor-id") & 0xffff;
         NSMutableArray *rows = [NSMutableArray arrayWithArray:@[
-            @[ @"Type", pciClass(cls) ],
-            @[ @"Vendor", vendorText(vendor) ],
-            @[ @"Device ID", hex(wordProperty(d, "device-id") & 0xffff, 4) ],
-            @[ @"Subsystem", [NSString stringWithFormat:@"%@ %@", hex(wordProperty(d, "subsystem-vendor-id") & 0xffff, 4),
+            @[ NSLocalizedString(@"Type", @""), pciClass(cls) ],
+            @[ NSLocalizedString(@"Vendor", @""), vendorText(vendor) ],
+            @[ NSLocalizedString(@"Device ID", @""), hex(wordProperty(d, "device-id") & 0xffff, 4) ],
+            @[ NSLocalizedString(@"Subsystem", @""), [NSString stringWithFormat:@"%@ %@", hex(wordProperty(d, "subsystem-vendor-id") & 0xffff, 4),
                                                          hex(wordProperty(d, "subsystem-id") & 0xffff, 4)] ],
-            @[ @"Class Code", hex(cls, 6) ],
-            @[ @"Driver", driverFor(d) ],
+            @[ NSLocalizedString(@"Class Code", @""), hex(cls, 6) ],
+            @[ NSLocalizedString(@"Driver", @""), driverFor(d) ],
         ]];
         NSString *loc = stringProperty(d, "pcidebug");
 
         if ([loc length] > 0)
-            [rows addObject:@[ @"Location", loc ]];
+            [rows addObject:@[ NSLocalizedString(@"Location", @""), loc ]];
         return group(entryName(d), rows);
     });
 }
@@ -352,16 +352,16 @@ static NSArray *usb(void)
         NSString *vendorName = stringProperty(d, "USB Vendor Name") ?: stringProperty(d, "kUSBVendorString");
         NSString *serial = stringProperty(d, "USB Serial Number") ?: stringProperty(d, "kUSBSerialNumberString");
         NSMutableArray *rows = [NSMutableArray arrayWithArray:@[
-            @[ @"Product ID", hex(wordProperty(d, "idProduct") & 0xffff, 4) ],
-            @[ @"Vendor ID", hex(wordProperty(d, "idVendor") & 0xffff, 4) ],
-            @[ @"Location ID", hex(wordProperty(d, "locationID"), 8) ],
+            @[ NSLocalizedString(@"Product ID", @""), hex(wordProperty(d, "idProduct") & 0xffff, 4) ],
+            @[ NSLocalizedString(@"Vendor ID", @""), hex(wordProperty(d, "idVendor") & 0xffff, 4) ],
+            @[ NSLocalizedString(@"Location ID", @""), hex(wordProperty(d, "locationID"), 8) ],
         ]];
 
         if (vendorName != nil)
-            [rows insertObject:@[ @"Manufacturer", vendorName ] atIndex:0];
+            [rows insertObject:@[ NSLocalizedString(@"Manufacturer", @""), vendorName ] atIndex:0];
         if ([serial length] > 0)
-            [rows addObject:@[ @"Serial Number", serial ]];
-        [rows addObject:@[ @"Driver", driverFor(d) ]];
+            [rows addObject:@[ NSLocalizedString(@"Serial Number", @""), serial ]];
+        [rows addObject:@[ NSLocalizedString(@"Driver", @""), driverFor(d) ]];
         return group([product length] > 0 ? product : entryName(d), rows);
     };
     NSArray *devices = eachService("IOUSBHostDevice", describe);
@@ -376,15 +376,15 @@ static NSArray *storage(void)
         NSString *content = stringProperty(m, "Content");
         BOOL whole = boolProperty(m, "Whole");
         NSMutableArray *rows = [NSMutableArray arrayWithArray:@[
-            @[ @"Capacity", bytes(numberProperty(m, "Size")) ],
-            @[ @"BSD Name", bsd ?: @"?" ],
-            @[ @"Kind", whole ? @"Disk" : @"Partition" ],
+            @[ NSLocalizedString(@"Capacity", @""), bytes(numberProperty(m, "Size")) ],
+            @[ NSLocalizedString(@"BSD Name", @""), bsd ?: @"?" ],
+            @[ NSLocalizedString(@"Kind", @""), whole ? NSLocalizedString(@"Disk", @"") : NSLocalizedString(@"Partition", @"") ],
         ]];
 
         if ([content length] > 0)
-            [rows addObject:@[ @"Content", content ]];
-        [rows addObject:@[ @"Removable", boolProperty(m, "Removable") ? @"Yes" : @"No" ]];
-        [rows addObject:@[ @"Writable", boolProperty(m, "Writable") ? @"Yes" : @"No" ]];
+            [rows addObject:@[ NSLocalizedString(@"Content", @""), content ]];
+        [rows addObject:@[ NSLocalizedString(@"Removable", @""), boolProperty(m, "Removable") ? NSLocalizedString(@"Yes", @"") : NSLocalizedString(@"No", @"") ]];
+        [rows addObject:@[ NSLocalizedString(@"Writable", @""), boolProperty(m, "Writable") ? NSLocalizedString(@"Yes", @"") : NSLocalizedString(@"No", @"") ]];
         return group(whole ? entryName(m) : [NSString stringWithFormat:@"%@ (%@)", entryName(m), bsd ?: @"?"], rows);
     });
 }
@@ -404,7 +404,7 @@ static NSArray *network(void)
         char text[INET6_ADDRSTRLEN];
 
         if (rows == nil) {
-            rows = [NSMutableArray arrayWithObject:@[ @"Status", (a->ifa_flags & IFF_UP) ? ((a->ifa_flags & IFF_RUNNING) ? @"Up" : @"Up, no link") : @"Down" ]];
+            rows = [NSMutableArray arrayWithObject:@[ NSLocalizedString(@"Status", @""), (a->ifa_flags & IFF_UP) ? ((a->ifa_flags & IFF_RUNNING) ? NSLocalizedString(@"Up", @"") : NSLocalizedString(@"Up, no link", @"")) : NSLocalizedString(@"Down", @"") ]];
             byName[name] = rows;
             [order addObject:name];
         }
@@ -415,13 +415,13 @@ static NSArray *network(void)
             const unsigned char *mac = (const unsigned char *)LLADDR(dl);
 
             if (dl->sdl_alen == 6)
-                [rows addObject:@[ @"MAC Address", [NSString stringWithFormat:@"%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]] ]];
+                [rows addObject:@[ NSLocalizedString(@"MAC Address", @""), [NSString stringWithFormat:@"%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]] ]];
         } else if (a->ifa_addr->sa_family == AF_INET) {
             inet_ntop(AF_INET, &((struct sockaddr_in *)a->ifa_addr)->sin_addr, text, sizeof(text));
-            [rows addObject:@[ @"IPv4 Address", [NSString stringWithUTF8String:text] ]];
+            [rows addObject:@[ NSLocalizedString(@"IPv4 Address", @""), [NSString stringWithUTF8String:text] ]];
         } else if (a->ifa_addr->sa_family == AF_INET6) {
             inet_ntop(AF_INET6, &((struct sockaddr_in6 *)a->ifa_addr)->sin6_addr, text, sizeof(text));
-            [rows addObject:@[ @"IPv6 Address", [NSString stringWithUTF8String:text] ]];
+            [rows addObject:@[ NSLocalizedString(@"IPv6 Address", @""), [NSString stringWithUTF8String:text] ]];
         }
     }
     freeifaddrs(list);
@@ -446,12 +446,12 @@ static NSArray *software(void)
     up = boot.tv_sec > 0 ? (long)(time(NULL) - boot.tv_sec) : 0;
     [rows addObject:@[ @"System Version", [NSString stringWithFormat:@"%@ %@ (%@)", sv[@"ProductName"] ?: @"PureDarwin",
                                                    sv[@"ProductVersion"] ?: @"?", sv[@"ProductBuildVersion"] ?: @"?"] ]];
-    [rows addObject:@[ @"Kernel Version", [NSString stringWithFormat:@"%s %s", u.sysname, u.release] ]];
-    [rows addObject:@[ @"Kernel Build", sysctlString("kern.version") ?: @"?" ]];
-    [rows addObject:@[ @"Boot Arguments", [sysctlString("kern.bootargs") length] > 0 ? sysctlString("kern.bootargs") : @"None" ]];
-    [rows addObject:@[ @"Computer Name", [NSString stringWithUTF8String:host] ]];
-    [rows addObject:@[ @"User Name", NSUserName() ?: @"?" ]];
-    [rows addObject:@[ @"Time since boot", [NSString stringWithFormat:@"%ld days, %ld:%02ld", up / 86400, up / 3600 % 24, up / 60 % 60] ]];
+    [rows addObject:@[ NSLocalizedString(@"Kernel Version", @""), [NSString stringWithFormat:@"%s %s", u.sysname, u.release] ]];
+    [rows addObject:@[ NSLocalizedString(@"Kernel Build", @""), sysctlString("kern.version") ?: @"?" ]];
+    [rows addObject:@[ NSLocalizedString(@"Boot Arguments", @""), [sysctlString("kern.bootargs") length] > 0 ? sysctlString("kern.bootargs") : NSLocalizedString(@"None", @"") ]];
+    [rows addObject:@[ NSLocalizedString(@"Computer Name", @""), [NSString stringWithUTF8String:host] ]];
+    [rows addObject:@[ NSLocalizedString(@"User Name", @""), NSUserName() ?: @"?" ]];
+    [rows addObject:@[ NSLocalizedString(@"Time since boot", @""), [NSString stringWithFormat:NSLocalizedString(@"%1$ld days, %2$ld:%3$02ld", @""), up / 86400, up / 3600 % 24, up / 60 % 60] ]];
     return @[ group(nil, rows) ];
 }
 
@@ -481,7 +481,7 @@ static NSArray *extensions(void)
     for (NSString *bundle in [[bundles allKeys] sortedArrayUsingSelector:@selector(caseInsensitiveCompare:)]) {
         NSArray *classes = [[bundles[bundle] allObjects] sortedArrayUsingSelector:@selector(compare:)];
 
-        [groups addObject:group(bundle, @[ @[ @"Classes", [classes componentsJoinedByString:@", "] ] ])];
+        [groups addObject:group(bundle, @[ @[ NSLocalizedString(@"Classes", @""), [classes componentsJoinedByString:@", "] ] ])];
     }
     return groups;
 }
@@ -489,14 +489,14 @@ static NSArray *extensions(void)
 NSArray *PDReportSections(void)
 {
     return @[
-        section(@"Hardware", @"Hardware Overview", ^{ return overview(); }),
-        section(@"Graphics", @"Graphics/Displays", ^{ return graphics(); }),
-        section(@"Memory", @"Memory", ^{ return memoryInfo(); }),
-        section(@"PCI", @"PCI Devices", ^{ return pci(); }),
-        section(@"USB", @"USB Devices", ^{ return usb(); }),
-        section(@"Storage", @"Storage", ^{ return storage(); }),
-        section(@"Network", @"Network Interfaces", ^{ return network(); }),
-        section(@"Software", @"System Software Overview", ^{ return software(); }),
-        section(@"Extensions", @"Drivers in Use", ^{ return extensions(); }),
+        section(NSLocalizedString(@"Hardware", @""), NSLocalizedString(@"Hardware Overview", @""), ^{ return overview(); }),
+        section(NSLocalizedString(@"Graphics", @""), NSLocalizedString(@"Graphics/Displays", @""), ^{ return graphics(); }),
+        section(NSLocalizedString(@"Memory", @""), NSLocalizedString(@"Memory", @""), ^{ return memoryInfo(); }),
+        section(@"PCI", NSLocalizedString(@"PCI Devices", @""), ^{ return pci(); }),
+        section(NSLocalizedString(@"USB", @""), NSLocalizedString(@"USB Devices", @""), ^{ return usb(); }),
+        section(NSLocalizedString(@"Storage", @""), NSLocalizedString(@"Storage", @""), ^{ return storage(); }),
+        section(NSLocalizedString(@"Network", @""), NSLocalizedString(@"Network Interfaces", @""), ^{ return network(); }),
+        section(NSLocalizedString(@"Software", @""), NSLocalizedString(@"System Software Overview", @""), ^{ return software(); }),
+        section(NSLocalizedString(@"Extensions", @""), NSLocalizedString(@"Drivers in Use", @""), ^{ return extensions(); }),
     ];
 }

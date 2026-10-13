@@ -78,6 +78,7 @@ stdenv.mkDerivation {
     app="$out/Applications/Settings.app/Contents"
     install -Dm755 Settings "$app/MacOS/Settings"
     install -Dm644 Info.plist "$app/Info.plist"
+    for l in *.lproj; do install -Dm644 -t "$app/Resources/$l" $l/*.strings; done
     install -Dm644 AppIcon.png "$app/Resources/AppIcon.png"
     install -Dm644 -t "$app/Resources" png/*.png
     install -Dm644 Resources/TRENTA-LICENSE "$app/Resources/TRENTA-LICENSE"

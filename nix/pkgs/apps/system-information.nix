@@ -54,6 +54,7 @@ stdenv.mkDerivation {
     app="$out/Applications/Utilities/System Information.app/Contents"
     install -Dm755 "System Information" "$app/MacOS/System Information"
     install -Dm644 Info.plist "$app/Info.plist"
+    for l in *.lproj; do install -Dm644 -t "$app/Resources/$l" $l/*.strings; done
     runHook postInstall
   '';
 

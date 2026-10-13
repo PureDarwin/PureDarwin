@@ -1,0 +1,546 @@
+/* No comment provided by engineer. */
+"Settings" = "Settings";
+
+/* No comment provided by engineer. */
+"Edit" = "Edit";
+
+/* No comment provided by engineer. */
+"View" = "View";
+
+/* No comment provided by engineer. */
+"Window" = "Window";
+
+/* No comment provided by engineer. */
+"Help" = "Help";
+
+/* No comment provided by engineer. */
+"About Settings" = "About Settings";
+
+/* No comment provided by engineer. */
+"Quit Settings" = "Quit Settings";
+
+/* No comment provided by engineer. */
+"Copy" = "Copy";
+
+/* No comment provided by engineer. */
+"Paste" = "Paste";
+
+/* No comment provided by engineer. */
+"Back" = "Back";
+
+/* No comment provided by engineer. */
+"Show All" = "Show All";
+
+/* No comment provided by engineer. */
+"Search" = "Search";
+
+/* No comment provided by engineer. */
+"Minimize" = "Minimize";
+
+/* No comment provided by engineer. */
+"Zoom" = "Zoom";
+
+/* No comment provided by engineer. */
+"Settings Help" = "Settings Help";
+
+/* No comment provided by engineer. */
+"Settings" = "Settings";
+
+/* No comment provided by engineer. */
+"%1$d-core %2$s" = "%1$d-core %2$s";
+
+/* No comment provided by engineer. */
+"Unknown" = "Unknown";
+
+/* No comment provided by engineer. */
+"%llu GB" = "%llu GB";
+
+/* No comment provided by engineer. */
+"Display controller" = "Display controller";
+
+/* No comment provided by engineer. */
+"Unknown" = "Unknown";
+
+/* No comment provided by engineer. */
+"PureDarwin · %1$s · %2$@" = "PureDarwin · %1$s · %2$@";
+
+/* No comment provided by engineer. */
+"in use" = "in use";
+
+/* No comment provided by engineer. */
+"not matched" = "not matched";
+
+/* No comment provided by engineer. */
+"in use" = "in use";
+
+/* No comment provided by engineer. */
+"%1$s · %2$@" = "%1$s · %2$@";
+
+/* No comment provided by engineer. */
+"no link" = "no link";
+
+/* No comment provided by engineer. */
+"Audio device" = "Audio device";
+
+/* No comment provided by engineer. */
+"No EFI partition was found." = "No EFI partition was found.";
+
+/* No comment provided by engineer. */
+"Could not mount the EFI partition (%@)." = "Could not mount the EFI partition (%@).";
+
+/* No comment provided by engineer. */
+"The EFI partition is mounted read-only." = "The EFI partition is mounted read-only.";
+
+/* No comment provided by engineer. */
+"You" = "You";
+
+/* No comment provided by engineer. */
+"Appearance" = "Appearance";
+
+/* No comment provided by engineer. */
+"Theme, wallpaper and dock" = "Theme, wallpaper and dock";
+
+/* No comment provided by engineer. */
+"Account" = "Account";
+
+/* No comment provided by engineer. */
+"Name and picture" = "Name and picture";
+
+/* No comment provided by engineer. */
+"System" = "System";
+
+/* No comment provided by engineer. */
+"Startup & Boot" = "Startup & Boot";
+
+/* No comment provided by engineer. */
+"Boot args and disk" = "Boot args and disk";
+
+/* No comment provided by engineer. */
+"Services" = "Services";
+
+/* No comment provided by engineer. */
+"launchd daemons" = "launchd daemons";
+
+/* No comment provided by engineer. */
+"Kernel Extensions" = "Kernel Extensions";
+
+/* No comment provided by engineer. */
+"Kernel collection" = "Kernel collection";
+
+/* No comment provided by engineer. */
+"Session" = "Session";
+
+/* No comment provided by engineer. */
+"Compositor and windows" = "Compositor and windows";
+
+/* No comment provided by engineer. */
+"Hardware" = "Hardware";
+
+/* No comment provided by engineer. */
+"Displays" = "Displays";
+
+/* No comment provided by engineer. */
+"Resolution" = "Resolution";
+
+/* No comment provided by engineer. */
+"Network" = "Network";
+
+/* No comment provided by engineer. */
+"Wi-Fi and Ethernet" = "Wi-Fi and Ethernet";
+
+/* No comment provided by engineer. */
+"Sound" = "Sound";
+
+/* No comment provided by engineer. */
+"Output devices" = "Output devices";
+
+/* No comment provided by engineer. */
+"Power" = "Power";
+
+/* No comment provided by engineer. */
+"Battery and sleep" = "Battery and sleep";
+
+/* No comment provided by engineer. */
+"Mouse & Keyboard" = "Mouse & Keyboard";
+
+/* No comment provided by engineer. */
+"Pointer and keys" = "Pointer and keys";
+
+/* No comment provided by engineer. */
+"Region" = "Region";
+
+/* No comment provided by engineer. */
+"Date & Time" = "Date & Time";
+
+/* No comment provided by engineer. */
+"Clock and time zone" = "Clock and time zone";
+
+/* No comment provided by engineer. */
+"About" = "About";
+
+/* No comment provided by engineer. */
+"Darwin and xnu" = "Darwin and xnu";
+
+/* No comment provided by engineer. */
+"PureDarwin %@" = "PureDarwin %@";
+
+/* No comment provided by engineer. */
+"%1$@ · %2$@ · %3$@ · build %4$@" = "%1$@ · %2$@ · %3$@ · build %4$@";
+
+/* No comment provided by engineer. */
+"No settings match “%@”." = "No settings match “%@”.";
+
+/* No comment provided by engineer. */
+"Theme" = "Theme";
+
+/* No comment provided by engineer. */
+"Light" = "Light";
+
+/* No comment provided by engineer. */
+"Dark" = "Dark";
+
+/* No comment provided by engineer. */
+"Auto" = "Auto";
+
+/* No comment provided by engineer. */
+"Mode" = "Mode";
+
+/* No comment provided by engineer. */
+"Accent" = "Accent";
+
+/* No comment provided by engineer. */
+"Wallpaper" = "Wallpaper";
+
+/* No comment provided by engineer. */
+"Sunset" = "Sunset";
+
+/* No comment provided by engineer. */
+"Lagoon" = "Lagoon";
+
+/* No comment provided by engineer. */
+"Dusk" = "Dusk";
+
+/* No comment provided by engineer. */
+"Graphite" = "Graphite";
+
+/* No comment provided by engineer. */
+"Dock" = "Dock";
+
+/* No comment provided by engineer. */
+"Size" = "Size";
+
+/* No comment provided by engineer. */
+"Magnify on hover" = "Magnify on hover";
+
+/* No comment provided by engineer. */
+"Dark mode is saved, apps draw it once AppKit has a dark appearance." = "Dark mode is saved, apps draw it once AppKit has a dark appearance.";
+
+/* No comment provided by engineer. */
+"Full name" = "Full name";
+
+/* No comment provided by engineer. */
+"Account name" = "Account name";
+
+/* No comment provided by engineer. */
+"Account" = "Account";
+
+/* No comment provided by engineer. */
+"Administrator, uid 0" = "Administrator, uid 0";
+
+/* No comment provided by engineer. */
+"Standard, uid %@" = "Standard, uid %@";
+
+/* No comment provided by engineer. */
+"Home" = "Home";
+
+/* No comment provided by engineer. */
+"Shell" = "Shell";
+
+/* No comment provided by engineer. */
+"Arguments passed to xnu at the next start, kept in boot-args.txt on the EFI partition." = "Arguments passed to xnu at the next start, kept in boot-args.txt on the EFI partition.";
+
+/* No comment provided by engineer. */
+"Boot arguments" = "Boot arguments";
+
+/* No comment provided by engineer. */
+"(none)" = "(none)";
+
+/* No comment provided by engineer. */
+"Save" = "Save";
+
+/* No comment provided by engineer. */
+"Not saved yet." = "Not saved yet.";
+
+/* No comment provided by engineer. */
+"Matches the running system." = "Matches the running system.";
+
+/* No comment provided by engineer. */
+"Saved, used at the next start." = "Saved, used at the next start.";
+
+/* No comment provided by engineer. */
+"Startup" = "Startup";
+
+/* No comment provided by engineer. */
+"Startup disk" = "Startup disk";
+
+/* No comment provided by engineer. */
+"Firmware" = "Firmware";
+
+/* No comment provided by engineer. */
+"UEFI, legacy BIOS supported" = "UEFI, legacy BIOS supported";
+
+/* No comment provided by engineer. */
+"Daemons launchd starts at boot. Changes apply after a restart." = "Daemons launchd starts at boot. Changes apply after a restart.";
+
+/* No comment provided by engineer. */
+"No launch daemons found" = "No launch daemons found";
+
+/* No comment provided by engineer. */
+"Extensions on this system, and whether a driver of theirs is running." = "Extensions on this system, and whether a driver of theirs is running.";
+
+/* No comment provided by engineer. */
+"Name" = "Name";
+
+/* No comment provided by engineer. */
+"Family" = "Family";
+
+/* No comment provided by engineer. */
+"State" = "State";
+
+/* No comment provided by engineer. */
+"not running" = "not running";
+
+/* No comment provided by engineer. */
+"Compositor" = "Compositor";
+
+/* No comment provided by engineer. */
+"neuswc with pdwm, %@" = "neuswc with pdwm, %@";
+
+/* No comment provided by engineer. */
+"Window server" = "Window server";
+
+/* No comment provided by engineer. */
+"AppKit over WindowServer" = "AppKit over WindowServer";
+
+/* No comment provided by engineer. */
+"%1$.0f × %2$.0f" = "%1$.0f × %2$.0f";
+
+/* No comment provided by engineer. */
+"%@ Hz" = "%@ Hz";
+
+/* No comment provided by engineer. */
+"The compositor did not accept that resolution." = "The compositor did not accept that resolution.";
+
+/* No comment provided by engineer. */
+"Display" = "Display";
+
+/* No comment provided by engineer. */
+"Resolution" = "Resolution";
+
+/* No comment provided by engineer. */
+"%zu × %zu" = "%zu × %zu";
+
+/* No comment provided by engineer. */
+"%1$.0f × %2$.0f" = "%1$.0f × %2$.0f";
+
+/* No comment provided by engineer. */
+"Larger Text" = "Larger Text";
+
+/* No comment provided by engineer. */
+"More Space" = "More Space";
+
+/* No comment provided by engineer. */
+"Display" = "Display";
+
+/* No comment provided by engineer. */
+"Resolution" = "Resolution";
+
+/* No comment provided by engineer. */
+"Refresh rate" = "Refresh rate";
+
+/* No comment provided by engineer. */
+"No Wi-Fi hardware" = "No Wi-Fi hardware";
+
+/* No comment provided by engineer. */
+"Off" = "Off";
+
+/* No comment provided by engineer. */
+"Connected to %@" = "Connected to %@";
+
+/* No comment provided by engineer. */
+"Joining %@…" = "Joining %@…";
+
+/* No comment provided by engineer. */
+"Not connected" = "Not connected";
+
+/* No comment provided by engineer. */
+"Connected · %@ Personal" = "Connected · %@ Personal";
+
+/* No comment provided by engineer. */
+"Connected" = "Connected";
+
+/* No comment provided by engineer. */
+"Hide Details" = "Hide Details";
+
+/* No comment provided by engineer. */
+"Details…" = "Details…";
+
+/* No comment provided by engineer. */
+"Disconnect" = "Disconnect";
+
+/* No comment provided by engineer. */
+"IP address" = "IP address";
+
+/* No comment provided by engineer. */
+"Waiting for DHCP" = "Waiting for DHCP";
+
+/* No comment provided by engineer. */
+"Security" = "Security";
+
+/* No comment provided by engineer. */
+" Personal" = " Personal";
+
+/* No comment provided by engineer. */
+"None" = "None";
+
+/* No comment provided by engineer. */
+"Channel" = "Channel";
+
+/* No comment provided by engineer. */
+"%1$u (%2$@ GHz)" = "%1$u (%2$@ GHz)";
+
+/* No comment provided by engineer. */
+"Signal" = "Signal";
+
+/* No comment provided by engineer. */
+"%d dBm" = "%d dBm";
+
+/* No comment provided by engineer. */
+"Wi-Fi address" = "Wi-Fi address";
+
+/* No comment provided by engineer. */
+"Interface" = "Interface";
+
+/* No comment provided by engineer. */
+"Forget" = "Forget";
+
+/* No comment provided by engineer. */
+"Join" = "Join";
+
+/* No comment provided by engineer. */
+"In range" = "In range";
+
+/* No comment provided by engineer. */
+"Not in range" = "Not in range";
+
+/* No comment provided by engineer. */
+"Known Networks" = "Known Networks";
+
+/* No comment provided by engineer. */
+"Join" = "Join";
+
+/* No comment provided by engineer. */
+"Looking for networks…" = "Looking for networks…";
+
+/* No comment provided by engineer. */
+"No other networks in range" = "No other networks in range";
+
+/* No comment provided by engineer. */
+"Other Network…" = "Other Network…";
+
+/* No comment provided by engineer. */
+"Other Network…" = "Other Network…";
+
+/* No comment provided by engineer. */
+"Other Networks" = "Other Networks";
+
+/* No comment provided by engineer. */
+"Ethernet" = "Ethernet";
+
+/* No comment provided by engineer. */
+"No cable connected" = "No cable connected";
+
+/* No comment provided by engineer. */
+"Ethernet" = "Ethernet";
+
+/* No comment provided by engineer. */
+"Output" = "Output";
+
+/* No comment provided by engineer. */
+"No audio device" = "No audio device";
+
+/* No comment provided by engineer. */
+"Battery" = "Battery";
+
+/* No comment provided by engineer. */
+", charging" = ", charging";
+
+/* No comment provided by engineer. */
+"None, on AC power" = "None, on AC power";
+
+/* No comment provided by engineer. */
+"Sleep after" = "Sleep after";
+
+/* No comment provided by engineer. */
+"Never" = "Never";
+
+/* No comment provided by engineer. */
+"Keyboard layout" = "Keyboard layout";
+
+/* No comment provided by engineer. */
+"U.S." = "U.S.";
+
+/* No comment provided by engineer. */
+"ISO 8601" = "ISO 8601";
+
+/* No comment provided by engineer. */
+"Dates as 2026-10-10, times as 14:05" = "Dates as 2026-10-10, times as 14:05";
+
+/* No comment provided by engineer. */
+"24-hour clock" = "24-hour clock";
+
+/* No comment provided by engineer. */
+"Date in the menu bar" = "Date in the menu bar";
+
+/* No comment provided by engineer. */
+"Time zone" = "Time zone";
+
+/* No comment provided by engineer. */
+"Now" = "Now";
+
+/* No comment provided by engineer. */
+"Version" = "Version";
+
+/* No comment provided by engineer. */
+"PureDarwin %1$@ (%2$@)" = "PureDarwin %1$@ (%2$@)";
+
+/* No comment provided by engineer. */
+"Kernel" = "Kernel";
+
+/* No comment provided by engineer. */
+"Processor" = "Processor";
+
+/* No comment provided by engineer. */
+"Memory" = "Memory";
+
+/* No comment provided by engineer. */
+"Graphics" = "Graphics";
+
+/* No comment provided by engineer. */
+"System Report…" = "System Report…";
+
+/* No comment provided by engineer. */
+"Search settings" = "Search settings";
+
+/* No comment provided by engineer. */
+"connected" = "connected";
+
+/* No comment provided by engineer. */
+"Menu bar" = "Menu bar";
+
+/* No comment provided by engineer. */
+"MenuBar, %@" = "MenuBar, %@";
+
+/* No comment provided by engineer. */
+"Dock, %@" = "Dock, %@";
+

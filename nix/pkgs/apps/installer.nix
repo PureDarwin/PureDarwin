@@ -67,6 +67,7 @@ stdenv.mkDerivation {
     app="$out/Applications/Install PureDarwin.app/Contents"
     install -Dm755 Installer "$app/MacOS/Installer"
     install -Dm644 Info.plist "$app/Info.plist"
+    for l in *.lproj; do install -Dm644 -t "$app/Resources/$l" $l/*.strings; done
     install -Dm644 AppIcon.png "$app/Resources/AppIcon.png"
     for p in beak-white beak-mark beak-grey; do install -Dm644 $p.png "$app/Resources/$p.png"; done
     runHook postInstall

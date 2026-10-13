@@ -56,6 +56,7 @@ stdenv.mkDerivation {
     app="$out/Applications/Calculator.app/Contents"
     install -Dm755 Calculator "$app/MacOS/Calculator"
     install -Dm644 Info.plist "$app/Info.plist"
+    for l in *.lproj; do install -Dm644 -t "$app/Resources/$l" $l/*.strings; done
     install -Dm644 AppIcon.png "$app/Resources/AppIcon.png"
     runHook postInstall
   '';

@@ -47,48 +47,48 @@ static void addDisabled(NSMenu *menu, NSString *title, NSString *key, NSUInteger
     NSString *home = NSHomeDirectory();
     NSUInteger cmd = NSCommandKeyMask, shift = NSCommandKeyMask | NSShiftKeyMask;
 
-    NSMenu *app = addMenu(mainMenu, @"Finder");
-    addDisabled(app, @"About Finder", @"", 0);
+    NSMenu *app = addMenu(mainMenu, NSLocalizedString(@"Finder", @""));
+    addDisabled(app, NSLocalizedString(@"About Finder", @""), @"", 0);
     [app addItem:[NSMenuItem separatorItem]];
-    addDisabled(app, @"Settings…", @",", 0);
+    addDisabled(app, NSLocalizedString(@"Settings…", @""), @",", 0);
     [app addItem:[NSMenuItem separatorItem]];
-    addDisabled(app, @"Empty Trash…", @"\b", shift);
+    addDisabled(app, NSLocalizedString(@"Empty Trash…", @""), @"\b", shift);
     [app addItem:[NSMenuItem separatorItem]];
-    addItem(app, @"Quit Finder", @selector(terminate:), @"q", 0);
+    addItem(app, NSLocalizedString(@"Quit Finder", @""), @selector(terminate:), @"q", 0);
 
-    NSMenu *file = addMenu(mainMenu, @"File");
-    [addItem(file, @"New Finder Window", @selector(newWindow:), @"n", 0) setTarget:self];
-    addItem(file, @"New Folder", @selector(newFolder:), @"n", shift);
+    NSMenu *file = addMenu(mainMenu, NSLocalizedString(@"File", @""));
+    [addItem(file, NSLocalizedString(@"New Finder Window", @""), @selector(newWindow:), @"n", 0) setTarget:self];
+    addItem(file, NSLocalizedString(@"New Folder", @""), @selector(newFolder:), @"n", shift);
     [file addItem:[NSMenuItem separatorItem]];
-    addItem(file, @"Open", @selector(openSelection:), @"o", 0);
+    addItem(file, NSLocalizedString(@"Open", @""), @selector(openSelection:), @"o", 0);
     [file addItem:[NSMenuItem separatorItem]];
-    addItem(file, @"Close Window", @selector(performClose:), @"w", 0);
+    addItem(file, NSLocalizedString(@"Close Window", @""), @selector(performClose:), @"w", 0);
 
-    NSMenu *edit = addMenu(mainMenu, @"Edit");
-    addDisabled(edit, @"Undo", @"z", 0);
+    NSMenu *edit = addMenu(mainMenu, NSLocalizedString(@"Edit", @""));
+    addDisabled(edit, NSLocalizedString(@"Undo", @""), @"z", 0);
     [edit addItem:[NSMenuItem separatorItem]];
-    addDisabled(edit, @"Copy", @"c", 0);
-    addDisabled(edit, @"Paste", @"v", 0);
-    addItem(edit, @"Select All", @selector(selectAll:), @"a", 0);
+    addDisabled(edit, NSLocalizedString(@"Copy", @""), @"c", 0);
+    addDisabled(edit, NSLocalizedString(@"Paste", @""), @"v", 0);
+    addItem(edit, NSLocalizedString(@"Select All", @""), @selector(selectAll:), @"a", 0);
 
-    NSMenu *view = addMenu(mainMenu, @"View");
-    [addItem(view, @"as Icons", NULL, @"1", 0) setState:NSOnState];
-    addDisabled(view, @"as List", @"2", 0);
+    NSMenu *view = addMenu(mainMenu, NSLocalizedString(@"View", @""));
+    [addItem(view, NSLocalizedString(@"as Icons", @""), NULL, @"1", 0) setState:NSOnState];
+    addDisabled(view, NSLocalizedString(@"as List", @""), @"2", 0);
     [view addItem:[NSMenuItem separatorItem]];
-    addItem(view, @"Hide Sidebar", @selector(toggleSidebar:), @"s", cmd | NSControlKeyMask);
+    addItem(view, NSLocalizedString(@"Hide Sidebar", @""), @selector(toggleSidebar:), @"s", cmd | NSControlKeyMask);
 
-    NSMenu *go = addMenu(mainMenu, @"Go");
-    addItem(go, @"Back", @selector(goBack:), @"[", 0);
-    addItem(go, @"Forward", @selector(goForward:), @"]", 0);
-    addItem(go, @"Enclosing Folder", @selector(goEnclosingFolder:), [NSString stringWithFormat:@"%C", (unichar)NSUpArrowFunctionKey], 0);
+    NSMenu *go = addMenu(mainMenu, NSLocalizedString(@"Go", @""));
+    addItem(go, NSLocalizedString(@"Back", @""), @selector(goBack:), @"[", 0);
+    addItem(go, NSLocalizedString(@"Forward", @""), @selector(goForward:), @"]", 0);
+    addItem(go, NSLocalizedString(@"Enclosing Folder", @""), @selector(goEnclosingFolder:), [NSString stringWithFormat:@"%C", (unichar)NSUpArrowFunctionKey], 0);
     [go addItem:[NSMenuItem separatorItem]];
     NSArray *places = @[
-        @[ @"Documents", [home stringByAppendingPathComponent:@"Documents"], @"o" ],
-        @[ @"Desktop", [home stringByAppendingPathComponent:@"Desktop"], @"d" ],
-        @[ @"Downloads", [home stringByAppendingPathComponent:@"Downloads"], @"l" ],
-        @[ @"Home", home, @"h" ],
-        @[ @"Computer", @"/", @"c" ],
-        @[ @"Applications", @"/Applications", @"a" ],
+        @[ NSLocalizedString(@"Documents", @""), [home stringByAppendingPathComponent:@"Documents"], @"o" ],
+        @[ NSLocalizedString(@"Desktop", @""), [home stringByAppendingPathComponent:@"Desktop"], @"d" ],
+        @[ NSLocalizedString(@"Downloads", @""), [home stringByAppendingPathComponent:@"Downloads"], @"l" ],
+        @[ NSLocalizedString(@"Home", @""), home, @"h" ],
+        @[ NSLocalizedString(@"Computer", @""), @"/", @"c" ],
+        @[ NSLocalizedString(@"Applications", @""), @"/Applications", @"a" ],
     ];
     for (NSArray *place in places) {
         NSUInteger mods = [place[0] isEqualToString:@"Downloads"] ? cmd | NSAlternateKeyMask : shift;
@@ -96,9 +96,9 @@ static void addDisabled(NSMenu *menu, NSString *title, NSString *key, NSUInteger
         [addItem(go, place[0], @selector(goToPlace:), place[2], mods) setRepresentedObject:place[1]];
     }
 
-    NSMenu *window = addMenu(mainMenu, @"Window");
-    addItem(window, @"Minimize", @selector(performMiniaturize:), @"m", 0);
-    addItem(window, @"Zoom", @selector(performZoom:), @"", 0);
+    NSMenu *window = addMenu(mainMenu, NSLocalizedString(@"Window", @""));
+    addItem(window, NSLocalizedString(@"Minimize", @""), @selector(performMiniaturize:), @"m", 0);
+    addItem(window, NSLocalizedString(@"Zoom", @""), @selector(performZoom:), @"", 0);
 
     [NSApp setMainMenu:mainMenu];
     [mainMenu release];

@@ -336,14 +336,14 @@ static BOOL magnify = YES;
 - (NSArray *)makeItems
 {
     NSArray *spec = @[
-        @[ @"Files", @"files", @"/System/Library/CoreServices/Finder.app" ],
-        @[ @"Web", @"web", @"/Applications/Web.app" ],
-        @[ @"Calculator", @"calculator", @"/Applications/Calculator.app" ],
-        @[ @"Maps", @"maps", @"/Applications/Maps.app" ],
-        @[ @"Settings", @"settings", @"/Applications/Settings.app" ],
-        @[ @"Terminal", @"terminal", @"/Applications/Utilities/Terminal.app" ],
+        @[ NSLocalizedString(@"Files", @""), @"files", @"/System/Library/CoreServices/Finder.app" ],
+        @[ NSLocalizedString(@"Web", @""), @"web", @"/Applications/Web.app" ],
+        @[ NSLocalizedString(@"Calculator", @""), @"calculator", @"/Applications/Calculator.app" ],
+        @[ NSLocalizedString(@"Maps", @""), @"maps", @"/Applications/Maps.app" ],
+        @[ NSLocalizedString(@"Settings", @""), @"settings", @"/Applications/Settings.app" ],
+        @[ NSLocalizedString(@"Terminal", @""), @"terminal", @"/Applications/Utilities/Terminal.app" ],
         [NSNull null],
-        @[ @"Trash", @"trash", @"" ],
+        @[ NSLocalizedString(@"Trash", @""), @"trash", @"" ],
     ];
     NSMutableArray *items = [NSMutableArray array];
 

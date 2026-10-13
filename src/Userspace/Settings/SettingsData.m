@@ -153,7 +153,7 @@ NSString *PDProcessor(void)
 
     sysctlbyname("hw.ncpu", &cpus, &len, NULL, 0);
     uname(&u);
-    return [NSString stringWithFormat:@"%d-core %s", cpus > 0 ? cpus : 1, u.machine];
+    return [NSString stringWithFormat:NSLocalizedString(@"%1$d-core %2$s", @""), cpus > 0 ? cpus : 1, u.machine];
 }
 
 NSString *PDMemory(void)
@@ -162,8 +162,8 @@ NSString *PDMemory(void)
     size_t len = sizeof(bytes);
 
     if (sysctlbyname("hw.memsize", &bytes, &len, NULL, 0) != 0 || bytes == 0)
-        return @"Unknown";
-    return [NSString stringWithFormat:@"%llu GB", (unsigned long long)((bytes + (1ULL << 29)) >> 30)];
+        return NSLocalizedString(@"Unknown", @"");
+    return [NSString stringWithFormat:NSLocalizedString(@"%llu GB", @""), (unsigned long long)((bytes + (1ULL << 29)) >> 30)];
 }
 
 static CFTypeRef property(io_registry_entry_t e, const char *key)
@@ -237,10 +237,10 @@ NSString *PDGraphics(void)
             case 0x8086: result = @"Intel Graphics"; break;
             case 0x1af4: result = @"Virtio GPU"; break;
             case 0x1234: result = @"QEMU Standard VGA"; break;
-            default: result = @"Display controller"; break;
+            default: result = NSLocalizedString(@"Display controller", @""); break;
         }
     });
-    return result ?: @"Unknown";
+    return result ?: NSLocalizedString(@"Unknown", @"");
 }
 
 NSString *PDHostName(void)
@@ -266,7 +266,7 @@ NSString *PDStartupDisk(void)
 
     if (statfs("/", &fs) != 0)
         return @"PureDarwin";
-    return [NSString stringWithFormat:@"PureDarwin · %s · %@", fs.f_fstypename,
+    return [NSString stringWithFormat:NSLocalizedString(@"PureDarwin · %1$s · %2$@", @""), fs.f_fstypename,
                                       [[NSString stringWithUTF8String:fs.f_mntfromname] lastPathComponent]];
 }
 
@@ -405,7 +405,7 @@ NSArray *PDKernelExtensions(void)
         [list addObject:@{
             @"name": [name stringByDeletingPathExtension],
             @"family": familyFor(bundle, name),
-            @"state": [inUse containsObject:bundle] ? @"in use" : @"not matched",
+            @"state": [inUse containsObject:bundle] ? NSLocalizedString(@"in use", @"") : NSLocalizedString(@"not matched", @""),
         }];
         [inUse removeObject:bundle];
     }
@@ -413,7 +413,7 @@ NSArray *PDKernelExtensions(void)
     for (NSString *bundle in [[inUse allObjects] sortedArrayUsingSelector:@selector(caseInsensitiveCompare:)]) {
         if ([bundle hasPrefix:@"__kernel__"] || [bundle isEqualToString:@"com.apple.kernel"])
             continue;
-        [list addObject:@{ @"name": [[bundle componentsSeparatedByString:@"."] lastObject], @"family": familyFor(bundle, @""), @"state": @"in use" }];
+        [list addObject:@{ @"name": [[bundle componentsSeparatedByString:@"."] lastObject], @"family": familyFor(bundle, @""), @"state": NSLocalizedString(@"in use", @"") }];
     }
     return list;
 }
@@ -432,7 +432,7 @@ NSArray *PDNetworkInterfaces(void)
             continue;
         inet_ntop(AF_INET, &((struct sockaddr_in *)a->ifa_addr)->sin_addr, text, sizeof(text));
         [rows addObject:@[ [NSString stringWithUTF8String:a->ifa_name],
-                           [NSString stringWithFormat:@"%s · %@", text, (a->ifa_flags & IFF_RUNNING) ? @"connected" : @"no link"] ]];
+                           [NSString stringWithFormat:NSLocalizedString(@"%1$s · %2$@", @""), text, (a->ifa_flags & IFF_RUNNING) ? NSLocalizedString(@"connected", @"") : NSLocalizedString(@"no link", @"")] ]];
     }
     freeifaddrs(all);
     return rows;
@@ -457,7 +457,7 @@ NSArray *PDAudioDevices(void)
     NSMutableArray *rows = [NSMutableArray array];
 
     eachService("IOAudioDevice", ^(io_service_t d) {
-        NSString *name = stringProperty(d, "IOAudioDeviceName") ?: stringProperty(d, "IOAudioDeviceShortName") ?: @"Audio device";
+        NSString *name = stringProperty(d, "IOAudioDeviceName") ?: stringProperty(d, "IOAudioDeviceShortName") ?: NSLocalizedString(@"Audio device", @"");
         NSString *maker = stringProperty(d, "IOAudioDeviceManufacturerName");
 
         [rows addObject:@[ name, maker ?: @"IOAudioFamily" ]];
@@ -545,13 +545,13 @@ NSString *PDWriteBootArgs(NSString *args)
     BOOL ok;
 
     if (dev == nil)
-        return @"No EFI partition was found.";
+        return NSLocalizedString(@"No EFI partition was found.", @"");
     [fm createDirectoryAtPath:mnt withIntermediateDirectories:YES attributes:nil error:NULL];
     // PureDarwin's mount handles msdos itself, there is no separate mount_msdos
     if (run(@[ @"/sbin/mount", @"-t", @"msdos", [@"/dev/" stringByAppendingString:dev], mnt ]) != 0)
-        return [NSString stringWithFormat:@"Could not mount the EFI partition (%@).", dev];
+        return [NSString stringWithFormat:NSLocalizedString(@"Could not mount the EFI partition (%@).", @""), dev];
     file = [mnt stringByAppendingPathComponent:@"EFI/BOOT/boot-args.txt"];
     ok = [[args stringByAppendingString:@"\n"] writeToFile:file atomically:NO encoding:NSUTF8StringEncoding error:NULL];
     unmount([mnt fileSystemRepresentation], 0);
-    return ok ? nil : @"The EFI partition is mounted read-only.";
+    return ok ? nil : NSLocalizedString(@"The EFI partition is mounted read-only.", @"");
 }

@@ -241,7 +241,7 @@ static void lookoutCentred(NSString *text, NSDictionary *attrs, CGFloat midX, CG
         lookoutCentred(selected[@"answer"], @{ NSFontAttributeName: lookoutFont(@"Inter-Light", 40),
                                             NSForegroundColorAttributeName: ink() }, mid, centre - 40);
         lookoutCentred([field stringValue], grey, mid, centre + 12);
-        lookoutCentred(@"Return copies the result", grey, mid, centre + 32);
+        lookoutCentred(NSLocalizedString(@"Return copies the result", @""), grey, mid, centre + 32);
         return;
     }
     [selected[@"icon"] drawInRect:NSMakeRect(mid - 48, centre - 80, 96, 96) fromRect:NSZeroRect
@@ -616,7 +616,7 @@ static NSImage *loadImage(NSString *name)
         [_lookoutField setFont:lookoutFont(@"Inter-Light", 24)];
         [_lookoutField setTextColor:ink()];
         // the cell draws the placeholder where the field editor puts the text
-        [[_lookoutField cell] setPlaceholderAttributedString:[[NSAttributedString alloc] initWithString:@"Lookout Search"
+        [[_lookoutField cell] setPlaceholderAttributedString:[[NSAttributedString alloc] initWithString:NSLocalizedString(@"Lookout Search", @"")
             attributes:@{ NSFontAttributeName: lookoutFont(@"Inter-Light", 24), NSForegroundColorAttributeName: lightDark(lookoutRGB(0x9a, 0x9a, 0x9a, 1), lookoutRGB(0x7a, 0x7a, 0x7a, 1)) }]];
         [_lookoutField setTarget:self];
         [_lookoutField setAction:@selector(searchLookout:)];
@@ -690,8 +690,8 @@ static NSImage *loadImage(NSString *name)
         return;
     }
     if (answer != nil)
-        [_lookoutResults addObject:@{ @"group": @"Calculator", @"name": [NSString stringWithFormat:@"%@ = %@", query, answer],
-                                        @"kind": @"Calculator", @"answer": answer, @"action": @"copy",
+        [_lookoutResults addObject:@{ @"group": NSLocalizedString(@"Calculator", @""), @"name": [NSString stringWithFormat:@"%@ = %@", query, answer],
+                                        @"kind": NSLocalizedString(@"Calculator", @""), @"answer": answer, @"action": @"copy",
                                         @"icon": [ws iconForFile:@"/Applications/Calculator.app"] ?: [NSNull null] }];
 
     for (NSDictionary *app in [self lookoutApplications]) {
@@ -702,11 +702,11 @@ static NSImage *loadImage(NSString *name)
         if ([app[@"name"] isEqualToString:@"Finder"])
             finder = app[@"path"];
         if (score > 0)
-            [apps addObject:@{ @"name": app[@"name"], @"path": app[@"path"], @"kind": @"Application", @"action": @"open",
+            [apps addObject:@{ @"name": app[@"name"], @"path": app[@"path"], @"kind": NSLocalizedString(@"Application", @""), @"action": @"open",
                                @"score": @(score), @"icon": [ws iconForFile:app[@"path"]] }];
     }
-    for (NSArray *verb in @[ @[ @"About PureDarwin", @"about", @"System" ], @[ @"New Terminal Window", @"open", @"Action", terminal ?: @"" ],
-                             @[ @"New Finder Window", @"open", @"Action", finder ?: @"" ] ]) {
+    for (NSArray *verb in @[ @[ NSLocalizedString(@"About PureDarwin", @""), @"about", NSLocalizedString(@"System", @"") ], @[ NSLocalizedString(@"New Terminal Window", @""), @"open", NSLocalizedString(@"Action", @""), terminal ?: @"" ],
+                             @[ NSLocalizedString(@"New Finder Window", @""), @"open", NSLocalizedString(@"Action", @""), finder ?: @"" ] ]) {
         NSInteger score = lookoutScore(verb[0], query);
         NSString *target = [verb count] > 3 ? verb[3] : nil;
 
@@ -722,7 +722,7 @@ static NSImage *loadImage(NSString *name)
 
         if ([name hasPrefix:@"."] || score == 0 || ![[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&dir] || !dir)
             continue;
-        [folders addObject:@{ @"name": name, @"path": path, @"kind": @"Folder", @"action": @"open", @"score": @(score),
+        [folders addObject:@{ @"name": name, @"path": path, @"kind": NSLocalizedString(@"Folder", @""), @"action": @"open", @"score": @(score),
                               @"icon": lookoutFolderIcon(path) }];
     }
     [apps sortUsingComparator:byScore];
@@ -738,10 +738,10 @@ static NSImage *loadImage(NSString *name)
     if ([all count] > 0) {
         NSMutableDictionary *top = [[all[0] mutableCopy] autorelease];
 
-        top[@"group"] = @"Top Hit";
+        top[@"group"] = NSLocalizedString(@"Top Hit", @"");
         [_lookoutResults addObject:top];
     }
-    for (NSArray *group in @[ @[ @"Applications", apps ], @[ @"Actions", actions ], @[ @"Folders", folders ] ]) {
+    for (NSArray *group in @[ @[ NSLocalizedString(@"Applications", @""), apps ], @[ NSLocalizedString(@"Actions", @""), actions ], @[ NSLocalizedString(@"Folders", @""), folders ] ]) {
         for (NSDictionary *hit in group[1]) {
             NSMutableDictionary *row;
 
@@ -867,16 +867,16 @@ static NSImage *loadImage(NSString *name)
     NSMenuItem *item;
 
     [menu setAutoenablesItems:NO];
-    item = [menu addItemWithTitle:@"About PureDarwin" action:@selector(openAbout:) keyEquivalent:@""];
+    item = [menu addItemWithTitle:NSLocalizedString(@"About PureDarwin", @"") action:@selector(openAbout:) keyEquivalent:@""];
     [item setTarget:self];
     [menu addItem:[NSMenuItem separatorItem]];
-    item = [menu addItemWithTitle:@"Settings\u2026" action:@selector(openSettings:) keyEquivalent:@""];
+    item = [menu addItemWithTitle:NSLocalizedString(@"Settings\u2026", @"") action:@selector(openSettings:) keyEquivalent:@""];
     [item setTarget:self];
     [menu addItem:[NSMenuItem separatorItem]];
     item = [menu addItemWithTitle:@"Terminal" action:@selector(openTerminal:) keyEquivalent:@""];
     [item setTarget:self];
     [menu addItem:[NSMenuItem separatorItem]];
-    for (NSString *title in @[ @"Sleep", @"Restart\u2026", @"Shut Down\u2026" ])
+    for (NSString *title in @[ NSLocalizedString(@"Sleep", @""), NSLocalizedString(@"Restart\u2026", @""), NSLocalizedString(@"Shut Down\u2026", @"") ])
         [[menu addItemWithTitle:title action:NULL keyEquivalent:@""] setEnabled:NO];
     return menu;
 }

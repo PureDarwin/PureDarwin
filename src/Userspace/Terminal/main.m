@@ -41,44 +41,44 @@ static NSMenu *addMenu(NSMenu *mainMenu, NSString *title)
     NSMenu *mainMenu = [[NSMenu alloc] initWithTitle:@"MainMenu"];
     NSUInteger shiftCmd = NSCommandKeyMask | NSShiftKeyMask;
 
-    NSMenu *appMenu = addMenu(mainMenu, @"Terminal");
-    [addItem(appMenu, @"About Terminal", NULL, @"") setEnabled:NO];
+    NSMenu *appMenu = addMenu(mainMenu, NSLocalizedString(@"Terminal", @""));
+    [addItem(appMenu, NSLocalizedString(@"About Terminal", @""), NULL, @"") setEnabled:NO];
     [appMenu addItem:[NSMenuItem separatorItem]];
-    [addItem(appMenu, @"Settings\u2026", NULL, @",") setEnabled:NO];
+    [addItem(appMenu, NSLocalizedString(@"Settings\u2026", @""), NULL, @",") setEnabled:NO];
     [appMenu addItem:[NSMenuItem separatorItem]];
-    addItem(appMenu, @"Quit Terminal", @selector(terminate:), @"q");
+    addItem(appMenu, NSLocalizedString(@"Quit Terminal", @""), @selector(terminate:), @"q");
 
-    NSMenu *shellMenu = addMenu(mainMenu, @"Shell");
-    [addItem(shellMenu, @"New Window", @selector(newWindow:), @"n") setTarget:self];
-    addItem(shellMenu, @"New Tab", @selector(newTab:), @"t");
+    NSMenu *shellMenu = addMenu(mainMenu, NSLocalizedString(@"Shell", @""));
+    [addItem(shellMenu, NSLocalizedString(@"New Window", @""), @selector(newWindow:), @"n") setTarget:self];
+    addItem(shellMenu, NSLocalizedString(@"New Tab", @""), @selector(newTab:), @"t");
     [shellMenu addItem:[NSMenuItem separatorItem]];
-    addItem(shellMenu, @"Close Tab", @selector(closeTab:), @"w");
-    [addItem(shellMenu, @"Close Window", @selector(closeWindow:), @"w") setKeyEquivalentModifierMask:shiftCmd];
+    addItem(shellMenu, NSLocalizedString(@"Close Tab", @""), @selector(closeTab:), @"w");
+    [addItem(shellMenu, NSLocalizedString(@"Close Window", @""), @selector(closeWindow:), @"w") setKeyEquivalentModifierMask:shiftCmd];
 
-    NSMenu *editMenu = addMenu(mainMenu, @"Edit");
-    addItem(editMenu, @"Copy", @selector(copy:), @"c");
-    addItem(editMenu, @"Paste", @selector(paste:), @"v");
-    addItem(editMenu, @"Select All", @selector(selectAll:), @"a");
+    NSMenu *editMenu = addMenu(mainMenu, NSLocalizedString(@"Edit", @""));
+    addItem(editMenu, NSLocalizedString(@"Copy", @""), @selector(copy:), @"c");
+    addItem(editMenu, NSLocalizedString(@"Paste", @""), @selector(paste:), @"v");
+    addItem(editMenu, NSLocalizedString(@"Select All", @""), @selector(selectAll:), @"a");
     [editMenu addItem:[NSMenuItem separatorItem]];
-    addItem(editMenu, @"Clear to Start", @selector(clearScrollback:), @"k");
+    addItem(editMenu, NSLocalizedString(@"Clear to Start", @""), @selector(clearScrollback:), @"k");
 
-    NSMenu *viewMenu = addMenu(mainMenu, @"View");
-    addItem(viewMenu, @"Default Size", @selector(defaultFontSize:), @"0");
-    addItem(viewMenu, @"Bigger", @selector(biggerFont:), @"+");
-    addItem(viewMenu, @"Smaller", @selector(smallerFont:), @"-");
+    NSMenu *viewMenu = addMenu(mainMenu, NSLocalizedString(@"View", @""));
+    addItem(viewMenu, NSLocalizedString(@"Default Size", @""), @selector(defaultFontSize:), @"0");
+    addItem(viewMenu, NSLocalizedString(@"Bigger", @""), @selector(biggerFont:), @"+");
+    addItem(viewMenu, NSLocalizedString(@"Smaller", @""), @selector(smallerFont:), @"-");
     [viewMenu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem *fullScreen = addItem(viewMenu, @"Enter Full Screen", @selector(toggleFullScreen:), @"f");
+    NSMenuItem *fullScreen = addItem(viewMenu, NSLocalizedString(@"Enter Full Screen", @""), @selector(toggleFullScreen:), @"f");
     [fullScreen setKeyEquivalentModifierMask:NSCommandKeyMask | NSControlKeyMask];
 
-    NSMenu *windowMenu = addMenu(mainMenu, @"Window");
-    addItem(windowMenu, @"Minimize", @selector(performMiniaturize:), @"m");
-    addItem(windowMenu, @"Zoom", @selector(performZoom:), @"");
+    NSMenu *windowMenu = addMenu(mainMenu, NSLocalizedString(@"Window", @""));
+    addItem(windowMenu, NSLocalizedString(@"Minimize", @""), @selector(performMiniaturize:), @"m");
+    addItem(windowMenu, NSLocalizedString(@"Zoom", @""), @selector(performZoom:), @"");
     [windowMenu addItem:[NSMenuItem separatorItem]];
-    [addItem(windowMenu, @"Show Previous Tab", @selector(selectPreviousTab:), @"{") setKeyEquivalentModifierMask:shiftCmd];
-    [addItem(windowMenu, @"Show Next Tab", @selector(selectNextTab:), @"}") setKeyEquivalentModifierMask:shiftCmd];
+    [addItem(windowMenu, NSLocalizedString(@"Show Previous Tab", @""), @selector(selectPreviousTab:), @"{") setKeyEquivalentModifierMask:shiftCmd];
+    [addItem(windowMenu, NSLocalizedString(@"Show Next Tab", @""), @selector(selectNextTab:), @"}") setKeyEquivalentModifierMask:shiftCmd];
 
-    NSMenu *helpMenu = addMenu(mainMenu, @"Help");
-    [addItem(helpMenu, @"Terminal Help", NULL, @"") setEnabled:NO];
+    NSMenu *helpMenu = addMenu(mainMenu, NSLocalizedString(@"Help", @""));
+    [addItem(helpMenu, NSLocalizedString(@"Terminal Help", @""), NULL, @"") setEnabled:NO];
 
     [NSApp setMainMenu:mainMenu];
     [mainMenu release];

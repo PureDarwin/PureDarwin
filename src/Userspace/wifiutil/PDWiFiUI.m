@@ -270,7 +270,7 @@ static PDWiFiNetwork *wrap(const pdwifi_network *n)
         dispatch_async(dispatch_get_main_queue(), ^{
             self.busy = nil;
             if (r != PDWIFI_OK)
-                self.lastError = [NSString stringWithUTF8String:pdwifi_message(r)];
+                self.lastError = NSLocalizedStringFromTable([NSString stringWithUTF8String:pdwifi_message(r)], @"WiFi", @"");
             if (finish)
                 finish(r);
             [self tellOthers];
@@ -548,11 +548,11 @@ void PDDrawWiFiSpinner(NSRect r, NSColor *colour)
     NSRect b = [self bounds];
     CGFloat y, lx = 22, fx = 120, fw = NSWidth(b) - fx - 22;
     NSDictionary *label = uiText(@"Inter-Regular", 12, [self fg]);
-    NSString *title = [self other] ? @"Find and join a Wi-Fi network."
-                                   : [NSString stringWithFormat:@"The Wi-Fi network “%@” requires a %@ password.", _network.ssid,
+    NSString *title = [self other] ? NSLocalizedStringFromTable(@"Find and join a Wi-Fi network.", @"WiFi", @"")
+                                   : [NSString stringWithFormat:NSLocalizedStringFromTable(@"The Wi-Fi network “%1$@” requires a %2$@ password.", @"WiFi", @""), _network.ssid,
                                                                 _network.security ?: @"WPA2"];
-    NSString *sub = [self other] ? @"Enter the name and security type of the network you want to join."
-                                 : @"Enter the password to join this network.";
+    NSString *sub = [self other] ? NSLocalizedStringFromTable(@"Enter the name and security type of the network you want to join.", @"WiFi", @"")
+                                 : NSLocalizedStringFromTable(@"Enter the password to join this network.", @"WiFi", @"");
 
     [(uiDark() ? rgba(0x2c, 0x29, 0x2b, 1) : rgba(0xf6, 0xf2, 0xef, 1)) setFill];
     NSRectFill(b);
@@ -594,12 +594,12 @@ void PDDrawWiFiSpinner(NSRect r, NSColor *colour)
     y = MAX(96, ty + 30);
 
     if ([self other]) {
-        [@"Network Name" drawAtPoint:NSMakePoint(lx, y + 5) withAttributes:label];
+        [NSLocalizedStringFromTable(@"Network Name", @"WiFi", @"") drawAtPoint:NSMakePoint(lx, y + 5) withAttributes:label];
         _nameBox = NSMakeRect(fx, y, fw, 26);
         [self field:_nameBox text:_name focused:_focus == 0];
         y += 36;
-        [@"Security" drawAtPoint:NSMakePoint(lx, y + 4) withAttributes:label];
-        NSString *opts[2] = { @"None", @"WPA2 Personal" };
+        [NSLocalizedStringFromTable(@"Security", @"WiFi", @"") drawAtPoint:NSMakePoint(lx, y + 4) withAttributes:label];
+        NSString *opts[2] = { NSLocalizedStringFromTable(@"None", @"WiFi", @""), NSLocalizedStringFromTable(@"WPA2 Personal", @"WiFi", @"") };
         CGFloat x = fx;
         for (int i = 0; i < 2; i++) {
             NSDictionary *a = uiText(@"Inter-Regular", 12, [self fg]);
@@ -617,26 +617,26 @@ void PDDrawWiFiSpinner(NSRect r, NSColor *colour)
     _passBox = NSZeroRect;
     if ([self needsPassword]) {
         NSString *shown = _show ? _password : [@"" stringByPaddingToLength:[_password length] withString:@"•" startingAtIndex:0];
-        [@"Password" drawAtPoint:NSMakePoint(lx, y + 5) withAttributes:label];
+        [NSLocalizedStringFromTable(@"Password", @"WiFi", @"") drawAtPoint:NSMakePoint(lx, y + 5) withAttributes:label];
         _passBox = NSMakeRect(fx, y, fw, 26);
         [self field:_passBox text:shown focused:_focus == 1 || ![self other]];
         y += 34;
         _showBox = NSMakeRect(fx, y, 160, 20);
-        [self check:_showBox label:@"Show password" on:_show];
+        [self check:_showBox label:NSLocalizedStringFromTable(@"Show password", @"WiFi", @"") on:_show];
         y += 24;
     }
     _keepBox = NSMakeRect(fx, y, 200, 20);
-    [self check:_keepBox label:@"Remember this network" on:_keep];
+    [self check:_keepBox label:NSLocalizedStringFromTable(@"Remember this network", @"WiFi", @"") on:_keep];
     y += 26;
     if (_error)
         [_error drawAtPoint:NSMakePoint(fx, y) withAttributes:uiText(@"Inter-Regular", 12, rgba(0xd9, 0x4f, 0x45, 1))];
 
     CGFloat by = NSHeight(b) - 44;
-    _joinRect = [self button:@"Join" right:NSWidth(b) - 22 y:by go:YES enabled:[self canJoin]];
-    _cancelRect = [self button:@"Cancel" right:NSMinX(_joinRect) - 8 y:by go:NO enabled:YES];
+    _joinRect = [self button:NSLocalizedStringFromTable(@"Join", @"WiFi", @"") right:NSWidth(b) - 22 y:by go:YES enabled:[self canJoin]];
+    _cancelRect = [self button:NSLocalizedStringFromTable(@"Cancel", @"WiFi", @"") right:NSMinX(_joinRect) - 8 y:by go:NO enabled:YES];
     if (_joining) {
         PDDrawWiFiSpinner(NSMakeRect(22, by + 6, 14, 14), _accent);
-        [@"Joining…" drawAtPoint:NSMakePoint(42, by + 5) withAttributes:uiText(@"Inter-Regular", 12, [self muted])];
+        [NSLocalizedStringFromTable(@"Joining…", @"WiFi", @"") drawAtPoint:NSMakePoint(42, by + 5) withAttributes:uiText(@"Inter-Regular", 12, [self muted])];
     }
 }
 
@@ -671,7 +671,7 @@ void PDDrawWiFiSpinner(NSRect r, NSColor *colour)
             [self close];
             return;
         }
-        _error = [[NSString stringWithUTF8String:pdwifi_message(r)] retain];
+        _error = [NSLocalizedStringFromTable([NSString stringWithUTF8String:pdwifi_message(r)], @"WiFi", @"") retain];
         // a wrong password is typed again from scratch
         if (r == PDWIFI_BAD_PASSWORD)
             [_password setString:@""];
@@ -761,7 +761,7 @@ void PDDrawWiFiSpinner(NSRect r, NSColor *colour)
     v->_focus = network == nil ? 0 : 1;
     v->_secure = YES;
     v->_keep = YES;
-    [w setTitle:@"Join a Wi-Fi Network"];
+    [w setTitle:NSLocalizedStringFromTable(@"Join a Wi-Fi Network", @"WiFi", @"")];
     [w setTitlebarAppearsTransparent:YES];
     [w setTitleVisibility:NSWindowTitleHidden];
     [w setLevel:NSFloatingWindowLevel];

@@ -1,0 +1,66 @@
+/* No comment provided by engineer. */
+"Find and join a Wi-Fi network." = "Find and join a Wi-Fi network.";
+
+/* No comment provided by engineer. */
+"The Wi-Fi network “%1$@” requires a %2$@ password." = "The Wi-Fi network “%1$@” requires a %2$@ password.";
+
+/* No comment provided by engineer. */
+"Enter the name and security type of the network you want to join." = "Enter the name and security type of the network you want to join.";
+
+/* No comment provided by engineer. */
+"Enter the password to join this network." = "Enter the password to join this network.";
+
+/* No comment provided by engineer. */
+"Network Name" = "Network Name";
+
+/* No comment provided by engineer. */
+"Security" = "Security";
+
+/* No comment provided by engineer. */
+"None" = "None";
+
+/* No comment provided by engineer. */
+"WPA2 Personal" = "WPA2 Personal";
+
+/* No comment provided by engineer. */
+"Password" = "Password";
+
+/* No comment provided by engineer. */
+"Show password" = "Show password";
+
+/* No comment provided by engineer. */
+"Remember this network" = "Remember this network";
+
+/* No comment provided by engineer. */
+"Join" = "Join";
+
+/* No comment provided by engineer. */
+"Cancel" = "Cancel";
+
+/* No comment provided by engineer. */
+"Joining…" = "Joining…";
+
+/* No comment provided by engineer. */
+"Join a Wi-Fi Network" = "Join a Wi-Fi Network";
+
+/* No comment provided by engineer. */
+"Connected." = "Connected.";
+
+/* No comment provided by engineer. */
+"No Wi-Fi hardware was found." = "No Wi-Fi hardware was found.";
+
+/* No comment provided by engineer. */
+"Wi-Fi is turned off." = "Wi-Fi is turned off.";
+
+/* No comment provided by engineer. */
+"Couldn't join. Check the password and try again." = "Couldn't join. Check the password and try again.";
+
+/* No comment provided by engineer. */
+"The network didn't accept the connection." = "The network didn't accept the connection.";
+
+/* No comment provided by engineer. */
+"The network wasn't found. Move closer and try again." = "The network wasn't found. Move closer and try again.";
+
+/* No comment provided by engineer. */
+"The network couldn't be joined." = "The network couldn't be joined.";
+

@@ -39,24 +39,24 @@ static NSMenu *addMenu(NSMenu *mainMenu, NSString *title)
 - (void)buildMenu
 {
     NSMenu *mainMenu = [[NSMenu alloc] initWithTitle:@"MainMenu"];
-    NSMenu *app = addMenu(mainMenu, @"Settings");
-    NSMenu *edit = addMenu(mainMenu, @"Edit");
-    NSMenu *view = addMenu(mainMenu, @"View");
-    NSMenu *window = addMenu(mainMenu, @"Window");
-    NSMenu *help = addMenu(mainMenu, @"Help");
+    NSMenu *app = addMenu(mainMenu, NSLocalizedString(@"Settings", @""));
+    NSMenu *edit = addMenu(mainMenu, NSLocalizedString(@"Edit", @""));
+    NSMenu *view = addMenu(mainMenu, NSLocalizedString(@"View", @""));
+    NSMenu *window = addMenu(mainMenu, NSLocalizedString(@"Window", @""));
+    NSMenu *help = addMenu(mainMenu, NSLocalizedString(@"Help", @""));
 
-    [addItem(app, @"About Settings", NULL, @"") setEnabled:NO];
+    [addItem(app, NSLocalizedString(@"About Settings", @""), NULL, @"") setEnabled:NO];
     [app addItem:[NSMenuItem separatorItem]];
-    addItem(app, @"Quit Settings", @selector(terminate:), @"q");
-    [addItem(edit, @"Copy", NULL, @"c") setEnabled:NO];
-    [addItem(edit, @"Paste", NULL, @"v") setEnabled:NO];
-    addItem(view, @"Back", @selector(goBack:), @"[");
-    addItem(view, @"Show All", @selector(goHome:), @"l");
+    addItem(app, NSLocalizedString(@"Quit Settings", @""), @selector(terminate:), @"q");
+    [addItem(edit, NSLocalizedString(@"Copy", @""), NULL, @"c") setEnabled:NO];
+    [addItem(edit, NSLocalizedString(@"Paste", @""), NULL, @"v") setEnabled:NO];
+    addItem(view, NSLocalizedString(@"Back", @""), @selector(goBack:), @"[");
+    addItem(view, NSLocalizedString(@"Show All", @""), @selector(goHome:), @"l");
     [view addItem:[NSMenuItem separatorItem]];
-    addItem(view, @"Search", @selector(find:), @"f");
-    addItem(window, @"Minimize", @selector(performMiniaturize:), @"m");
-    addItem(window, @"Zoom", @selector(performZoom:), @"");
-    [addItem(help, @"Settings Help", NULL, @"") setEnabled:NO];
+    addItem(view, NSLocalizedString(@"Search", @""), @selector(find:), @"f");
+    addItem(window, NSLocalizedString(@"Minimize", @""), @selector(performMiniaturize:), @"m");
+    addItem(window, NSLocalizedString(@"Zoom", @""), @selector(performZoom:), @"");
+    [addItem(help, NSLocalizedString(@"Settings Help", @""), NULL, @"") setEnabled:NO];
     [NSApp setMainMenu:mainMenu];
     [mainMenu release];
 }
@@ -73,7 +73,7 @@ static NSMenu *addMenu(NSMenu *mainMenu, NSString *title)
                                                     NSResizableWindowMask | NSFullSizeContentViewWindowMask
                                             backing:NSBackingStoreBuffered
                                               defer:NO];
-    [_window setTitle:@"Settings"];
+    [_window setTitle:NSLocalizedString(@"Settings", @"")];
     [_window setTitlebarAppearsTransparent:YES];
     [_window setTitleVisibility:NSWindowTitleHidden];
     [_window setToolbarStyle:NSWindowToolbarStyleUnifiedCompact];

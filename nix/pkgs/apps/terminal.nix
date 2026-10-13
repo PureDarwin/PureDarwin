@@ -65,6 +65,7 @@ stdenv.mkDerivation {
     app="$out/Applications/Utilities/Terminal.app/Contents"
     install -Dm755 Terminal "$app/MacOS/Terminal"
     install -Dm644 Info.plist "$app/Info.plist"
+    for l in *.lproj; do install -Dm644 -t "$app/Resources/$l" $l/*.strings; done
     install -Dm644 AppIcon.png "$app/Resources/AppIcon.png"
     install -Dm644 vterm/LICENSE "$app/Resources/libvterm-LICENSE"
     runHook postInstall

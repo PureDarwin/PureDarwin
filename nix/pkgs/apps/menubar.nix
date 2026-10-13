@@ -68,6 +68,7 @@ stdenv.mkDerivation {
     app="$out/System/Library/CoreServices/MenuBar.app/Contents"
     install -Dm755 MenuBar "$app/MacOS/MenuBar"
     install -Dm644 Info.plist "$app/Info.plist"
+    for l in *.lproj; do install -Dm644 -t "$app/Resources/$l" $l/*.strings; done
     install -Dm644 -t "$app/Resources" png/*.png
     install -Dm644 Resources/TRENTA-LICENSE "$app/Resources/TRENTA-LICENSE"
     runHook postInstall

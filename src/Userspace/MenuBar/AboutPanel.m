@@ -99,7 +99,7 @@ static NSString *processor(void)
 
     sysctlbyname("hw.ncpu", &cpus, &len, NULL, 0);
     uname(&u);
-    return [NSString stringWithFormat:@"%d-core %s", cpus > 0 ? cpus : 1, u.machine];
+    return [NSString stringWithFormat:NSLocalizedString(@"%1$d-core %2$s", @""), cpus > 0 ? cpus : 1, u.machine];
 }
 
 static NSString *memory(void)
@@ -108,8 +108,8 @@ static NSString *memory(void)
     size_t len = sizeof(bytes);
 
     if (sysctlbyname("hw.memsize", &bytes, &len, NULL, 0) != 0 || bytes == 0)
-        return @"Unknown";
-    return [NSString stringWithFormat:@"%llu GB", (unsigned long long)((bytes + (1ULL << 29)) >> 30)];
+        return NSLocalizedString(@"Unknown", @"");
+    return [NSString stringWithFormat:NSLocalizedString(@"%llu GB", @""), (unsigned long long)((bytes + (1ULL << 29)) >> 30)];
 }
 
 static uint32_t dataWord(CFTypeRef data)
@@ -129,7 +129,7 @@ static NSString *graphics(void)
     NSString *result = nil;
 
     if (IOServiceGetMatchingServices(MACH_PORT_NULL, IOServiceMatching("IOPCIDevice"), &iter) != KERN_SUCCESS)
-        return @"Unknown";
+        return NSLocalizedString(@"Unknown", @"");
     while (result == nil && (dev = IOIteratorNext(iter)) != IO_OBJECT_NULL) {
         CFTypeRef cls = IORegistryEntryCreateCFProperty(dev, CFSTR("class-code"), kCFAllocatorDefault, 0);
         CFTypeRef model = IORegistryEntryCreateCFProperty(dev, CFSTR("model"), kCFAllocatorDefault, 0);
@@ -149,7 +149,7 @@ static NSString *graphics(void)
                     case 0x1af4: result = @"Virtio GPU"; break;
                     case 0x1234: result = @"QEMU Standard VGA"; break;
                     case 0x15ad: result = @"VMware SVGA"; break;
-                    default: result = @"Display controller"; break;
+                    default: result = NSLocalizedString(@"Display controller", @""); break;
                 }
             }
         }
@@ -162,7 +162,7 @@ static NSString *graphics(void)
         IOObjectRelease(dev);
     }
     IOObjectRelease(iter);
-    return result != nil ? result : @"Unknown";
+    return result != nil ? result : NSLocalizedString(@"Unknown", @"");
 }
 
 // the root volume's name, PureDarwin when the filesystem keeps none
@@ -200,13 +200,13 @@ static NSString *startupDisk(void)
 
     if ((self = [super initWithFrame:frame]) == nil)
         return nil;
-    _version = [[NSString alloc] initWithFormat:@"Version %@ (%@)", sv[@"ProductVersion"] ?: @"?", sv[@"ProductBuildVersion"] ?: @"?"];
+    _version = [[NSString alloc] initWithFormat:NSLocalizedString(@"Version %1$@ (%2$@)", @""), sv[@"ProductVersion"] ?: @"?", sv[@"ProductBuildVersion"] ?: @"?"];
     _rows = [@[
-        @[ @"Kernel", kernelVersion() ],
-        @[ @"Processor", processor() ],
-        @[ @"Memory", memory() ],
-        @[ @"Graphics", graphics() ],
-        @[ @"Startup Disk", startupDisk() ],
+        @[ NSLocalizedString(@"Kernel", @""), kernelVersion() ],
+        @[ NSLocalizedString(@"Processor", @""), processor() ],
+        @[ NSLocalizedString(@"Memory", @""), memory() ],
+        @[ NSLocalizedString(@"Graphics", @""), graphics() ],
+        @[ NSLocalizedString(@"Startup Disk", @""), startupDisk() ],
     ] retain];
     return self;
 }
@@ -264,15 +264,15 @@ static NSString *startupDisk(void)
     }
 
     // the demo's More Info button, a white pill with a hairline border
-    size = [@"More Info…" sizeWithAttributes:label];
+    size = [NSLocalizedString(@"More Info…", @"") sizeWithAttributes:label];
     _button = NSMakeRect(floor((PANEL_W - size.width - 28) / 2), y + 16, ceil(size.width) + 28, 22);
     [grey(0xc4) setFill];
     [[NSBezierPath bezierPathWithRoundedRect:_button xRadius:6 yRadius:6] fill];
     [(_pressed ? (darkNow() ? grey(0x50) : grey(0xe2)) : grey(0xfa)) setFill];
     [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(_button, 1, 1) xRadius:5 yRadius:5] fill];
-    [@"More Info…" drawAtPoint:NSMakePoint(NSMinX(_button) + 14, NSMinY(_button) + floor((22 - size.height) / 2)) withAttributes:label];
+    [NSLocalizedString(@"More Info…", @"") drawAtPoint:NSMakePoint(NSMinX(_button) + 14, NSMinY(_button) + floor((22 - size.height) / 2)) withAttributes:label];
 
-    [self drawCentered:@"© The PureDarwin Project" at:NSMaxY(_button) + 14 attributes:fine];
+    [self drawCentered:NSLocalizedString(@"© The PureDarwin Project", @"") at:NSMaxY(_button) + 14 attributes:fine];
     [self drawCentered:@"Icons: Trenta, CC-BY-SA-4.0" at:NSMaxY(_button) + 28 attributes:fine];
 }
 
@@ -326,7 +326,7 @@ static NSString *startupDisk(void)
                                               styleMask:NSTitledWindowMask | NSClosableWindowMask | NSFullSizeContentViewWindowMask
                                                 backing:NSBackingStoreBuffered
                                                   defer:NO];
-        [_window setTitle:@"About PureDarwin"];
+        [_window setTitle:NSLocalizedString(@"About PureDarwin", @"")];
         [_window setTitlebarAppearsTransparent:YES];
         [_window setTitleVisibility:NSWindowTitleHidden];
         [_window setReleasedWhenClosed:NO];

@@ -147,7 +147,7 @@ static const struct { NSString *label; KeyKind kind; int span; } keys[] = {
     NSString *text;
 
     if (!isfinite(value))
-        return @"Error";
+        return NSLocalizedString(@"Error", @"");
     text = [NSString stringWithFormat:@"%.*g", MAX_DIGITS, value];
     if ([text length] > MAX_DIGITS)
         text = [NSString stringWithFormat:@"%.3e", value];
@@ -324,21 +324,21 @@ static NSMenu *addMenu(NSMenu *mainMenu, NSString *title)
 - (void)buildMenu
 {
     NSMenu *mainMenu = [[NSMenu alloc] initWithTitle:@"MainMenu"];
-    NSMenu *app = addMenu(mainMenu, @"Calculator");
-    NSMenu *edit = addMenu(mainMenu, @"Edit");
-    NSMenu *view = addMenu(mainMenu, @"View");
-    NSMenu *window = addMenu(mainMenu, @"Window");
-    NSMenu *help = addMenu(mainMenu, @"Help");
+    NSMenu *app = addMenu(mainMenu, NSLocalizedString(@"Calculator", @""));
+    NSMenu *edit = addMenu(mainMenu, NSLocalizedString(@"Edit", @""));
+    NSMenu *view = addMenu(mainMenu, NSLocalizedString(@"View", @""));
+    NSMenu *window = addMenu(mainMenu, NSLocalizedString(@"Window", @""));
+    NSMenu *help = addMenu(mainMenu, NSLocalizedString(@"Help", @""));
 
-    [addItem(app, @"About Calculator", NULL, @"") setEnabled:NO];
+    [addItem(app, NSLocalizedString(@"About Calculator", @""), NULL, @"") setEnabled:NO];
     [app addItem:[NSMenuItem separatorItem]];
-    addItem(app, @"Quit Calculator", @selector(terminate:), @"q");
-    [addItem(edit, @"Copy", @selector(copy:), @"c") setTarget:self];
-    [addItem(edit, @"Paste", @selector(paste:), @"v") setTarget:self];
-    [addItem(edit, @"All Clear", @selector(allClear:), @"") setTarget:self];
-    [addItem(view, @"Basic", NULL, @"1") setState:NSOnState];
-    addItem(window, @"Minimize", @selector(performMiniaturize:), @"m");
-    [addItem(help, @"Calculator Help", NULL, @"") setEnabled:NO];
+    addItem(app, NSLocalizedString(@"Quit Calculator", @""), @selector(terminate:), @"q");
+    [addItem(edit, NSLocalizedString(@"Copy", @""), @selector(copy:), @"c") setTarget:self];
+    [addItem(edit, NSLocalizedString(@"Paste", @""), @selector(paste:), @"v") setTarget:self];
+    [addItem(edit, NSLocalizedString(@"All Clear", @""), @selector(allClear:), @"") setTarget:self];
+    [addItem(view, NSLocalizedString(@"Basic", @""), NULL, @"1") setState:NSOnState];
+    addItem(window, NSLocalizedString(@"Minimize", @""), @selector(performMiniaturize:), @"m");
+    [addItem(help, NSLocalizedString(@"Calculator Help", @""), NULL, @"") setEnabled:NO];
     [NSApp setMainMenu:mainMenu];
     [mainMenu release];
 }

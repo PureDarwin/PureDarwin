@@ -121,7 +121,7 @@ static NSDictionary *t(NSString *face, CGFloat size, NSColor *colour)
     [_items removeAllObjects];
     [self add:@"head" title:@"Wi-Fi" net:nil h:HeadH at:&y];
     if (!w.hardware) {
-        [self add:@"note" title:@"No Wi-Fi hardware" net:nil h:ItemH at:&y];
+        [self add:@"note" title:NSLocalizedString(@"No Wi-Fi hardware", @"") net:nil h:ItemH at:&y];
     } else if (w.powered) {
         for (PDWiFiNetwork *n in w.inRange) {
             if (w.current && [w.current.ssid isEqualToString:n.ssid])
@@ -131,22 +131,22 @@ static NSDictionary *t(NSString *face, CGFloat size, NSColor *colour)
         if (w.current)
             [self add:@"net" title:w.current.ssid net:w.current h:NetH at:&y];
         if ([known count]) {
-            [self add:@"title" title:@"Known Networks" net:nil h:TitleH at:&y];
+            [self add:@"title" title:NSLocalizedString(@"Known Networks", @"") net:nil h:TitleH at:&y];
             for (PDWiFiNetwork *n in known)
                 [self add:@"net" title:n.ssid net:n h:NetH at:&y];
         }
         if ([other count]) {
-            [self add:@"title" title:@"Other Networks" net:nil h:TitleH at:&y];
+            [self add:@"title" title:NSLocalizedString(@"Other Networks", @"") net:nil h:TitleH at:&y];
             for (PDWiFiNetwork *n in other)
                 [self add:@"net" title:n.ssid net:n h:NetH at:&y];
         }
         if (![known count] && ![other count] && !w.current)
-            [self add:@"note" title:w.scanning ? @"Looking for networks…" : @"No networks in range" net:nil h:ItemH at:&y];
+            [self add:@"note" title:w.scanning ? NSLocalizedString(@"Looking for networks…", @"") : NSLocalizedString(@"No networks in range", @"") net:nil h:ItemH at:&y];
         [self add:@"sep" title:nil net:nil h:SepH at:&y];
-        [self add:@"other" title:@"Other Network…" net:nil h:ItemH at:&y];
+        [self add:@"other" title:NSLocalizedString(@"Other Network…", @"") net:nil h:ItemH at:&y];
     }
     [self add:@"sep" title:nil net:nil h:SepH at:&y];
-    [self add:@"settings" title:@"Wi-Fi Settings…" net:nil h:ItemH at:&y];
+    [self add:@"settings" title:NSLocalizedString(@"Wi-Fi Settings…", @"") net:nil h:ItemH at:&y];
     return y + Inset;
 }
 
