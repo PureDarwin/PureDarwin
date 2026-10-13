@@ -1,0 +1,354 @@
+/* No comment provided by engineer. */
+"Report" = "Bericht";
+
+/* No comment provided by engineer. */
+"Nothing found." = "Nichts gefunden.";
+
+/* No comment provided by engineer. */
+"System Information" = "Systeminformationen";
+
+/* No comment provided by engineer. */
+"File" = "Ablage";
+
+/* No comment provided by engineer. */
+"View" = "Darstellung";
+
+/* No comment provided by engineer. */
+"Window" = "Fenster";
+
+/* No comment provided by engineer. */
+"Quit System Information" = "Systeminformationen beenden";
+
+/* No comment provided by engineer. */
+"Close" = "Schließen";
+
+/* No comment provided by engineer. */
+"Refresh" = "Aktualisieren";
+
+/* No comment provided by engineer. */
+"Minimize" = "Im Dock ablegen";
+
+/* No comment provided by engineer. */
+"Zoom" = "Zoomen";
+
+/* No comment provided by engineer. */
+"%llu bytes" = "%llu Byte";
+
+/* No comment provided by engineer. */
+"%1$.0f %2$s" = "%1$.0f %2$s";
+
+/* No comment provided by engineer. */
+"%1$.1f %2$s" = "%1$.1f %2$s";
+
+/* No comment provided by engineer. */
+"None" = "Ohne";
+
+/* No comment provided by engineer. */
+"Unclassified" = "Nicht klassifiziert";
+
+/* No comment provided by engineer. */
+"SATA controller" = "SATA-Controller";
+
+/* No comment provided by engineer. */
+"NVMe controller" = "NVMe-Controller";
+
+/* No comment provided by engineer. */
+"Storage controller" = "Speicher-Controller";
+
+/* No comment provided by engineer. */
+"Network controller" = "Netzwerk-Controller";
+
+/* No comment provided by engineer. */
+"Display controller" = "Display-Controller";
+
+/* No comment provided by engineer. */
+"Multimedia controller" = "Multimedia-Controller";
+
+/* No comment provided by engineer. */
+"Memory controller" = "Arbeitsspeicher-Controller";
+
+/* No comment provided by engineer. */
+"Bridge" = "Bridge";
+
+/* No comment provided by engineer. */
+"Communication controller" = "Kommunikations-Controller";
+
+/* No comment provided by engineer. */
+"System peripheral" = "Systemperipherie";
+
+/* No comment provided by engineer. */
+"USB controller" = "USB-Controller";
+
+/* No comment provided by engineer. */
+"Serial bus controller" = "Controller für seriellen Bus";
+
+/* No comment provided by engineer. */
+"Wireless controller" = "Drahtlos-Controller";
+
+/* No comment provided by engineer. */
+"Class %@" = "Klasse %@";
+
+/* No comment provided by engineer. */
+"Model Identifier" = "Modell-ID";
+
+/* No comment provided by engineer. */
+"Unknown" = "Unbekannt";
+
+/* No comment provided by engineer. */
+"Processor Name" = "Prozessortyp";
+
+/* No comment provided by engineer. */
+"Architecture" = "Architektur";
+
+/* No comment provided by engineer. */
+"Total Number of Cores" = "Gesamtanzahl der Kerne";
+
+/* No comment provided by engineer. */
+"Threads" = "Threads";
+
+/* No comment provided by engineer. */
+"Processor Speed" = "Prozessorgeschwindigkeit";
+
+/* No comment provided by engineer. */
+"%.2f GHz" = "%.2f GHz";
+
+/* No comment provided by engineer. */
+"L2 Cache" = "L2-Cache";
+
+/* No comment provided by engineer. */
+"L3 Cache" = "L3-Cache";
+
+/* No comment provided by engineer. */
+"Memory" = "Speicher";
+
+/* No comment provided by engineer. */
+"Firmware Vendor" = "Firmware-Hersteller";
+
+/* No comment provided by engineer. */
+"Firmware Revision" = "Firmware-Revision";
+
+/* No comment provided by engineer. */
+"Firmware ABI" = "Firmware-ABI";
+
+/* No comment provided by engineer. */
+"Serial Number" = "Seriennummer";
+
+/* No comment provided by engineer. */
+"Hardware UUID" = "Hardware-UUID";
+
+/* No comment provided by engineer. */
+"Chipset Model" = "Chipsatz-Modell";
+
+/* No comment provided by engineer. */
+"Type" = "Typ";
+
+/* No comment provided by engineer. */
+"Bus" = "Bus";
+
+/* No comment provided by engineer. */
+"Vendor" = "Hersteller";
+
+/* No comment provided by engineer. */
+"Device ID" = "Geräte-ID";
+
+/* No comment provided by engineer. */
+"Revision ID" = "Revisions-ID";
+
+/* No comment provided by engineer. */
+"Driver" = "Treiber";
+
+/* No comment provided by engineer. */
+"Memory" = "Speicher";
+
+/* No comment provided by engineer. */
+"Page Size" = "Seitengröße";
+
+/* No comment provided by engineer. */
+"Free" = "Frei";
+
+/* No comment provided by engineer. */
+"Active" = "Aktiv";
+
+/* No comment provided by engineer. */
+"Inactive" = "Inaktiv";
+
+/* No comment provided by engineer. */
+"Wired" = "Reserviert";
+
+/* No comment provided by engineer. */
+"Compressed" = "Komprimiert";
+
+/* No comment provided by engineer. */
+"Type" = "Typ";
+
+/* No comment provided by engineer. */
+"Vendor" = "Hersteller";
+
+/* No comment provided by engineer. */
+"Device ID" = "Geräte-ID";
+
+/* No comment provided by engineer. */
+"Subsystem" = "Subsystem";
+
+/* No comment provided by engineer. */
+"Class Code" = "Klassencode";
+
+/* No comment provided by engineer. */
+"Driver" = "Treiber";
+
+/* No comment provided by engineer. */
+"Location" = "Ort";
+
+/* No comment provided by engineer. */
+"Product ID" = "Produkt-ID";
+
+/* No comment provided by engineer. */
+"Vendor ID" = "Hersteller-ID";
+
+/* No comment provided by engineer. */
+"Location ID" = "Orts-ID";
+
+/* No comment provided by engineer. */
+"Manufacturer" = "Hersteller";
+
+/* No comment provided by engineer. */
+"Serial Number" = "Seriennummer";
+
+/* No comment provided by engineer. */
+"Driver" = "Treiber";
+
+/* No comment provided by engineer. */
+"Capacity" = "Kapazität";
+
+/* No comment provided by engineer. */
+"BSD Name" = "BSD-Name";
+
+/* No comment provided by engineer. */
+"Kind" = "Art";
+
+/* No comment provided by engineer. */
+"Disk" = "Volume";
+
+/* No comment provided by engineer. */
+"Partition" = "Partition";
+
+/* No comment provided by engineer. */
+"Content" = "Inhalt";
+
+/* No comment provided by engineer. */
+"Removable" = "Wechselmedium";
+
+/* No comment provided by engineer. */
+"Yes" = "Ja";
+
+/* No comment provided by engineer. */
+"No" = "Nein";
+
+/* No comment provided by engineer. */
+"Writable" = "Beschreibbar";
+
+/* No comment provided by engineer. */
+"Yes" = "Ja";
+
+/* No comment provided by engineer. */
+"No" = "Nein";
+
+/* No comment provided by engineer. */
+"Status" = "Status";
+
+/* No comment provided by engineer. */
+"Up" = "Aktiv";
+
+/* No comment provided by engineer. */
+"Up, no link" = "Aktiv, keine Verbindung";
+
+/* No comment provided by engineer. */
+"Down" = "Inaktiv";
+
+/* No comment provided by engineer. */
+"MAC Address" = "MAC-Adresse";
+
+/* No comment provided by engineer. */
+"IPv4 Address" = "IPv4-Adresse";
+
+/* No comment provided by engineer. */
+"IPv6 Address" = "IPv6-Adresse";
+
+/* No comment provided by engineer. */
+"Kernel Version" = "Kernel-Version";
+
+/* No comment provided by engineer. */
+"Kernel Build" = "Kernel-Build";
+
+/* No comment provided by engineer. */
+"Boot Arguments" = "Startargumente";
+
+/* No comment provided by engineer. */
+"None" = "Ohne";
+
+/* No comment provided by engineer. */
+"Computer Name" = "Computername";
+
+/* No comment provided by engineer. */
+"User Name" = "Benutzername";
+
+/* No comment provided by engineer. */
+"Time since boot" = "Zeit seit dem Start";
+
+/* No comment provided by engineer. */
+"%1$ld days, %2$ld:%3$02ld" = "%1$ld Tage, %2$ld:%3$02ld";
+
+/* No comment provided by engineer. */
+"Classes" = "Klassen";
+
+/* No comment provided by engineer. */
+"Hardware" = "Hardware";
+
+/* No comment provided by engineer. */
+"Hardware Overview" = "Hardware-Übersicht";
+
+/* No comment provided by engineer. */
+"Graphics" = "Grafik";
+
+/* No comment provided by engineer. */
+"Graphics/Displays" = "Grafik/Displays";
+
+/* No comment provided by engineer. */
+"Memory" = "Speicher";
+
+/* No comment provided by engineer. */
+"Memory" = "Speicher";
+
+/* No comment provided by engineer. */
+"PCI Devices" = "PCI-Geräte";
+
+/* No comment provided by engineer. */
+"USB" = "USB";
+
+/* No comment provided by engineer. */
+"USB Devices" = "USB-Geräte";
+
+/* No comment provided by engineer. */
+"Storage" = "Speicher";
+
+/* No comment provided by engineer. */
+"Storage" = "Speicher";
+
+/* No comment provided by engineer. */
+"Network" = "Netzwerk";
+
+/* No comment provided by engineer. */
+"Network Interfaces" = "Netzwerkschnittstellen";
+
+/* No comment provided by engineer. */
+"Software" = "Software";
+
+/* No comment provided by engineer. */
+"System Software Overview" = "Systemsoftware-Übersicht";
+
+/* No comment provided by engineer. */
+"Extensions" = "Erweiterungen";
+
+/* No comment provided by engineer. */
+"Drivers in Use" = "Verwendete Treiber";
+

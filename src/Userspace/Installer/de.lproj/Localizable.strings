@@ -1,0 +1,372 @@
+/* No comment provided by engineer. */
+"%.1f TB" = "%.1f TB";
+
+/* No comment provided by engineer. */
+"%.0f MB" = "%.0f MB";
+
+/* No comment provided by engineer. */
+"%.1f GB" = "%.1f GB";
+
+/* No comment provided by engineer. */
+"%.0f GB" = "%.0f GB";
+
+/* No comment provided by engineer. */
+"Free" = "Frei";
+
+/* No comment provided by engineer. */
+"Partition" = "Partition";
+
+/* No comment provided by engineer. */
+"Unknown processor" = "Unbekannter Prozessor";
+
+/* No comment provided by engineer. */
+", %llu cores" = ", %llu Kerne";
+
+/* No comment provided by engineer. */
+"%.0f GB" = "%.0f GB";
+
+/* No comment provided by engineer. */
+"Unknown" = "Unbekannt";
+
+/* No comment provided by engineer. */
+"PureDarwin %@" = "PureDarwin %@";
+
+/* No comment provided by engineer. */
+"Darwin %1$@ · %2$@ · build %3$@" = "Darwin %1$@ · %2$@ · Build %3$@";
+
+/* No comment provided by engineer. */
+"Empty" = "Leer";
+
+/* No comment provided by engineer. */
+"from the install drive" = "vom Installationsvolume";
+
+/* No comment provided by engineer. */
+"This puts PureDarwin on a disk in this computer. You'll pick the disk, then it takes a few minutes. Nothing changes until you choose Install." = "PureDarwin wird auf einem Volume in diesem Computer installiert. Du wählst das Volume aus, danach dauert es einige Minuten. Bis du „Installieren“ wählst, wird nichts verändert.";
+
+/* No comment provided by engineer. */
+"This computer" = "Dieser Computer";
+
+/* No comment provided by engineer. */
+"No network hardware found" = "Keine Netzwerkhardware gefunden";
+
+/* No comment provided by engineer. */
+"Processor" = "Prozessor";
+
+/* No comment provided by engineer. */
+"Memory" = "Speicher";
+
+/* No comment provided by engineer. */
+"Firmware" = "Firmware";
+
+/* No comment provided by engineer. */
+"Graphics" = "Grafik";
+
+/* No comment provided by engineer. */
+"The firmware's framebuffer, basic display only" = "Framebuffer der Firmware, nur einfache Anzeige";
+
+/* No comment provided by engineer. */
+"Network" = "Netzwerk";
+
+/* No comment provided by engineer. */
+"Supported" = "Unterstützt";
+
+/* No comment provided by engineer. */
+"Partly supported" = "Teilweise unterstützt";
+
+/* No comment provided by engineer. */
+"Not found" = "Nicht gefunden";
+
+/* No comment provided by engineer. */
+"PureDarwin is free software. Read how you can use and share it." = "PureDarwin ist freie Software. Lies, wie du sie verwenden und weitergeben kannst.";
+
+/* No comment provided by engineer. */
+"The kernel, launchd and most of the core system are Apple's open source releases under the APSL 2.0. You may use, study, change and share them. If you share a changed version, its source has to be available too." = "Der Kernel, launchd und der Großteil des Kernsystems sind Open-Source-Veröffentlichungen von Apple unter der APSL 2.0. Du darfst sie verwenden, untersuchen, ändern und weitergeben. Wenn du eine geänderte Version weitergibst, muss auch ihr Quellcode verfügbar sein.";
+
+/* No comment provided by engineer. */
+"Other components" = "Andere Komponenten";
+
+/* No comment provided by engineer. */
+"Parts of the system come from other projects under their own licences, among them BSD, MIT, LGPL and GPL. Each component's licence ships with it." = "Teile des Systems stammen aus anderen Projekten unter eigenen Lizenzen, darunter BSD, MIT, LGPL und GPL. Die Lizenz jeder Komponente wird mit ihr ausgeliefert.";
+
+/* No comment provided by engineer. */
+"Vendor firmware" = "Firmware der Hersteller";
+
+/* No comment provided by engineer. */
+"Some devices only work with firmware supplied by their vendor. PureDarwin includes it only where the vendor allows it to be shared, under the vendor's own terms." = "Manche Geräte funktionieren nur mit Firmware ihres Herstellers. PureDarwin enthält sie nur, wenn der Hersteller die Weitergabe erlaubt, und zu dessen eigenen Bedingungen.";
+
+/* No comment provided by engineer. */
+"No warranty" = "Keine Gewährleistung";
+
+/* No comment provided by engineer. */
+"PureDarwin comes as is, without warranty of any kind. Back up anything you care about before installing." = "PureDarwin wird ohne Mängelgewähr und ohne jegliche Gewährleistung bereitgestellt. Sichere vor der Installation alles, was dir wichtig ist.";
+
+/* No comment provided by engineer. */
+"The install doesn't need a network, everything comes from the install drive. Connecting now carries the network over, so the installed system joins it on first start." = "Für die Installation wird kein Netzwerk benötigt, alles kommt vom Installationsvolume. Wenn du dich jetzt verbindest, wird das Netzwerk übernommen und das installierte System verbindet sich beim ersten Start damit.";
+
+/* No comment provided by engineer. */
+"Ethernet" = "Ethernet";
+
+/* No comment provided by engineer. */
+"No cable connected" = "Kein Kabel angeschlossen";
+
+/* No comment provided by engineer. */
+"Connected, %@" = "Verbunden, %@";
+
+/* No comment provided by engineer. */
+"No cable connected" = "Kein Kabel angeschlossen";
+
+/* No comment provided by engineer. */
+"No Wi-Fi hardware found" = "Keine WLAN-Hardware gefunden";
+
+/* No comment provided by engineer. */
+"Off" = "Aus";
+
+/* No comment provided by engineer. */
+"Connected to %@" = "Verbunden mit „%@“";
+
+/* No comment provided by engineer. */
+"Joining %@…" = "Verbinden mit „%@“ …";
+
+/* No comment provided by engineer. */
+"Not connected" = "Nicht verbunden";
+
+/* No comment provided by engineer. */
+"Connected · %@ Personal" = "Verbunden · %@ Personal";
+
+/* No comment provided by engineer. */
+"Connected" = "Verbunden";
+
+/* No comment provided by engineer. */
+"Disconnect" = "Trennen";
+
+/* No comment provided by engineer. */
+"Join" = "Verbinden";
+
+/* No comment provided by engineer. */
+"Looking for networks…" = "Netzwerke werden gesucht …";
+
+/* No comment provided by engineer. */
+"No networks in range" = "Keine Netzwerke in Reichweite";
+
+/* No comment provided by engineer. */
+"Other Network…" = "Anderes Netzwerk …";
+
+/* No comment provided by engineer. */
+"Choose the disk to install on. The bar shows what it holds now." = "Wähle das Volume für die Installation. Der Balken zeigt, was es zurzeit enthält.";
+
+/* No comment provided by engineer. */
+"Install drive" = "Installationsvolume";
+
+/* No comment provided by engineer. */
+"External disk" = "Externes Volume";
+
+/* No comment provided by engineer. */
+"Internal disk" = "Internes Volume";
+
+/* No comment provided by engineer. */
+"No disks found." = "Keine Volumes gefunden.";
+
+/* No comment provided by engineer. */
+"In use" = "Belegt";
+
+/* No comment provided by engineer. */
+"Free, %@" = "Frei, %@";
+
+/* No comment provided by engineer. */
+"PureDarwin is running from this drive" = "PureDarwin läuft von diesem Volume";
+
+/* No comment provided by engineer. */
+"What's on the disk stays where it is" = "Der Inhalt des Volumes bleibt erhalten";
+
+/* No comment provided by engineer. */
+"Everything on the disk is deleted" = "Der gesamte Inhalt des Volumes wird gelöscht";
+
+/* No comment provided by engineer. */
+"Use" = "Verwenden";
+
+/* No comment provided by engineer. */
+"Free Space" = "Freier Speicher";
+
+/* No comment provided by engineer. */
+"Whole Disk" = "Gesamtes Volume";
+
+/* No comment provided by engineer. */
+"Disk" = "Volume";
+
+/* No comment provided by engineer. */
+"Kept" = "Bleibt erhalten";
+
+/* No comment provided by engineer. */
+"PureDarwin, %@" = "PureDarwin, %@";
+
+/* No comment provided by engineer. */
+"Format" = "Format";
+
+/* No comment provided by engineer. */
+"ext4, journaled, readable from Linux" = "ext4, Journaled, unter Linux lesbar";
+
+/* No comment provided by engineer. */
+"What happens" = "Was passiert";
+
+/* No comment provided by engineer. */
+"A new partition is made in the %1$@ of free space on %2$@" = "In den %1$@ freiem Speicher auf %2$@ wird eine neue Partition angelegt";
+
+/* No comment provided by engineer. */
+"The system on this drive is copied onto it" = "Das System auf diesem Volume wird darauf kopiert";
+
+/* No comment provided by engineer. */
+"The loader goes next to the other systems' in the EFI partition" = "Der Loader kommt neben die der anderen Systeme in der EFI-Partition";
+
+/* No comment provided by engineer. */
+"%@ is erased and gets a new partition table" = "%@ wird gelöscht und erhält eine neue Partitionstabelle";
+
+/* No comment provided by engineer. */
+"The system on this drive is copied onto it" = "Das System auf diesem Volume wird darauf kopiert";
+
+/* No comment provided by engineer. */
+"The loader is installed, so the firmware can start it" = "Der Loader wird installiert, damit die Firmware es starten kann";
+
+/* No comment provided by engineer. */
+"You can keep using the desktop while this runs. Don't remove the install drive." = "Du kannst den Schreibtisch währenddessen weiter verwenden. Entferne das Installationsvolume nicht.";
+
+/* No comment provided by engineer. */
+"Preparing…" = "Vorbereiten …";
+
+/* No comment provided by engineer. */
+"%.0f%%" = "%.0f %%";
+
+/* No comment provided by engineer. */
+"▾ Hide Details" = "▾ Details ausblenden";
+
+/* No comment provided by engineer. */
+"▸ Show Details" = "▸ Details einblenden";
+
+/* No comment provided by engineer. */
+"The install did not finish" = "Die Installation wurde nicht abgeschlossen";
+
+/* No comment provided by engineer. */
+"PureDarwin is installed" = "PureDarwin ist installiert";
+
+/* No comment provided by engineer. */
+"Remove the install drive and restart. The firmware starts the new system from its PureDarwin entry." = "Entferne das Installationsvolume und starte neu. Die Firmware startet das neue System über seinen PureDarwin-Eintrag.";
+
+/* No comment provided by engineer. */
+"Log" = "Protokoll";
+
+/* No comment provided by engineer. */
+"Installed on" = "Installiert auf";
+
+/* No comment provided by engineer. */
+"Format" = "Format";
+
+/* No comment provided by engineer. */
+"ext4, journaled" = "ext4, Journaled";
+
+/* No comment provided by engineer. */
+"To continue, agree to the terms of the licence." = "Stimme den Lizenzbedingungen zu, um fortzufahren.";
+
+/* No comment provided by engineer. */
+"Choose Agree to carry on with the install, or Disagree to stop and keep using PureDarwin from the install drive." = "Wähle „Akzeptieren“, um mit der Installation fortzufahren, oder „Ablehnen“, um abzubrechen und PureDarwin weiter vom Installationsvolume zu verwenden.";
+
+/* No comment provided by engineer. */
+"Disagree" = "Ablehnen";
+
+/* No comment provided by engineer. */
+"Disagree" = "Ablehnen";
+
+/* No comment provided by engineer. */
+"Agree" = "Akzeptieren";
+
+/* No comment provided by engineer. */
+"Agree" = "Akzeptieren";
+
+/* No comment provided by engineer. */
+"Continue" = "Fortfahren";
+
+/* No comment provided by engineer. */
+"Continue Without a Network" = "Ohne Netzwerk fortfahren";
+
+/* No comment provided by engineer. */
+"Install" = "Installieren";
+
+/* No comment provided by engineer. */
+"Erase and Install" = "Löschen und installieren";
+
+/* No comment provided by engineer. */
+"Continue" = "Fortfahren";
+
+/* No comment provided by engineer. */
+"Quit" = "Beenden";
+
+/* No comment provided by engineer. */
+"Restart" = "Neustart";
+
+/* No comment provided by engineer. */
+"Continue" = "Fortfahren";
+
+/* No comment provided by engineer. */
+"You can connect later in Settings." = "Du kannst dich später in den Einstellungen verbinden.";
+
+/* No comment provided by engineer. */
+"Pick another disk." = "Wähle ein anderes Volume.";
+
+/* No comment provided by engineer. */
+"Not enough free space on this disk." = "Nicht genügend freier Speicher auf diesem Volume.";
+
+/* No comment provided by engineer. */
+"Everything on %@ is deleted." = "Der gesamte Inhalt von %@ wird gelöscht.";
+
+/* No comment provided by engineer. */
+"Welcome to PureDarwin" = "Willkommen bei PureDarwin";
+
+/* No comment provided by engineer. */
+"Licence" = "Lizenz";
+
+/* No comment provided by engineer. */
+"Connect to a Network" = "Mit einem Netzwerk verbinden";
+
+/* No comment provided by engineer. */
+"Select a Destination" = "Ziel auswählen";
+
+/* No comment provided by engineer. */
+"Installation Type" = "Installationstyp";
+
+/* No comment provided by engineer. */
+"Installing" = "Installieren";
+
+/* No comment provided by engineer. */
+"Summary" = "Zusammenfassung";
+
+/* No comment provided by engineer. */
+"Step %1$d of %2$d" = "Schritt %1$d von %2$d";
+
+/* No comment provided by engineer. */
+"Go Back" = "Zurück";
+
+/* No comment provided by engineer. */
+"pdinstall stopped before it finished." = "pdinstall wurde vor dem Abschluss beendet.";
+
+/* No comment provided by engineer. */
+"pdinstall could not be started (%s)." = "pdinstall konnte nicht gestartet werden (%s).";
+
+/* No comment provided by engineer. */
+"Install PureDarwin" = "PureDarwin installieren";
+
+/* No comment provided by engineer. */
+"Install PureDarwin" = "PureDarwin installieren";
+
+/* No comment provided by engineer. */
+"Quit Install PureDarwin" = "„PureDarwin installieren“ beenden";
+
+/* No comment provided by engineer. */
+"Install PureDarwin" = "PureDarwin installieren";
+
+/* No comment provided by engineer. */
+"Introduction" = "Einführung";
+
+/* No comment provided by engineer. */
+"Destination" = "Ziel";
+
+/* No comment provided by engineer. */
+"Installation" = "Installation";
+

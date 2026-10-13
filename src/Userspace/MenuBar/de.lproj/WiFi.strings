@@ -1,0 +1,66 @@
+/* No comment provided by engineer. */
+"Find and join a Wi-Fi network." = "WLAN-Netzwerk suchen und verbinden.";
+
+/* No comment provided by engineer. */
+"The Wi-Fi network “%1$@” requires a %2$@ password." = "Das WLAN-Netzwerk „%1$@“ erfordert ein %2$@-Passwort.";
+
+/* No comment provided by engineer. */
+"Enter the name and security type of the network you want to join." = "Gib den Namen und die Sicherheitsart des Netzwerks ein, mit dem du dich verbinden möchtest.";
+
+/* No comment provided by engineer. */
+"Enter the password to join this network." = "Gib das Passwort ein, um dich mit diesem Netzwerk zu verbinden.";
+
+/* No comment provided by engineer. */
+"Network Name" = "Netzwerkname";
+
+/* No comment provided by engineer. */
+"Security" = "Sicherheit";
+
+/* No comment provided by engineer. */
+"None" = "Ohne";
+
+/* No comment provided by engineer. */
+"WPA2 Personal" = "WPA2 Personal";
+
+/* No comment provided by engineer. */
+"Password" = "Passwort";
+
+/* No comment provided by engineer. */
+"Show password" = "Passwort einblenden";
+
+/* No comment provided by engineer. */
+"Remember this network" = "Dieses Netzwerk merken";
+
+/* No comment provided by engineer. */
+"Join" = "Verbinden";
+
+/* No comment provided by engineer. */
+"Cancel" = "Abbrechen";
+
+/* No comment provided by engineer. */
+"Joining…" = "Verbinden …";
+
+/* No comment provided by engineer. */
+"Join a Wi-Fi Network" = "Mit einem WLAN-Netzwerk verbinden";
+
+/* No comment provided by engineer. */
+"Connected." = "Verbunden.";
+
+/* No comment provided by engineer. */
+"No Wi-Fi hardware was found." = "Es wurde keine WLAN-Hardware gefunden.";
+
+/* No comment provided by engineer. */
+"Wi-Fi is turned off." = "WLAN ist deaktiviert.";
+
+/* No comment provided by engineer. */
+"Couldn't join. Check the password and try again." = "Verbinden nicht möglich. Prüfe das Passwort und versuche es erneut.";
+
+/* No comment provided by engineer. */
+"The network didn't accept the connection." = "Das Netzwerk hat die Verbindung nicht angenommen.";
+
+/* No comment provided by engineer. */
+"The network wasn't found. Move closer and try again." = "Das Netzwerk wurde nicht gefunden. Geh näher heran und versuche es erneut.";
+
+/* No comment provided by engineer. */
+"The network couldn't be joined." = "Die Verbindung mit dem Netzwerk ist fehlgeschlagen.";
+

@@ -1,0 +1,126 @@
+/* No comment provided by engineer. */
+"%1$d-core %2$s" = "%1$d-Core %2$s";
+
+/* No comment provided by engineer. */
+"Unknown" = "Unbekannt";
+
+/* No comment provided by engineer. */
+"%llu GB" = "%llu GB";
+
+/* No comment provided by engineer. */
+"Unknown" = "Unbekannt";
+
+/* No comment provided by engineer. */
+"Display controller" = "Display-Controller";
+
+/* No comment provided by engineer. */
+"Unknown" = "Unbekannt";
+
+/* No comment provided by engineer. */
+"Version %1$@ (%2$@)" = "Version %1$@ (%2$@)";
+
+/* No comment provided by engineer. */
+"Kernel" = "Kernel";
+
+/* No comment provided by engineer. */
+"Processor" = "Prozessor";
+
+/* No comment provided by engineer. */
+"Memory" = "Speicher";
+
+/* No comment provided by engineer. */
+"Graphics" = "Grafik";
+
+/* No comment provided by engineer. */
+"Startup Disk" = "Startvolume";
+
+/* No comment provided by engineer. */
+"More Info…" = "Weitere Infos …";
+
+/* No comment provided by engineer. */
+"More Info…" = "Weitere Infos …";
+
+/* No comment provided by engineer. */
+"© The PureDarwin Project" = "© The PureDarwin Project";
+
+/* No comment provided by engineer. */
+"About PureDarwin" = "Über PureDarwin";
+
+/* No comment provided by engineer. */
+"Return copies the result" = "Zeilenschalter kopiert das Ergebnis";
+
+/* No comment provided by engineer. */
+"Lookout Search" = "Lookout-Suche";
+
+/* No comment provided by engineer. */
+"Calculator" = "Rechner";
+
+/* No comment provided by engineer. */
+"Calculator" = "Rechner";
+
+/* No comment provided by engineer. */
+"Application" = "Programm";
+
+/* No comment provided by engineer. */
+"System" = "System";
+
+/* No comment provided by engineer. */
+"New Terminal Window" = "Neues Terminal-Fenster";
+
+/* No comment provided by engineer. */
+"Action" = "Aktion";
+
+/* No comment provided by engineer. */
+"New Finder Window" = "Neues Finder-Fenster";
+
+/* No comment provided by engineer. */
+"Action" = "Aktion";
+
+/* No comment provided by engineer. */
+"Folder" = "Ordner";
+
+/* No comment provided by engineer. */
+"Top Hit" = "Top-Treffer";
+
+/* No comment provided by engineer. */
+"Applications" = "Programme";
+
+/* No comment provided by engineer. */
+"Actions" = "Aktionen";
+
+/* No comment provided by engineer. */
+"Folders" = "Ordner";
+
+/* No comment provided by engineer. */
+"Settings\U2026" = "Einstellungen\U2026";
+
+/* No comment provided by engineer. */
+"Sleep" = "Ruhezustand";
+
+/* No comment provided by engineer. */
+"Restart\U2026" = "Neustart\U2026";
+
+/* No comment provided by engineer. */
+"Shut Down\U2026" = "Ausschalten\U2026";
+
+/* No comment provided by engineer. */
+"No Wi-Fi hardware" = "Keine WLAN-Hardware";
+
+/* No comment provided by engineer. */
+"Known Networks" = "Bekannte Netzwerke";
+
+/* No comment provided by engineer. */
+"Other Networks" = "Andere Netzwerke";
+
+/* No comment provided by engineer. */
+"Looking for networks…" = "Netzwerke werden gesucht …";
+
+/* No comment provided by engineer. */
+"No networks in range" = "Keine Netzwerke in Reichweite";
+
+/* No comment provided by engineer. */
+"Other Network…" = "Anderes Netzwerk …";
+
+/* No comment provided by engineer. */
+"Wi-Fi Settings…" = "WLAN-Einstellungen …";
+
