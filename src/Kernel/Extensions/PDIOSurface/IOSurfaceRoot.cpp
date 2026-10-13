@@ -750,9 +750,11 @@ pdScanoutFrame(void)
 	if (sScanCursor.md)
 		pdScanoutLayerOver(&sScanCursor, sScanCursorX, sScanCursorY);
 	if (back) {
+#if defined(__arm64__)
 		for (size_t off = 0; off < (size_t)sScanStride * sScanH; off += 64)
 			__asm__ volatile ("dc cvac, %0" :: "r"(sScanTarget + off) : "memory");
 		__asm__ volatile ("dsb sy" ::: "memory");
+#endif
 		IOByteCount span = 0;
 		uint64_t phys = back->getPhysicalSegment(0, &span, kIOMemoryMapperNone);
 		pd_display_flip flip = {};
