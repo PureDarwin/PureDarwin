@@ -144,6 +144,7 @@ typedef struct {
 #define TRB_TC             (1U << 1)  /* Toggle Cycle (link TRB) / Evaluate Next TRB */
 #define TRB_ENT             (1U << 1) /* Evaluate Next TRB (transfer TRBs) */
 #define TRB_ISP            (1U << 2)  /* Interrupt on Short Packet */
+#define TRB_TD_SIZE(n)     ((UInt32)(n) << 17) /* Normal TRB status[21:17], packets left after this TRB */
 #define TRB_CH             (1U << 4)  /* Chain bit */
 #define TRB_IOC            (1U << 5)  /* Interrupt on Completion */
 #define TRB_IDT            (1U << 6)  /* Immediate Data (setup stage) */

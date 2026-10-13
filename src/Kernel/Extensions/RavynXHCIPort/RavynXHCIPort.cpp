@@ -1144,8 +1144,10 @@ void RavynXHCIPort::pushTRB(volatile XHCITRB *ring, UInt32 &enqueue, UInt8 &cycl
     dmaFlush(&ring[enqueue], sizeof(XHCITRB));
     enqueue++;
     if (enqueue == ringSizeTRBs - 1) {
-        /* LINK TRB sits at ringSizeTRBs-1; toggle our own cycle and loop. */
-        ring[enqueue].control = (ring[enqueue].control & ~TRB_CYCLE) | (cycle ? TRB_CYCLE : 0);
+        /* LINK TRB sits at ringSizeTRBs-1; toggle our own cycle and loop. A TD that
+         * continues past it needs the chain bit on the link too (xHCI 1.1 4.11.5.1). */
+        ring[enqueue].control = (ring[enqueue].control & ~(TRB_CYCLE | TRB_CH)) | (control & TRB_CH) |
+                                (cycle ? TRB_CYCLE : 0);
         dmaFlush(&ring[enqueue], sizeof(XHCITRB));
         enqueue = 0;
         cycle ^= 1;
@@ -2279,15 +2281,37 @@ bool RavynXHCIPort::bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
     UInt32 dci = in ? (epNum * 2 + 1) : (epNum * 2);
     UInt64 base = xferMem->getPhysicalAddress();
 
+    // the endpoint's max packet size, as the controller holds it, for the TD Size field
+    void *dc = sr.deviceCtxMem->getBytesNoCopy();
+    dmaFlush(deviceEp(dc, dci), sizeof(XHCIEndpointContext));
+    UInt32 maxPkt = (deviceEp(dc, dci)->dword1 >> EP_CTX_MAXPKT_SHIFT) & 0xffff;
+    UInt32 tdPackets = maxPkt ? (len + maxPkt - 1) / maxPkt : 0;
+
+    // one TRB per 64 KiB window the buffer touches. The TD must fit in the ring.
+    UInt64 trbs = (((base & (kMaxTRBTransferBytes - 1)) + len + kMaxTRBTransferBytes - 1) / kMaxTRBTransferBytes);
+    if (trbs > kRingTRBs - 2) {
+        XHCI_Log("bulk transfer of %u bytes needs %llu TRBs, more than the ring holds", len, trbs);
+        return false;
+    }
+
     UInt32 remaining = len ? len : 0;
     UInt32 offset = 0;
     dmaFlush(xferMem->getBytesNoCopy(), len);
     do {
+        UInt64 addr = base + offset;
         UInt32 chunk = remaining;
-        if (chunk > kMaxTRBTransferBytes) chunk = kMaxTRBTransferBytes;
+        // a TRB's buffer may not cross a 64 KiB boundary (xHCI 1.1 6.4.1.1)
+        UInt32 toBoundary = kMaxTRBTransferBytes - (UInt32)(addr & (kMaxTRBTransferBytes - 1));
+        if (chunk > toBoundary) chunk = toBoundary;
         bool isLast = (offset + chunk >= len);
+        // packets left in the TD after this TRB, at most 31, and 0 on the last (xHCI 1.1 4.11.2.4)
+        UInt32 tdSize = 0;
+        if (!isLast && maxPkt) {
+            UInt32 left = tdPackets - (offset + chunk) / maxPkt;
+            tdSize = left > 31 ? 31 : left;
+        }
         pushTRB(ring, enqueue, cycle, kRingTRBs,
-               base + offset, chunk,
+               addr, chunk | TRB_TD_SIZE(tdSize),
                TRB_SET_TYPE(TRB_TYPE_NORMAL) | (isLast ? TRB_IOC : TRB_CH));
         offset += chunk;
         remaining -= chunk;
