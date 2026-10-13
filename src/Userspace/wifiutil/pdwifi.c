@@ -329,13 +329,12 @@ static pdwifi_result associate(const char *ssid, const uint8_t *pmk)
 		}
 		if (state > furthest)
 			furthest = state;
-		// associated and then dropped back to scanning is the access point refusing the key
-		if (pmk != NULL && furthest >= STATE_ASSOCIATING && state <= 1)
-			break;
 	}
 	request(1, APPLE80211_IOC_DISASSOCIATE, 0, NULL, 0);
 	unlink(JOINING_PATH);
-	if (pmk != NULL && furthest >= STATE_ASSOCIATING && state <= 1)
+	// net80211 falls back to scanning and retries on a lost frame, so only the whole wait tells.
+	// associated but never running is the handshake failing, which is the key
+	if (pmk != NULL && furthest >= STATE_ASSOCIATING)
 		return PDWIFI_BAD_PASSWORD;
 	return furthest >= 2 ? PDWIFI_TIMEOUT : PDWIFI_NOT_FOUND;
 }
