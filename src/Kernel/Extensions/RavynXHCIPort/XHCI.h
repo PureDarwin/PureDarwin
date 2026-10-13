@@ -60,8 +60,10 @@
 #define XHCI_USBCMD_INTE  (1U << 2)  /* Interrupter Enable */
 
 #define XHCI_USBSTS_HCH   (1U << 0)  /* HC Halted */
+#define XHCI_USBSTS_HSE   (1U << 2)  /* Host System Error */
 #define XHCI_USBSTS_EINT  (1U << 3)  /* Event Interrupt, RW1C */
 #define XHCI_USBSTS_CNR   (1U << 11) /* Controller Not Ready */
+#define XHCI_USBSTS_HCE   (1U << 12) /* Host Controller Error */
 
 #define XHCI_CRCR_RCS     (1ULL << 0) /* Ring Cycle State */
 #define XHCI_CRCR_CS      (1ULL << 1) /* Command Stop */
@@ -185,6 +187,7 @@ enum {
 #define TRB_CC_TRANSACTION    4
 #define TRB_CC_STALL          6
 #define TRB_CC_SHORT_PACKET   13
+#define TRB_CC_CONTEXT_STATE  19
 
 /* Setup stage TRT (transfer type) field, control[17:16] */
 #define TRB_SETUP_TRT_NO_DATA     0

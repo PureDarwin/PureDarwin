@@ -416,6 +416,7 @@ private:
     // after a stall: reset the endpoint, move its dequeue past the halted td, clear the device halt
     void recoverHaltedEndpoint(UInt32 slotId, UInt8 epNum, bool in);
     void resetHaltedRing(UInt32 slotId, UInt32 dci, UInt64 deq, UInt8 cycle, UInt8 *cc1, UInt8 *cc2);
+    bool stopRing(UInt32 slotId, UInt32 dci, UInt64 deq, UInt8 cycle);
     bool bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
                       IOBufferMemoryDescriptor *xferMem, UInt32 len, UInt32 timeoutMs);
 
