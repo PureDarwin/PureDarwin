@@ -240,6 +240,7 @@ struct boot_args;
 extern void pd_boot_mark(uint8_t code);
 extern void pd_boot_mark_init(struct boot_args *args);
 extern void pd_boot_mark_band(uint32_t band);
+extern void pd_boot_mark_tick(uint32_t band);
 extern void pd_boot_mark_direct(uint32_t band, struct boot_args *args);
 extern uintptr_t pd_boot_mark_fb_va(void);
 extern int pd_boot_mark_physmap;
@@ -247,7 +248,10 @@ extern uint64_t pd_boot_mark_physmap_cr3;
 
 #define postcode(xx)     pd_boot_mark((uint8_t)(xx))
 #define postcode2(xxxx)  do {} while(0)
+// a band after each step of i386_init, in rows 19 to 31 and 40 to 44 that no postcode uses
+#define pd_band(n)       pd_boot_mark_band(n)
 #else
+#define pd_band(n) do {} while(0)
 #define postcode(xx) do {} while(0)
 #define postcode2(xxxx) do {} while(0)
 #endif

@@ -87,4 +87,12 @@ pd_entry_t      BootPTD[2048]
 __attribute__((section("__HIB, __bootPT"))) = {
 	FOR_0_TO_2047(ID_MAP_2MEG)
 };
+
+// the pdpt for a framebuffer at or above 512GB, outside BootPML4[0], hooked in by PD_MAP_HIGH_FB
+pdpt_entry_t    BootFBPDPT[PTE_PER_PAGE]
+__attribute__((section("__HIB, __bootPT"))) = { 0 };
+
+// page directory for a firmware framebuffer above 4GB, filled in by PD_MAP_HIGH_FB in start.s
+pd_entry_t      BootFBPD[PTE_PER_PAGE]
+__attribute__((section("__HIB, __bootPT"))) = { 0 };
 #endif /* MACHINE_BOOTSTRAPPTD */

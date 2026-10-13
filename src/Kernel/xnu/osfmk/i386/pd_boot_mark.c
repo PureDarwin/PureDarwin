@@ -12,6 +12,8 @@ uint32_t pd_boot_mark_rowbytes;
 uint32_t pd_boot_mark_width;
 uint32_t pd_boot_mark_height;
 int pd_boot_mark_physmap;
+// set once the boot cpu is through i386_init: the other cores redraw the same bands and must not each wait
+int pd_boot_mark_nohold;
 uint64_t pd_boot_mark_boot_cr3;          /* boot page tables: framebuffer is 1:1 */
 uint64_t pd_boot_mark_physmap_cr3;       /* IdlePML4: reach it through the physmap */
 
@@ -20,6 +22,10 @@ static void
 pd_boot_mark_hold(void)
 {
 	volatile uint32_t spin = PD_BAND_SPIN;
+
+	if (pd_boot_mark_nohold) {
+		return;
+	}
 
 	while (spin-- != 0) {
 		__asm__ volatile ("rep; nop");
@@ -84,14 +90,9 @@ pd_boot_mark_init(boot_args *args)
 	if (args->Video.v_baseAddr < PD_BAND_MIN_BASE) {
 		return;
 	}
-	/*
-	 * Above 4GB is fine here, but only up to 512GB: PD_MAP_HIGH_FB identity-
-	 * maps the framebuffer into PML4[0] before the long-mode switch, and that
-	 * entry cannot describe anything higher. Same bound PD_MARK64 applies.
-	 * (Before that mapping existed this was a flat 4GB cut-off, which rejected
-	 * exactly the firmware framebuffers the mapping was added for.)
-	 */
-	if (args->Video.v_baseAddr >= (512ULL * 1024 * 1024 * 1024)) {
+	// above 4GB PD_MAP_HIGH_FB maps it, below 512GB in BootPML4[0], higher through BootFBPDPT
+
+	if (args->Video.v_baseAddr >= (256ULL << 40)) {
 		return;
 	}
 	if (args->Video.v_width == 0 || args->Video.v_width > PD_BAND_MAX_DIM ||
@@ -103,7 +104,8 @@ pd_boot_mark_init(boot_args *args)
 		return;
 	}
 	pd_boot_mark_boot_cr3 = get_cr3_raw();
-	pd_boot_mark_base     = args->Video.v_baseAddr;
+	// the loader tags a physical framebuffer with bit 0
+	pd_boot_mark_base     = args->Video.v_baseAddr & ~3ULL;
 	pd_boot_mark_rowbytes = args->Video.v_rowBytes;
 	pd_boot_mark_width    = args->Video.v_width;
 	pd_boot_mark_height   = args->Video.v_height;
@@ -128,10 +130,15 @@ pd_boot_mark_fb_va(void)
 		if (pd_boot_mark_base < (physmap_max - physmap_base)) {
 			return (uintptr_t)PHYSMAP_PTOV(pd_boot_mark_base);
 		}
+		// above the physmap, Idle_PTs_init carried BootFBPD into the kernel PDPT
+		if (pd_boot_mark_base >= (4ULL << 30) && ((pd_boot_mark_base >> 30) & 0x1ff) >= 4) {
+			return (uintptr_t)(KERNEL_BASE + (pd_boot_mark_base & ((512ULL << 30) - 1)));
+		}
 		return 0;
 	}
 	if (cr3 == pd_boot_mark_boot_cr3) {
 		/* BootPML4[0] identity-maps the low 4GB. */
+		// above that, PD_MAP_HIGH_FB mapped it 1:1 from start.s
 		return (uintptr_t)pd_boot_mark_base;
 	}
 	/* Some other page-table regime - refuse rather than guess an address.
@@ -174,4 +181,30 @@ pd_boot_mark_band(uint32_t band)
 		}
 	}
 	pd_boot_mark_hold();
+}
+
+// one more block along a band per call, 32 to a row, so a count of blocks names the last step reached
+void
+pd_boot_mark_tick(uint32_t band)
+{
+	static uint32_t ticks[64];
+	uint32_t n, x0, x1, x, y;
+	uintptr_t base;
+
+	if (band >= 64 || pd_boot_mark_base == 0 || band * 16 + 16 > pd_boot_mark_height) {
+		return;
+	}
+	base = pd_boot_mark_fb_va();
+	if (base == 0) {
+		return;
+	}
+	n = ticks[band]++ % 32;
+	x0 = n * pd_boot_mark_width / 32;
+	x1 = (n + 1) * pd_boot_mark_width / 32 - 2;
+	for (y = band * 16 + 2; y < band * 16 + 14; y++) {
+		volatile uint32_t *row = (volatile uint32_t *)(base + (uintptr_t)y * pd_boot_mark_rowbytes);
+		for (x = x0; x < x1; x++) {
+			row[x] = (n & 1) ? 0xffffffffu : 0xff20c0ffu;
+		}
+	}
 }

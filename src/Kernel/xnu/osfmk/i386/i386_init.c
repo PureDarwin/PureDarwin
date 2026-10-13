@@ -427,6 +427,20 @@ Idle_PTs_init(void)
 	postcode(VSTART_SET_CR3);
 	physmap_base = new_physmap_base;
 	physmap_max = new_physmap_max;
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	// a framebuffer above 4GB stays reachable through the kernel pdpt, at KERNEL_BASE plus its offset in its 512GB
+	{
+		extern pd_entry_t BootFBPD[];
+		uint64_t fb = kernelBootArgs->Video.v_baseAddr;
+
+		// slots 0-3 of the kernel pdpt hold the kernel itself
+		if (fb >= (4ULL << 30) && fb < (256ULL << 40) && ((fb >> 30) & 0x1ff) >= 4 &&
+		    kernelBootArgs->Video.v_depth == 32) {
+			IdlePDPT[(fb >> 30) & 0x1ff] = (pdpt_entry_t)ID_MAP_VTOP(BootFBPD)
+			    | INTEL_PTE_VALID | INTEL_PTE_WRITE;
+		}
+	}
+#endif
 	set_cr3_raw((uintptr_t)ID_MAP_VTOP(IdlePML4));
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 	/* The firmware identity map is gone; address the framebuffer through the
@@ -855,8 +869,11 @@ i386_init(void)
 	postcode(I386_INIT_ENTRY);
 
 	pal_i386_init();
+	pd_band(19);
 	tsc_init();
+	pd_band(20);
 	rtclock_early_init();   /* mach_absolute_time() now functional */
+	pd_band(21);
 
 	kernel_debug_string_early("i386_init");
 	//pstate_trace(); /* Where does this come from? */
@@ -868,23 +885,28 @@ i386_init(void)
 	mca_cpu_init();
 #endif
 
+	pd_band(22);
 	boot_cpu_id = 0;
 
 	kernel_debug_string_early("kernel_startup_bootstrap");
 	kernel_startup_bootstrap();
+	pd_band(23);
 
 	/*
 	 * Initialize the timer callout world
 	 */
 	timer_call_init();
+	pd_band(24);
 
 	cpu_init();
 
 	postcode(CPU_INIT_D);
+	pd_band(25);
 
 	/* setup debugging output if one has been chosen */
 	kernel_startup_initialize_upto(STARTUP_SUB_KPRINTF);
 	kprintf("kprintf initialized\n");
+	pd_band(26);
 
 	if (!PE_parse_boot_argn("diag", &dgWork.dgFlags, sizeof(dgWork.dgFlags))) {
 		dgWork.dgFlags = 0;
@@ -956,6 +978,7 @@ i386_init(void)
 	/* setup console output */
 	kernel_debug_string_early("PE_init_printf");
 	PE_init_printf(FALSE);
+	pd_band(27);
 
 	kprintf("version_variant = %s\n", version_variant);
 	kprintf("version         = %s\n", version);
@@ -967,6 +990,7 @@ i386_init(void)
 	}
 
 	max_cpus_from_firmware = acpi_count_enabled_logical_processors();
+	pd_band(28);
 
 	if (PE_parse_boot_argn("cpus", &cpus, sizeof(cpus))) {
 		if ((0 < cpus) && (cpus < max_ncpus)) {
@@ -1005,19 +1029,25 @@ i386_init(void)
 	 */
 	kernel_debug_string_early("i386_vm_init");
 	i386_vm_init(maxmemtouse, IA32e, kernelBootArgs);
+	pd_band(29);
 
 	/* create the console for verbose or pretty mode */
 	/* Note: doing this prior to tsc_init() allows for graceful panic! */
 	PE_init_platform(TRUE, kernelBootArgs);
+	pd_band(30);
 	PE_create_console();
+	pd_band(31);
 
 	/* set %gs early so that power management can use locks */
 	thread_t thread = thread_bootstrap();
 	machine_set_current_thread(thread);
+	pd_band(40);
 
 	kernel_debug_string_early("power_management_init");
 	power_management_init();
+	pd_band(41);
 	xcpm_bootstrap();
+	pd_band(42);
 
 #if CONFIG_CPU_COUNTERS
 	cpc_cpu_transition(CPC_CPU_EARLY_INIT, cpu_datap(0));
@@ -1025,6 +1055,13 @@ i386_init(void)
 #endif /* CONFIG_CPU_COUNTERS */
 
 	processor_bootstrap();
+	pd_band(43);
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	{
+		extern int pd_boot_mark_nohold;
+		pd_boot_mark_nohold = 1;
+	}
+#endif
 
 	//pstate_trace();
 	kernel_debug_string_early("machine_startup");

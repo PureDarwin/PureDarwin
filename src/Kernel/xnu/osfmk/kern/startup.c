@@ -219,6 +219,10 @@ TUNABLE(startup_debug_t, startup_debug, "startup_debug", 0);
 /* Indicates a server boot when set */
 TUNABLE(int, serverperfmode, "serverperfmode", 0);
 
+#if defined(PUREDARWIN_EARLY_FB_MARK) && defined(__x86_64__)
+extern void pd_boot_mark_tick(uint32_t band);
+#endif
+
 static inline void
 kernel_bootstrap_log(const char *message)
 {
@@ -227,6 +231,10 @@ kernel_bootstrap_log(const char *message)
 		kprintf("kernel_bootstrap: %s\n", message);
 	}
 	kernel_debug_string_early(message);
+#if defined(PUREDARWIN_EARLY_FB_MARK) && defined(__x86_64__)
+	// a block per step on a box with no serial port, row 44
+	pd_boot_mark_tick(44);
+#endif
 }
 
 static inline void
@@ -237,6 +245,10 @@ kernel_bootstrap_thread_log(const char *message)
 		kprintf("kernel_bootstrap_thread: %s\n", message);
 	}
 	kernel_debug_string_early(message);
+#if defined(PUREDARWIN_EARLY_FB_MARK) && defined(__x86_64__)
+	// a block per step on a box with no serial port, row 45
+	pd_boot_mark_tick(45);
+#endif
 }
 
 extern void

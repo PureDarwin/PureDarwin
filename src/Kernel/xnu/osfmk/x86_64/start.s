@@ -143,8 +143,79 @@
 	popal
 	popfl
 .endm
+
+// maps 16MB of a framebuffer above 4GB into BootPML4[0] with 2MB pages, the progress bars draw through it
+.macro PD_MAP_HIGH_FB unused
+	pushal
+	testl	%edi, %edi
+	jz	9f
+	cmpl	$32, BA_VIDEO_DEPTH(%edi)
+	jne	9f
+	movl	(BA_VIDEO_BASEADDR + 4)(%edi), %edx
+	testl	%edx, %edx
+	jz	9f
+	// below 512GB the framebuffer shares BootPML4[0], above it gets BootFBPDPT in its own empty slot
+	movl	$EXT(BootPDPT), %esi
+	cmpl	$0x80, %edx
+	jb	3f
+	cmpl	$0xff80, %edx
+	jae	9f
+	movl	%edx, %eax
+	shrl	$7, %eax
+	shll	$3, %eax
+	addl	$EXT(BootPML4), %eax
+	cmpl	$0, (%eax)
+	jne	9f
+	movl	$EXT(BootFBPDPT), %ebx
+	orl	$0x3, %ebx
+	movl	%ebx, (%eax)
+	movl	$0, 4(%eax)
+	movl	$EXT(BootFBPDPT), %esi
+3:
+	// pdpt[(fb >> 30) & 0x1ff] = BootFBPD
+	movl	BA_VIDEO_BASEADDR(%edi), %eax
+	shrl	$30, %eax
+	movl	%edx, %ecx
+	shll	$2, %ecx
+	orl	%ecx, %eax
+	andl	$0x1ff, %eax
+	shll	$3, %eax
+	addl	%esi, %eax
+	movl	$EXT(BootFBPD), %ebx
+	orl	$0x3, %ebx
+	movl	%ebx, (%eax)
+	movl	$0, 4(%eax)
+
+	// up to eight 2MB entries from the framebuffer base, uncached, stopping at the end of the directory
+	movl	BA_VIDEO_BASEADDR(%edi), %eax
+	andl	$0xffe00000, %eax
+	movl	%eax, %ecx
+	shrl	$21, %ecx
+	andl	$0x1ff, %ecx
+	shll	$3, %ecx
+	orl	$0x9b, %eax
+	movl	$(512 * 8), %ebx
+	subl	%ecx, %ebx
+	shrl	$3, %ebx
+	cmpl	$8, %ebx
+	jbe	1f
+	movl	$8, %ebx
+1:
+	addl	$EXT(BootFBPD), %ecx
+2:
+	movl	%eax, (%ecx)
+	movl	%edx, 4(%ecx)
+	addl	$0x200000, %eax
+	addl	$8, %ecx
+	decl	%ebx
+	jnz	2b
+9:
+	popal
+.endm
 #else
 .macro PD_MARK32 band
+.endm
+.macro PD_MAP_HIGH_FB unused
 .endm
 #endif
 
@@ -244,6 +315,7 @@ LEXT(pstart)
  *
  */	
 	mov	%eax, %edi	/* save kernbootstruct */
+	PD_MAP_HIGH_FB 0
 
 	/* Use low 32-bits of address as 32-bit stack */
 	movl	$EXT(low_eintstack), %esp
