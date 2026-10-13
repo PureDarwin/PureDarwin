@@ -1225,9 +1225,27 @@ let
           mesa-demos = mesaDemosNoxBuild;
           librsvg = librsvgNoxBuild;
         };
+      # the desktop session: neuswc with pdwm, the AppKit apps and org.puredarwin.wayland-session to start them
+      waylandDesktopPackages = lib.filter lib.isDerivation [
+          foundationBuild freetype2Build fontconfigBuild libpngBuild libjpegBuild xvfbZlibBuild
+          xvfbFontsBuild pdsurfaceBuild onyx2dBuild coregraphicsBuild coretextBuild
+          waylandBuild xkbcommonNoxBuild xkeyboardConfigBuild neuswcBuild
+          quartzcoreBuild corevideoBuild applicationservicesBuild windowserverBuild appkitBuild coredataBuild cocoaBuild appFrameworksBuild mpsNoxBuild
+          openglFrameworkNoxBuild mesaNoxBuild gluNoxBuild llvmCrossBuild pdVirglShimBuild
+          terminalBuild menubarBuild dockBuild finderBuild systemInformationBuild calculatorBuild settingsBuild waylandSessionBuild psOnlyBuild diagToolsBuild
+          # Inter and the other system faces the window chrome and menu bar are drawn in
+          systemFontsBuild
+          # something full-screen to run in it
+          ncursesBuild nanoBuild fastfetchNoxBuild
+          # vulkan on the host gpu with PUREDARWIN_VM_VENUS=1 (venus virtio-gpu)
+          vulkanLoaderNoxBuild mesaVenusWaylandBuild libdrmVirtgpuBuild vulkanToolsNoxBuild venusTestsNoxBuild
+          # the Metal demos: pdmtl and Indium tests (metal-pd), Metal.framework (metal-objc), Apple's samples
+          glfwPdBuild metalPdNoxBuild metalObjcPdNoxBuild metalAppleSamplesNoxBuild spirvCrossPdBuild
+      ];
       imageWaylandBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemWayland;
-        extraPackages = lib.attrValues waylandOnlyExtraPackageSet;
+        # the same desktop session as image-wayland-minimal, over the full userland
+        extraPackages = lib.unique (lib.attrValues waylandOnlyExtraPackageSet ++ waylandDesktopPackages);
         kc = kcBuild;
         xnuLoader = xnuLoaderDefault;
         apfsprogs = pkgs.apfsprogs;
@@ -1408,34 +1426,21 @@ let
         mkdir -p $out/bin
         cp "$(find ${userlandNoxBuild} -path '*/bin/ps' | head -n 1)" $out/bin/ps
       '';
-      # the kernel log, the wifi tool and the power daemon, for bringing drivers up in the minimal image
+      # the kernel log, the wifi tool with its autojoin job and the power daemon, for bringing drivers up in the minimal image
       diagToolsBuild = pkgs.runCommand "puredarwin-diag-tools" { } ''
         mkdir -p $out/bin $out/usr/sbin $out/System/Library/LaunchDaemons
         cp "$(find ${userlandNoxBuild} -path '*/bin/dmesg' | head -n 1)" $out/bin/dmesg
         cp "$(find ${userlandNoxBuild} -path '*/usr/sbin/wifiutil' | head -n 1)" $out/usr/sbin/wifiutil
         cp "$(find ${userlandNoxBuild} -path '*/usr/sbin/pdpowerd' | head -n 1)" $out/usr/sbin/pdpowerd
         cp "$(find ${userlandNoxBuild} -name org.puredarwin.pdpowerd.plist | head -n 1)" $out/System/Library/LaunchDaemons/
+        # joins a remembered network at boot
+        cp "$(find ${userlandNoxBuild} -name org.puredarwin.wifi-autojoin.plist | head -n 1)" $out/System/Library/LaunchDaemons/
       '';
       # the Wayland counterpart of a minimal X11 session: neuswc with pdwm, and the
       # AppKit Terminal started by org.puredarwin.wayland-session.
       imageWaylandMinimalBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemStripped;
-        extraPackages = lib.unique (strippedExtraPackages ++ lib.filter lib.isDerivation [
-          foundationBuild freetype2Build fontconfigBuild libpngBuild libjpegBuild xvfbZlibBuild
-          xvfbFontsBuild pdsurfaceBuild onyx2dBuild coregraphicsBuild coretextBuild
-          waylandBuild xkbcommonNoxBuild xkeyboardConfigBuild neuswcBuild
-          quartzcoreBuild corevideoBuild applicationservicesBuild windowserverBuild appkitBuild coredataBuild cocoaBuild appFrameworksBuild mpsNoxBuild
-          openglFrameworkNoxBuild mesaNoxBuild gluNoxBuild llvmCrossBuild pdVirglShimBuild
-          terminalBuild menubarBuild dockBuild finderBuild systemInformationBuild calculatorBuild settingsBuild waylandSessionBuild psOnlyBuild diagToolsBuild
-          # Inter and the other system faces the window chrome and menu bar are drawn in
-          systemFontsBuild
-          # something full-screen to run in it
-          ncursesBuild nanoBuild fastfetchNoxBuild
-          # vulkan on the host gpu with PUREDARWIN_VM_VENUS=1 (venus virtio-gpu)
-          vulkanLoaderNoxBuild mesaVenusWaylandBuild libdrmVirtgpuBuild vulkanToolsNoxBuild venusTestsNoxBuild
-          # the Metal demos: pdmtl and Indium tests (metal-pd), Metal.framework (metal-objc), Apple's samples
-          glfwPdBuild metalPdNoxBuild metalObjcPdNoxBuild metalAppleSamplesNoxBuild spirvCrossPdBuild
-        ]);
+        extraPackages = lib.unique (strippedExtraPackages ++ waylandDesktopPackages);
         kc = kcBuild;
         xnuLoader = xnuLoaderDefault;
         apfsprogs = pkgs.apfsprogs;
