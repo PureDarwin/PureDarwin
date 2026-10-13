@@ -57,6 +57,7 @@
     "PDRealtek8111.kext"
     "IO80211Family.kext"
     "PDRalinkUSB.kext"
+    "PDUSBNCM.kext"
     "IOAudioFamily.kext"
     "RavynHDAudio.kext"
 ]

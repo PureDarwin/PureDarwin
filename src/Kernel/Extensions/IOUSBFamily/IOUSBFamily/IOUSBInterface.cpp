@@ -263,6 +263,61 @@ IOUSBPipe *IOUSBInterface::FindNextPipe(IOUSBPipe *current, IOUSBFindEndpointReq
     return NULL;
 }
 
+// class and vendor descriptors that follow this interface, up to the next interface descriptor
+const IOUSBDescriptorHeader *IOUSBInterface::FindNextAssociatedDescriptor(const void *current, UInt8 type)
+{
+    if (!_configDesc || !_interfaceDesc) return NULL;
+    const UInt8 *base = (const UInt8 *)_configDesc;
+    UInt16 total = _configDesc->wTotalLength;
+    const UInt8 *from = current ? (const UInt8 *)current : (const UInt8 *)_interfaceDesc;
+    UInt32 off = (UInt32)(from - base) + from[0];
+
+    while (off + 2 <= total) {
+        UInt8 len = base[off];
+        UInt8 t = base[off + 1];
+        if (len < 2 || off + len > total || t == kUSBInterfaceDesc) break;
+        if (type == kUSBAnyDesc || t == type)
+            return (const IOUSBDescriptorHeader *)(base + off);
+        off += len;
+    }
+    return NULL;
+}
+
+// SET_INTERFACE to the other setting of this interface, then the pipes are those of its endpoints
+IOReturn IOUSBInterface::SetAlternateInterface(IOService *forClient, UInt16 alternateSetting)
+{
+    if (!_device || !_configDesc) return kIOReturnNotAttached;
+    if (!isOpen(forClient)) return kIOReturnExclusiveAccess;
+
+    const IOUSBInterfaceDescriptor *alt = NULL;
+    while ((alt = FindNextAltInterface(alt, NULL)) != NULL) {
+        if (alt->bAlternateSetting == alternateSetting) break;
+    }
+    if (alt == NULL) return kIOReturnBadArgument;
+
+    IOUSBDevRequest r;
+    r.bmRequestType = USBmakebmRequestType(kUSBOut, kUSBStandard, kUSBInterface);
+    r.bRequest = kUSBRqSetInterface;
+    r.wValue = alternateSetting;
+    r.wIndex = _bInterfaceNumber;
+    r.wLength = 0;
+    r.pData = NULL;
+    r.wLenDone = 0;
+    IOReturn ret = _device->DeviceRequest(&r);
+    if (ret != kIOReturnSuccess) return ret;
+
+    ClosePipes();
+    _interfaceDesc = alt;
+    _bAlternateSetting = alt->bAlternateSetting;
+    _bNumEndpoints = alt->bNumEndpoints;
+    _bInterfaceClass = alt->bInterfaceClass;
+    _bInterfaceSubClass = alt->bInterfaceSubClass;
+    _bInterfaceProtocol = alt->bInterfaceProtocol;
+    _iInterface = alt->iInterface;
+    SetProperties();
+    return CreatePipes();
+}
+
 const IOUSBInterfaceDescriptor *IOUSBInterface::FindNextAltInterface(const IOUSBInterfaceDescriptor *current,
                                                                       IOUSBFindInterfaceRequest *request)
 {

@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>English</string>
+    <key>CFBundleExecutable</key>
+    <string>PDUSBNCM</string>
+    <key>CFBundleIdentifier</key>
+    <string>org.puredarwin.driver.PDUSBNCM</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>PDUSBNCM</string>
+    <key>CFBundlePackageType</key>
+    <string>KEXT</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1.0.0</string>
+    <key>IOKitPersonalities</key>
+    <dict>
+        <key>Realtek RTL8156</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>org.puredarwin.driver.PDUSBNCM</string>
+            <key>IOClass</key>
+            <string>PDUSBNCMConfig</string>
+            <key>IOProviderClass</key>
+            <string>IOUSBDevice</string>
+            <key>IOProbeScore</key>
+            <integer>90000</integer>
+            <key>idVendor</key>
+            <integer>3034</integer>
+            <key>idProduct</key>
+            <integer>33110</integer>
+        </dict>
+        <key>Realtek RTL8156B</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>org.puredarwin.driver.PDUSBNCM</string>
+            <key>IOClass</key>
+            <string>PDUSBNCMConfig</string>
+            <key>IOProviderClass</key>
+            <string>IOUSBDevice</string>
+            <key>IOProbeScore</key>
+            <integer>90000</integer>
+            <key>idVendor</key>
+            <integer>3034</integer>
+            <key>idProduct</key>
+            <integer>33114</integer>
+        </dict>
+        <key>Realtek RTL8155</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>org.puredarwin.driver.PDUSBNCM</string>
+            <key>IOClass</key>
+            <string>PDUSBNCMConfig</string>
+            <key>IOProviderClass</key>
+            <string>IOUSBDevice</string>
+            <key>IOProbeScore</key>
+            <integer>90000</integer>
+            <key>idVendor</key>
+            <integer>3034</integer>
+            <key>idProduct</key>
+            <integer>33109</integer>
+        </dict>
+        <key>CDC NCM</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>org.puredarwin.driver.PDUSBNCM</string>
+            <key>IOClass</key>
+            <string>PDUSBNCM</string>
+            <key>IOProviderClass</key>
+            <string>IOUSBInterface</string>
+            <key>bInterfaceClass</key>
+            <integer>2</integer>
+            <key>bInterfaceSubClass</key>
+            <integer>13</integer>
+        </dict>
+    </dict>
+    <key>OSBundleLibraries</key>
+    <dict>
+        <key>com.apple.iokit.IONetworkingFamily</key>
+        <string>3.4</string>
+        <key>org.puredarwin.iokit.IOUSBFamily</key>
+        <string>1.0</string>
+        <key>com.apple.kpi.bsd</key>
+        <string>10.0.0d1</string>
+        <key>com.apple.kpi.iokit</key>
+        <string>10.0.0d1</string>
+        <key>com.apple.kpi.libkern</key>
+        <string>10.0.0d1</string>
+        <key>com.apple.kpi.mach</key>
+        <string>10.0.0d1</string>
+    </dict>
+    <key>OSBundleRequired</key>
+    <string>Network-Root</string>
+</dict>
+</plist>

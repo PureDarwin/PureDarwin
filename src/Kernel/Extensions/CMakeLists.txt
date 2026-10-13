@@ -81,6 +81,7 @@ add_subdirectory(PDBcm2835SD)
 add_subdirectory(PDI2CFamily)
 add_subdirectory(PDI2CHID)
 add_subdirectory(PDDesignWareI2C)
+add_subdirectory(PDUSBNCM)
 if(PUREDARWIN_ARM64)
     add_subdirectory(PDSun50iMMC)
     add_subdirectory(PDPowerVR)
@@ -108,7 +109,7 @@ add_dependencies(kexts
     corecrypto.kext ext4.kext msdosfs.kext cd9660.kext PDAuxHello.kext apfs.kext HFSEncodings.kext hfs.kext
     AppleFileSystemDriver.kext Ext4FileSystemDriver.kext ApfsFileSystemDriver.kext
 )
-add_dependencies(kexts PDI2CFamily.kext PDI2CHID.kext PDDesignWareI2C.kext)
+add_dependencies(kexts PDI2CFamily.kext PDI2CHID.kext PDDesignWareI2C.kext PDUSBNCM.kext)
 if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32)
     add_dependencies(kexts PDArmPlatformExpert)
 endif()
