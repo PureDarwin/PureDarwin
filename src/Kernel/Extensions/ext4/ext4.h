@@ -57,6 +57,16 @@
 #define EXT4_FEATURE_RO_COMPAT_GDT_CSUM      0x0010 /* uninit_bg: crc16 gd csums */
 #define EXT4_FEATURE_RO_COMPAT_METADATA_CSUM 0x0400 /* crc32c metadata checksums */
 
+// what this driver reads and writes correctly, an unknown incompat bit refuses the mount
+// and an unknown ro_compat bit mounts read-only, as Linux does
+#define EXT4_FEATURE_INCOMPAT_FLEX_BG   0x0200
+#define EXT4_INCOMPAT_SUPPORTED (EXT4_FEATURE_INCOMPAT_FILETYPE | EXT4_FEATURE_INCOMPAT_RECOVER | \
+    EXT4_FEATURE_INCOMPAT_EXTENTS | EXT4_FEATURE_INCOMPAT_64BIT | EXT4_FEATURE_INCOMPAT_FLEX_BG | \
+    EXT4_FEATURE_INCOMPAT_CSUM_SEED)
+// sparse_super, large_file, huge_file, gdt_csum, dir_nlink, extra_isize, metadata_csum
+#define EXT4_RO_COMPAT_SUPPORTED (0x0001 | 0x0002 | 0x0008 | EXT4_FEATURE_RO_COMPAT_GDT_CSUM | \
+    0x0020 | 0x0040 | EXT4_FEATURE_RO_COMPAT_METADATA_CSUM)
+
 /* bg_flags */
 #define EXT4_BG_INODE_UNINIT    0x0001  /* inode bitmap not initialized on disk */
 #define EXT4_BG_BLOCK_UNINIT    0x0002  /* block bitmap not initialized on disk */

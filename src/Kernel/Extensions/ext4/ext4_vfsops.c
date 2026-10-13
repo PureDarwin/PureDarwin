@@ -145,6 +145,16 @@ ext4_mount(struct mount *mp, vnode_t devvp, __unused user_addr_t data,
 	error = ext4_read_super(emp);
 	if (error)
 		goto fail;
+	if (emp->em_feature_incompat & ~EXT4_INCOMPAT_SUPPORTED) {
+		E4LOG("unsupported incompat features 0x%x, not mounting",
+		    emp->em_feature_incompat & ~EXT4_INCOMPAT_SUPPORTED);
+		error = ENOTSUP;
+		goto fail;
+	}
+	int unknown_ro = (emp->em_feature_ro_compat & ~EXT4_RO_COMPAT_SUPPORTED) != 0;
+	if (unknown_ro)
+		E4LOG("unsupported ro_compat features 0x%x, mounting read-only",
+		    emp->em_feature_ro_compat & ~EXT4_RO_COMPAT_SUPPORTED);
 
 	/*
 	 * Query the device's native sector size so ext4_blkread() can convert
@@ -183,10 +193,11 @@ ext4_mount(struct mount *mp, vnode_t devvp, __unused user_addr_t data,
 		/* Write-protected media (a flash partition driven read-only) stays read-only */
 		uint32_t writable = 1;
 		(void)VNOP_IOCTL(devvp, DKIOCISWRITABLE, (caddr_t)&writable, 0, ctx);
-		if (writable)
-			vfs_clearflags(mp, MNT_RDONLY);
-		else
+		// only the root is born read-only, any other mount keeps what mount -o asked for
+		if (!writable || unknown_ro)
 			vfs_setflags(mp, MNT_RDONLY);
+		else if (vfs_flags(mp) & MNT_ROOTFS)
+			vfs_clearflags(mp, MNT_RDONLY);
 	}
 
 	vfs_setlocklocal(mp);
