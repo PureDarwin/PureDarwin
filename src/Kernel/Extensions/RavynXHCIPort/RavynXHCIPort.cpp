@@ -1127,8 +1127,10 @@ void RavynXHCIPort::interruptOccurredStatic(OSObject *owner, IOInterruptEventSou
 
 void RavynXHCIPort::interruptOccurred(IOInterruptEventSource *sender, int count)
 {
-    /* IMAN.IP (Interrupt Pending) is write-1-to-clear; ack it so the
-     * controller can post the next interrupt. */
+    /* USBSTS.EINT and IMAN.IP (Interrupt Pending) are write-1-to-clear, EINT
+     * first (xHCI 1.1 5.4.2). A level-triggered line stays asserted until IP
+     * is clear, so this ack is what lets the controller re-enable it. */
+    opWrite32(XHCI_USBSTS, XHCI_USBSTS_EINT);
     UInt32 iman = rtRead32(XHCI_RT_IR0 + XHCI_IR_IMAN);
     rtWrite32(XHCI_RT_IR0 + XHCI_IR_IMAN, iman);
 

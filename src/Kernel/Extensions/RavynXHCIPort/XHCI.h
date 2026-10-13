@@ -60,6 +60,7 @@
 #define XHCI_USBCMD_INTE  (1U << 2)  /* Interrupter Enable */
 
 #define XHCI_USBSTS_HCH   (1U << 0)  /* HC Halted */
+#define XHCI_USBSTS_EINT  (1U << 3)  /* Event Interrupt, RW1C */
 #define XHCI_USBSTS_CNR   (1U << 11) /* Controller Not Ready */
 
 #define XHCI_CRCR_RCS     (1ULL << 0) /* Ring Cycle State */
