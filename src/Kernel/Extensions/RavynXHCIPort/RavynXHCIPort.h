@@ -154,6 +154,7 @@ private:
     IOWorkLoop            * fWorkLoop;
     IOInterruptEventSource * fInterruptSource;
     bool                   fInterruptsEnabled;
+    bool                   fPlatformInterrupt;
     IOLock               * fEventWaitLock;
     UInt32                 fEventWaitChannel;
 

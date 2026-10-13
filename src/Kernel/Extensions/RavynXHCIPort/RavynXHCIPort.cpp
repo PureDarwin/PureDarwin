@@ -492,6 +492,29 @@ bool RavynXHCIPort::startA733(IOService *provider)
     return true;
 }
 
+#define kInterruptControllerWaitNS (5ULL * 1000 * 1000 * 1000)
+
+// the gic's spi controller registers from a thread of its own and publishes its device tree
+// name as a resource once it can deliver. a nub's interrupt is usable after that
+static bool
+interruptControllerReady(IOService *provider)
+{
+    OSArray *names = OSDynamicCast(OSArray, provider->getProperty("IOInterruptControllers"));
+    OSString *parent = names ? OSDynamicCast(OSString, names->getObject(0)) : NULL;
+    OSDictionary *match;
+    IOService *found = NULL;
+
+    if (!parent) return false;
+    match = IOService::resourceMatching(parent);
+    if (match) {
+        found = IOService::waitForMatchingService(match, kInterruptControllerWaitNS);
+        match->release();
+    }
+    if (!found) return false;
+    found->release();
+    return true;
+}
+
 // x13s usb_1: the firmware leaves the core clocked, powered, in host mode and halted
 // across ExitBootServices, so nothing here writes. A core whose clock is gated never
 // answers the first read and the boot stops, so that read is logged first
@@ -521,6 +544,14 @@ bool RavynXHCIPort::startSC8280XP(IOService *provider)
     // HCCPARAMS1.AC64 is set, so buffers may sit above 4 GiB. Page alignment keeps each
     // one off cache lines the cpu shares with anything else, which dmaFlush relies on
     fDMAMask = 0xFFFFFFFFFFFFF000ULL;
+
+    UInt32 poll = 0;
+    if (PE_parse_boot_argn("pdxhci_poll", &poll, sizeof(poll)) && poll)
+        XHCI_Log("sc8280xp: pdxhci_poll set, polled");
+    else if (!interruptControllerReady(provider))
+        XHCI_Log("sc8280xp: %s has no usable interrupt, polled", provider->getName());
+    else
+        fPlatformInterrupt = true;
     return true;
 }
 
@@ -580,6 +611,7 @@ bool RavynXHCIPort::start(IOService *provider)
     fWorkLoop = NULL;
     fInterruptSource = NULL;
     fInterruptsEnabled = false;
+    fPlatformInterrupt = false;
     fEventWaitLock = NULL;
     fEventWaitChannel = 0;
     fUSBBus = NULL;
@@ -687,7 +719,7 @@ bool RavynXHCIPort::start(IOService *provider)
      * a failed registration here just leaves fInterruptsEnabled false and
      * everything behaves exactly as before. */
     fEventWaitLock = IOLockAlloc();
-    fWorkLoop = (fEventWaitLock && fPCI) ? IOWorkLoop::workLoop() : NULL;
+    fWorkLoop = (fEventWaitLock && (fPCI || fPlatformInterrupt)) ? IOWorkLoop::workLoop() : NULL;
     if (fWorkLoop) {
         fInterruptSource = IOInterruptEventSource::interruptEventSource(
             this, &RavynXHCIPort::interruptOccurredStatic, fProvider, 0);
@@ -695,7 +727,7 @@ bool RavynXHCIPort::start(IOService *provider)
             fInterruptSource->enable();
             opWrite32(XHCI_USBCMD, opRead32(XHCI_USBCMD) | XHCI_USBCMD_INTE);
             fInterruptsEnabled = true;
-            XHCI_Log("using MSI interrupt (source 0)");
+            XHCI_Log("using %s interrupt (source 0)", fPCI ? "MSI" : "device tree");
         } else {
             if (fInterruptSource) { fInterruptSource->release(); fInterruptSource = NULL; }
             XHCI_Log("MSI registration failed, event ring stays polling-only");
