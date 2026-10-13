@@ -165,6 +165,7 @@
 , finderBuild
 , systemInformationBuild
 , calculatorBuild
+, installerBuild
 , settingsBuild
 , waylandSessionBuild
 , wlrootsBuild
@@ -307,6 +308,9 @@
 , xvfbZlibBuild
 , xxdBuild
 , xzBuild
+, e2fsprogsBuild
+, msdosCmdsBuild
+, pdblessBuild
 , unzipBuild
 , bzip2Build
 , yajlBuild
@@ -1302,6 +1306,12 @@ let
         rootMB = 260;
         bootArgs = minimalBootArgs;
       };
+      # image-minimal with the installer's disk tools and ssh, for testing them against a second disk
+      imageToolsTestBuild = imageMinimalBuild.override {
+        extraPackages = strippedExtraPackages ++ [ e2fsprogsBuild msdosCmdsBuild pdblessBuild opensshBuild ];
+        imageFileName = "puredarwin-tools-test.img";
+        rootMB = 512;
+      };
       # The minimal system on an APFS root. Same contents as image-minimal, so
       # a boot failure here is the APFS path rather than anything in userland.
       imageApfsMinimalBuild = pkgs.callPackage ../image.nix {
@@ -1450,6 +1460,53 @@ let
         # a graphical boot: the progress bar instead of the verbose log, which -v brings back
         bootArgs = "debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopprogress=1";
       };
+      # the install and rescue drive: the desktop with the disk tools, pdinstall and Install PureDarwin
+      imageInstallerBuild = imageWaylandMinimalBuild.override (old: {
+        extraPackages = old.extraPackages ++ [ e2fsprogsBuild msdosCmdsBuild pdblessBuild installerBuild
+          # the stripped base system carries no userland, so the commands pdinstall runs come from it here
+          (pkgs.runCommand "puredarwin-installer-commands" { } ''
+            mkdir -p $out/sbin $out/usr/sbin
+            cp "$(find ${userlandNoxBuild} -path '*/sbin/pdinstall' | head -n 1)" $out/sbin/pdinstall
+            cp "$(find ${userlandNoxBuild} -path '*/sbin/gpt' | head -n 1)" $out/usr/sbin/gpt
+            mkdir -p $out/bin
+            for c in mount umount; do cp "$(find ${userlandNoxBuild} -path "*/sbin/$c" | head -n 1)" $out/sbin/$c; done
+            cp "$(find ${userlandNoxBuild} -path '*/bin/sync' | head -n 1)" $out/bin/sync
+          '')
+          # the session opens Install PureDarwin on the drive that has this file, pdinstall leaves it behind
+          (pkgs.runCommand "puredarwin-install-media-marker" { } "mkdir -p $out; echo 1 > $out/.pd-install-media")
+        ];
+        imageFileName = "puredarwin-installer.img";
+        rootMB = 1600;
+        bootFilesInTree = true;
+      });
+      # the same system as the install drive, run from a ramdisk so it works from a CD
+      installerRamdiskBuild = imageInstallerBuild.override (old: {
+        netbootOnly = true;
+        useRamdisk = true;
+        # the tree is about 650 MB, the rest is what the live system can write
+        ramdiskMB = 1024;
+        bootArgs = old.bootArgs + " rd=md0";
+      });
+      # a hybrid ISO: the ESP (loader, kernel, ramdisk) is a file inside the ISO that El Torito boots from a CD,
+      # and a GPT entry points at the same file for a USB stick written with dd. inside the ISO volume, because
+      # firmware sizes an El Torito image too big for its 16 bit count by where the volume ends
+      isoInstallerBuild = pkgs.runCommand "puredarwin-installer-iso" {
+        nativeBuildInputs = [ pkgs.dosfstools pkgs.mtools pkgs.xorriso ];
+      } ''
+        n=${installerRamdiskBuild}
+        mkdir -p iso/boot
+        # the ESP holds the ramdisk whole, sized to its files plus room for the FAT itself
+        kb=$(( ( $(stat -c %s $n/ramdisk.img) + $(stat -c %s $n/kernel) + $(stat -c %s $n/BOOTX64.EFI) ) / 1024 + 16384 ))
+        mkfs.vfat -F 32 -n PUREDARWIN -C iso/boot/efi.img $kb >/dev/null
+        mmd -i iso/boot/efi.img ::/EFI ::/EFI/BOOT
+        mcopy -i iso/boot/efi.img $n/BOOTX64.EFI $n/kernel $n/boot-args.txt ::/EFI/BOOT/
+        mcopy -i iso/boot/efi.img $n/ramdisk.img ::/ramdisk.img
+        echo "PureDarwin installer, boot it in UEFI mode" > iso/README.TXT
+        mkdir -p $out
+        xorriso -as mkisofs -o $out/puredarwin-installer.iso -iso-level 3 -V PUREDARWIN -R -J \
+          -e boot/efi.img -no-emul-boot -isohybrid-gpt-basdat \
+          iso
+      '';
       imageLegacyShellBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemStripped;
         extraPackages = strippedExtraPackages;
@@ -2196,10 +2253,16 @@ EOF
       mesa-demos-nox = mesaDemosNoxBuild;
       image-wayland = imageWaylandBuild;
       image-wayland-minimal = imageWaylandMinimalBuild;
+      image-installer = imageInstallerBuild;
+      iso-installer = isoInstallerBuild;
       wlroots-nox = wlrootsNoxBuild;
       sway-nox = swayNoxBuild;
       gtk3-nox = gtk3NoxBuild;
       image-minimal = imageMinimalBuild;
+      e2fsprogs = e2fsprogsBuild;
+      image-tools-test = imageToolsTestBuild;
+      msdos-cmds = msdosCmdsBuild;
+      pdbless = pdblessBuild;
       image-apfs-minimal = imageApfsMinimalBuild;
       image-legacy = imageLegacyBuild;
       image-ia32 = imageIa32Build;

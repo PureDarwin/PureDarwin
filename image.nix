@@ -35,6 +35,8 @@
 , useRamdisk ? false
 , ramdiskMB ? 128
 , ramdiskPrune ? []
+# the loader, kernel and boot args inside the system tree too, so pdinstall can install from media whose ESP it cannot mount
+, bootFilesInTree ? false
 # fixed uuid for the ext4 root partition and filesystem, for loaders that cannot scan the disk
 # and take boot-uuid from boot-args (xnu-loader turns that into an IOMedia UUID root match)
 , rootUUID ? null
@@ -822,7 +824,10 @@ EOF
     chmod 1777 "$staging/var/run/dbus"
 
     chmod 700  $staging/var/root
-    chmod 755  $staging/var/root/.cache
+${lib.optionalString bootFilesInTree ''
+    mkdir -p "$staging/usr/standalone/PureDarwin"
+    cp ${xnuLoader}/img/EFI/BOOT/${efiBinary} ${kc}/kernel boot-args.txt "$staging/usr/standalone/PureDarwin/"
+''}    chmod 755  $staging/var/root/.cache
     chmod 755  $staging/var/empty
 
 ${lib.optionalString useRamdisk ''

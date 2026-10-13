@@ -29,5 +29,11 @@ fi
 # the first app is only the opening window, quitting it must leave the desktop running
 "$@" &
 
+# the install drive opens the installer too
+installer="/Applications/Install PureDarwin.app/Contents/MacOS/Installer"
+if [ -f /.pd-install-media ] && [ -x "$installer" ]; then
+    "$installer" &
+fi
+
 wait $compositor
 kill $menubar $dock 2>/dev/null

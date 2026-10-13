@@ -1703,6 +1703,28 @@
               mesa = mesaNoxBuild;
               src = ./src/Userspace/Calculator;
             };
+          # Install PureDarwin, the app over pdinstall
+          installerBuild =
+            pkgs.callPackage ./nix/pkgs/apps/installer.nix {
+              iokit = iokitBuild;
+              iokitHeaders = iokitCFStaticBuild;
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              appkit = appkitBuild;
+              onyx2d = onyx2dBuild;
+              coretext = coretextBuild;
+              quartzcore = quartzcoreBuild;
+              coregraphics = coregraphicsBuild;
+              applicationservices = applicationservicesBuild;
+              coreservices = coreServicesBuild;
+              windowserver = windowserverBuild;
+              openglFramework = openglFrameworkNoxBuild;
+              mesa = mesaNoxBuild;
+              src = ./src/Userspace/Installer;
+            };
           # neuswc plus the Terminal from launchd, the Wayland counterpart of startx with xterm
           waylandSessionBuild =
             pkgs.runCommand "puredarwin-wayland-session" { } ''
@@ -4449,7 +4471,7 @@
           # Image contents (see nix/image-contents.nix).
           imageContents = import ./nix/image-contents.nix {
             inherit
-              appkitBuild windowserverBuild applicationservicesBuild terminalBuild menubarBuild dockBuild finderBuild systemInformationBuild calculatorBuild settingsBuild waylandSessionBuild
+              appkitBuild windowserverBuild applicationservicesBuild terminalBuild menubarBuild dockBuild finderBuild systemInformationBuild calculatorBuild installerBuild settingsBuild waylandSessionBuild
               nixPortPackages
               atspi2CoreBuild autoconfBuild automakeBuild bisonBuild bmakeBuild cairoBuild
               cairoGobjectBuild cctoolsBuild coreFoundationBuild curlBuild darwinCrossToolchain
@@ -4611,6 +4633,7 @@
             finder = finderBuild;
             system-information = systemInformationBuild;
             calculator = calculatorBuild;
+            installer = installerBuild;
             settings = settingsBuild;
             wayland-session = waylandSessionBuild;
           };
