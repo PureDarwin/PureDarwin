@@ -460,6 +460,8 @@ struct ifnet {
 	void		*if_pdowner;
 	void		(*if_pdinput)(struct ifnet *, struct mbuf *);
 	void		(*if_pdlinkchange)(struct ifnet *);
+	// if_slowtimo's once a second if_timer countdown, which drives if_watchdog
+	struct timeout	if_slowtimo;
 };
 struct arpcom {
 	struct ifnet	ac_if;

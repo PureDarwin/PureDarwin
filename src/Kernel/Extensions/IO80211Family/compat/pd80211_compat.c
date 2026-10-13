@@ -730,12 +730,26 @@ ifq_purge(struct ifqueue *q)
 
 // interfaces
 
+// OpenBSD's if_slowtimo: counts if_timer down once a second and calls if_watchdog at zero.
+// net80211 retries and times out authentication and association from that watchdog
+static void
+if_slowtimo(void *arg)
+{
+	struct ifnet *ifp = arg;
+
+	if (ifp->if_timer > 0 && --ifp->if_timer == 0 && ifp->if_watchdog)
+		ifp->if_watchdog(ifp);
+	timeout_add_sec(&ifp->if_slowtimo, 1);
+}
+
 void
 if_attach(struct ifnet *ifp)
 {
 	ifp->if_snd.ifq_if = ifp;
 	if (ifp->if_snd.ifq_maxlen == 0)
 		ifp->if_snd.ifq_maxlen = IFQ_MAXLEN;
+	timeout_set(&ifp->if_slowtimo, if_slowtimo, ifp);
+	timeout_add_sec(&ifp->if_slowtimo, 1);
 }
 
 void
@@ -761,6 +775,7 @@ ether_ifdetach(struct ifnet *ifp)
 void
 if_detach(struct ifnet *ifp)
 {
+	timeout_del(&ifp->if_slowtimo);
 	ifq_purge(&ifp->if_snd);
 }
 
