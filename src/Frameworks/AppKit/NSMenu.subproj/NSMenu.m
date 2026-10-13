@@ -164,7 +164,7 @@ static NSMutableArray *__NSMenuPopUpWindows = nil;
 
 -initApplicationMenu:(NSString*)appName {
    [self init];
-   NSMenuItem *quitItem = [[NSMenuItem alloc] initWithTitle:[@"Quit " stringByAppendingString:appName] action:@selector(terminate:) keyEquivalent:@"q"];
+   NSMenuItem *quitItem = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:NSLocalizedStringFromTableInBundle(@"Quit %@", nil, [NSBundle bundleForClass:[NSMenu class]], @"application menu item, the app name"), appName] action:@selector(terminate:) keyEquivalent:@"q"];
    [self addItem: quitItem];
    [self setValue:@"NSAppleMenu" forKey:@"name"];
    return self;

@@ -148,6 +148,11 @@ stdenv.mkDerivation {
     # (+[NSKeyboardBindingManager defaultKeyBindingManager] finds them through the same bundle)
     cp "$src/NSKeyboardBinding/StandardKeyBindings.keyBindings" "$frameworkDir/Versions/A/Resources/"
 
+    # the string tables, so menus and panels follow AppleLanguages
+    for l in "$src"/*.lproj; do
+      install -Dm644 -t "$frameworkDir/Versions/A/Resources/$(basename "$l")" "$l/Localizable.strings"
+    done
+
     ln -s A "$frameworkDir/Versions/Current"
     ln -s Versions/Current/AppKit "$frameworkDir/AppKit"
     ln -s Versions/Current/Headers "$frameworkDir/Headers"

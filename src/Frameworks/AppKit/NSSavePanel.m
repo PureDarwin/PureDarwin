@@ -20,7 +20,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 -init {
    [super initWithContentRect:NSMakeRect(0,0,1,1) styleMask:NSTitledWindowMask|NSResizableWindowMask backing:NSBackingStoreBuffered defer:YES];
 
-   _dialogTitle=@"Save";
+   _dialogTitle=[NSLocalizedStringFromTableInBundle(@"Save", nil, [NSBundle bundleForClass:[NSSavePanel class]], @"save panel title") copy];
    _filename=@"";
    _directory=[NSHomeDirectory() copy];
    _requiredFileType=@"";

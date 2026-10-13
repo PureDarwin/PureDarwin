@@ -227,7 +227,7 @@ static NSPrintOperation *_currentOperation=nil;
 		// We can't assume that there are valid titles on every window
 		NSString* title = [[_view window] title];
 		if (title == nil) {
-			title = @"Printing View";
+			title = NSLocalizedStringFromTableInBundle(@"Printing View", nil, [NSBundle bundleForClass:[NSPrintOperation class]], @"print job title for a view in a window without one");
 		}
 		
      [[_printInfo dictionary] setObject:_view forKey:@"_NSView"];
