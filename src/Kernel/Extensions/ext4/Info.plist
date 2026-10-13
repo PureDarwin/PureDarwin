@@ -29,9 +29,9 @@
 			<key>CFBundleIdentifier</key>
 			<string>com.apple.filesystems.ext4</string>
 			<key>IOClass</key>
-			<string>com_ravynos_filesystems_ext4</string>
+			<string>org_puredarwin_filesystems_ext4</string>
 			<key>IOMatchCategory</key>
-			<string>com_ravynos_filesystems_ext4</string>
+			<string>org_puredarwin_filesystems_ext4</string>
 			<key>IOProviderClass</key>
 			<string>IOResources</string>
 			<key>IOResourceMatch</key>

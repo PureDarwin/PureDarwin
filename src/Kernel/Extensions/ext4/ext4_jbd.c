@@ -130,8 +130,11 @@ static int e4j_write_jsb(struct ext4mount *emp, struct e4jnl *j,
 static void
 e4j_flush_device(struct ext4mount *emp)
 {
-	(void)VNOP_IOCTL(emp->em_devvp, DKIOCSYNCHRONIZECACHE, NULL, FWRITE,
-	    vfs_context_current());
+	// vfs_context_create is public KPI, vfs_context_current is not exported on macOS
+	vfs_context_t ctx = vfs_context_create(NULL);
+
+	(void)VNOP_IOCTL(emp->em_devvp, DKIOCSYNCHRONIZECACHE, NULL, FWRITE, ctx);
+	vfs_context_rele(ctx);
 }
 
 /* Read/write one journal block (journal-file logical block jlblk). */

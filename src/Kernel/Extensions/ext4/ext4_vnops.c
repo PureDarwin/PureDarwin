@@ -13,8 +13,12 @@
 #include <sys/unistd.h>
 #include <sys/syslimits.h>
 #include <sys/fcntl.h>
+// macOS's Kernel.framework has no fsctl.h, the root-auth fsctl is PureDarwin's boot path only
+#if __has_include(<sys/fsctl.h>)
 #include <sys/fsctl.h>
+#endif
 #include <sys/disk.h>
+#include <sys/xattr.h>
 #include <string.h>
 #include <vm/vm_kern.h>
 #include <IOKit/IOLocks.h>
@@ -2368,12 +2372,14 @@ ext4_vnop_ioctl(struct vnop_ioctl_args *ap)
 		 * and for anything we would have flushed, yes. */
 		return 0;
 
+#ifdef FSIOC_KERNEL_ROOTAUTH
 	case FSIOC_KERNEL_ROOTAUTH:
 		/*
 		 * Apple Silicon macOS boots a Signed System Volume and bsd_init()
 		 * panics if the root file system cannot vouch for its own seal.
 		 */
 		return 0;
+#endif
 
 	default:
 		/* ENOTTY, not ENOTSUP: this is the POSIX answer for an ioctl a

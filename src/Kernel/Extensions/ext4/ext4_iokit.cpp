@@ -16,19 +16,19 @@ extern "C" {
     int ext4_vfs_unregister(void);
 }
 
-class com_ravynos_filesystems_ext4 : public IOService
+class org_puredarwin_filesystems_ext4 : public IOService
 {
-    OSDeclareDefaultStructors(com_ravynos_filesystems_ext4)
+    OSDeclareDefaultStructors(org_puredarwin_filesystems_ext4)
 public:
     virtual bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
     virtual void stop(IOService *provider) APPLE_KEXT_OVERRIDE;
 };
 
 #define super IOService
-OSDefineMetaClassAndStructors(com_ravynos_filesystems_ext4, IOService)
+OSDefineMetaClassAndStructors(org_puredarwin_filesystems_ext4, IOService)
 
 bool
-com_ravynos_filesystems_ext4::start(IOService *provider)
+org_puredarwin_filesystems_ext4::start(IOService *provider)
 {
     if (!super::start(provider))
         return false;
@@ -39,7 +39,7 @@ com_ravynos_filesystems_ext4::start(IOService *provider)
 }
 
 void
-com_ravynos_filesystems_ext4::stop(IOService *provider)
+org_puredarwin_filesystems_ext4::stop(IOService *provider)
 {
     ext4_vfs_unregister();
     super::stop(provider);
