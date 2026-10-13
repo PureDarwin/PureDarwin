@@ -444,6 +444,9 @@ static NSInteger pdExitIndex = -1;
         total.width += 2 * SHADOW_M;
         total.height += 2 * PANEL_INSET + 2 * SHADOW_M;
     }
+    // round up to whole pixels so the window's truncation never clips the panel edge
+    total.width = ceil(total.width);
+    total.height = ceil(total.height);
     frame.size = total;
     [self setFrame:frame];
 }

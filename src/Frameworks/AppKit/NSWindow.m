@@ -418,7 +418,9 @@ static BOOL _allowsAutomaticWindowTabbing=YES;
 
         int depth = [_display depth] / 8;
         int shmfd = shm_open([shmPath cString], O_RDWR, 0600);
-        bufsize = depth * _frame.size.width * _frame.size.height;
+        // whole pixels, truncated as the window server does, or a fractional width shears every row
+        int pixelsWide = (int)_frame.size.width, pixelsHigh = (int)_frame.size.height;
+        bufsize = (size_t)depth * pixelsWide * pixelsHigh;
 
         if(shmfd >= 0) {
             /* The window server sizes this object from its own idea of the
@@ -443,8 +445,8 @@ static BOOL _allowsAutomaticWindowTabbing=YES;
 
         O2ColorSpaceRef colorSpace = O2ColorSpaceCreateDeviceRGB();
         O2Surface *surface = [[O2Surface alloc] initWithBytes:buffer
-                width:_frame.size.width height:_frame.size.height
-                bitsPerComponent:8 bytesPerRow:4*_frame.size.width colorSpace:colorSpace
+                width:pixelsWide height:pixelsHigh
+                bitsPerComponent:8 bytesPerRow:4*pixelsWide colorSpace:colorSpace
                 bitmapInfo:kO2BitmapByteOrder32Little|kCGImageAlphaPremultipliedFirst];
         _context = [[O2Context_builtin_FT alloc] initWithSurface:surface flipped:NO];
 
