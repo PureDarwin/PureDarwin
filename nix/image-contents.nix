@@ -228,6 +228,7 @@
 , ninjaBuild
 , cmakeBuild
 , clangCrossBuild
+, dsymutilBuild
 , kcToolsGuestBuild
 , mesonBuild
 , nativeLd
@@ -567,6 +568,7 @@ let
     ninja = ninjaBuild;
     cmake = cmakeBuild;
     clang = clangCrossBuild;
+    dsymutil = dsymutilBuild;
     kc-tools-guest = kcToolsGuestBuild;
     meson = mesonBuild;
     pkgconf = pkgconfBuild;

@@ -1136,6 +1136,17 @@
               llvmSrc = pkgs.llvmPackages_21.libllvm.monorepoSrc;
               llvmVersion = pkgs.llvmPackages_21.llvm.version;
             };
+          # dsymutil for the guest toolchain: clang runs it after every -g link on Darwin, so
+          # configure link tests fail without it. Same configuration as llvm-cross, only this tool
+          dsymutilBuild = llvmCrossBuild.overrideAttrs (old: {
+            pname = "puredarwin-dsymutil";
+            buildPhase = "ninja -C build dsymutil";
+            # libLLVM is found at /usr/lib in the image, as llvm-cross stamps it, never through an rpath
+            installPhase = ''
+              install -Dm755 build/bin/dsymutil $out/usr/bin/dsymutil
+              ${nativeMesonToolsDir}/bin/install_name_tool -change @rpath/libLLVM.dylib /usr/lib/libLLVM.dylib $out/usr/bin/dsymutil
+            '';
+          });
           llvmCrossBuild =
             pkgs.callPackage ./nix/pkgs/toolchain/llvm-cross.nix {
               inherit darwinCrossToolchain nativeLd;
@@ -4522,7 +4533,7 @@
               libiconvBuild libnsbmpBuild libnsgifBuild libnsutilsBuild libobjcBuild libparserutilsBuild
               libpngBuild libutf8procBuild libwapcapletBuild libwnckBuild libxfce4uiBuild
               libxfce4utilBuild libxfce4windowingBuild libxml2Build libzDylibBuild mesaBuild gluBuild gluNoxBuild
-              mesaDemosBuild migcomDarwinBuild mkPureDarwinBuild clangCrossBuild cmakeBuild kcToolsGuestBuild mesonBuild nanoBuild nativeLd ncursesBuild ninjaBuild
+              mesaDemosBuild migcomDarwinBuild mkPureDarwinBuild clangCrossBuild dsymutilBuild cmakeBuild kcToolsGuestBuild mesonBuild nanoBuild nativeLd ncursesBuild ninjaBuild
               netsurfBuild objcTestBuild openglFrameworkBuild opensshBuild opensslBuild
               pangoBuild pcre2Build pdVirglShimBuild pkgconfBuild pkgs pythonBuild
               securityBuild symptomReporterBuild splitBaseSystemArm64VirtMinimal splitBaseSystemArm64VirtMinimalRelease splitBaseSystemArm64VirtWayland
