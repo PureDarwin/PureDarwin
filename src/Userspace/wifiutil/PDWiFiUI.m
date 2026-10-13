@@ -576,8 +576,22 @@ void PDDrawWiFiSpinner(NSRect r, NSColor *colour)
         }
     }
     [line drawAtPoint:NSMakePoint(82, ty) withAttributes:ta];
-    [sub drawAtPoint:NSMakePoint(82, ty + 20) withAttributes:uiText(@"Inter-Regular", 12, [self muted])];
-    y = MAX(96, ty + 50);
+    // the line under it wraps the same way
+    NSDictionary *sa = uiText(@"Inter-Regular", 12, [self muted]);
+    [line setString:@""];
+    ty += 20;
+    for (NSString *word in [sub componentsSeparatedByString:@" "]) {
+        NSString *next = [line length] ? [NSString stringWithFormat:@"%@ %@", line, word] : word;
+        if ([line length] && [next sizeWithAttributes:sa].width > tw) {
+            [line drawAtPoint:NSMakePoint(82, ty) withAttributes:sa];
+            ty += 16;
+            [line setString:word];
+        } else {
+            [line setString:next];
+        }
+    }
+    [line drawAtPoint:NSMakePoint(82, ty) withAttributes:sa];
+    y = MAX(96, ty + 30);
 
     if ([self other]) {
         [@"Network Name" drawAtPoint:NSMakePoint(lx, y + 5) withAttributes:label];
@@ -731,7 +745,7 @@ void PDDrawWiFiSpinner(NSRect r, NSColor *colour)
 + (void)showForNetwork:(PDWiFiNetwork *)network accent:(NSColor *)accent
 {
     // room under the checkboxes for an error line above the buttons
-    CGFloat h = network == nil ? 346 : 276;
+    CGFloat h = network == nil ? 362 : 276;
     NSRect screen = [[NSScreen mainScreen] visibleFrame];
     NSRect frame = NSMakeRect(NSMidX(screen) - 220, NSMaxY(screen) - NSHeight(screen) * 0.22 - h, 440, h);
     NSWindow *w = [[NSWindow alloc] initWithContentRect:frame
