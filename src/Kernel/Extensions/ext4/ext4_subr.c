@@ -498,6 +498,35 @@ ext4_gd_note_inode_used(struct ext4mount *emp, struct ext4_group_desc *gd,
 	    ext4_itable_unused_from_bitmap(map, emp->em_inodes_per_group));
 }
 
+// a reused inode keeps the bytes past struct ext4_inode, its old in-inode xattrs among them,
+// so clear them as Linux clears a whole new inode. Called with em_alloc_lock held
+static int
+ext4_inode_zero_tail(struct ext4mount *emp, ino_t ino)
+{
+	struct ext4_group_desc gd;
+	uint32_t grp = (uint32_t)((ino - 1) / emp->em_inodes_per_group);
+	uint32_t index = (uint32_t)((ino - 1) % emp->em_inodes_per_group);
+	uint64_t itable_block, byteoff;
+	buf_t bp = NULL;
+	int error;
+
+	if (emp->em_inode_size <= sizeof(struct ext4_inode))
+		return 0;
+	error = ext4_read_group_desc(emp, grp, &gd);
+	if (error)
+		return error;
+	itable_block = le32(gd.bg_inode_table_lo);
+	if (emp->em_desc_size >= 64)
+		itable_block |= ((uint64_t)le32(gd.bg_inode_table_hi)) << 32;
+	byteoff = (uint64_t)index * emp->em_inode_size;
+	error = ext4_blkread(emp, itable_block + byteoff / emp->em_blocksize, &bp);
+	if (error)
+		return error;
+	memset((char *)buf_dataptr(bp) + byteoff % emp->em_blocksize + sizeof(struct ext4_inode), 0,
+	    emp->em_inode_size - sizeof(struct ext4_inode));
+	return ext4_meta_bwrite(emp, bp);
+}
+
 static int
 ext4_alloc_inode_locked(struct ext4mount *emp, enum vtype type,
     ino_t *ino_out)
@@ -580,7 +609,7 @@ ext4_alloc_inode_locked(struct ext4mount *emp, enum vtype type,
 				return error;
 			emp->em_stats.alloc_inodes++;
 			*ino_out = ino;
-			return 0;
+			return ext4_inode_zero_tail(emp, ino);
 		}
 		buf_brelse(bp);
 	}
