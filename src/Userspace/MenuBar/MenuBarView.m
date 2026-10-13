@@ -26,6 +26,7 @@ enum { BeakIndex = -1, NoMenu = -2 };
 - (void)openLookout:(id)sender;
 - (void)searchLookout:(id)sender;
 - (void)launchLookoutResult:(id)sender;
+- (void)closeLookout;
 - (void)layoutLookout;
 - (void)controlTextDidChange:(NSNotification *)note;
 - (BOOL)control:(NSControl *)control textView:(NSTextView *)textView doCommandBySelector:(SEL)selector;
@@ -764,11 +765,19 @@ static NSImage *loadImage(NSString *name)
             [textView deleteBackward:nil];
             [self searchLookout:nil];
         } else {
-            [_lookoutWindow orderOut:nil];
+            // the editor is still inside this command, so it ends editing on the next pass
+            [self performSelector:@selector(closeLookout) withObject:nil afterDelay:0];
         }
         return YES;
     }
     return NO;
+}
+
+// editing ends before the panel goes, a hidden field editor left first responder took no keys on the next open
+- (void)closeLookout
+{
+    [_lookoutWindow makeFirstResponder:_lookoutWindow];
+    [_lookoutWindow orderOut:nil];
 }
 
 - (void)launchLookoutResult:(id)sender
@@ -779,7 +788,7 @@ static NSImage *loadImage(NSString *name)
     if (index < 0 || index >= (NSInteger)[_lookoutResults count])
         return;
     hit = _lookoutResults[index];
-    [_lookoutWindow orderOut:nil];
+    [self closeLookout];
     if ([hit[@"action"] isEqualToString:@"copy"]) {
         NSPasteboard *pb = [NSPasteboard generalPasteboard];
 

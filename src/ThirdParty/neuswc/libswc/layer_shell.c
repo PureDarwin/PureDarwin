@@ -38,6 +38,9 @@ struct layer_surface {
 	uint32_t configure_serial;
 	bool configured;
 	bool mapped;
+	// the view that had the keyboard before an exclusive surface took it, it gets it back on hide
+	struct compositor_view *return_focus;
+	struct wl_listener return_focus_destroy_listener;
 };
 
 static bool
@@ -369,6 +372,39 @@ static const struct zwlr_layer_surface_v1_interface layer_surface_impl = {
 };
 
 static void
+handle_return_focus_destroy(struct wl_listener *listener, void *data)
+{
+	struct layer_surface *surface =
+	    wl_container_of(listener, surface, return_focus_destroy_listener);
+
+	(void)data;
+	wl_list_remove(&surface->return_focus_destroy_listener.link);
+	surface->return_focus = NULL;
+}
+
+static void
+forget_return_focus(struct layer_surface *surface)
+{
+	if (surface->return_focus) {
+		wl_list_remove(&surface->return_focus_destroy_listener.link);
+		surface->return_focus = NULL;
+	}
+}
+
+// a hidden surface keeping the keyboard swallows every key and is never told it has focus again,
+// since setting the focus it already holds sends no enter, so it hands the keyboard back
+static void
+release_keyboard(struct layer_surface *surface)
+{
+	struct keyboard *keyboard = swc.seat->keyboard;
+	struct compositor_view *back = surface->return_focus;
+
+	if (keyboard->focus.view == surface->view)
+		keyboard_set_focus(keyboard, back && back->visible ? back : NULL);
+	forget_return_focus(surface);
+}
+
+static void
 handle_attach(struct view_handler *handler)
 {
 	struct layer_surface *surface = wl_container_of(handler, surface, view_handler);
@@ -384,11 +420,20 @@ handle_attach(struct view_handler *handler)
 			// only an exclusive surface takes the keyboard when it appears, on demand waits for a click
 			if (surface->current.keyboard_interactivity ==
 			    ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE) {
+				struct compositor_view *had = swc.seat->keyboard->focus.view;
+
+				forget_return_focus(surface);
+				if (had && had != surface->view) {
+					surface->return_focus = had;
+					wl_signal_add(&had->destroy_signal,
+					              &surface->return_focus_destroy_listener);
+				}
 				keyboard_set_focus(swc.seat->keyboard, surface->view);
 			}
 		}
 	} else if (surface->mapped) {
 		compositor_view_hide(surface->view);
+		release_keyboard(surface);
 	}
 
 	surface->mapped = mapped;
@@ -511,6 +556,7 @@ destroy_layer_surface(struct wl_resource *resource)
 	wl_list_remove(&surface->surface_destroy_listener.link);
 	wl_list_remove(&surface->surface_commit_listener.link);
 	wl_list_remove(&surface->modifier.link);
+	release_keyboard(surface);
 	compositor_view_destroy(surface->view);
 	if (had_screen) {
 		screen_update_usable_geometry(surface->screen);
@@ -561,6 +607,8 @@ layer_surface_new(struct wl_client *client, uint32_t version, uint32_t id,
 	layer_surface->current.keyboard_interactivity =
 	    ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE;
 	layer_surface->pending = layer_surface->current;
+	layer_surface->return_focus = NULL;
+	layer_surface->return_focus_destroy_listener.notify = handle_return_focus_destroy;
 	layer_surface->surface_destroy_listener.notify = handle_surface_destroy;
 	layer_surface->surface_commit_listener.notify = handle_surface_commit;
 	layer_surface->view_handler.impl = &view_handler_impl;
