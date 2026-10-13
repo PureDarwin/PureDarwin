@@ -478,11 +478,19 @@ static void
 handle_attach(struct view_handler *handler)
 {
 	struct window *window = wl_container_of(handler, window, view_handler);
+	bool has_buffer = window->view->base.buffer != NULL;
 
 	if (window->configure.acknowledged) {
 		flush(window);
 	}
 	window->configure.pending = false;
+	if (has_buffer == window->has_buffer)
+		return;
+	window->has_buffer = has_buffer;
+	if (!has_buffer && window->handler->unmapped)
+		window->handler->unmapped(window->handler_data);
+	else if (has_buffer && window->handler->mapped)
+		window->handler->mapped(window->handler_data);
 }
 
 static void
@@ -535,6 +543,7 @@ window_initialize(struct window *window, const struct window_impl *impl,
 
 	window->impl = impl;
 	window->handler = &null_handler;
+	window->has_buffer = false;
 	window->view_handler.impl = &view_handler_impl;
 	window->view->window = window;
 	compositor_apply_window_style(window->view);

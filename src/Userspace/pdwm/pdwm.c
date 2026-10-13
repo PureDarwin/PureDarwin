@@ -15,6 +15,7 @@
  */
 
 #include <signal.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <wayland-server.h>
 #include <swc.h>
@@ -28,6 +29,7 @@ struct window {
 	struct swc_window *swc;
 	struct screen *screen;
 	struct wl_list link;
+	bool hidden;
 };
 
 static struct wl_display *display;
@@ -60,30 +62,70 @@ static const struct swc_screen_handler screen_handler = {
     .usable_geometry_changed = &screen_usable_geometry_changed,
 };
 
+// the most recently focused shown window other than this one, the list keeps focus order
+static struct window *
+next_focus(struct window *window)
+{
+	struct window *other;
+
+	if (!window->screen)
+		return NULL;
+	wl_list_for_each(other, &window->screen->windows, link) {
+		if (other != window && !other->hidden)
+			return other;
+	}
+	return NULL;
+}
+
+static void
+focus_front(struct window *window)
+{
+	// the list runs from the most recently focused, so the next window to hand focus to is found first
+	if (window->screen) {
+		wl_list_remove(&window->link);
+		wl_list_insert(&window->screen->windows, &window->link);
+	}
+	focus(window);
+}
+
 static void
 window_destroy(void *data)
 {
-	struct window *window = data, *next = NULL;
+	struct window *window = data;
 
-	if (focused_window == window) {
-		/* Hand focus to a neighbour so the desktop never ends up with
-		 * no key window while windows remain. */
-		if (window->link.next != &window->screen->windows) {
-			next = wl_container_of(window->link.next, next, link);
-		} else if (window->link.prev != &window->screen->windows) {
-			next = wl_container_of(window->link.prev, next, link);
-		}
-		focus(next);
-	}
-
+	// hand focus on so the desktop never ends up with no key window while windows remain
+	if (focused_window == window)
+		focus(next_focus(window));
 	wl_list_remove(&window->link);
 	free(window);
+}
+
+// AppKit hides a window by dropping its buffer, the keyboard must not stay on it
+static void
+window_unmapped(void *data)
+{
+	struct window *window = data;
+
+	window->hidden = true;
+	if (focused_window == window)
+		focus(next_focus(window));
+}
+
+static void
+window_mapped(void *data)
+{
+	struct window *window = data;
+	bool was_hidden = window->hidden;
+
+	window->hidden = false;
+	if (was_hidden)
+		focus_front(window);
 }
 
 static void
 window_entered(void *data)
 {
-	focus(data);
+	focus_front(data);
 }
 
 static void
@@ -101,6 +143,8 @@ static const struct swc_window_handler window_handler = {
     .entered = &window_entered,
     .move = &window_keep_floating,
     .resize = &window_keep_floating,
+    .unmapped = &window_unmapped,
+    .mapped = &window_mapped,
 };
 
 static void
@@ -129,6 +173,7 @@ new_window(struct swc_window *swc)
 	}
 	window->swc = swc;
 	window->screen = active_screen;
+	window->hidden = false;
 
 	swc_window_set_handler(swc, &window_handler, window);
 	swc_window_set_stacked(swc);

@@ -51,6 +51,8 @@ struct window {
 	struct compositor_view *view;
 	struct view_handler view_handler;
 	bool managed;
+	// whether the surface had a buffer at the last attach, a hidden window drops it
+	bool has_buffer;
 	unsigned mode;
 
 	struct {

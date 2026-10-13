@@ -267,6 +267,13 @@ struct swc_window_handler {
 	 * the interactive resize will be honored.
 	 */
 	void (*resize)(void *data);
+
+	/**
+	 * Called when the window's surface loses its buffer, and when it gets one
+	 * again. A client hides a window this way without destroying it.
+	 */
+	void (*unmapped)(void *data);
+	void (*mapped)(void *data);
 };
 
 struct swc_window {
