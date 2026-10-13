@@ -399,6 +399,8 @@ EOF
   dontMoveSbin = installBaseSystem || installUserland;
   dontStrip = installBaseSystem;
   dontPatchELF = installBaseSystem;
+  # scripts run on PureDarwin, so their #! has to stay a guest path, not the build host's bash
+  dontPatchShebangs = installBaseSystem || installUserland;
 
   meta = with lib; {
     platforms = platforms.linux ++ platforms.darwin;

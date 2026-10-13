@@ -62,7 +62,8 @@ struct hfs_mount_args {
 static void
 usage(void)
 {
-    fprintf(stderr, "usage: mount [-v] -t type [-o options] special node\n");
+    fprintf(stderr, "usage: mount [-t type]\n");
+    fprintf(stderr, "       mount [-v] -t type [-o options] special node\n");
     fprintf(stderr, "       mount [-v] -a [-t [no]type[,type...]]\n");
     exit(64);
 }
@@ -265,6 +266,37 @@ mount_all(const char *typelist, const char *options, int verbose)
     return status;
 }
 
+// with no operands mount lists what is mounted, as "special on node (type, flags)"
+static int
+list_mounts(const char *type)
+{
+    static const struct { uint64_t flag; const char *name; } names[] = {
+        { MNT_RDONLY, "read-only" }, { MNT_SYNCHRONOUS, "synchronous" }, { MNT_NOEXEC, "noexec" },
+        { MNT_NOSUID, "nosuid" }, { MNT_NODEV, "nodev" }, { MNT_UNION, "union" },
+        { MNT_ASYNC, "asynchronous" }, { MNT_LOCAL, "local" }, { MNT_QUOTA, "quotas" },
+        { MNT_ROOTFS, "root file system" }, { MNT_DONTBROWSE, "nobrowse" }, { MNT_JOURNALED, "journaled" },
+        { MNT_NOATIME, "noatime" }, { MNT_SNAPSHOT, "snapshot" },
+    };
+    struct statfs *fs;
+    int n = getmntinfo(&fs, MNT_NOWAIT);
+
+    if (n <= 0) {
+        perror("mount: getmntinfo");
+        return 1;
+    }
+    for (int i = 0; i < n; i++) {
+        if (type && strcmp(type, fs[i].f_fstypename) != 0)
+            continue;
+        printf("%s on %s (%s", fs[i].f_mntfromname, fs[i].f_mntonname, fs[i].f_fstypename);
+        for (size_t k = 0; k < sizeof(names) / sizeof(names[0]); k++) {
+            if (fs[i].f_flags & names[k].flag)
+                printf(", %s", names[k].name);
+        }
+        printf(")\n");
+    }
+    return 0;
+}
+
 int
 main(int argc, char **argv)
 {
@@ -305,6 +337,8 @@ main(int argc, char **argv)
         return mount_all(type, options, verbose);
     }
 
+    if (argc == optind)
+        return list_mounts(type);
     if (!type || argc - optind != 2)
         usage();
 

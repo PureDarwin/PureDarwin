@@ -783,7 +783,7 @@ EOF
     done
     # the rest of the configured toybox applets, only where no real command of that name is installed
     for applet in \
-      basename cat cut dirname echo false head hostname kill pwd seq sha1sum sha256sum sha512sum \
+      basename cat cksum cut dirname echo false head hostname kill md5sum pwd seq sha1sum sha256sum sha512sum \
       sleep tail test tr true uname uniq wc yes
     do
       [ -e "$staging/bin/toybox" ] || break
@@ -793,7 +793,13 @@ EOF
       fi
     done
     ln -s toybox "$staging/usr/bin/env"
-    ln -sf zsh "$staging/bin/sh"
+    # /bin/sh is the userland launcher, it runs the shell /private/var/select/sh names, bash as on macOS
+    mkdir -p "$staging/private/var/select"
+    if [ -x "$staging/bin/bash" ]; then
+      ln -sfn /bin/bash "$staging/private/var/select/sh"
+    else
+      ln -sfn /bin/zsh "$staging/private/var/select/sh"
+    fi
 
     # Scripts widely assume `#!/usr/bin/env foo` works, not just `/bin/foo`.
     ln -sf ../../bin/env "$staging/usr/bin/env"

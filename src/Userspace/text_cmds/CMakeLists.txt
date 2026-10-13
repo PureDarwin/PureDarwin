@@ -47,3 +47,6 @@ add_text_cmd(wc wc.c)
 target_include_directories(look PRIVATE look)
 target_include_directories(tail PRIVATE tail)
 target_include_directories(tr PRIVATE tr)
+
+# md5 is the macOS command over toybox md5sum
+install(PROGRAMS md5.sh DESTINATION bin RENAME md5 COMPONENT BaseSystem)
