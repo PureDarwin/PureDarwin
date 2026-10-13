@@ -388,12 +388,18 @@ int  ext4_ino_is_live(struct ext4mount *emp, ino_t ino);
 int  ext4_indirect_lookup(struct ext4mount *emp, uint32_t blk, uint32_t lblk,
                int level, uint64_t *pblk_out);
 int  ext4_blkread(struct ext4mount *emp, uint64_t pblk, buf_t *bpp);
-// in-inode extended attributes (ext4_xattr.c), index 4 is Linux's trusted namespace
+// extended attributes (ext4_xattr.c), index 1 is Linux's user namespace and 4 its trusted one
+#define EXT4_XATTR_INDEX_USER    1
 #define EXT4_XATTR_INDEX_TRUSTED 4
-int  ext4_xattr_ibody_get(struct ext4mount *emp, ino_t ino, uint8_t index, const char *name,
-               void *value, uint32_t cap, uint32_t *out_size);
-int  ext4_xattr_ibody_set(struct ext4mount *emp, ino_t ino, uint8_t index, const char *name,
-               const void *value, uint32_t vsize);
+struct ext4node;
+int  ext4_xattr_get(struct ext4mount *emp, ino_t ino, uint8_t index, const char *name,
+               void *value, size_t cap, size_t *out_size);
+int  ext4_xattr_set(struct ext4node *ep, uint8_t index, const char *name, const void *value,
+               size_t vsize, int options);
+int  ext4_xattr_list(struct ext4mount *emp, ino_t ino, uint8_t index, char *buf, size_t cap,
+               size_t *out_len);
+int  ext4_xattr_release_block(struct ext4mount *emp, struct ext4_inode *raw);
+uint64_t ext4_inode_xattr_block(struct ext4mount *emp, const struct ext4_inode *raw);
 uint64_t ext4_gd_block_bitmap(struct ext4mount *emp, const struct ext4_group_desc *gd);
 uint64_t ext4_gd_inode_bitmap(struct ext4mount *emp, const struct ext4_group_desc *gd);
 int  ext4_bitmap_test(const uint8_t *map, uint32_t bit);

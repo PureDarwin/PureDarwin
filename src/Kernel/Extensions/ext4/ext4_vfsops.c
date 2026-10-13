@@ -342,8 +342,10 @@ ext4_vfs_getattr(struct mount *mp, struct vfs_attr *fsap,
 		cap->valid[VOL_CAPABILITIES_FORMAT] =
 		    VOL_CAP_FMT_SYMBOLICLINKS | VOL_CAP_FMT_HARDLINKS |
 		    VOL_CAP_FMT_CASE_SENSITIVE | VOL_CAP_FMT_CASE_PRESERVING;
-		cap->capabilities[VOL_CAPABILITIES_INTERFACES] = 0;
-		cap->valid[VOL_CAPABILITIES_INTERFACES] = 0;
+		// native xattrs need the ext_attr feature, without it everything lands in AppleDouble
+		cap->capabilities[VOL_CAPABILITIES_INTERFACES] =
+		    (le32(VFSTOEXT4(mp)->em_sb.s_feature_compat) & 0x0008u) ? VOL_CAP_INT_EXTENDED_ATTR : 0;
+		cap->valid[VOL_CAPABILITIES_INTERFACES] = VOL_CAP_INT_EXTENDED_ATTR;
 		cap->capabilities[VOL_CAPABILITIES_RESERVED1] = 0;
 		cap->valid[VOL_CAPABILITIES_RESERVED1] = 0;
 		cap->capabilities[VOL_CAPABILITIES_RESERVED2] = 0;

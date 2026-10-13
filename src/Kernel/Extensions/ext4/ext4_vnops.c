@@ -146,8 +146,9 @@ restart:
 	ep->e_size  = size;
 	ep->e_vtype = vtype;
 	{
-		uint32_t xv = 0, xs = 0;
-		if (ext4_xattr_ibody_get(emp, ino, EXT4_XATTR_INDEX_TRUSTED, "bsdflags", &xv, sizeof(xv), &xs) == 0 &&
+		uint32_t xv = 0;
+		size_t xs = 0;
+		if (ext4_xattr_get(emp, ino, EXT4_XATTR_INDEX_TRUSTED, "bsdflags", &xv, sizeof(xv), &xs) == 0 &&
 		    xs == sizeof(xv))
 			ep->e_xflags = le32(xv);
 	}
@@ -312,9 +313,9 @@ ext4_set_bsd_flags(struct ext4node *ep, uint32_t flags)
 		f |= EXT4_NODUMP_FL;
 	if (extra != ep->e_xflags) {
 		uint32_t v = le32(extra);
-		int error = ext4_xattr_ibody_set(ep->e_mount, ep->e_ino, EXT4_XATTR_INDEX_TRUSTED, "bsdflags",
-		    extra ? &v : NULL, sizeof(v));
-		if (error)
+		int error = ext4_xattr_set(ep, EXT4_XATTR_INDEX_TRUSTED, "bsdflags", extra ? &v : NULL,
+		    sizeof(v), 0);
+		if (error && error != ENOATTR)
 			return error;
 		ep->e_xflags = extra;
 	}
@@ -902,7 +903,9 @@ ext4_finish_free_inode(struct ext4node *ep)
 {
 	int error;
 
-	error = ext4_inode_free_extents(ep->e_mount, &ep->e_raw);
+	error = ext4_xattr_release_block(ep->e_mount, &ep->e_raw);
+	if (!error)
+		error = ext4_inode_free_extents(ep->e_mount, &ep->e_raw);
 	if (error)
 		return error;
 	ep->e_raw.i_links_count = 0;
@@ -1013,7 +1016,9 @@ ext4_drop_inode_ino(struct ext4mount *emp, ino_t ino)
 		return ext4_write_inode(emp, ino, &raw);
 	}
 
-	error = ext4_inode_free_extents(emp, &raw);
+	error = ext4_xattr_release_block(emp, &raw);
+	if (!error)
+		error = ext4_inode_free_extents(emp, &raw);
 	if (error)
 		return error;
 	microtime(&tv);
@@ -2041,7 +2046,9 @@ ext4_vnop_readlink_impl(struct vnop_readlink_args *ap)
 		return EINVAL;
 
 	/* fast symlink: target stored inline in i_block[] when size < 60 */
-	if (size < 60 && le32(ep->e_raw.i_blocks_lo) == 0) {
+	// an xattr block counts in i_blocks without holding the target, as Linux reads it
+	if (size < 60 && le32(ep->e_raw.i_blocks_lo) ==
+	    (ext4_inode_xattr_block(emp, &ep->e_raw) ? emp->em_blocksize / 512 : 0)) {
 		return uiomove((caddr_t)ep->e_raw.i_block, (int)size, uio);
 	}
 
@@ -2652,6 +2659,128 @@ ext4_vnop_inactive(struct vnop_inactive_args *ap)
 	return error;
 }
 
+/*
+ * Native extended attributes in Linux's user namespace, so Linux sees name N
+ * as user.N. A name that is not stored here answers ENOTSUP, which sends xnu
+ * to the AppleDouble fallback for that one attribute.
+ */
+static int
+ext4_xattr_native(vnode_t vp, const char *name)
+{
+	if (name != NULL && strcmp(name, XATTR_RESOURCEFORK_NAME) == 0)
+		return 0;
+	return vnode_isreg(vp) || vnode_isdir(vp) || vnode_islnk(vp);
+}
+
+static int
+ext4_vnop_getxattr(struct vnop_getxattr_args *ap)
+{
+	struct ext4node *ep = VTOE(ap->a_vp);
+	struct ext4mount *emp = ep->e_mount;
+	size_t size = 0, cap = ap->a_uio ? (size_t)uio_resid(ap->a_uio) : 0;
+	void *buf = NULL;
+	int error;
+
+	if (!ext4_xattr_native(ap->a_vp, ap->a_name))
+		return ENOTSUP;
+	if (cap > emp->em_blocksize)
+		cap = emp->em_blocksize;
+	if (ap->a_uio != NULL) {
+		buf = _MALLOC(cap ? cap : 1, M_TEMP, M_WAITOK);
+		if (buf == NULL)
+			return ENOMEM;
+	}
+	ext4_fs_lock(emp);
+	error = ext4_xattr_get(emp, ep->e_ino, EXT4_XATTR_INDEX_USER, ap->a_name, buf, cap, &size);
+	ext4_fs_unlock_nocommit(emp);
+	if (error == 0 && ap->a_uio != NULL)
+		error = uiomove(buf, (int)size, ap->a_uio);
+	if (error == 0 && ap->a_size != NULL)
+		*ap->a_size = size;
+	if (buf)
+		_FREE(buf, M_TEMP);
+	return error == ENOATTR ? ENOTSUP : error;
+}
+
+static int
+ext4_vnop_setxattr(struct vnop_setxattr_args *ap)
+{
+	struct ext4node *ep = VTOE(ap->a_vp);
+	struct ext4mount *emp = ep->e_mount;
+	size_t len = (size_t)uio_resid(ap->a_uio);
+	void *buf;
+	int error;
+
+	if (!ext4_xattr_native(ap->a_vp, ap->a_name) || len > emp->em_blocksize)
+		return ENOTSUP;
+	if (vfs_isrdonly(vnode_mount(ap->a_vp)))
+		return EROFS;
+	buf = _MALLOC(len ? len : 1, M_TEMP, M_WAITOK);
+	if (buf == NULL)
+		return ENOMEM;
+	error = uiomove(buf, (int)len, ap->a_uio);
+	if (error == 0) {
+		ext4_fs_lock(emp);
+		error = ext4_xattr_set(ep, EXT4_XATTR_INDEX_USER, ap->a_name, buf, len,
+		    ap->a_options & (XATTR_CREATE | XATTR_REPLACE));
+		ext4_fs_unlock(emp);
+	}
+	_FREE(buf, M_TEMP);
+	// no room here, or a replace of an attribute that may live in AppleDouble
+	if (error == ENOSPC || (error == ENOATTR && (ap->a_options & XATTR_REPLACE)))
+		return ENOTSUP;
+	return error;
+}
+
+static int
+ext4_vnop_removexattr(struct vnop_removexattr_args *ap)
+{
+	struct ext4node *ep = VTOE(ap->a_vp);
+	struct ext4mount *emp = ep->e_mount;
+	int error;
+
+	if (!ext4_xattr_native(ap->a_vp, ap->a_name))
+		return ENOTSUP;
+	if (vfs_isrdonly(vnode_mount(ap->a_vp)))
+		return EROFS;
+	ext4_fs_lock(emp);
+	error = ext4_xattr_set(ep, EXT4_XATTR_INDEX_USER, ap->a_name, NULL, 0, 0);
+	ext4_fs_unlock(emp);
+	return error == ENOATTR ? ENOTSUP : error;
+}
+
+static int
+ext4_vnop_listxattr(struct vnop_listxattr_args *ap)
+{
+	struct ext4node *ep = VTOE(ap->a_vp);
+	struct ext4mount *emp = ep->e_mount;
+	size_t len = 0, cap = ap->a_uio ? (size_t)uio_resid(ap->a_uio) : 0;
+	char *buf = NULL;
+	int error;
+
+	if (!ext4_xattr_native(ap->a_vp, NULL))
+		return ENOTSUP;
+	// the names of one inode fit in its inode and one block
+	if (cap > emp->em_blocksize + emp->em_inode_size)
+		cap = emp->em_blocksize + emp->em_inode_size;
+	if (ap->a_uio != NULL) {
+		buf = _MALLOC(cap ? cap : 1, M_TEMP, M_WAITOK);
+		if (buf == NULL)
+			return ENOMEM;
+	}
+	ext4_fs_lock(emp);
+	error = ext4_xattr_list(emp, ep->e_ino, EXT4_XATTR_INDEX_USER, buf, cap, &len);
+	ext4_fs_unlock_nocommit(emp);
+	if (error == 0 && ap->a_uio != NULL && len)
+		error = uiomove(buf, (int)len, ap->a_uio);
+	if (error == 0 && ap->a_size != NULL)
+		*ap->a_size += len;
+	if (buf)
+		_FREE(buf, M_TEMP);
+	// xnu then adds any names kept in an AppleDouble file
+	return error ? error : ENOTSUP;
+}
+
 #define VOPFUNC int (*)(void *)
 
 static const struct vnodeopv_entry_desc ext4_vnodeop_entries[] = {
@@ -2681,6 +2810,10 @@ static const struct vnodeopv_entry_desc ext4_vnodeop_entries[] = {
 	{ &vnop_ioctl_desc,    (VOPFUNC)ext4_vnop_ioctl },
 	{ &vnop_reclaim_desc,  (VOPFUNC)ext4_vnop_reclaim },
 	{ &vnop_pathconf_desc, (VOPFUNC)ext4_vnop_pathconf },
+	{ &vnop_getxattr_desc,    (VOPFUNC)ext4_vnop_getxattr },
+	{ &vnop_setxattr_desc,    (VOPFUNC)ext4_vnop_setxattr },
+	{ &vnop_removexattr_desc, (VOPFUNC)ext4_vnop_removexattr },
+	{ &vnop_listxattr_desc,   (VOPFUNC)ext4_vnop_listxattr },
 	{ NULL, NULL }
 };
 
