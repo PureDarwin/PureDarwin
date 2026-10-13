@@ -450,6 +450,23 @@ extern int __CFConstantStringClassReference[];
     return (NSString *)CFAutorelease(result);
 }
 
+// cut to newLength, or grown by repeating pad from padIndex, as Cocoa documents it
+- (NSString *)stringByPaddingToLength:(NSUInteger)newLength withString:(NSString *)pad startingAtIndex:(NSUInteger)padIndex {
+    NSUInteger len = [self length], plen = [pad length];
+    CFMutableStringRef result;
+
+    if (newLength <= len)
+        return [self substringToIndex:newLength];
+    if (plen == 0 || padIndex >= plen)
+        [NSException raise:NSRangeException format:@"-[NSString stringByPaddingToLength:withString:startingAtIndex:] pad index %lu out of range", (unsigned long)padIndex];
+    result = CFStringCreateMutableCopy(kCFAllocatorDefault, 0, (CFStringRef)self);
+    for (NSUInteger i = len, k = padIndex; i < newLength; i++, k = (k + 1) % plen) {
+        UniChar ch = [pad characterAtIndex:k];
+        CFStringAppendCharacters(result, &ch, 1);
+    }
+    return (NSString *)CFAutorelease(result);
+}
+
 - (NSString *)substringFromIndex:(NSUInteger)index {
     return [self substringWithRange:NSMakeRange(index, [self length] - index)];
 }

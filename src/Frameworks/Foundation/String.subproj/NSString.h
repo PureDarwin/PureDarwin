@@ -157,6 +157,7 @@ typedef NS_OPTIONS(NSUInteger, NSStringCompareOptions) {
 - (NSString *)substringFromIndex:(NSUInteger)index;
 - (NSString *)substringToIndex:(NSUInteger)index;
 - (NSString *)stringByAppendingString:(NSString *)string;
+- (NSString *)stringByPaddingToLength:(NSUInteger)newLength withString:(NSString *)padString startingAtIndex:(NSUInteger)padIndex;
 
 - (BOOL)getBytes:(void *)buffer
        maxLength:(NSUInteger)maxBufferCount
