@@ -185,6 +185,9 @@ private:
     UInt8                  fResetTries[64];
     uint64_t               fVbusOnAt;
     volatile bool          fHotplugRunning;
+    // a port status change event wakes the hotplug thread early, under fEventWaitLock
+    bool                   fPortChangePending;
+    UInt32                 fHotplugWaitChannel;
     // set once the controller is halted for a restart or the watchdog deadline
     volatile bool          fQuiesced;
     IONotifier           * fRestartNotifier;
