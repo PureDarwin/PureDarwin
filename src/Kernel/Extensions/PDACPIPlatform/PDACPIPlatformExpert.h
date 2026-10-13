@@ -79,6 +79,7 @@ private:
 
 	void publishRTC(void);
 	void setupNVRAM(void);
+	void setupEFIVariables(void);
 
 public:
 	virtual const char *deleteList(void) APPLE_KEXT_OVERRIDE;

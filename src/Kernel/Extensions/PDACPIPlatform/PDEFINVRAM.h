@@ -12,6 +12,9 @@
 #include <IOKit/nvram/IONVRAMController.h>
 #include <kern/thread_call.h>
 
+// one EFI runtime call with up to five arguments, interrupts off, on the calling thread's stack
+kern_return_t efiCall5(uint64_t func, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t *status);
+
 // IODTNVRAM's one CHRP bank, kept in firmware variables through EFI runtime services
 class PDEFINVRAM : public IONVRAMController {
 	OSDeclareDefaultStructors(PDEFINVRAM)

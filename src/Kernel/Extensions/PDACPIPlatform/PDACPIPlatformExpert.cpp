@@ -44,6 +44,7 @@ extern "C" {
 #include "../AppleAPIC/PICShared.h"
 #include "PDACPIPlatformExpert.h"
 #include "PDEFINVRAM.h"
+#include "PDEFIVariables.h"
 #include <IOKit/IONVRAM.h>
 
 extern "C" {
@@ -388,9 +389,21 @@ bool PDACPIPlatformExpert::start(IOService *provider) {
 
 	publishRTC();
 	setupNVRAM();
+	setupEFIVariables();
 	if (fUACPIStarted) startACPI();
 
 	return true;
+}
+
+// firmware variables for boot entries, only when the loader handed over EFI runtime services
+void PDACPIPlatformExpert::setupEFIVariables(void) {
+	PDEFIVariables *vars = new PDEFIVariables;
+
+	if (vars == 0) return;
+	if (!vars->init() || !vars->attach(this) || !vars->start(this)) {
+		vars->detach(this);
+	}
+	vars->release();
 }
 
 // the loader describes one CHRP bank in /chosen, and its contents live in firmware variables between boots

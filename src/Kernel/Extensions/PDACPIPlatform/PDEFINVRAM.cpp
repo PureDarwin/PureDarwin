@@ -47,7 +47,7 @@ chunkName(EFI_CHAR16 name[9], unsigned index)
 }
 
 // the five-argument EFI calls: rcx, rdx, r8, r9, then the fifth above the 32-byte shadow space
-static kern_return_t
+kern_return_t
 efiCall5(uint64_t func, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t *status)
 {
 	struct pal_efi_registers regs = { a1, a2, a3, a4, 0 };

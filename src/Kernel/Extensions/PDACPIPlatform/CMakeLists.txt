@@ -6,6 +6,7 @@ file(GLOB PDACPI_UACPI_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/uacpi/source/*.c)
 target_sources(PDACPIPlatform PRIVATE
     PDACPIPlatformExpert.cpp
     PDEFINVRAM.cpp
+    PDEFIVariables.cpp
     PDACPIGlue.cpp
     PDACPIKernel.cpp
     PDACPIPower.cpp
