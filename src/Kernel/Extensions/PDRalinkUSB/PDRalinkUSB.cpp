@@ -25,6 +25,8 @@ void pd80211_unlock(void);
 
 #define kMaxEndpoints 16
 
+enum { kXferIdle, kXferPending, kXferOrphaned };
+
 struct usbd_device {
     IOUSBDevice *dev;
     volatile bool dying;
@@ -58,6 +60,8 @@ struct usbd_xfer {
     void *priv;
     usbd_status status;
     IOUSBCompletion completion;
+    // idle, pending on the controller, or freed by the stack while still pending
+    volatile SInt32 state;
 };
 
 class PDRalinkUSB : public IO80211Controller
@@ -253,6 +257,9 @@ void usbd_free_xfer(struct usbd_xfer *x)
 {
     if (x == NULL)
         return;
+    // the controller may complete it after an abort gave up waiting, its completion frees it then
+    if (OSCompareAndSwap(kXferPending, kXferOrphaned, (volatile UInt32 *)&x->state))
+        return;
     OSSafeReleaseNULL(x->mem);
     IOFree(x, sizeof(*x));
 }
@@ -286,6 +293,16 @@ void usbd_setup_xfer(struct usbd_xfer *x, struct usbd_pipe *p, void *priv, void 
 static void xferDone(void *target, void *parameter, IOReturn status, UInt32 remaining)
 {
     struct usbd_xfer *x = (struct usbd_xfer *)target;
+    // the callback may close the pipe or free the transfer, the pipe itself lives in the interface
+    struct usbd_pipe *pipe = x->pipe;
+
+    // freed while the controller still had it: this late completion is the last use, so it frees it
+    if (!OSCompareAndSwap(kXferPending, kXferIdle, (volatile UInt32 *)&x->state)) {
+        OSSafeReleaseNULL(x->mem);
+        IOFree(x, sizeof(*x));
+        OSDecrementAtomic(&pipe->inflight);
+        return;
+    }
 
     x->actlen = remaining > x->len ? 0 : x->len - remaining;
     if (status == kIOReturnSuccess)
@@ -300,12 +317,12 @@ static void xferDone(void *target, void *parameter, IOReturn status, UInt32 rema
         x->status = USBD_IOERROR;
 
     // an abort holds the stack lock while it waits on inflight, so nothing finishing then may take it
-    if (x->cb && x->status != USBD_CANCELLED && !x->pipe->aborting) {
+    if (x->cb && x->status != USBD_CANCELLED && !pipe->aborting) {
         pd80211_lock();
         x->cb(x, x->priv, x->status);
         pd80211_unlock();
     }
-    OSDecrementAtomic(&x->pipe->inflight);
+    OSDecrementAtomic(&pipe->inflight);
 }
 
 usbd_status usbd_transfer(struct usbd_xfer *x)
@@ -318,11 +335,13 @@ usbd_status usbd_transfer(struct usbd_xfer *x)
     x->completion.action = &xferDone;
     x->completion.parameter = NULL;
     OSIncrementAtomic(&x->pipe->inflight);
+    x->state = kXferPending;
     if (x->pipe->in)
         ret = x->pipe->pipe->Read(x->mem, 0, 0, x->len, &x->completion);
     else
         ret = x->pipe->pipe->Write(x->mem, 0, x->timeout, x->len, &x->completion);
     if (ret != kIOReturnSuccess) {
+        x->state = kXferIdle;
         OSDecrementAtomic(&x->pipe->inflight);
         return USBD_IOERROR;
     }
