@@ -341,9 +341,13 @@ NSString * const NSSpellingStateAttributeName=@"NSSpellingStateAttributeName"; /
 #pragma mark -
 #pragma mark Getting the Bounding Rectangle of Rendered Strings
 
+// laid out in a container of size, a zero dimension being unbounded, as macOS treats it
 -(NSRect)boundingRectWithSize:(NSSize)size options:(NSStringDrawingOptions)options {
-	NSUnimplementedMethod();
-	return NSMakeRect(0,0,0,0);
+	extern const float NSStringDrawerLargeDimension;
+	NSSize box = NSMakeSize(size.width > 0 ? size.width : NSStringDrawerLargeDimension,
+	                        size.height > 0 ? size.height : NSStringDrawerLargeDimension);
+	NSSize used = [[NSStringDrawer sharedStringDrawer] sizeOfAttributedString:self inSize:box];
+	return NSMakeRect(0, 0, used.width, used.height);
 }
 
 #pragma mark -

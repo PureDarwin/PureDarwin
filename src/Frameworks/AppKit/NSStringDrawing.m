@@ -26,9 +26,13 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return [[NSStringDrawer sharedStringDrawer] sizeOfString:self withAttributes:attributes inSize:NSZeroSize];
 }
 
+// laid out in a container of size, a zero dimension being unbounded, as macOS treats it
 - (NSRect)boundingRectWithSize:(NSSize)size options:(NSStringDrawingOptions)options attributes:(NSDictionary *)attributes {
-	NSUnimplementedMethod();
-	return NSMakeRect(0,0,0,0);
+	extern const float NSStringDrawerLargeDimension;
+	NSSize box = NSMakeSize(size.width > 0 ? size.width : NSStringDrawerLargeDimension,
+	                        size.height > 0 ? size.height : NSStringDrawerLargeDimension);
+	NSSize used = [[NSStringDrawer sharedStringDrawer] sizeOfString:self withAttributes:attributes inSize:box];
+	return NSMakeRect(0, 0, used.width, used.height);
 }
 
 @end
