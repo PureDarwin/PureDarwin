@@ -7,7 +7,7 @@ if(_wifiutil_opts)
     set_target_properties(wifiutil PROPERTIES COMPILE_OPTIONS "${_wifiutil_opts}")
 endif()
 
-target_sources(wifiutil PRIVATE wifiutil.c)
+target_sources(wifiutil PRIVATE wifiutil.c pdwifi.c)
 if(PUREDARWIN_ARCH STREQUAL "arm64" OR PUREDARWIN_ARCH STREQUAL "riscv64")
     target_compile_definitions(wifiutil PRIVATE __DARWIN_ONLY_VERS_1050=1 __DARWIN_ONLY_64_BIT_INO_T=1)
 endif()
@@ -24,3 +24,6 @@ target_link_options(wifiutil PRIVATE
     -lSystem)
 add_dependencies(wifiutil libSystem_B_stub dyld)
 install(TARGETS wifiutil DESTINATION usr/sbin COMPONENT BaseSystem)
+# joins a remembered network at boot, and again while the radio has none
+install(FILES org.puredarwin.wifi-autojoin.plist
+        DESTINATION System/Library/LaunchDaemons COMPONENT BaseSystem)
