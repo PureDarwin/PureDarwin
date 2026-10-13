@@ -613,6 +613,7 @@ bool RavynXHCIPort::start(IOService *provider)
     fInterruptsEnabled = false;
     fPlatformInterrupt = false;
     fEventWaitLock = NULL;
+    fMSCLock = NULL;
     fEventWaitChannel = 0;
     fEventGeneration = 0;
     fPortChangePending = false;
@@ -722,6 +723,7 @@ bool RavynXHCIPort::start(IOService *provider)
      * a failed registration here just leaves fInterruptsEnabled false and
      * everything behaves exactly as before. */
     fEventWaitLock = IOLockAlloc();
+    fMSCLock = IOLockAlloc();
     fWorkLoop = (fEventWaitLock && (fPCI || fPlatformInterrupt)) ? IOWorkLoop::workLoop() : NULL;
     if (fWorkLoop) {
         fInterruptSource = IOInterruptEventSource::interruptEventSource(
@@ -862,6 +864,7 @@ void RavynXHCIPort::free()
     if (fInterruptSource) { fInterruptSource->release(); fInterruptSource = NULL; }
     if (fWorkLoop) { fWorkLoop->release(); fWorkLoop = NULL; }
     if (fEventWaitLock) { IOLockFree(fEventWaitLock); fEventWaitLock = NULL; }
+    if (fMSCLock) { IOLockFree(fMSCLock); fMSCLock = NULL; }
     if (fUSBBus) { fUSBBus->release(); fUSBBus = NULL; }
 
     if (fCmdLock) { IOLockFree(fCmdLock); fCmdLock = NULL; }
@@ -1547,6 +1550,25 @@ void RavynXHCIPort::disconnectUSBDevices(UInt32 rootPort, UInt32 route, UInt32 m
         if (fSlotRootPort[slot] != rootPort || (fSlotRoute[slot] & mask) != route)
             continue;
         bool matched = fUSBDeviceNubs[slot] || fHubs[slot].valid;
+        // mass storage has no IOUSBDevice nub: retire its fMSC entry under the BOT lock,
+        // which waits out a command in flight. later commands fail with no device
+        RavynXHCIMassStorageDisk *disk = NULL;
+        if (fMSCLock) {
+            IOLockLock(fMSCLock);
+            for (int i = 0; i < 16; i++) {
+                if (!fMSC[i].valid || fMSC[i].slotId != (UInt32)slot) continue;
+                fMSC[i].valid = false;
+                disk = fDiskNubs[i];
+                fDiskNubs[i] = NULL;
+                matched = true;
+            }
+            IOLockUnlock(fMSCLock);
+        }
+        if (disk) {
+            // not synchronous. the block storage stack above it may still be failing I/O back
+            disk->terminate(kIOServiceRequired);
+            disk->release();
+        }
         for (UInt32 ep = 1; ep < 16; ++ep) {
             InterruptInEndpoint &intr = fIntrIn[slot][ep];
             if (!intr.lock) continue;
@@ -2902,7 +2924,21 @@ bool RavynXHCIPort::tryEnumerateMassStorage(UInt32 port0based, UInt32 speed)
     return true;
 }
 
+// one BOT command at a time. unplug takes the lock to retire the device, so a command
+// either finishes first or finds the fMSC entry gone
 IOReturn RavynXHCIPort::botTransfer(UInt32 slotId,
+                                    const void *cbwCB, UInt8 cbwLen,
+                                    UInt32 dataLen, bool dataIn,
+                                    IOMemoryDescriptor *buffer, UInt64 bufOff)
+{
+    if (!fMSCLock) return kIOReturnNoMemory;
+    IOLockLock(fMSCLock);
+    IOReturn ret = botTransferLocked(slotId, cbwCB, cbwLen, dataLen, dataIn, buffer, bufOff);
+    IOLockUnlock(fMSCLock);
+    return ret;
+}
+
+IOReturn RavynXHCIPort::botTransferLocked(UInt32 slotId,
                                     const void *cbwCB, UInt8 cbwLen,
                                     UInt32 dataLen, bool dataIn,
                                     IOMemoryDescriptor *buffer, UInt64 bufOff)
