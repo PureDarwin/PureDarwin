@@ -36,8 +36,8 @@
 #define EXT4_VALID_FS           0x0001  /* cleanly unmounted */
 #define EXT4_ERROR_FS           0x0002  /* errors detected */
 
-/* s_feature_incompat bits this driver must understand to mount at all. */
-#define EXT4_FEATURE_INCOMPAT_SUPP_MASK 0x0002fdff
+// the kext's EXT4_INCOMPAT_SUPPORTED: filetype, recover, extents, 64bit, flex_bg, csum_seed
+#define EXT4_FEATURE_INCOMPAT_SUPP_MASK 0x000022c6
 
 struct ext4_super_block {
 	uint32_t s_inodes_count;
@@ -113,10 +113,15 @@ read_superblock(const char *bsdname, struct ext4_super_block *sb)
 		}
 	}
 
-	n = pread(fd, sb, sizeof(*sb), EXT4_SUPERBLOCK_OFFSET);
-	close(fd);
+	// raw disk devices on macOS only take whole sectors, so read the full 1 KiB superblock
+	char block[1024];
 
-	return (n == (ssize_t)sizeof(*sb)) ? 0 : -1;
+	n = pread(fd, block, sizeof(block), EXT4_SUPERBLOCK_OFFSET);
+	close(fd);
+	if (n != (ssize_t)sizeof(block))
+		return -1;
+	memcpy(sb, block, sizeof(*sb));
+	return 0;
 }
 
 static int
@@ -141,8 +146,9 @@ main(int argc, char *argv[])
 	action  = argv[1][1];
 	bsdname = argv[2];
 
+	// diskarbitrationd runs this on every leaf, unreadable media such as sealed snapshots are just not ext4
 	if (read_superblock(bsdname, &sb) != 0) {
-		return FSUR_IO_FAIL;
+		return FSUR_UNRECOGNIZED;
 	}
 
 	if (!is_ext4(&sb)) {

@@ -19,19 +19,29 @@
 
 	<!--
 	    FSMediaTypes tells diskarbitrationd which media this filesystem is
-	    worth probing, keyed by the IOMedia Content hint. "" is the wildcard
-	    for media with no usable hint.
+	    worth probing. Each entry's FSMediaProperties is an IOKit match
+	    against the IOMedia object, and an entry without one is never probed.
 
 	    Two entries rather than one wildcard: an ext4 volume in a GPT
 	    partition carries the Linux filesystem data GUID, and that is the
-	    strong signal. The wildcard entry is what catches a whole disk or a
-	    partition whose hint is missing, and it is ordered after the others
-	    (FSProbeOrder below) so better-identified filesystems get first look.
+	    strong signal. The second matches any leaf media, which catches a
+	    whole unpartitioned disk or an MBR partition, and it is ordered after
+	    the others (FSProbeOrder below) so better-identified filesystems get
+	    first look.
 	-->
 	<key>FSMediaTypes</key>
 	<dict>
 		<key>0FC63DAF-8483-4772-8E79-3D69D8477DE4</key>
 		<dict>
+			<key>FSMediaProperties</key>
+			<dict>
+				<key>Content Hint</key>
+				<string>0FC63DAF-8483-4772-8E79-3D69D8477DE4</string>
+				<key>Leaf</key>
+				<true/>
+			</dict>
+			<key>FSProbeArguments</key>
+			<string>-p</string>
 			<key>FSProbeExecutable</key>
 			<string>ext4.util</string>
 			<key>FSProbeOrder</key>
@@ -39,6 +49,13 @@
 		</dict>
 		<key></key>
 		<dict>
+			<key>FSMediaProperties</key>
+			<dict>
+				<key>Leaf</key>
+				<true/>
+			</dict>
+			<key>FSProbeArguments</key>
+			<string>-p</string>
 			<key>FSProbeExecutable</key>
 			<string>ext4.util</string>
 			<key>FSProbeOrder</key>
