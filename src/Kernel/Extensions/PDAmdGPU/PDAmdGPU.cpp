@@ -38,6 +38,14 @@ static const AmdChip kAmdChips[] = {
       0x283, 0x293, 0x29b, false },
 };
 
+// cpuid leaf 1 ecx bit 31, set by every hypervisor
+static bool underHypervisor(void)
+{
+    uint32_t a = 1, b, c = 0, d;
+    __asm__ volatile("cpuid" : "+a"(a), "=b"(b), "+c"(c), "=d"(d));
+    return c & (1u << 31);
+}
+
 static bool ipIs(const AmdIp *ip, const uint8_t v[3])
 {
     return ip && ip->major == v[0] && ip->minor == v[1] && ip->rev == v[2];
@@ -54,6 +62,19 @@ static const AmdChip *amdIdentify(const AmdIpTable &ips)
         mp0 ? mp0->major : 0, mp0 ? mp0->minor : 0, mp0 ? mp0->rev : 0, dmu ? dmu->major : 0, dmu ? dmu->minor : 0,
         dmu ? dmu->rev : 0);
     return nullptr;
+}
+
+// a chip this driver does not bring up goes back to IOKit, so IOGOPFramebuffer can drive the firmware display
+bool PDAmdGPU::leaveAlone(void)
+{
+    if (regMap) {
+        regMap->release();
+        regMap = nullptr;
+        regs = nullptr;
+    }
+    PMstop();
+    super::stop(getProvider());
+    return false;
 }
 
 bool PDAmdGPU::start(IOService *provider)
@@ -93,7 +114,7 @@ bool PDAmdGPU::start(IOService *provider)
     regMap = pci->mapDeviceMemoryWithRegister(kIOPCIConfigBaseAddress5, kIOMapInhibitCache);
     if (!regMap) {
         LOG("cannot map bar5 registers\n");
-        return true;
+        return leaveAlone();
     }
     regs = (volatile uint32_t *)regMap->getVirtualAddress();
     regCount = regMap->getLength() / 4;
@@ -107,23 +128,25 @@ bool PDAmdGPU::start(IOService *provider)
 
     if (memsize == 0 || memsize == 0xffffffff) {
         LOG("no carveout size, skipping discovery\n");
-        return true;
+        return leaveAlone();
     }
 
     uint8_t *bin = (uint8_t *)IOMallocZeroData(kAmdDiscoverySize);
-    if (!bin) return true;
+    if (!bin) return leaveAlone();
 
     vramSize = (uint64_t)memsize << 20;
     readVram(vramSize - kAmdDiscoverySize, bin, kAmdDiscoverySize);
     bool found = amdParseDiscovery(bin, kAmdDiscoverySize, &ips);
     IOFreeData(bin, kAmdDiscoverySize);
 
-    if (!found) return true;
+    if (!found) return leaveAlone();
 
     chip = amdIdentify(ips);
+    // mendocino is the 7520U laptop, whose display is its internal eDP panel
+    edp = pci->configRead16(kIOPCIConfigDeviceID) == 0x1506;
     if (!chip) {
         LOG("not a chip this driver knows, leaving it alone\n");
-        return true;
+        return leaveAlone();
     }
     // the segment bases the driver's fixed register indices depend on, logged to compare chips
     static const struct { uint16_t hw; const char *name; } key[] = {
@@ -137,19 +160,31 @@ bool PDAmdGPU::start(IOService *provider)
             ip->count > 2 ? ip->base[2] : 0, ip->count > 3 ? ip->base[3] : 0, ip->count > 4 ? ip->base[4] : 0,
             ip->count > 5 ? ip->base[5] : 0);
     }
-    if (!chip->bringUp) {
+    // a chip still being brought up runs only as far as pdamdgpu_stage asks: 1 post and smu, 2 the psp ring, 3 all
+    // bring-up runs under vfio only, on bare metal the firmware display stays in charge unless pdamdgpu_stage asks
+    stage = chip->bringUp && underHypervisor() ? 3 : 0;
+    bool asked = PE_parse_boot_argn("pdamdgpu_stage", &stage, sizeof(stage));
+    if (stage == 0 && !asked && !underHypervisor()) {
+        LOG("%s: bare metal, leaving it alone\n", chip->name);
+        return leaveAlone();
+    }
+    if (stage == 0) {
         // the two mailboxes the table describes, each asked for its firmware version and nothing else
         smuInit();
         int32_t disp = dispSmuSend(2, 0);
         LOG("%s: display pmfw 0x%x\n", chip->name, disp);
         LOG("%s: discovery read, bring-up not supported yet, leaving it alone\n", chip->name);
-        return true;
+        return leaveAlone();
     }
-    LOG("%s\n", chip->name);
+    LOG("%s, stage %u\n", chip->name, stage);
 
     // the teardown's mode 2 reset clears the posted bit, so the next start posts before the psp, as amdgpu does at load
     asicPost(false);
     smuInit();
+    if (stage < 2) {
+        LOG("%s: stopping after smu init (stage 1)\n", chip->name);
+        return true;
+    }
     probePsp();
     return true;
 }

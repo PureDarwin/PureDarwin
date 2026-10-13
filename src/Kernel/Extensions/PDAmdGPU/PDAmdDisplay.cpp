@@ -1,6 +1,7 @@
 #include "PDAmdGPU.h"
 #include "AmdDcn315Regs.h"
 #include "AmdDcn315Dump.h"
+#include "AmdDcnDpRegs.h"
 
 #include <IOKit/IOLib.h>
 #include <pexpert/pexpert.h>
@@ -16,6 +17,9 @@ struct CeaMode {
 
 // cea-861 vic 16, 1920x1080p60
 static const CeaMode k1080p60 = { 148500, 1920, 88, 44, 148, 1080, 4, 5, 36 };
+
+// the LEN156FHD panel's edid timing, 2230x1110 at 148.51 MHz
+static const CeaMode kEdp1080p60 = { 148510, 1920, 48, 32, 230, 1080, 3, 6, 21 };
 
 struct RegValue { uint32_t reg, value; };
 
@@ -275,7 +279,8 @@ void PDAmdGPU::displayQuiesce(void)
     // dcn10_init_hw disables a link only when its dig reports enabled
     bool digOn = rreg(dcnDIG0_DIG_BE_EN_CNTL) & 1;
     wreg(dcnDIG0_DIG_BE_EN_CNTL, 0);
-    if (digOn) hdmiLinkDown();
+    if (digOn && edp) dmubTransmitter(0, 0, 0, kEdpLanes, kEdpLinkRate10khz, 1, 0, 0x14);
+    else if (digOn) hdmiLinkDown();
     else LOG("disp: dig already off, no transmitter disable\n");
     dmubNotifyStreamMask(0);
 
@@ -300,17 +305,33 @@ bool PDAmdGPU::scanout(uint64_t *phys, uint32_t *w, uint32_t *h, uint32_t *rowBy
 
 void PDAmdGPU::displayInit(void)
 {
-    const CeaMode &m = k1080p60;
+    const CeaMode &m = edp ? kEdp1080p60 : k1080p60;
 
     if (!pipePowerUp()) return;
     fillTestPattern(m, fbOff);
     writeTable(this, kAmdgpuSettings, sizeof(kAmdgpuSettings) / sizeof(kAmdgpuSettings[0]));
-    dccgSetup();
-    digSetup();
+    if (edp) {
+        // edpLinkUp already set the dp dto and the dig, only the dpp and otg clocks remain
+        wreg(dcnDPPCLK0_DTO_PARAM, 0x00ff00ff);
+        wreg(dcnDPPCLK_DTO_CTRL, 0x00000001);
+        wreg(dcnOTG0_OTG_CLOCK_CONTROL, 0x00010103);
+    } else {
+        dccgSetup();
+        digSetup();
+    }
     otgSetup(m);
+    if (edp) {
+        wreg(dcnOTG0_OTG_VSTARTUP_PARAM, 0x0000001d);
+        wreg(dcnOTG0_OTG_VUPDATE_PARAM, 0x00f7022e);
+    }
     pipeSetup(m);
     hubpSetup(m, fbStart + fbOff);
     wreg(dcnOTG0_OTG_CONTROL, (rreg(dcnOTG0_OTG_CONTROL) & ~0x300u) | 0x200u | 1u);   // disable point 2, master enable
+    if (edp) {
+        wreg(dcnDP0_DP_VID_STREAM_CNTL, 0x00000201);          // stream on, disable deferred to the next blank
+        IOSleep(20);
+        LOG("dp: VID_STREAM_CNTL 0x%08x LINK_CNTL 0x%08x\n", rreg(dcnDP0_DP_VID_STREAM_CNTL), rreg(dcnDP0_DP_LINK_CNTL));
+    }
     dmubNotifyStreamMask(1);
     IOSleep(100);
     LOG("disp: DPG_CONTROL 0x%08x DPG_STATUS 0x%08x, clearing the pattern generator\n", rreg(dcnDPG0_DPG_CONTROL), rreg(dcnDPG0_DPG_STATUS));
@@ -318,6 +339,7 @@ void PDAmdGPU::displayInit(void)
     IOSleep(100);
     LOG("disp: otg0 CONTROL 0x%08x STATUS 0x%08x frame count %u, DIG_FIFO_STATUS 0x%08x\n", rreg(dcnOTG0_OTG_CONTROL),
         rreg(dcnOTG0_OTG_STATUS), rreg(dcnOTG0_OTG_STATUS_FRAME_COUNT), rreg(dcnDIG0_DIG_FIFO_STATUS));
+    if (edp) edpBacklight(true);
 
     // pdamdgpu_dcndump=1: every named dcn register and a few framebuffer words, to diff against amdgpu's dump
     int dump = 0;

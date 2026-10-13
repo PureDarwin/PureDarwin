@@ -73,6 +73,7 @@ class PDAmdGPU : public IOService {
 
 public:
     bool start(IOService *provider) override;
+    bool leaveAlone(void);
     void stop(IOService *provider) override;
     void systemWillShutdown(IOOptionBits specifier) override;
 
@@ -136,6 +137,7 @@ private:
     void goldenInit(void);
     void teardown(bool reset);
     bool running;
+    uint32_t stage;
     void ihInit(void);
     uint32_t ihDrain(const char *why);
     void ihStop(void);
@@ -155,6 +157,24 @@ private:
                          uint8_t digfe, uint8_t connector);
     void hdmiLinkUp(void);
     void hdmiLinkDown(void);
+
+    // the internal panel over eDP (PDAmdDp.cpp): 1080p60 at hbr over two lanes
+    static const uint32_t kEdpPixKhz = 148510;
+    static const uint32_t kEdpLinkRate10khz = 27000;
+    static const uint8_t kEdpLanes = 2;
+    bool edp;
+    bool auxXfer(bool read, uint32_t addr, uint8_t *buf, uint8_t len);
+    bool dpcdRead(uint32_t addr, uint8_t *buf, uint32_t len);
+    bool dpcdWrite(uint32_t addr, const uint8_t *buf, uint32_t len);
+    bool edpPowerOn(void);
+    void edpBacklight(bool on);
+    void dpSourcePattern(uint32_t index);
+    void dpSourceVideo(void);
+    void dpSetLanes(uint8_t laneSet, uint8_t lanes, uint8_t tp);
+    bool edpLinkTrain(uint8_t rate, uint8_t lanes);
+    void dpStreamSetup(void);
+    bool edpLinkUp(void);
+    bool dmubLvtma(uint8_t action);
     bool dmubDcPowerState(bool on);
     void dmubNotifyStreamMask(uint16_t mask);
     void displayQuiesce(void);

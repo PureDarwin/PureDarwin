@@ -308,7 +308,8 @@ void PDAmdGPU::pspLoadGfx(void)
         if (clkInit()) {
             dmubDcPowerState(true);
             displayQuiesce();
-            hdmiLinkUp();
+            if (edp) edpLinkUp();
+            else hdmiLinkUp();
             displayInit();
             displayUp = true;
 
@@ -381,6 +382,10 @@ void PDAmdGPU::probePsp(void)
     bool ok = waitReg(msg64, 0x80000000, 0x8000ffff, 2000);
     LOG("psp: km ring at mc 0x%llx %s, C2PMSG_64 0x%08x\n", ringMc, ok ? "created" : "failed", rreg(msg64));
     if (!ok) return;
+    if (stage < 3) {
+        LOG("psp: stopping before the firmware load (stage %u)\n", stage);
+        return;
+    }
     pspLoadToc();
 
     // pdamdgpu_teardown=1 ends the run with amdgpu's unload order for repeat tests, otherwise the display stays up

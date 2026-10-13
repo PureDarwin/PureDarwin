@@ -431,6 +431,23 @@ bool PDAmdGPU::dmubTransmitter(uint8_t phy, uint8_t action, uint8_t mode, uint8_
     return ok;
 }
 
+// the panel power sequencer and backlight belong to the firmware on dcn31, so they go through the vbios table
+#define kVbiosLvtmaControl          15
+
+bool PDAmdGPU::dmubLvtma(uint8_t action)
+{
+    uint32_t cmd[16] = {};
+    uint8_t *p = (uint8_t *)&cmd[1];
+
+    p[0] = action;          // 12 power on, 13 power off, 3 backlight on, 2 backlight off
+    p[1] = 0;               // the firmware waits the panel's delays
+    p[4] = 0;               // power sequencer 0
+    cmd[0] = (kDmubCmdVbios | (kVbiosLvtmaControl << 8)) | (8u << 24);
+    bool ok = dmubCmd(cmd, false);
+    LOG("dmub: lvtma control action %u %s\n", action, ok ? "done" : "failed");
+    return ok;
+}
+
 #define kDmubCmdIdleOpt             72
 #define kIdleOptDcnRestore          0
 #define kIdleOptSetDcPowerState     3

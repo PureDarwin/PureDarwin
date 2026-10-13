@@ -15,6 +15,7 @@ target_sources(PDAmdGPU.kext PRIVATE
     PDAmdDmub.cpp
     PDAmdClk.cpp
     PDAmdDisplay.cpp
+    PDAmdDp.cpp
     PDAmdAtom.cpp
     PDAmdFramebuffer.cpp
     PDAmdFirmware.cpp
