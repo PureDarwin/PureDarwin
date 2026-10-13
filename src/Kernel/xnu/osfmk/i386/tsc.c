@@ -59,6 +59,7 @@
 #include <i386/tsc.h>
 #include <i386/misc_protos.h>
 #include <pexpert/pexpert.h>
+#include <kern/startup.h>
 #include <machine/limits.h>
 #include <machine/commpage.h>
 #include <sys/kdebug.h>
@@ -105,6 +106,8 @@ uint64_t tsc_sync_interval_msecs = 5000; /* 5 seconds */
 uint64_t tsc_sync_interval_abs;
 uint64_t tsc_sync_next_deadline;
 static timer_call_data_t sync_tsc_timer;
+static boolean_t tsc_sync_wanted;
+extern int wrmsr_carefully(uint32_t msr, uint64_t val);
 
 static void
 tsc_sync(thread_call_param_t param0 __unused, thread_call_param_t param1 __unused)
@@ -395,10 +398,23 @@ tsc_init(void)
 			}
 		}
 
-		if (infop->cpuid_family >= 0x17 && !cpuid_vmm_present()) {
-			msr = rdmsr64(MSR_AMD_HARDWARE_CFG);
-			msr |= MSR_AMD_HARDWARE_CFG_TSC_LOCK_AT_P0;
-			wrmsr64(MSR_AMD_HARDWARE_CFG, msr);
+		// an invariant TSC is already in step on every core, writing it or HWCR only breaks that
+		uint32_t pm[4];
+		boolean_t invariant;
+
+		do_cpuid(0x80000007, pm);
+		invariant = (pm[edx] & (1U << 8)) != 0;
+
+		if (infop->cpuid_family >= 0x17 && !cpuid_vmm_present() && !invariant) {
+			uint32_t lo, hi;
+
+			// a CPU that refuses HWCR keeps its TSC as it is rather than faulting this early
+			if (rdmsr_carefully(MSR_AMD_HARDWARE_CFG, &lo, &hi) == 0) {
+				msr = ((uint64_t)hi << 32) | lo | MSR_AMD_HARDWARE_CFG_TSC_LOCK_AT_P0;
+				if (wrmsr_carefully(MSR_AMD_HARDWARE_CFG, msr) != 0) {
+					kprintf("tsc_init: HWCR refused the TSC lock\n");
+				}
+			}
 		}
 
 		tscGranularity = tscFreq / busFreq;
@@ -406,7 +422,7 @@ tsc_init(void)
 			tscGranularity = 1;
 		}
 
-		sync_amd_tsc = !cpuid_vmm_present();
+		sync_amd_tsc = !cpuid_vmm_present() && !invariant;
 		break;
 	}
 	default: {
@@ -526,15 +542,25 @@ tsc_init(void)
 	    (uint32_t)(tscFCvtn2t >> 32), (uint32_t)tscFCvtn2t,
 	    tscGranularity, N_by_2_bus_ratio ? " (N/2)" : "");
 
-	if (sync_amd_tsc) {
-		clock_interval_to_absolutetime_interval(tsc_sync_interval_msecs,
-		    NSEC_PER_MSEC, &tsc_sync_interval_abs);
-		timer_call_setup(&sync_tsc_timer, tsc_sync, NULL);
-		tsc_sync_next_deadline = mach_absolute_time() + tsc_sync_interval_abs;
-		timer_call_enter_with_leeway(&sync_tsc_timer, NULL,
-		    tsc_sync_next_deadline, 0, TIMER_CALL_SYS_NORMAL, FALSE);
-	}
+	// the timer is armed by tsc_sync_start(), timer calls are not set up yet here
+	tsc_sync_wanted = sync_amd_tsc;
 }
+
+// arming a timer call needs the scheduler, so this waits for the early boot phase
+void
+tsc_sync_start(void)
+{
+	if (!tsc_sync_wanted) {
+		return;
+	}
+	clock_interval_to_absolutetime_interval(tsc_sync_interval_msecs,
+	    NSEC_PER_MSEC, &tsc_sync_interval_abs);
+	timer_call_setup(&sync_tsc_timer, tsc_sync, NULL);
+	tsc_sync_next_deadline = mach_absolute_time() + tsc_sync_interval_abs;
+	timer_call_enter_with_leeway(&sync_tsc_timer, NULL,
+	    tsc_sync_next_deadline, 0, TIMER_CALL_SYS_NORMAL, FALSE);
+}
+STARTUP(EARLY_BOOT, STARTUP_RANK_MIDDLE, tsc_sync_start);
 
 void
 tsc_get_info(tscInfo_t *info)
