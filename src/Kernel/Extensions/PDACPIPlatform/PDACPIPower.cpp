@@ -26,6 +26,9 @@ enum { kSciLevel = 0x01, kSciActiveLow = 0x02, kSciShareable = 0x04 };
 #define super IOACPIPlatformExpert
 
 extern "C" void kprintf(const char *fmt, ...);
+void pd_acpi_publish_i2c_hid(IOService *expert);
+void pd_acpi_ec_init(void);
+void pd_acpi_ec_start(void);
 void pd_acpi_kernel_init(void);
 
 // a power button press, delivered to whoever watches this service
@@ -154,6 +157,7 @@ static void pd_acpi_init(thread_call_param_t, thread_call_param_t)
 {
     uacpi_status st = uacpi_initialize(0);
     if (st == UACPI_STATUS_OK) st = uacpi_namespace_load();
+    if (st == UACPI_STATUS_OK) pd_acpi_ec_init();
     if (st == UACPI_STATUS_OK) st = uacpi_namespace_initialize();
     if (st != UACPI_STATUS_OK) {
         kprintf("PDACPIPlatform: acpi namespace failed: %s\n", uacpi_status_to_string(st));
@@ -163,7 +167,9 @@ static void pd_acpi_init(thread_call_param_t, thread_call_param_t)
     st = uacpi_install_fixed_event_handler(UACPI_FIXED_EVENT_POWER_BUTTON, pd_fixed_power_button, UACPI_NULL);
     kprintf("PDACPIPlatform: fixed power button %s\n", uacpi_status_to_string(st));
     uacpi_find_devices("PNP0C0C", pd_found_button, UACPI_NULL);
+    pd_acpi_publish_i2c_hid(sExpert);
     uacpi_finalize_gpe_initialization();
+    pd_acpi_ec_start();
 
     sNamespaceReady = true;
     kprintf("PDACPIPlatform: acpi namespace up\n");

@@ -10,6 +10,8 @@ target_sources(PDACPIPlatform PRIVATE
     PDACPIGlue.cpp
     PDACPIKernel.cpp
     PDACPIPower.cpp
+    PDACPII2C.cpp
+    PDACPIEC.cpp
     AppleI386CPU.cpp
     ${PDACPI_UACPI_SOURCES}
 )
