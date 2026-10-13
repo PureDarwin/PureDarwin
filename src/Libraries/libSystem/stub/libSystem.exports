@@ -1060,6 +1060,12 @@ _setgroups
 _setjmp
 __setjmp
 _setregid
+_gcvt
+_setpgrp
+_setrgid
+_setruid
+_ecvt
+_fcvt
 _setresgid
 _setresuid
 _setreuid
@@ -1084,6 +1090,8 @@ _strftime
 _strncasecmp
 _strndup
 _strpbrk
+_sbrk
+_brk
 _strsignal
 _strstr
 _strtod
@@ -1565,6 +1573,7 @@ _mach_port_insert_right
 __kernelrpc_mach_port_insert_right_trap
 _confstr
 _getprogname
+_setprogname
 _putwchar
 ___strlcat_chk
 _sys_signame

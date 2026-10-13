@@ -142,6 +142,11 @@ target_sources(libc_static PRIVATE
     gen/FreeBSD/utime.c         # git
     gen/pd_wait.c                # _wait forwarder (__weak_reference alias not emitted)
     compat-43/FreeBSD/killpg.c   # _killpg (zsh job control)
+    compat-43/FreeBSD/setpgrp.c  # _setpgrp (perl)
+    compat-43/FreeBSD/setrgid.c  # _setrgid (perl)
+    compat-43/FreeBSD/setruid.c  # _setruid
+    stdlib/OpenBSD/gcvt.c        # _gcvt (perl), over the gdtoa __dtoa already here
+    stdlib/OpenBSD/ecvt.c        # _ecvt/_fcvt
     gen/FreeBSD/nice.c           # _nice (zsh BGNICE backgrounded-job priority)
     gen/FreeBSD/popen.c          # popen/pclose
     gen/FreeBSD/pause.c          # _pause (init halt loop)
@@ -363,6 +368,7 @@ target_sources(libc_static PRIVATE
     gen/FreeBSD/usleep.c         # _usleep
     gen/FreeBSD/gethostname.c    # _gethostname
     gen/FreeBSD/getprogname.c    # _getprogname (malloc_printf.c's diagnostic prefix)
+    gen/FreeBSD/setprogname.c    # _setprogname (gpt)
     gen/FreeBSD/time.c           # _time
     stdtime/FreeBSD/difftime.c   # _difftime
     gen/FreeBSD/times.c          # _times
@@ -384,6 +390,7 @@ target_sources(libc_static PRIVATE
     string/FreeBSD/strnstr.c     # _strnstr
     os/pd_assumes.c               # os_assumes/os_assert real-contract impl (see file comment: real os/assumes.c needs firehose/os_log private ABI logd doesn't back here)
     emulated/lchflags.c           # _lchflags (real launchctl.c)
+    emulated/brk.c                # _sbrk/_brk (e2fsck resource tracking)
     emulated/lutimes.c            # _lutimes (setattrlist-based, real Apple source)
     emulated/copyfile.c           # _copyfile/_fcopyfile + copyfile_state_* (see file comment for what is carried across)
     emulated/lchmod.c             # _lchmod (setattrlist-based, real Apple source)
