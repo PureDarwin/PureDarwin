@@ -506,25 +506,44 @@ static NSImage *loadImage(NSString *name)
 // Settings' Date & Time switches, read on every tick so a change shows within the minute
 - (NSString *)clockText
 {
-    static NSDateFormatter *format;
+    static NSDateFormatter *dayFormat, *timeFormat;
     static NSString *current;
     id h24, date, iso;
-    NSString *wanted;
+    NSString *dayPattern, *timePattern, *wanted, *now;
 
     CFPreferencesAppSynchronize(CFSTR("org.puredarwin.MenuBar"));
     h24 = [(id)CFPreferencesCopyAppValue(CFSTR("Clock24"), CFSTR("org.puredarwin.MenuBar")) autorelease];
     date = [(id)CFPreferencesCopyAppValue(CFSTR("ShowDate"), CFSTR("org.puredarwin.MenuBar")) autorelease];
     iso = [(id)CFPreferencesCopyAppValue(CFSTR("ISO8601"), CFSTR("org.puredarwin.MenuBar")) autorelease];
-    wanted = [NSString stringWithFormat:@"%@%@", (date == nil || [date boolValue]) ? ([iso boolValue] ? @"yyyy-MM-dd " : @"EEE MMM d  ") : @"",
-                                        ([iso boolValue] || [h24 boolValue]) ? @"HH:mm" : @"h:mm a"];
-    if (format == nil)
-        format = [[NSDateFormatter alloc] init];
+
+    // the locale orders and names the day, j takes its 12 or 24 hour clock unless Clock24 says otherwise
+    if ([iso boolValue]) {
+        dayPattern = @"yyyy-MM-dd";
+        timePattern = @"HH:mm";
+    }
+    else {
+        dayPattern = [NSDateFormatter dateFormatFromTemplate:@"EEEMMMd" options:0 locale:nil];
+        timePattern = [NSDateFormatter dateFormatFromTemplate:h24 == nil ? @"jmm" : [h24 boolValue] ? @"HHmm" : @"hmma"
+                                                       options:0 locale:nil];
+    }
+    if (date != nil && ![date boolValue])
+        dayPattern = nil;
+    wanted = [NSString stringWithFormat:@"%@|%@", dayPattern ?: @"", timePattern];
+    if (dayFormat == nil) {
+        dayFormat = [[NSDateFormatter alloc] init];
+        timeFormat = [[NSDateFormatter alloc] init];
+    }
     if (![wanted isEqualToString:current]) {
         [current release];
         current = [wanted copy];
-        [format setDateFormat:current];
+        if (dayPattern != nil)
+            [dayFormat setDateFormat:dayPattern];
+        [timeFormat setDateFormat:timePattern];
     }
-    return [format stringFromDate:[NSDate date]];
+    now = [timeFormat stringFromDate:[NSDate date]];
+    if (dayPattern == nil)
+        return now;
+    return [NSString stringWithFormat:[iso boolValue] ? @"%@ %@" : @"%@  %@", [dayFormat stringFromDate:[NSDate date]], now];
 }
 
 - (void)drawRect:(NSRect)dirty

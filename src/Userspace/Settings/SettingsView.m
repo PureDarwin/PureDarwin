@@ -1447,12 +1447,18 @@ static NSArray *paneInfo(NSString *pane)
 
 - (CGFloat)drawClockAt:(CGFloat)y
 {
-    BOOL h24 = [PDPref(PDMenuBarDomain, @"Clock24") boolValue];
+    // until the switch is used the clock follows the locale, so it shows the locale's hour cycle
+    NSString *localeTime = [NSDateFormatter dateFormatFromTemplate:@"jmm" options:0 locale:nil];
+    id clock24 = PDPref(PDMenuBarDomain, @"Clock24");
+    BOOL h24 = clock24 != nil ? [clock24 boolValue] : [localeTime rangeOfString:@"H"].location != NSNotFound;
     BOOL iso = [PDPref(PDMenuBarDomain, @"ISO8601") boolValue];
     BOOL date = PDPref(PDMenuBarDomain, @"ShowDate") ? [PDPref(PDMenuBarDomain, @"ShowDate") boolValue] : YES;
     NSDateFormatter *f = [[[NSDateFormatter alloc] init] autorelease];
 
-    [f setDateFormat:iso ? @"yyyy-MM-dd'T'HH:mm:ssZZZZZ" : h24 ? @"EEEE, d MMMM yyyy, HH:mm" : @"EEEE, d MMMM yyyy, h:mm a"];
+    if (iso)
+        [f setDateFormat:@"yyyy-MM-dd'T'HH:mm:ssZZZZZ"];
+    else
+        [f setLocalizedDateFormatFromTemplate:h24 ? @"EEEEdMMMMyyyyHHmm" : @"EEEEdMMMMyyyyhmma"];
     return [self card:@[
         [self switchRow:NSLocalizedString(@"ISO 8601", @"") sub:NSLocalizedString(@"Dates as 2026-10-10, times as 14:05", @"") code:NO dot:nil on:iso enabled:YES toggle:^(BOOL on) {
             PDSetPref(PDMenuBarDomain, @"ISO8601", @(on));
