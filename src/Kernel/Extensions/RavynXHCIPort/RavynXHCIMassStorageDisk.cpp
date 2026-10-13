@@ -32,6 +32,8 @@
 OSDefineMetaClassAndStructors(RavynXHCIMassStorageDisk, IOBlockStorageDevice);
 
 /* SCSI opcodes we need */
+#define SCSI_TEST_UNIT_READY  0x00
+#define SCSI_REQUEST_SENSE    0x03
 #define SCSI_INQUIRY          0x12
 #define SCSI_READ_CAPACITY10  0x25
 #define SCSI_READ10           0x28
@@ -61,8 +63,15 @@ RavynXHCIMassStorageDisk::initWithPort(RavynXHCIPort *parent, UInt32 mscIndex)
 
     if (!scsiInquiry())
         XHCI_Log("usbdisk%u: INQUIRY failed (continuing)", mscIndex);
-    if (!scsiReadCapacity10())
-        XHCI_Log("usbdisk%u: READ CAPACITY(10) failed", mscIndex);
+    // a fresh device reports unit attention (power on, reset) to the first command
+    // that isn't INQUIRY. REQUEST SENSE clears it
+    if (!waitUnitReady())
+        XHCI_Log("usbdisk%u: not ready (continuing)", mscIndex);
+    if (!scsiReadCapacity10()) {
+        scsiRequestSense(NULL, NULL, NULL);
+        if (!scsiReadCapacity10())
+            XHCI_Log("usbdisk%u: READ CAPACITY(10) failed", mscIndex);
+    }
 
     XHCI_Log("usbdisk%u init slot=%u vendor=%s product=%s blocks=%llu blksz=%u",
             mscIndex, fSlotId, fVendorStr, fProductStr, fCapacityBlocks, fBlockSize);
@@ -111,6 +120,50 @@ RavynXHCIMassStorageDisk::scsiInquiry()
     }
     buf->release();
     return ok;
+}
+
+bool
+RavynXHCIMassStorageDisk::scsiTestUnitReady()
+{
+    UInt8 cdb[6] = { SCSI_TEST_UNIT_READY, 0, 0, 0, 0, 0 };
+    return fParent->botTransfer(fSlotId, cdb, sizeof(cdb), 0, false, NULL, 0) == kIOReturnSuccess;
+}
+
+// fixed-format sense. key in byte 2, asc/ascq in bytes 12-13
+bool
+RavynXHCIMassStorageDisk::scsiRequestSense(UInt8 *senseKey, UInt8 *asc, UInt8 *ascq)
+{
+    UInt8 cdb[6] = { SCSI_REQUEST_SENSE, 0, 0, 0, 18, 0 };
+    IOBufferMemoryDescriptor *buf = IOBufferMemoryDescriptor::inTaskWithOptions(
+        kernel_task, kIODirectionInOut, 18);
+    if (!buf) return false;
+    bzero(buf->getBytesNoCopy(), 18);
+
+    IOReturn ret = fParent->botTransfer(fSlotId, cdb, sizeof(cdb), 18, true, buf, 0);
+    bool ok = (ret == kIOReturnSuccess);
+    if (ok) {
+        const UInt8 *d = (const UInt8 *)buf->getBytesNoCopy();
+        if (senseKey) *senseKey = d[2] & 0x0f;
+        if (asc) *asc = d[12];
+        if (ascq) *ascq = d[13];
+    }
+    buf->release();
+    return ok;
+}
+
+bool
+RavynXHCIMassStorageDisk::waitUnitReady()
+{
+    for (int i = 0; i < 5; i++) {
+        if (scsiTestUnitReady())
+            return true;
+        UInt8 key = 0, asc = 0, ascq = 0;
+        if (scsiRequestSense(&key, &asc, &ascq))
+            XHCI_Log("usbdisk%u: not ready, sense key=%x asc=%02x ascq=%02x",
+                     fMscIndex, key, asc, ascq);
+        IOSleep(100);
+    }
+    return false;
 }
 
 bool

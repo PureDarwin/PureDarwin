@@ -84,6 +84,9 @@ private:
     char    fRevisionStr[5];
 
     bool scsiInquiry();
+    bool scsiTestUnitReady();
+    bool scsiRequestSense(UInt8 *senseKey, UInt8 *asc, UInt8 *ascq);
+    bool waitUnitReady();
     bool scsiReadCapacity10();
     bool scsiReadWrite10(UInt64 block, UInt32 nblks, IOMemoryDescriptor *buffer,
                          UInt64 bufOff, bool write);
