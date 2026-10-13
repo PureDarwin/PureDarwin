@@ -3193,6 +3193,12 @@
               libSystem = libSystemBuild;
               xz = pkgs.xz;
             };
+          e2fsprogsBuild =
+            pkgs.callPackage ./nix/pkgs/base/e2fsprogs.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              e2fsprogs = pkgs.e2fsprogs;
+            };
           bzip2Build =
             pkgs.callPackage ./nix/pkgs/base/bzip2.nix {
               inherit darwinCrossToolchain nativeLd;
@@ -3365,6 +3371,22 @@
             pkgs.callPackage ./nix/pkgs/toolchain/migcom-darwin.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
+            };
+          pdblessBuild =
+            pkgs.callPackage ./nix/pkgs/base/pdbless.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              corefoundation = coreFoundationBuild;
+              iokit = iokitBuild;
+            };
+          msdosCmdsBuild =
+            pkgs.callPackage ./nix/pkgs/apple/msdos-cmds.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              corefoundation = coreFoundationBuild;
+              iokit = iokitBuild;
+              libcxxDylib = libcxxDylibBuild;
+              libcxxabiDylib = libcxxabiDylibBuild;
             };
           ioregBuild =
             pkgs.callPackage ./nix/pkgs/apple/ioreg.nix {
@@ -4465,7 +4487,7 @@
               xvfbLibXdamageBuild xvfbLibXdmcpBuild xvfbLibXextBuild xvfbLibXfixesBuild
               xvfbLibXineramaBuild xvfbLibXkbfileBuild xvfbLibXpresentBuild xvfbLibXrandrBuild
               xvfbLibXrenderBuild xvfbLibXresBuild xvfbLibxcvtBuild xvfbZlibBuild xxdBuild xzBuild
-              unzipBuild bzip2Build
+              unzipBuild bzip2Build e2fsprogsBuild msdosCmdsBuild pdblessBuild
               yajlBuild zshArm64Build zshBuild bashBuild libcrocoBuild librsvgBuild gettextBuild
               webkitgtkBuild libsoupBuild sqliteBuild libpslBuild nghttp2Build
               libgcryptBuild libgpgErrorBuild libtasn1Build libjpegBuild libwebpBuild
