@@ -8,6 +8,7 @@
 
 #import "SettingsView.h"
 #import "SettingsData.h"
+#import "PDWiFiUI.h"
 
 // sizes from the demo's settings window
 #define TB_H 38
@@ -332,6 +333,8 @@ static NSArray *paneInfo(NSString *pane)
     // the banner shows the wallpaper behind the window, so it follows the window around
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(windowMoved:)
                                                  name:NSWindowDidMoveNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(wifiChanged:)
+                                                 name:PDWiFiChangedNotification object:nil];
     return self;
 }
 
@@ -347,6 +350,7 @@ static NSArray *paneInfo(NSString *pane)
     [_kexts release];
     [_bootArgs release];
     [_displayModes release];
+    [_wifiScan invalidate];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [super dealloc];
 }
@@ -391,8 +395,28 @@ static NSArray *paneInfo(NSString *pane)
         [_displayModes release];
         _displayModes = (NSArray *)CGDisplayCopyAllDisplayModes(CGMainDisplayID(), NULL);
     }
+    // the network pane keeps its list of networks fresh while it is open
+    [_wifiScan invalidate];
+    _wifiScan = nil;
+    if ([pane isEqualToString:@"network"]) {
+        [[PDWiFi shared] refresh];
+        [[PDWiFi shared] scan];
+        _wifiScan = [NSTimer scheduledTimerWithTimeInterval:20 target:self selector:@selector(wifiRescan:) userInfo:nil repeats:YES];
+    }
     if (getenv("PD_SETTINGS_TRACE") != NULL)
         NSLog(@"Settings: load %@ %.1f ms", pane, -[started timeIntervalSinceNow] * 1000);
+}
+
+- (void)wifiRescan:(NSTimer *)t
+{
+    if ([[PDWiFi shared] powered])
+        [[PDWiFi shared] scan];
+}
+
+- (void)wifiChanged:(NSNotification *)note
+{
+    if ([_pane isEqualToString:@"network"])
+        [self setNeedsDisplay:YES];
 }
 
 - (void)windowMoved:(NSNotification *)note
@@ -1240,17 +1264,153 @@ static NSArray *paneInfo(NSString *pane)
     ] at:y];
 }
 
+// a link or a small button at the right of a row, laid out right to left
+- (CGFloat)wifiControl:(NSString *)title button:(BOOL)button right:(CGFloat)right mid:(CGFloat)mid action:(void (^)(void))action
+{
+    NSDictionary *a = attrs(@"Inter-Regular", 12, button ? rgb(0x1b, 0x1b, 0x1b) : accent());
+    NSSize s = [title sizeWithAttributes:a];
+    NSRect b = button ? NSMakeRect(right - s.width - 20, mid - 11, s.width + 20, 22) : NSMakeRect(right - s.width, mid - 9, s.width, 18);
+
+    if (button) {
+        [[NSColor colorWithCalibratedWhite:0 alpha:0.15] setFill];
+        [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(b, -0.5, -0.5) xRadius:6.5 yRadius:6.5] fill];
+        [(darkNow() ? fixed(0x57, 0x51, 0x53) : [NSColor whiteColor]) setFill];
+        [[NSBezierPath bezierPathWithRoundedRect:b xRadius:6 yRadius:6] fill];
+    }
+    [title drawAtPoint:NSMakePoint(NSMinX(b) + (button ? 10 : 0), mid - s.height / 2) withAttributes:a];
+    [self hit:NSInsetRect(b, -3, -4) block:^(NSPoint p, BOOL dragging) {
+        if (!dragging)
+            action();
+    }];
+    return NSMinX(b) - 12;
+}
+
+// one network: the glyph in its circle, the name with a line under it, and what can be done with it
+- (NSDictionary *)wifiRow:(NSString *)name sub:(NSString *)sub level:(int)level on:(BOOL)on lock:(BOOL)lock
+                  actions:(NSArray *)actions
+{
+    return [self row:(sub != nil ? 46 : ROW_MIN) draw:^(NSRect r) {
+        NSRect circle = NSMakeRect(NSMinX(r) + 12, NSMidY(r) - 12, 24, 24);
+        CGFloat right = NSMaxX(r) - 12, x = NSMinX(r) + 46;
+        PDWiFi *w = [PDWiFi shared];
+
+        [(on ? accent() : rgba(127, 127, 127, 0.16)) setFill];
+        [[NSBezierPath bezierPathWithOvalInRect:circle] fill];
+        PDDrawWiFiGlyph(NSInsetRect(circle, 5, 5), level, on ? [NSColor whiteColor] : rgb(0x1b, 0x1b, 0x1b), YES);
+        for (NSArray *act in [actions reverseObjectEnumerator])
+            right = [self wifiControl:act[0] button:[act[1] boolValue] right:right mid:NSMidY(r) action:act[2]];
+        if ([w.busy isEqualToString:name]) {
+            PDDrawWiFiSpinner(NSMakeRect(right - 12, NSMidY(r) - 7, 14, 14), accent());
+            [self setNeedsDisplay:YES];
+        }
+        [self drawLabel:name sub:sub in:NSMakeRect(x, NSMinY(r), right - x - 30, NSHeight(r)) code:NO];
+        if (lock) {
+            NSDictionary *a = attrs(@"Inter-Regular", 13, rgb(0x1b, 0x1b, 0x1b));
+            CGFloat lx = x + MIN([name sizeWithAttributes:a].width, right - x - 40) + 7;
+            PDDrawWiFiLock(NSMakeRect(lx, NSMidY(r) - (sub ? 13 : 6), 10, 12), rgba(127, 127, 127, 0.8), YES);
+        }
+    }];
+}
+
+// the demo's Wi-Fi pane: the switch, the joined network and its details, known and other networks, then Ethernet
 - (CGFloat)drawNetworkAt:(CGFloat)y
 {
-    NSMutableArray *rows = [NSMutableArray arrayWithObject:[self valueRow:@"Wi-Fi" value:@"No Wi-Fi hardware"]];
-    NSArray *dns = PDNameServers();
+    PDWiFi *w = [PDWiFi shared];
+    PDWiFiNetwork *cur = w.current;
+    NSColor *tint = accent();
+    NSMutableArray *rows = [NSMutableArray array];
+    NSArray *ifs = PDNetworkInterfaces();
+    NSString *wifiIP = nil;
+    NSMutableArray *eth = [NSMutableArray array];
 
-    for (NSArray *i in PDNetworkInterfaces())
-        [rows addObject:[self valueRow:[NSString stringWithFormat:@"Ethernet (%@)", i[0]] value:i[1]]];
-    if ([rows count] == 1)
-        [rows addObject:[self valueRow:@"Ethernet" value:@"Not connected"]];
-    [rows addObject:[self valueRow:@"DNS" value:[dns count] > 0 ? [dns componentsJoinedByString:@", "] : @"mDNSResponder"]];
-    return [self card:rows at:y];
+    for (NSArray *i in ifs) {
+        if (w.interface && [i[0] isEqualToString:w.interface])
+            wifiIP = [[i[1] componentsSeparatedByString:@" "] firstObject];
+        else
+            [eth addObject:i];
+    }
+
+    if (!w.hardware) {
+        y = [self card:@[ [self valueRow:@"Wi-Fi" value:@"No Wi-Fi hardware"] ] at:y];
+    } else {
+        NSString *state = !w.powered ? @"Off" : cur ? [NSString stringWithFormat:@"Connected to %@", cur.ssid]
+                        : w.busy ? [NSString stringWithFormat:@"Joining %@…", w.busy] : w.lastError ?: @"Not connected";
+        [rows addObject:[self switchRow:@"Wi-Fi" sub:state code:NO dot:nil on:w.powered enabled:YES toggle:^(BOOL on) {
+            [w setPower:on];
+        }]];
+        if (cur) {
+            NSString *sub = cur.security ? [NSString stringWithFormat:@"Connected · %@ Personal", cur.security] : @"Connected";
+            [rows addObject:[self wifiRow:cur.ssid sub:sub level:[cur bars] on:YES lock:NO actions:@[
+                @[ _wifiDetails ? @"Hide Details" : @"Details…", @NO, ^{ _wifiDetails = !_wifiDetails; [self setNeedsDisplay:YES]; } ],
+                @[ @"Disconnect", @YES, ^{ [w leave]; } ],
+            ]]];
+            if (_wifiDetails) {
+                NSArray *facts = @[
+                    @[ @"IP address", wifiIP ?: @"Waiting for DHCP" ],
+                    @[ @"Security", cur.security ? [cur.security stringByAppendingString:@" Personal"] : @"None" ],
+                    @[ @"Channel", [NSString stringWithFormat:@"%u (%@ GHz)", cur.channel, cur.channel > 14 ? @"5" : @"2.4"] ],
+                    @[ @"Signal", [NSString stringWithFormat:@"%d dBm", cur.rssi] ],
+                    @[ @"Wi-Fi address", w.hardwareAddress ?: @"" ],
+                    @[ @"Interface", w.interface ?: @"" ],
+                ];
+                [rows addObject:[self row:[facts count] * 19 + 14 draw:^(NSRect r) {
+                    CGFloat fy = NSMinY(r) + 8;
+                    for (NSArray *f in facts) {
+                        [f[0] drawAtPoint:NSMakePoint(NSMinX(r) + 46, fy) withAttributes:attrs(@"Inter-Regular", 12, rgb(0x8a, 0x8a, 0x8a))];
+                        [f[1] drawAtPoint:NSMakePoint(NSMinX(r) + 176, fy) withAttributes:attrs(@"Inter-Regular", 12, rgb(0x1b, 0x1b, 0x1b))];
+                        fy += 19;
+                    }
+                }]];
+            }
+        }
+        y = [self card:rows at:y];
+
+        if (w.powered) {
+            NSMutableArray *known = [NSMutableArray array], *other = [NSMutableArray array];
+            NSMutableDictionary *inRange = [NSMutableDictionary dictionary];
+
+            for (PDWiFiNetwork *n in w.inRange)
+                inRange[n.ssid] = n;
+            for (NSString *k in w.known) {
+                PDWiFiNetwork *n = inRange[k];
+                NSMutableArray *acts = [NSMutableArray arrayWithObject:@[ @"Forget", @NO, ^{ [w forget:k]; } ]];
+                if (cur && [cur.ssid isEqualToString:k])
+                    continue;
+                if (n)
+                    [acts addObject:@[ @"Join", @YES, ^{ [w pick:n accent:tint]; } ]];
+                [known addObject:[self wifiRow:k sub:n ? @"In range" : @"Not in range" level:n ? [n bars] : 0 on:NO lock:NO actions:acts]];
+            }
+            if ([known count]) {
+                y = [self title:@"Known Networks" at:y];
+                y = [self card:known at:y];
+            }
+            for (PDWiFiNetwork *n in w.inRange) {
+                if (n.known || (cur && [cur.ssid isEqualToString:n.ssid]))
+                    continue;
+                [other addObject:[self wifiRow:n.ssid sub:nil level:[n bars] on:NO lock:n.security != nil actions:@[
+                    @[ @"Join", @YES, ^{ [w pick:n accent:tint]; } ],
+                ]]];
+            }
+            if ([other count] == 0)
+                [other addObject:[self valueRow:w.scanning ? @"Looking for networks…" : @"No other networks in range" value:@""]];
+            [other addObject:[self row:ROW_MIN draw:^(NSRect r) {
+                [self wifiControl:@"Other Network…" button:NO right:NSMinX(r) + 12 + [@"Other Network…" sizeWithAttributes:attrs(@"Inter-Regular", 12, accent())].width
+                              mid:NSMidY(r) action:^{ [w joinOther:tint]; }];
+            }]];
+            y = [self title:@"Other Networks" at:y];
+            y = [self card:other at:y];
+        }
+    }
+
+    NSMutableArray *er = [NSMutableArray array];
+    NSArray *dns = PDNameServers();
+    for (NSArray *i in eth)
+        [er addObject:[self valueRow:i[0] value:i[1]]];
+    if ([er count] == 0)
+        [er addObject:[self valueRow:@"Ethernet" value:@"No cable connected"]];
+    [er addObject:[self valueRow:@"DNS" value:[dns count] > 0 ? [dns componentsJoinedByString:@", "] : @"mDNSResponder"]];
+    y = [self title:@"Ethernet" at:y];
+    return [self card:er at:y];
 }
 
 - (CGFloat)drawSoundAt:(CGFloat)y

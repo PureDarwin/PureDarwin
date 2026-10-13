@@ -7,6 +7,8 @@
  */
 
 #import "MenuBarView.h"
+#import "WiFiMenu.h"
+#import "PDWiFiUI.h"
 #import "AboutPanel.h"
 #include <math.h>
 
@@ -411,7 +413,8 @@ static NSImage *loadImage(NSString *name)
     self = [super initWithFrame:frame];
     _titleRects = [[NSMutableArray alloc] init];
     _beak = loadImage(@"beak");
-    for (NSString *name in @[ @"wifi", @"volume", @"battery", @"search" ]) {
+    // wi-fi is drawn live from PDWiFi, left of these
+    for (NSString *name in @[ @"volume", @"battery", @"search" ]) {
         image = loadImage(name);
         if (image != nil) {
             [status addObject:image];
@@ -420,7 +423,20 @@ static NSImage *loadImage(NSString *name)
     }
     _status = [status retain];
     _open = NoMenu;
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(wifiChanged:) name:PDWiFiChangedNotification object:nil];
+    [PDWiFi shared];
     return self;
+}
+
+- (void)wifiChanged:(NSNotification *)note
+{
+    [self setNeedsDisplay:YES];
+}
+
+// the left edge of the wi-fi glyph's slot, the first status item left of the image ones
+- (CGFloat)wifiX
+{
+    return NSWidth([self bounds]) - ItemPad - [self widthOfText:[self clockText] bold:NO] - ([_status count] + 1) * (IconSize + 2 * ItemPad);
 }
 
 - (void)setDelegate:(id<MenuBarViewDelegate>)delegate
@@ -549,6 +565,15 @@ static NSImage *loadImage(NSString *name)
     for (NSImage *image in [_status reverseObjectEnumerator]) {
         x -= IconSize + 2 * ItemPad;
         drawIcon(image, NSMakeRect(x + ItemPad, (MenuBarHeight - IconSize) / 2, IconSize, IconSize));
+    }
+    // the signal of the joined network, faint with the radio off, nothing without the hardware
+    PDWiFi *wifi = [PDWiFi shared];
+    if (wifi.hardware) {
+        x -= IconSize + 2 * ItemPad;
+        if ([[WiFiMenu shared] isOpen])
+            [self drawHighlight:NSMakeRect(x, 0, IconSize + 2 * ItemPad, MenuBarHeight)];
+        PDDrawWiFiGlyph(NSMakeRect(x + ItemPad, (MenuBarHeight - IconSize) / 2, IconSize, IconSize), wifi.current ? [wifi.current bars] : 0,
+                        [ink() colorWithAlphaComponent:wifi.powered ? 1 : 0.35], NO);
     }
 }
 
@@ -924,6 +949,12 @@ static NSImage *loadImage(NSString *name)
                     - (IconSize + 2 * ItemPad);
     if (p.x >= searchX && p.x < searchX + IconSize + 2 * ItemPad) {
         [self openLookout:nil];
+        return;
+    }
+    if ([PDWiFi shared].hardware && p.x >= [self wifiX] && p.x < [self wifiX] + IconSize + 2 * ItemPad) {
+        NSPoint screen = [[self window] convertBaseToScreen:[self convertPoint:NSMakePoint([self wifiX], 0) toView:nil]];
+        [[WiFiMenu shared] toggleAtX:screen.x];
+        [self setNeedsDisplay:YES];
         return;
     }
 

@@ -3,6 +3,9 @@
 , coregraphics, applicationservices, coreservices, windowserver, openglFramework, mesa
 , librsvg, iokit, iokitHeaders
 , src ? ../../../src/Userspace/MenuBar
+, wifiSrc ? ../../../src/Userspace/wifiutil
+, wifiHeaders ? ../../../src/Kernel/Extensions/IO80211Family
+, cryptoHeaders ? ../../../src/Libraries/CommonCrypto/include
 , targetTriple ? "x86_64-apple-darwin20.4" }:
 
 stdenv.mkDerivation {
@@ -22,9 +25,11 @@ stdenv.mkDerivation {
     mkdir -p objs png
     # the protocol header is shared with AppKit
     cp ${../../../src/Frameworks/AppKit/PDMenuServer.h} PDMenuServer.h
-    for f in main.m MenuBarView.m AboutPanel.m; do
+    # the Wi-Fi backend and screens the menu bar, Settings and the installer share
+    cp ${wifiSrc}/pdwifi.c ${wifiSrc}/pdwifi.h ${wifiSrc}/PDWiFiUI.m ${wifiSrc}/PDWiFiUI.h .
+    for f in main.m MenuBarView.m AboutPanel.m WiFiMenu.m pdwifi.c PDWiFiUI.m; do
       $cc $common -x objective-c -fno-objc-arc -fblocks -Wall -Wno-deprecated-declarations \
-        -I. \
+        -I. -I${wifiHeaders} -I${cryptoHeaders} \
         -I${libSystem}/usr/include -I${libobjc}/usr/include -I${corefoundation}/include \
         -I${foundation}/usr/include -I${onyx2d}/usr/include -I${coretext}/usr/include \
         -I${quartzcore}/usr/include -I${applicationservices}/usr/include \

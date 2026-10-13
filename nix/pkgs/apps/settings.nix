@@ -4,6 +4,9 @@
 , librsvg, iokit, iokitHeaders
 
 , src ? ../../../src/Userspace/Settings
+, wifiSrc ? ../../../src/Userspace/wifiutil
+, wifiHeaders ? ../../../src/Kernel/Extensions/IO80211Family
+, cryptoHeaders ? ../../../src/Libraries/CommonCrypto/include
 , targetTriple ? "x86_64-apple-darwin20.4" }:
 
 stdenv.mkDerivation {
@@ -21,9 +24,11 @@ stdenv.mkDerivation {
     common="-isysroot $SDK -mmacosx-version-min=26.5 -D_DARWIN_C_SOURCE -fno-stack-protector -O2"
 
     mkdir -p objs png
-    for f in main.m SettingsView.m SettingsData.m; do
+    # the Wi-Fi backend and screens the menu bar, Settings and the installer share
+    cp ${wifiSrc}/pdwifi.c ${wifiSrc}/pdwifi.h ${wifiSrc}/PDWiFiUI.m ${wifiSrc}/PDWiFiUI.h .
+    for f in main.m SettingsView.m SettingsData.m pdwifi.c PDWiFiUI.m; do
       $cc $common -x objective-c -fno-objc-arc -fblocks -Wall -Wno-deprecated-declarations \
-        -I. \
+        -I. -I${wifiHeaders} -I${cryptoHeaders} \
         -I${libSystem}/usr/include -I${libobjc}/usr/include -I${corefoundation}/include \
         -I${foundation}/usr/include -I${onyx2d}/usr/include -I${coretext}/usr/include \
         -I${quartzcore}/usr/include -I${applicationservices}/usr/include \

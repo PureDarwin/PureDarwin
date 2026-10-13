@@ -23,6 +23,8 @@
     NSMutableArray *_bootArgs;
     NSArray *_displayModes;
     NSRect _dirty;
+    BOOL _wifiDetails;
+    NSTimer *_wifiScan;
 }
 - (void)showPane:(NSString *)pane;
 - (IBAction)goBack:(id)sender;
