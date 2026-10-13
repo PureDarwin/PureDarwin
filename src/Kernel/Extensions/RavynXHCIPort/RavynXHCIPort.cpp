@@ -259,11 +259,25 @@ mapBARFromConfig(IOPCIDevice         * provider,
     return true;
 }
 
+#define kA733Compatible     "allwinner,sunxi-plat-dwc3"
+#define kSC8280XPCompatible "qcom,sc8280xp-dwc3"
+
+static bool
+isCompatible(IOService *provider, const char *compat)
+{
+    OSString *s = OSString::withCStringNoCopy(compat);
+    bool ok = s != NULL && provider->compareName(s);
+
+    OSSafeReleaseNULL(s);
+    return ok;
+}
+
 IOService *
 RavynXHCIPort::probe(IOService *provider, SInt32 *score)
 {
     IOPCIDevice *pci = OSDynamicCast(IOPCIDevice, provider);
-    if (!pci && !provider->compareName(OSString::withCStringNoCopy("allwinner,sunxi-plat-dwc3"))) return NULL;
+    if (!pci && !isCompatible(provider, kA733Compatible) && !isCompatible(provider, kSC8280XPCompatible))
+        return NULL;
     if (score) *score += 1000;
     return super::probe(provider, score);
 }
@@ -315,6 +329,9 @@ RavynXHCIPort::probe(IOService *provider, SInt32 *score)
 #define kU2PHY_PHYTUNE      0x18
 
 #define kDWC3_GCTL          0xc110
+#define kDWC3_GCTL_PRTCAP(v)    (((v) >> 12) & 3)   // port compat direction, 1 = host
+#define kDWC3_GSNPSID       0xc120
+#define kDWC3_USB31_ID      0x3331                  // GSNPSID[31:16] of a DWC_usb31 core
 #define kDWC3_GUSB2PHYCFG   0xc200
 #define kDWC3_GUSB3PIPECTL  0xc2c0
 #define kDWC3_DCTL          0xc704
@@ -475,6 +492,69 @@ bool RavynXHCIPort::startA733(IOService *provider)
     return true;
 }
 
+#define kInterruptControllerWaitNS (5ULL * 1000 * 1000 * 1000)
+
+// the gic's spi controller registers from a thread of its own and publishes its device tree
+// name as a resource once it can deliver. a nub's interrupt is usable after that
+static bool
+interruptControllerReady(IOService *provider)
+{
+    OSArray *names = OSDynamicCast(OSArray, provider->getProperty("IOInterruptControllers"));
+    OSString *parent = names ? OSDynamicCast(OSString, names->getObject(0)) : NULL;
+    OSDictionary *match;
+    IOService *found = NULL;
+
+    if (!parent) return false;
+    match = IOService::resourceMatching(parent);
+    if (match) {
+        found = IOService::waitForMatchingService(match, kInterruptControllerWaitNS);
+        match->release();
+    }
+    if (!found) return false;
+    found->release();
+    return true;
+}
+
+// x13s usb_1: the firmware leaves the core clocked, powered, in host mode and halted
+// across ExitBootServices, so nothing here writes. A core whose clock is gated never
+// answers the first read and the boot stops, so that read is logged first
+bool RavynXHCIPort::startSC8280XP(IOService *provider)
+{
+    fBARMap = provider->mapDeviceMemoryWithIndex(0, kIOMapInhibitCache);
+    if (!fBARMap || fBARMap->getLength() < kDWC3_GSNPSID + 4) {
+        XHCI_Log("sc8280xp: %s has no usable reg", provider->getName());
+        return false;
+    }
+    volatile UInt32 *dwc = (volatile UInt32 *)fBARMap->getVirtualAddress();
+
+    XHCI_Log("sc8280xp: first read of the core at %016llx",
+             (unsigned long long)fBARMap->getPhysicalAddress());
+    UInt32 id = dwc[kDWC3_GSNPSID / 4];
+    UInt32 gctl = dwc[kDWC3_GCTL / 4];
+    XHCI_Log("sc8280xp: GSNPSID=%08x GCTL=%08x GUSB2PHYCFG=%08x GUSB3IPECTL=%08x",
+             id, gctl, dwc[kDWC3_GUSB2PHYCFG / 4], dwc[kDWC3_GUSB3PIPECTL / 4]);
+    if ((id >> 16) != kDWC3_USB31_ID) {
+        XHCI_Log("sc8280xp: not a usb31 core, leaving it alone");
+        return false;
+    }
+    if (kDWC3_GCTL_PRTCAP(gctl) != 1) {
+        XHCI_Log("sc8280xp: core is not in host mode, leaving it alone");
+        return false;
+    }
+    // HCCPARAMS1.AC64 is set, so buffers may sit above 4 GiB. Page alignment keeps each
+    // one off cache lines the cpu shares with anything else, which dmaFlush relies on
+    fDMAMask = 0xFFFFFFFFFFFFF000ULL;
+
+    UInt32 poll = 0;
+    if (PE_parse_boot_argn("pdxhci_poll", &poll, sizeof(poll)) && poll)
+        XHCI_Log("sc8280xp: pdxhci_poll set, polled");
+    else if (!interruptControllerReady(provider))
+        XHCI_Log("sc8280xp: %s has no usable interrupt, polled", provider->getName());
+    else
+        fPlatformInterrupt = true;
+    return true;
+}
+
 void RavynXHCIPort::dmaFlush(const volatile void *va, UInt64 len) const
 {
     if (!fNonCoherent || !va || !len) return;
@@ -531,8 +611,13 @@ bool RavynXHCIPort::start(IOService *provider)
     fWorkLoop = NULL;
     fInterruptSource = NULL;
     fInterruptsEnabled = false;
+    fPlatformInterrupt = false;
     fEventWaitLock = NULL;
+    fMSCLock = NULL;
     fEventWaitChannel = 0;
+    fEventGeneration = 0;
+    fPortChangePending = false;
+    fHotplugWaitChannel = 0;
     fUSBBus = NULL;
 
     if (fPCI) {
@@ -544,6 +629,8 @@ bool RavynXHCIPort::start(IOService *provider)
         fBARMap = mapUsableBAR(fPCI, kIOPCIConfigBaseAddress0);
         if (!fBARMap) mapBARFromAssignedAddresses(fPCI, &fBARDesc, &fBARMap);
         if (!fBARMap) mapBARFromConfig(fPCI, &fBARDesc, &fBARMap);
+    } else if (isCompatible(provider, kSC8280XPCompatible)) {
+        if (!startSC8280XP(provider)) return false;
     } else if (!startA733(provider)) {
         return false;
     }
@@ -636,7 +723,8 @@ bool RavynXHCIPort::start(IOService *provider)
      * a failed registration here just leaves fInterruptsEnabled false and
      * everything behaves exactly as before. */
     fEventWaitLock = IOLockAlloc();
-    fWorkLoop = (fEventWaitLock && fPCI) ? IOWorkLoop::workLoop() : NULL;
+    fMSCLock = IOLockAlloc();
+    fWorkLoop = (fEventWaitLock && (fPCI || fPlatformInterrupt)) ? IOWorkLoop::workLoop() : NULL;
     if (fWorkLoop) {
         fInterruptSource = IOInterruptEventSource::interruptEventSource(
             this, &RavynXHCIPort::interruptOccurredStatic, fProvider, 0);
@@ -644,7 +732,7 @@ bool RavynXHCIPort::start(IOService *provider)
             fInterruptSource->enable();
             opWrite32(XHCI_USBCMD, opRead32(XHCI_USBCMD) | XHCI_USBCMD_INTE);
             fInterruptsEnabled = true;
-            XHCI_Log("using MSI interrupt (source 0)");
+            XHCI_Log("using %s interrupt (source 0)", fPCI ? "MSI" : "device tree");
         } else {
             if (fInterruptSource) { fInterruptSource->release(); fInterruptSource = NULL; }
             XHCI_Log("MSI registration failed, event ring stays polling-only");
@@ -776,6 +864,7 @@ void RavynXHCIPort::free()
     if (fInterruptSource) { fInterruptSource->release(); fInterruptSource = NULL; }
     if (fWorkLoop) { fWorkLoop->release(); fWorkLoop = NULL; }
     if (fEventWaitLock) { IOLockFree(fEventWaitLock); fEventWaitLock = NULL; }
+    if (fMSCLock) { IOLockFree(fMSCLock); fMSCLock = NULL; }
     if (fUSBBus) { fUSBBus->release(); fUSBBus = NULL; }
 
     if (fCmdLock) { IOLockFree(fCmdLock); fCmdLock = NULL; }
@@ -1058,8 +1147,10 @@ void RavynXHCIPort::pushTRB(volatile XHCITRB *ring, UInt32 &enqueue, UInt8 &cycl
     dmaFlush(&ring[enqueue], sizeof(XHCITRB));
     enqueue++;
     if (enqueue == ringSizeTRBs - 1) {
-        /* LINK TRB sits at ringSizeTRBs-1; toggle our own cycle and loop. */
-        ring[enqueue].control = (ring[enqueue].control & ~TRB_CYCLE) | (cycle ? TRB_CYCLE : 0);
+        /* LINK TRB sits at ringSizeTRBs-1; toggle our own cycle and loop. A TD that
+         * continues past it needs the chain bit on the link too (xHCI 1.1 4.11.5.1). */
+        ring[enqueue].control = (ring[enqueue].control & ~(TRB_CYCLE | TRB_CH)) | (control & TRB_CH) |
+                                (cycle ? TRB_CYCLE : 0);
         dmaFlush(&ring[enqueue], sizeof(XHCITRB));
         enqueue = 0;
         cycle ^= 1;
@@ -1076,14 +1167,14 @@ void RavynXHCIPort::interruptOccurredStatic(OSObject *owner, IOInterruptEventSou
 
 void RavynXHCIPort::interruptOccurred(IOInterruptEventSource *sender, int count)
 {
-    /* IMAN.IP (Interrupt Pending) is write-1-to-clear; ack it so the
-     * controller can post the next interrupt. */
+    /* USBSTS.EINT and IMAN.IP (Interrupt Pending) are write-1-to-clear, EINT
+     * first (xHCI 1.1 5.4.2). A level-triggered line stays asserted until IP
+     * is clear, so this ack is what lets the controller re-enable it. */
+    opWrite32(XHCI_USBSTS, XHCI_USBSTS_EINT);
     UInt32 iman = rtRead32(XHCI_RT_IR0 + XHCI_IR_IMAN);
     rtWrite32(XHCI_RT_IR0 + XHCI_IR_IMAN, iman);
 
     serviceEventRing();
-
-    IOLockWakeup(fEventWaitLock, &fEventWaitChannel, true);
 }
 
 void RavynXHCIPort::serviceEventRing()
@@ -1092,6 +1183,8 @@ void RavynXHCIPort::serviceEventRing()
      * event and files each completion into the per-(slot,DCI) transfer table
      * or the command-completion slot, so concurrent waiters (disk I/O + the
      * keyboard poll thread) never consume and discard each other's events. */
+    bool portChange = false, filed = false;
+
     IOLockLock(fEventLock);
     for (;;) {
         dmaFlush(&fEventRing[fEventRingDequeue], sizeof(XHCITRB));
@@ -1107,11 +1200,13 @@ void RavynXHCIPort::serviceEventRing()
             fCmdDoneCC      = TRB_CC(evStatus);
             fCmdDoneSlot    = TRB_GET_SLOT(evControl);
             fCmdDonePending = true;
+            filed = true;
         } else if (type == TRB_TYPE_TRANSFER_EVENT) {
             UInt32 slot = TRB_GET_SLOT(evControl);
             UInt32 dci  = (evControl >> 16) & 0x1F; /* Endpoint ID field */
             if (slot < 64 && dci < 32 && fBulk[slot][dci]) {
                 recordBulkEvent(slot, dci, evParam, evStatus);
+                filed = true;   // the bulk thread sleeps on fEventWaitChannel too
             } else if (slot < 64 && dci < 32) {
                 if (dci == 1 && TRB_CC(evStatus) == TRB_CC_SHORT_PACKET) {
                     fXferDone[slot][dci].shortResidual = evStatus & 0xffffff;
@@ -1122,7 +1217,11 @@ void RavynXHCIPort::serviceEventRing()
                 fXferDone[slot][dci].status  = evStatus;
                 fXferDone[slot][dci].control = evControl;
                 fXferDone[slot][dci].pending = true;
+                filed = true;
             }
+        } else if (type == TRB_TYPE_PORT_STATUS_CHG) {
+            XHCI_Log("port status change event, port %u", (UInt32)(evParam >> 24) & 0xff);
+            portChange = true;
         }
 
         fEventRingDequeue++;
@@ -1134,6 +1233,48 @@ void RavynXHCIPort::serviceEventRing()
         rtWrite64(XHCI_RT_IR0 + XHCI_IR_ERDP, (newErdp & ~0xFULL) | XHCI_ERDP_EHB);
     }
     IOLockUnlock(fEventLock);
+
+    // every waiter wakes: a completion this thread filed may belong to any of them
+    if ((filed || portChange) && fEventWaitLock) {
+        IOLockLock(fEventWaitLock);
+        if (filed) {
+            fEventGeneration++;
+            IOLockWakeup(fEventWaitLock, &fEventWaitChannel, false);
+        }
+        if (portChange) {
+            fPortChangePending = true;
+            IOLockWakeup(fEventWaitLock, &fHotplugWaitChannel, true);
+        }
+        IOLockUnlock(fEventWaitLock);
+    }
+}
+
+UInt32 RavynXHCIPort::eventGeneration()
+{
+    if (!fEventWaitLock) return 0;
+    IOLockLock(fEventWaitLock);
+    UInt32 generation = fEventGeneration;
+    IOLockUnlock(fEventWaitLock);
+    return generation;
+}
+
+#define kEventWaitBackstopMs 20
+
+// read the generation before draining the ring: if anything is filed after that, the generation
+// has moved and this returns at once, so a wakeup between the check and the sleep isn't lost
+void RavynXHCIPort::sleepForEvent(UInt32 generation, uint64_t until)
+{
+    uint64_t backstop;
+
+    if (!fInterruptsEnabled) {
+        IOSleep(1);
+        return;
+    }
+    clock_interval_to_deadline(kEventWaitBackstopMs, kMillisecondScale, &backstop);
+    IOLockLock(fEventWaitLock);
+    if (fEventGeneration == generation)
+        IOLockSleepDeadline(fEventWaitLock, &fEventWaitChannel, until < backstop ? until : backstop, THREAD_UNINT);
+    IOLockUnlock(fEventWaitLock);
 }
 
 bool RavynXHCIPort::doCommand(UInt64 param, UInt32 status, UInt32 controlNoCycle,
@@ -1157,7 +1298,10 @@ bool RavynXHCIPort::doCommand(UInt64 param, UInt32 status, UInt32 controlNoCycle
     ringDoorbell(0, 0);
 
     bool ok = false;
-    for (UInt64 waited = 0; waited < timeoutMs; waited++) {
+    uint64_t deadline;
+    clock_interval_to_deadline((UInt32)timeoutMs, kMillisecondScale, &deadline);
+    for (;;) {
+        UInt32 generation = eventGeneration();
         serviceEventRing();
         if (fCmdDonePending && fCmdDoneParam == cmdTRBPhys) {
             if (outCC) *outCC = fCmdDoneCC;
@@ -1166,15 +1310,8 @@ bool RavynXHCIPort::doCommand(UInt64 param, UInt32 status, UInt32 controlNoCycle
             ok = true;
             break;
         }
-        if (fInterruptsEnabled) {
-            AbsoluteTime deadline;
-            clock_interval_to_deadline(1, kMillisecondScale, &deadline);
-            IOLockLock(fEventWaitLock);
-            IOLockSleepDeadline(fEventWaitLock, &fEventWaitChannel, deadline, THREAD_UNINT);
-            IOLockUnlock(fEventWaitLock);
-        } else {
-            IOSleep(1);
-        }
+        if (mach_absolute_time() >= deadline) break;
+        sleepForEvent(generation, deadline);
     }
     dmaFlushContexts();
     IOLockUnlock(fCmdLock);
@@ -1206,7 +1343,12 @@ bool RavynXHCIPort::waitTransferEvent(UInt32 slotId, UInt32 epDCI, UInt8 *outCC,
                                       UInt32 *outResidual, UInt64 *outTRB)
 {
     if (slotId >= 64 || epDCI >= 32) return false;
-    for (UInt32 waited = 0; waited < timeoutMs; waited++) {
+    uint64_t deadline, reringInterval, rering;
+    clock_interval_to_deadline(timeoutMs, kMillisecondScale, &deadline);
+    nanoseconds_to_absolutetime(50 * NSEC_PER_MSEC, &reringInterval);
+    rering = mach_absolute_time() + reringInterval;
+    for (;;) {
+        UInt32 generation = eventGeneration();
         serviceEventRing();
         IOLockLock(fEventLock);
         if (fXferDone[slotId][epDCI].pending) {
@@ -1224,19 +1366,14 @@ bool RavynXHCIPort::waitTransferEvent(UInt32 slotId, UInt32 epDCI, UInt8 *outCC,
          * controller saw an empty ring and went idle). Periodically re-ring
          * the doorbell for this endpoint so the controller re-examines the
          * ring. Harmless if the transfer is already progressing. */
-        if (waited && (waited % 50) == 0)
+        uint64_t now = mach_absolute_time();
+        if (now >= deadline) return false;
+        if (now >= rering) {
             ringDoorbell(slotId, epDCI);
-        if (fInterruptsEnabled) {
-            AbsoluteTime deadline;
-            clock_interval_to_deadline(1, kMillisecondScale, &deadline);
-            IOLockLock(fEventWaitLock);
-            IOLockSleepDeadline(fEventWaitLock, &fEventWaitChannel, deadline, THREAD_UNINT);
-            IOLockUnlock(fEventWaitLock);
-        } else {
-            IOSleep(1);
+            rering = now + reringInterval;
         }
+        sleepForEvent(generation, deadline < rering ? deadline : rering);
     }
-    return false;
 }
 
 void RavynXHCIPort::scanPorts()
@@ -1341,6 +1478,9 @@ void RavynXHCIPort::hotplugLoop()
             bool connected = (portsc & XHCI_PORTSC_CCS) != 0;
 
             if (!connected) {
+                // a change bit left set blocks the ports next status change event
+                if (portsc & XHCI_PORTSC_RW1CS)
+                    portWrite32(p, XHCI_PORTSC, (portsc & ~XHCI_PORTSC_PR) & ~XHCI_PORTSC_PED);
                 if (fPortOccupied[p])
                     handleRootPortDisconnect(p, portsc);
                 fPortOccupied[p] = false;   /* allow a future replug on this port */
@@ -1356,7 +1496,18 @@ void RavynXHCIPort::hotplugLoop()
             if (!resetAndEnumeratePort(p) && ++fResetTries[p] < 5) fPortOccupied[p] = false;
         }
         pollHubPorts();
-        IOSleep(500);
+        if (fInterruptsEnabled) {
+            // a port status change event ends the wait early, the deadline still covers hubs
+            AbsoluteTime deadline;
+            clock_interval_to_deadline(500, kMillisecondScale, &deadline);
+            IOLockLock(fEventWaitLock);
+            if (!fPortChangePending)
+                IOLockSleepDeadline(fEventWaitLock, &fHotplugWaitChannel, deadline, THREAD_UNINT);
+            fPortChangePending = false;
+            IOLockUnlock(fEventWaitLock);
+        } else {
+            IOSleep(500);
+        }
     }
 }
 
@@ -1399,6 +1550,25 @@ void RavynXHCIPort::disconnectUSBDevices(UInt32 rootPort, UInt32 route, UInt32 m
         if (fSlotRootPort[slot] != rootPort || (fSlotRoute[slot] & mask) != route)
             continue;
         bool matched = fUSBDeviceNubs[slot] || fHubs[slot].valid;
+        // mass storage has no IOUSBDevice nub: retire its fMSC entry under the BOT lock,
+        // which waits out a command in flight. later commands fail with no device
+        RavynXHCIMassStorageDisk *disk = NULL;
+        if (fMSCLock) {
+            IOLockLock(fMSCLock);
+            for (int i = 0; i < 16; i++) {
+                if (!fMSC[i].valid || fMSC[i].slotId != (UInt32)slot) continue;
+                fMSC[i].valid = false;
+                disk = fDiskNubs[i];
+                fDiskNubs[i] = NULL;
+                matched = true;
+            }
+            IOLockUnlock(fMSCLock);
+        }
+        if (disk) {
+            // not synchronous. the block storage stack above it may still be failing I/O back
+            disk->terminate(kIOServiceRequired);
+            disk->release();
+        }
         for (UInt32 ep = 1; ep < 16; ++ep) {
             InterruptInEndpoint &intr = fIntrIn[slot][ep];
             if (!intr.lock) continue;
@@ -2133,15 +2303,37 @@ bool RavynXHCIPort::bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
     UInt32 dci = in ? (epNum * 2 + 1) : (epNum * 2);
     UInt64 base = xferMem->getPhysicalAddress();
 
+    // the endpoint's max packet size, as the controller holds it, for the TD Size field
+    void *dc = sr.deviceCtxMem->getBytesNoCopy();
+    dmaFlush(deviceEp(dc, dci), sizeof(XHCIEndpointContext));
+    UInt32 maxPkt = (deviceEp(dc, dci)->dword1 >> EP_CTX_MAXPKT_SHIFT) & 0xffff;
+    UInt32 tdPackets = maxPkt ? (len + maxPkt - 1) / maxPkt : 0;
+
+    // one TRB per 64 KiB window the buffer touches. The TD must fit in the ring.
+    UInt64 trbs = (((base & (kMaxTRBTransferBytes - 1)) + len + kMaxTRBTransferBytes - 1) / kMaxTRBTransferBytes);
+    if (trbs > kRingTRBs - 2) {
+        XHCI_Log("bulk transfer of %u bytes needs %llu TRBs, more than the ring holds", len, trbs);
+        return false;
+    }
+
     UInt32 remaining = len ? len : 0;
     UInt32 offset = 0;
     dmaFlush(xferMem->getBytesNoCopy(), len);
     do {
+        UInt64 addr = base + offset;
         UInt32 chunk = remaining;
-        if (chunk > kMaxTRBTransferBytes) chunk = kMaxTRBTransferBytes;
+        // a TRB's buffer may not cross a 64 KiB boundary (xHCI 1.1 6.4.1.1)
+        UInt32 toBoundary = kMaxTRBTransferBytes - (UInt32)(addr & (kMaxTRBTransferBytes - 1));
+        if (chunk > toBoundary) chunk = toBoundary;
         bool isLast = (offset + chunk >= len);
+        // packets left in the TD after this TRB, at most 31, and 0 on the last (xHCI 1.1 4.11.2.4)
+        UInt32 tdSize = 0;
+        if (!isLast && maxPkt) {
+            UInt32 left = tdPackets - (offset + chunk) / maxPkt;
+            tdSize = left > 31 ? 31 : left;
+        }
         pushTRB(ring, enqueue, cycle, kRingTRBs,
-               base + offset, chunk,
+               addr, chunk | TRB_TD_SIZE(tdSize),
                TRB_SET_TYPE(TRB_TYPE_NORMAL) | (isLast ? TRB_IOC : TRB_CH));
         offset += chunk;
         remaining -= chunk;
@@ -2168,6 +2360,16 @@ bool RavynXHCIPort::bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
                 (unsigned)((deviceEp(dc, dci)->dword1 >> EP_CTX_TYPE_SHIFT) & 0x7),
                 (unsigned long long)deviceEp(dc, dci)->trDequeuePtr,
                 (unsigned long long)pushedPhys, enqueue, opRead32(XHCI_USBSTS));
+        UInt32 sts = opRead32(XHCI_USBSTS);
+        if (sts & XHCI_USBSTS_HCH) {
+            // a halted controller does no dma, so the caller may free the buffer
+            XHCI_Log("controller halted%s%s, USBSTS=%08x", (sts & XHCI_USBSTS_HCE) ? ", host controller error" : "",
+                     (sts & XHCI_USBSTS_HSE) ? ", host system error" : "", sts);
+        } else if (!stopRing(slotId, dci, pushedPhys + (UInt64)enqueue * sizeof(XHCITRB), cycle)) {
+            // the controller may still write it. leak the buffer rather than let it be reused
+            xferMem->retain();
+            XHCI_Log("slot %u dci %u did not stop, keeping its %u-byte buffer", slotId, dci, len);
+        }
         return false;
     }
     if (cc != TRB_CC_SUCCESS && cc != TRB_CC_SHORT_PACKET) {
@@ -2186,6 +2388,27 @@ void RavynXHCIPort::resetHaltedRing(UInt32 slotId, UInt32 dci, UInt64 deq, UInt8
     doCommand(0, 0, TRB_SET_TYPE(TRB_TYPE_RESET_EP) | TRB_SET_SLOT(slotId) | TRB_SET_EP(dci), cc1, &slotOut, 500);
     doCommand(deq | cycle, 0, TRB_SET_TYPE(TRB_TYPE_SET_TR_DEQUEUE) | TRB_SET_SLOT(slotId) | TRB_SET_EP(dci),
               cc2, &slotOut, 500);
+}
+
+// take a running endpoint's TDs back: stop it, then move its dequeue pointer past them
+bool RavynXHCIPort::stopRing(UInt32 slotId, UInt32 dci, UInt64 deq, UInt8 cycle)
+{
+    UInt32 slotOut = 0;
+    UInt8 cc = 0;
+
+    if (!doCommand(0, 0, TRB_SET_TYPE(TRB_TYPE_STOP_EP) | TRB_SET_SLOT(slotId) | TRB_SET_EP(dci), &cc, &slotOut, 1000))
+        return false;
+    // a context state error means the endpoint had already left the running state
+    if (cc != TRB_CC_SUCCESS && cc != TRB_CC_CONTEXT_STATE)
+        return false;
+    if (!doCommand(deq | cycle, 0, TRB_SET_TYPE(TRB_TYPE_SET_TR_DEQUEUE) | TRB_SET_SLOT(slotId) | TRB_SET_EP(dci),
+                   &cc, &slotOut, 1000) || cc != TRB_CC_SUCCESS)
+        return false;
+    serviceEventRing();
+    IOLockLock(fEventLock);
+    fXferDone[slotId][dci].pending = false;
+    IOLockUnlock(fEventLock);
+    return true;
 }
 
 void RavynXHCIPort::recoverHaltedEndpoint(UInt32 slotId, UInt8 epNum, bool in)
@@ -2406,7 +2629,7 @@ bool RavynXHCIPort::enumerateHubPort(UInt32 hubSlotId, UInt32 rootPort0based, UI
         return false;
     }
 
-    if (!enumerateSlotDevice(slotId, rootPort0based, routeString, speed, depth + 1)) {
+    if (!enumerateSlotDevice(slotId, rootPort0based, routeString, speed, depth + 1, maxPkt0)) {
         if (disableSlot(slotId))
             freeSlotResources(slotId);
         return false;
@@ -2418,10 +2641,16 @@ bool RavynXHCIPort::enumerateHubPort(UInt32 hubSlotId, UInt32 rootPort0based, UI
  * downstream ports) or a candidate mass storage device (search for a
  * bulk-only MSC interface and, if found, publish a disk nub). */
 bool RavynXHCIPort::enumerateSlotDevice(UInt32 slotId, UInt32 rootPort0based, UInt32 routeString,
-                                        UInt32 speed, int depth)
+                                        UInt32 speed, int depth, UInt16 maxPkt0)
 {
     USBDeviceDescriptor devDesc;
     bzero(&devDesc, sizeof(devDesc));
+    USBSetupPacket getDevDesc8 = { 0x80, USB_REQ_GET_DESCRIPTOR,
+                                  (UInt16)(USB_DESC_DEVICE << 8), 0, 8 };
+    if (!controlTransfer(slotId, getDevDesc8, &devDesc, 8, true)) return false;
+    if (devDesc.bMaxPacketSize0 && devDesc.bMaxPacketSize0 != maxPkt0 && speed != 4) {
+        if (!evaluateEP0MaxPacket(slotId, devDesc.bMaxPacketSize0)) return false;
+    }
     USBSetupPacket getDevDesc = { 0x80, USB_REQ_GET_DESCRIPTOR,
                                   (UInt16)(USB_DESC_DEVICE << 8), 0, sizeof(devDesc) };
     if (!controlTransfer(slotId, getDevDesc, &devDesc, sizeof(devDesc), true)) return false;
@@ -2653,6 +2882,22 @@ bool RavynXHCIPort::enumerateSlotDevice(UInt32 slotId, UInt32 rootPort0based, UI
     return true;
 }
 
+bool RavynXHCIPort::evaluateEP0MaxPacket(UInt32 slotId, UInt16 maxPkt)
+{
+    SlotResources &sr = fSlots[slotId];
+    void *ic = sr.inputCtxMem->getBytesNoCopy();
+    bzero(ic, inputCtxBytes());
+    inputCtl(ic)->addFlags = (1u << 1);
+    inputEp(ic, 1)->dword1 = EP_CTX_CERR(3) | (EP_TYPE_CONTROL << EP_CTX_TYPE_SHIFT) |
+                             ((UInt32)maxPkt << EP_CTX_MAXPKT_SHIFT);
+    UInt8 cc = 0;
+    bool ok = doCommand(sr.inputCtxMem->getPhysicalAddress(), 0,
+                        TRB_SET_TYPE(TRB_TYPE_EVALUATE_CONTEXT) | TRB_SET_SLOT(slotId),
+                        &cc, NULL, 1000);
+    XHCI_Log("slot %u: evaluate ep0 mps=%u cc=%u", slotId, maxPkt, cc);
+    return ok && cc == TRB_CC_SUCCESS;
+}
+
 /* Full enumeration: Enable Slot -> Address -> GET_DESCRIPTOR -> hub or MSC */
 bool RavynXHCIPort::tryEnumerateMassStorage(UInt32 port0based, UInt32 speed)
 {
@@ -2671,7 +2916,7 @@ bool RavynXHCIPort::tryEnumerateMassStorage(UInt32 port0based, UInt32 speed)
         return false;
     }
 
-    if (!enumerateSlotDevice(slotId, port0based, 0, speed, 0)) {
+    if (!enumerateSlotDevice(slotId, port0based, 0, speed, 0, maxPkt0)) {
         if (disableSlot(slotId))
             freeSlotResources(slotId);
         return false;
@@ -2679,7 +2924,21 @@ bool RavynXHCIPort::tryEnumerateMassStorage(UInt32 port0based, UInt32 speed)
     return true;
 }
 
+// one BOT command at a time. unplug takes the lock to retire the device, so a command
+// either finishes first or finds the fMSC entry gone
 IOReturn RavynXHCIPort::botTransfer(UInt32 slotId,
+                                    const void *cbwCB, UInt8 cbwLen,
+                                    UInt32 dataLen, bool dataIn,
+                                    IOMemoryDescriptor *buffer, UInt64 bufOff)
+{
+    if (!fMSCLock) return kIOReturnNoMemory;
+    IOLockLock(fMSCLock);
+    IOReturn ret = botTransferLocked(slotId, cbwCB, cbwLen, dataLen, dataIn, buffer, bufOff);
+    IOLockUnlock(fMSCLock);
+    return ret;
+}
+
+IOReturn RavynXHCIPort::botTransferLocked(UInt32 slotId,
                                     const void *cbwCB, UInt8 cbwLen,
                                     UInt32 dataLen, bool dataIn,
                                     IOMemoryDescriptor *buffer, UInt64 bufOff)

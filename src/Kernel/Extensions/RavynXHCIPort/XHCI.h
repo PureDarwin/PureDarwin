@@ -60,7 +60,10 @@
 #define XHCI_USBCMD_INTE  (1U << 2)  /* Interrupter Enable */
 
 #define XHCI_USBSTS_HCH   (1U << 0)  /* HC Halted */
+#define XHCI_USBSTS_HSE   (1U << 2)  /* Host System Error */
+#define XHCI_USBSTS_EINT  (1U << 3)  /* Event Interrupt, RW1C */
 #define XHCI_USBSTS_CNR   (1U << 11) /* Controller Not Ready */
+#define XHCI_USBSTS_HCE   (1U << 12) /* Host Controller Error */
 
 #define XHCI_CRCR_RCS     (1ULL << 0) /* Ring Cycle State */
 #define XHCI_CRCR_CS      (1ULL << 1) /* Command Stop */
@@ -143,6 +146,7 @@ typedef struct {
 #define TRB_TC             (1U << 1)  /* Toggle Cycle (link TRB) / Evaluate Next TRB */
 #define TRB_ENT             (1U << 1) /* Evaluate Next TRB (transfer TRBs) */
 #define TRB_ISP            (1U << 2)  /* Interrupt on Short Packet */
+#define TRB_TD_SIZE(n)     ((UInt32)(n) << 17) /* Normal TRB status[21:17], packets left after this TRB */
 #define TRB_CH             (1U << 4)  /* Chain bit */
 #define TRB_IOC            (1U << 5)  /* Interrupt on Completion */
 #define TRB_IDT            (1U << 6)  /* Immediate Data (setup stage) */
@@ -183,6 +187,7 @@ enum {
 #define TRB_CC_TRANSACTION    4
 #define TRB_CC_STALL          6
 #define TRB_CC_SHORT_PACKET   13
+#define TRB_CC_CONTEXT_STATE  19
 
 /* Setup stage TRT (transfer type) field, control[17:16] */
 #define TRB_SETUP_TRT_NO_DATA     0

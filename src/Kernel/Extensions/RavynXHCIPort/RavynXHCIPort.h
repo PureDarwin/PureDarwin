@@ -63,6 +63,10 @@ public:
                          IOMemoryDescriptor *buffer, UInt64 bufOff);
 
 private:
+    IOReturn botTransferLocked(UInt32 slotId,
+                               const void *cbwCB, UInt8 cbwLen,
+                               UInt32 dataLen, bool dataIn,
+                               IOMemoryDescriptor *buffer, UInt64 bufOff);
     /* One tracked USB device slot that turned out to be Mass Storage. */
     struct MSCDevice {
         bool     valid;
@@ -145,17 +149,18 @@ private:
     UInt32                fContextSize; /* 32 or 64 bytes/context */
     IOLock              * fCmdLock;
 
-    /* MSI-driven event ring servicing. doCommand()/waitTransferEvent() still
-     * poll serviceEventRing() + IOSleep(1) themselves either way (identical
-     * to before), but when this is up the ISR also drains the ring and
-     * broadcasts fEventWaitChannel, so those waits usually resolve on the
-     * first iteration instead of a full 1ms tick. Falls back to pure polling
-     * (fInterruptsEnabled == false) if MSI registration fails. */
+    /* Interrupt-driven event ring servicing (MSI, or a device tree interrupt
+     * on the sc8280xp). doCommand()/waitTransferEvent() drain the ring
+     * themselves and then sleep on fEventWaitChannel until serviceEventRing()
+     * files something (fEventGeneration moves), their deadline, or a 20 ms
+     * backstop. Without an interrupt they fall back to 1 ms polling. */
     IOWorkLoop            * fWorkLoop;
     IOInterruptEventSource * fInterruptSource;
     bool                   fInterruptsEnabled;
+    bool                   fPlatformInterrupt;
     IOLock               * fEventWaitLock;
     UInt32                 fEventWaitChannel;
+    UInt32                 fEventGeneration;    // under fEventWaitLock, bumped when events are filed
 
     /* IOUSBController-shaped view of this port, backing IOUSBDevice/
      * IOUSBInterface for any slot enumerateSlotDevice() doesn't already
@@ -184,6 +189,9 @@ private:
     UInt8                  fResetTries[64];
     uint64_t               fVbusOnAt;
     volatile bool          fHotplugRunning;
+    // a port status change event wakes the hotplug thread early, under fEventWaitLock
+    bool                   fPortChangePending;
+    UInt32                 fHotplugWaitChannel;
     // set once the controller is halted for a restart or the watchdog deadline
     volatile bool          fQuiesced;
     IONotifier           * fRestartNotifier;
@@ -272,6 +280,7 @@ private:
 
     MSCDevice fMSC[16];
     RavynXHCIMassStorageDisk * fDiskNubs[16];
+    IOLock                   * fMSCLock;
 
     InterruptInEndpoint fIntrIn[64][16]; /* [slotId][endpoint number] */
 
@@ -349,6 +358,7 @@ private:
         }
 
     bool startA733(IOService *provider);
+    bool startSC8280XP(IOService *provider);
     void quiesce(const char *why);
     static IOReturn restartHandler(void *target, void *refCon, UInt32 messageType,
                                    IOService *provider, void *messageArgument, vm_size_t argSize);
@@ -383,6 +393,8 @@ private:
      * under fEventLock, recording each into fXferDone[][]/fCmdDone* for the
      * waiter that's looking for it. Safe to call from multiple threads. */
     void serviceEventRing();
+    UInt32 eventGeneration();
+    void sleepForEvent(UInt32 generation, uint64_t until);
 
     void interruptOccurred(IOInterruptEventSource *sender, int count);
     static void interruptOccurredStatic(OSObject *owner, IOInterruptEventSource *sender, int count);
@@ -409,6 +421,7 @@ private:
     // after a stall: reset the endpoint, move its dequeue past the halted td, clear the device halt
     void recoverHaltedEndpoint(UInt32 slotId, UInt8 epNum, bool in);
     void resetHaltedRing(UInt32 slotId, UInt32 dci, UInt64 deq, UInt8 cycle, UInt8 *cc1, UInt8 *cc2);
+    bool stopRing(UInt32 slotId, UInt32 dci, UInt64 deq, UInt8 cycle);
     bool bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
                       IOBufferMemoryDescriptor *xferMem, UInt32 len, UInt32 timeoutMs);
 
@@ -447,7 +460,8 @@ private:
      * recurse into hub downstream enumeration or search its configuration
      * for a bulk-only mass storage interface and publish a disk nub. */
     bool enumerateSlotDevice(UInt32 slotId, UInt32 rootPort0based, UInt32 routeString,
-                             UInt32 speed, int depth);
+                             UInt32 speed, int depth, UInt16 maxPkt0);
+    bool evaluateEP0MaxPacket(UInt32 slotId, UInt16 maxPkt);
 
     bool tryEnumerateMassStorage(UInt32 port0based, UInt32 speed);
 };

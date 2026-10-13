@@ -180,7 +180,7 @@ PDUSBHIDDevice::handleStop(IOService *provider)
 	if (fInPipe != NULL) {
 		fInPipe->Abort();
 	}
-	if (fInterface != NULL) {
+	if (fInterface != NULL && fInterface->isOpen(this)) {
 		fInterface->close(this);
 	}
 	super::handleStop(provider);
@@ -321,4 +321,23 @@ PDUSBHIDDevice::setReport(IOMemoryDescriptor *report, IOHIDReportType reportType
 	    (UInt16)len, NULL);
 	IOFree(buf, len ? len : 1);
 	return kr;
+}
+
+bool
+PDUSBHIDDevice::willTerminate(IOService *provider, IOOptionBits options)
+{
+	fRunning = false;
+	if (fInPipe) {
+	    fInPipe->Abort();
+	}
+	return super::willTerminate(provider, options);
+}
+
+bool
+PDUSBHIDDevice::didTerminate(IOService *provider, IOOptionBits options, bool *defer)
+{
+	if (fInterface && fInterface->isOpen(this)) {
+	    fInterface->close(this);
+	}
+	return super::didTerminate(provider, options, defer);
 }

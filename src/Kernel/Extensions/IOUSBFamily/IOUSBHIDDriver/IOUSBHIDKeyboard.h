@@ -14,6 +14,8 @@ public:
     bool start(IOService *provider) override;
     void stop(IOService *provider) override;
     void free() override;
+    bool willTerminate(IOService *provider, IOOptionBits options) override;
+    bool didTerminate(IOService *provider, IOOptionBits options, bool *defer) override;
 
     void setAlphaLockFeedback(bool state) override;
     const unsigned char *defaultKeymapOfLength(UInt32 *length) override;
