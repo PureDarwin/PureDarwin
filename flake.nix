@@ -1593,6 +1593,8 @@
               mesa = mesaNoxBuild;
               src = ./src/Userspace/MenuBar;
             };
+          # /usr/share/locale: UTF-8, en_US.UTF-8 and C.UTF-8, built with adv_cmds on the host
+          localeDataBuild = pkgs.callPackage ./nix/pkgs/base/locale-data.nix { };
           # title bars for Wayland windows that are not AppKit's, drawn with AppKit's frame code
           pddecorBuild =
             pkgs.callPackage ./nix/pkgs/apps/pddecor.nix {
@@ -4498,7 +4500,7 @@
           # Image contents (see nix/image-contents.nix).
           imageContents = import ./nix/image-contents.nix {
             inherit
-              appkitBuild windowserverBuild applicationservicesBuild terminalBuild menubarBuild dockBuild finderBuild systemInformationBuild calculatorBuild installerBuild pddecorBuild settingsBuild waylandSessionBuild
+              appkitBuild windowserverBuild applicationservicesBuild terminalBuild menubarBuild dockBuild finderBuild systemInformationBuild calculatorBuild installerBuild pddecorBuild localeDataBuild settingsBuild waylandSessionBuild
               nixPortPackages
               atspi2CoreBuild autoconfBuild automakeBuild bisonBuild bmakeBuild cairoBuild
               cairoGobjectBuild cctoolsBuild coreFoundationBuild curlBuild darwinCrossToolchain

@@ -169,6 +169,7 @@
 , calculatorBuild
 , installerBuild
 , pddecorBuild
+, localeDataBuild
 , settingsBuild
 , waylandSessionBuild
 , wlrootsBuild
@@ -1252,7 +1253,7 @@ let
         };
       # the desktop session: neuswc with pdwm, the AppKit apps and org.puredarwin.wayland-session to start them
       waylandDesktopPackages = lib.filter lib.isDerivation [
-          foundationBuild freetype2Build fontconfigBuild libpngBuild libjpegBuild xvfbZlibBuild
+          localeDataBuild foundationBuild freetype2Build fontconfigBuild libpngBuild libjpegBuild xvfbZlibBuild
           xvfbFontsBuild pdsurfaceBuild onyx2dBuild coregraphicsBuild coretextBuild
           waylandBuild xkbcommonNoxBuild xkeyboardConfigBuild neuswcBuild
           quartzcoreBuild corevideoBuild applicationservicesBuild windowserverBuild appkitBuild coredataBuild cocoaBuild appFrameworksBuild mpsNoxBuild
@@ -1279,6 +1280,7 @@ let
       };
       strippedExtraPackages = lib.filter lib.isDerivation (
         [
+          localeDataBuild
           coreFoundationBuild
           icuCoreBuild
           libcxxabiDylibBuild
