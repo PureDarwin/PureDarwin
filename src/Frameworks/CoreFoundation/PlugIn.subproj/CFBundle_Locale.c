@@ -535,7 +535,12 @@ CF_PRIVATE CFArrayRef _CFBundleCopyUserLanguages() {
     static CFArrayRef _CFBundleUserLanguages = NULL;
     static dispatch_once_t once = 0;
     dispatch_once(&once, ^{
-        CFArrayRef preferencesArray = NULL;
+        // the user's AppleLanguages, the global domain included, as Apple's CF reads them
+        CFArrayRef preferencesArray = (CFArrayRef)CFPreferencesCopyAppValue(CFSTR("AppleLanguages"), kCFPreferencesCurrentApplication);
+        if (preferencesArray && CFGetTypeID(preferencesArray) != CFArrayGetTypeID()) {
+            CFRelease(preferencesArray);
+            preferencesArray = NULL;
+        }
         if (__CFAppleLanguages) {
             CFDataRef data;
             CFIndex length = strlen((const char *)__CFAppleLanguages);

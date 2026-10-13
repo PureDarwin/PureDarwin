@@ -576,6 +576,30 @@ static CFStringRef _CFLocaleCreateLocaleIdentifierForAvailableLocalizations(CFAr
 }
 #endif
 
+// the user's format overrides from the global domain, the keys CFDateFormatter and CFNumberFormatter read
+static CFDictionaryRef __CFLocaleCopyFormatPrefs(void) {
+    static const CFStringRef keys[] = {
+        CFSTR("AppleICUForce24HourTime"), CFSTR("AppleICUForce12HourTime"), CFSTR("AppleFirstWeekday"),
+        CFSTR("AppleMinDaysInFirstWeek"), CFSTR("AppleICUDateFormatStrings"), CFSTR("AppleICUTimeFormatStrings"),
+        CFSTR("AppleICUDateTimeSymbols"), CFSTR("AppleICUNumberSymbols"), CFSTR("AppleMetricUnits"),
+        CFSTR("AppleMeasurementUnits"), CFSTR("AppleTemperatureUnit"), CFSTR("AppleLanguages"),
+    };
+    CFMutableDictionaryRef prefs = CFDictionaryCreateMutable(kCFAllocatorSystemDefault, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+
+    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+        CFPropertyListRef value = CFPreferencesCopyAppValue(keys[i], kCFPreferencesCurrentApplication);
+        if (value) {
+            CFDictionarySetValue(prefs, keys[i], value);
+            CFRelease(value);
+        }
+    }
+    if (CFDictionaryGetCount(prefs) == 0) {
+        CFRelease(prefs);
+        return NULL;
+    }
+    return prefs;
+}
+
 static CFLocaleRef _CFLocaleCopyCurrentGuts(CFStringRef name, Boolean useCache, CFDictionaryRef overridePrefs, Boolean disableBundleMatching) {
     /*
      NOTE: calling any CFPreferences function, or any function which calls into a CFPreferences function, *except* for __CFXPreferencesCopyCurrentApplicationStateWithDeadlockAvoidance (and accepting backstop values if its outparam is false), will deadlock. This is because CFPreferences calls os_log_*, which calls -descriptionWithLocale:, which calls CFLocaleCopyCurrent.
@@ -586,13 +610,33 @@ static CFLocaleRef _CFLocaleCopyCurrentGuts(CFStringRef name, Boolean useCache, 
     // even though the preference lookup is relatively quick, as there are
     // things which call this function thousands or millions of times in
     // a short period.
-    if (!name) {
-#if 0 // TARGET_OS_MAC || TARGET_OS_WIN32 || TARGET_OS_LINUX
-        name = (CFStringRef)CFPreferencesCopyAppValue(CFSTR("AppleLocale"), kCFPreferencesCurrentApplication);
+    // the cached locale answers the frequent calls before any preference is read
+    if (!name && useCache && !disableBundleMatching) {
+        CFLocaleRef cached = _cachedCurrentLocale();
+        if (cached) {
+#if DEPLOYMENT_RUNTIME_SWIFT
+            CFRetain(cached);
 #endif
-    } else {
+            return cached;
+        }
+    }
+
+    // CFPreferences can log, and logging formats with the current locale, so a nested call takes the fallback
+    static _Thread_local Boolean readingPrefs = false;
+    CFDictionaryRef prefs = NULL;
+    if (!readingPrefs && !overridePrefs) {
+        readingPrefs = true;
+        if (!name)
+            name = (CFStringRef)CFPreferencesCopyAppValue(CFSTR("AppleLocale"), kCFPreferencesCurrentApplication);
+        else
+            CFRetain(name);
+        prefs = __CFLocaleCopyFormatPrefs();
+        readingPrefs = false;
+    } else if (name) {
         CFRetain(name);
     }
+    if (overridePrefs)
+        prefs = (CFDictionaryRef)CFRetain(overridePrefs);
     if (name && (CFStringGetTypeID() == CFGetTypeID(name))) {
         ident = CFLocaleCreateCanonicalLocaleIdentifierFromString(kCFAllocatorSystemDefault, name);
     }
@@ -605,23 +649,19 @@ static CFLocaleRef _CFLocaleCopyCurrentGuts(CFStringRef name, Boolean useCache, 
     
     if (useCache) {
         CFLocaleRef cached = _cachedCurrentLocale();
-        if (ident) {
-            if (!CFEqual(cached->_identifier, ident)) {
-                _setCachedCurrentLocale(NULL);
-                cached = NULL;
-            }
-            CFRelease(ident);
+        if (cached && ident && !CFEqual(cached->_identifier, ident)) {
+            _setCachedCurrentLocale(NULL);
+            cached = NULL;
         }
         if (cached) {
 #if DEPLOYMENT_RUNTIME_SWIFT
             CFRetain(cached); // In Swift, this object isn't immortal and needs to be correctly memory-managed.
 #endif
-            
+            if (ident) CFRelease(ident);
+            if (prefs) CFRelease(prefs);
             return cached;
         }
     }
-    
-    CFDictionaryRef prefs = NULL;
     
     struct __CFLocale *locale;
     uint32_t size = sizeof(struct __CFLocale) - sizeof(CFRuntimeBase);
