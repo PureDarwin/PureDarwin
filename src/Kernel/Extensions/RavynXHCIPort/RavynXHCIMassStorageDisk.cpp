@@ -214,6 +214,7 @@ RavynXHCIMassStorageDisk::scsiReadWrite10(UInt64 block, UInt32 nblks,
     for (int attempt = 0; attempt < 4; attempt++) {
         IOReturn ret = fParent->botTransfer(fSlotId, cdb, sizeof(cdb), dataLen, !write, buffer, bufOff);
         if (ret == kIOReturnSuccess) return true;
+        if (ret == kIOReturnNoDevice) return false;
         XHCI_Log("usbdisk%u BOT %s block=%llu nblks=%u attempt %d failed, retrying",
                 fMscIndex, write ? "write" : "read", block, nblks, attempt);
     }

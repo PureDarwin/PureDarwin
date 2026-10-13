@@ -63,6 +63,10 @@ public:
                          IOMemoryDescriptor *buffer, UInt64 bufOff);
 
 private:
+    IOReturn botTransferLocked(UInt32 slotId,
+                               const void *cbwCB, UInt8 cbwLen,
+                               UInt32 dataLen, bool dataIn,
+                               IOMemoryDescriptor *buffer, UInt64 bufOff);
     /* One tracked USB device slot that turned out to be Mass Storage. */
     struct MSCDevice {
         bool     valid;
@@ -276,6 +280,7 @@ private:
 
     MSCDevice fMSC[16];
     RavynXHCIMassStorageDisk * fDiskNubs[16];
+    IOLock                   * fMSCLock;
 
     InterruptInEndpoint fIntrIn[64][16]; /* [slotId][endpoint number] */
 
