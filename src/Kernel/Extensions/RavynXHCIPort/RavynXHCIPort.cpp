@@ -614,6 +614,8 @@ bool RavynXHCIPort::start(IOService *provider)
     fPlatformInterrupt = false;
     fEventWaitLock = NULL;
     fEventWaitChannel = 0;
+    fPortChangePending = false;
+    fHotplugWaitChannel = 0;
     fUSBBus = NULL;
 
     if (fPCI) {
@@ -1177,6 +1179,8 @@ void RavynXHCIPort::serviceEventRing()
      * event and files each completion into the per-(slot,DCI) transfer table
      * or the command-completion slot, so concurrent waiters (disk I/O + the
      * keyboard poll thread) never consume and discard each other's events. */
+    bool portChange = false;
+
     IOLockLock(fEventLock);
     for (;;) {
         dmaFlush(&fEventRing[fEventRingDequeue], sizeof(XHCITRB));
@@ -1208,6 +1212,9 @@ void RavynXHCIPort::serviceEventRing()
                 fXferDone[slot][dci].control = evControl;
                 fXferDone[slot][dci].pending = true;
             }
+        } else if (type == TRB_TYPE_PORT_STATUS_CHG) {
+            XHCI_Log("port status change event, port %u", (UInt32)(evParam >> 24) & 0xff);
+            portChange = true;
         }
 
         fEventRingDequeue++;
@@ -1219,6 +1226,13 @@ void RavynXHCIPort::serviceEventRing()
         rtWrite64(XHCI_RT_IR0 + XHCI_IR_ERDP, (newErdp & ~0xFULL) | XHCI_ERDP_EHB);
     }
     IOLockUnlock(fEventLock);
+
+    if (portChange && fEventWaitLock) {
+        IOLockLock(fEventWaitLock);
+        fPortChangePending = true;
+        IOLockWakeup(fEventWaitLock, &fHotplugWaitChannel, true);
+        IOLockUnlock(fEventWaitLock);
+    }
 }
 
 bool RavynXHCIPort::doCommand(UInt64 param, UInt32 status, UInt32 controlNoCycle,
@@ -1426,6 +1440,9 @@ void RavynXHCIPort::hotplugLoop()
             bool connected = (portsc & XHCI_PORTSC_CCS) != 0;
 
             if (!connected) {
+                // a change bit left set blocks the ports next status change event
+                if (portsc & XHCI_PORTSC_RW1CS)
+                    portWrite32(p, XHCI_PORTSC, (portsc & ~XHCI_PORTSC_PR) & ~XHCI_PORTSC_PED);
                 if (fPortOccupied[p])
                     handleRootPortDisconnect(p, portsc);
                 fPortOccupied[p] = false;   /* allow a future replug on this port */
@@ -1441,7 +1458,18 @@ void RavynXHCIPort::hotplugLoop()
             if (!resetAndEnumeratePort(p) && ++fResetTries[p] < 5) fPortOccupied[p] = false;
         }
         pollHubPorts();
-        IOSleep(500);
+        if (fInterruptsEnabled) {
+            // a port status change event ends the wait early, the deadline still covers hubs
+            AbsoluteTime deadline;
+            clock_interval_to_deadline(500, kMillisecondScale, &deadline);
+            IOLockLock(fEventWaitLock);
+            if (!fPortChangePending)
+                IOLockSleepDeadline(fEventWaitLock, &fHotplugWaitChannel, deadline, THREAD_UNINT);
+            fPortChangePending = false;
+            IOLockUnlock(fEventWaitLock);
+        } else {
+            IOSleep(500);
+        }
     }
 }
 
