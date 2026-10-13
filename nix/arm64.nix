@@ -681,6 +681,10 @@ let
     pdVirglShim = pdVirglShimArm64Build;
     virglWinsysSrc = ./pkgs/mesa/virgl-puredarwin;
     virglAbiHeader = ../src/Kernel/Extensions/IOVirtIOGPU/IOVirtIOGPU3DShared.h;
+    radeonWinsysSrc = ./pkgs/mesa/radeon-puredarwin;
+    radeonAbiHeader = ../src/Kernel/Extensions/PDRadeonFramebuffer/PDRadeonRenderShared.h;
+    corefoundation = coreFoundationArm64Build;
+    iokit = iokitArm64Build;
     inherit (pkgs) meson ninja pkg-config python3 bison flex xorgproto xtrans;
   };
   # the powervr vulkan driver for PDPowerVR, on the mesa release the linux reference runs
