@@ -71,6 +71,23 @@
     [self _invalidate];
 }
 
+// the pattern ICU picks for the locale out of a skeleton such as "EEEMMMd jmm"
++ (NSString *)dateFormatFromTemplate:(NSString *)tmplate options:(NSUInteger)opts locale:(NSLocale *)locale {
+    CFLocaleRef cfLocale = locale != nil ? (CFLocaleRef)CFRetain((CFLocaleRef)locale) : CFLocaleCopyCurrent();
+    CFStringRef format = CFDateFormatterCreateDateFormatFromTemplate(kCFAllocatorDefault, (CFStringRef)tmplate, opts, cfLocale);
+
+    if (cfLocale != NULL)
+        CFRelease(cfLocale);
+    return [(NSString *)format autorelease];
+}
+
+- (void)setLocalizedDateFormatFromTemplate:(NSString *)tmplate {
+    NSString *format = [NSDateFormatter dateFormatFromTemplate:tmplate options:0 locale:_locale];
+
+    if (format != nil)
+        [self setDateFormat:format];
+}
+
 - (NSDateFormatterStyle)dateStyle { return _dateStyle; }
 - (void)setDateStyle:(NSDateFormatterStyle)style {
     _dateStyle = style;

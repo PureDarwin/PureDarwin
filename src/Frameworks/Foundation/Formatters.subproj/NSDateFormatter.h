@@ -29,6 +29,9 @@ typedef NS_ENUM(NSUInteger, NSDateFormatterStyle) {
     void *_cfFormatter;
 }
 
++ (NSString *)dateFormatFromTemplate:(NSString *)tmplate options:(NSUInteger)opts locale:(NSLocale *)locale;
+- (void)setLocalizedDateFormatFromTemplate:(NSString *)tmplate;
+
 - (NSString *)dateFormat;
 - (void)setDateFormat:(NSString *)format;
 - (NSDateFormatterStyle)dateStyle;
