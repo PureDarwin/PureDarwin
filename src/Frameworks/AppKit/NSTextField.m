@@ -144,6 +144,18 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return YES;
 }
 
+// a field still first responder after its editing ended takes the next key into a new editor
+-(void)keyDown:(NSEvent *)event {
+   if(_currentEditor==nil && [self isEditable] && [[self window] firstResponder]==self){
+    [self selectText:nil];
+    if(_currentEditor!=nil){
+     [_currentEditor keyDown:event];
+     return;
+    }
+   }
+   [super keyDown:event];
+}
+
 -(void)_selectTextWithRange:(NSRange)range {
    NSTextFieldCell *cell=[self selectedCell];
 

@@ -33,6 +33,7 @@
 #import <Onyx2D/O2Surface.h>
 #import <Onyx2D/O2GraphicsState.h>
 #import <AppKit/NSWindow.h>
+#import <AppKit/NSTextField.h>
 #import <objc/runtime.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1797,9 +1798,15 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 
 -(BOOL)makeFirstResponder:(NSResponder *)responder {
 
-   if(_firstResponder==responder ||
-      ([responder isKindOfClass:[NSControl class]] && _firstResponder==[(NSControl *)responder currentEditor]))
+   if([responder isKindOfClass:[NSControl class]] && [(NSControl *)responder currentEditor]!=nil &&
+      _firstResponder==[(NSControl *)responder currentEditor])
     return YES;
+   // endEditingFor: leaves a text field first responder with no editor, asking again starts editing
+   if(_firstResponder==responder){
+    if([responder isKindOfClass:[NSTextField class]] && [(NSControl *)responder currentEditor]==nil)
+     [responder becomeFirstResponder];
+    return YES;
+   }
 
    if(![_firstResponder resignFirstResponder])
     return NO;
