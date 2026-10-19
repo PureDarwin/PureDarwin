@@ -5,6 +5,8 @@
 , kernelSource
 , kexts
 , kcBase ? "fffffe0006000000"
+# kext bundles from other builds, e.g. drm drivers built apart from the boot kexts
+, extraKexts ? [ ]
 }:
 
 let
@@ -94,6 +96,7 @@ stdenv.mkDerivation {
       -kext "$KEXTS/PDLifs.kext" \
       -kext "$KEXTS/PDSerialHID.kext" \
       -kext "$KEXTS/PDKeyStore.kext" \
+      ${lib.concatMapStrings (k: "-kext \"${k}\" \\\n      ") extraKexts}\
       "''${codeless[@]}" \
       -o kernel
     runHook postBuild

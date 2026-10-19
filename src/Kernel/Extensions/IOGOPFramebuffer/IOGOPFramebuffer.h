@@ -23,6 +23,9 @@ public:
     virtual uint32_t getDepth();
 
     virtual IOReturn enableController() override;
+    // refuses clients once a gpu driver's framebuffer runs the same gpu
+    virtual IOReturn newUserClient(task_t owningTask, void *security_id, UInt32 type,
+                                   IOUserClient **clientH) override;
 
     virtual const char * getPixelFormats() override;
     virtual IOReturn getCurrentDisplayMode(IODisplayModeID * displayMode,

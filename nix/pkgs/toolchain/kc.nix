@@ -6,10 +6,12 @@
 , kexts
 # out-of-tree kexts, by bundle name, linked into an auxiliary KC against this boot KC
 , auxKexts ? [ ]
+# boot KC kexts left out, for images where an aux kext drives the same device
+, excludeKexts ? [ ]
 }:
 
 let
-  kextList = import ../../lib/kc-kexts.nix;
+  kextList = lib.subtractLists excludeKexts (import ../../lib/kc-kexts.nix);
   darwinKernelVersion = "25.5.0";
   darwinKernelVersionShort = "25.5";
 in

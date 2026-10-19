@@ -268,6 +268,10 @@ IOReturn IOFramebufferUserClient::clientMemoryForType( UInt32 type,
             FB_START(getVRAMRange,0,__LINE__,0);
             mem = fOwner->getVRAMRange();
             FB_END(getVRAMRange,0,__LINE__,0);
+#if defined(__i386__) || defined(__x86_64__)
+            // write-combined like the kernel's own mapping, the default is uncached
+            *flags |= kIOMapWriteCombineCache;
+#endif
             break;
 
         default:
@@ -606,6 +610,9 @@ IOReturn IOFramebufferSharedUserClient::clientMemoryForType( UInt32 type,
                 FB_START(getVRAMRange,0,__LINE__,0);
                 mem = fOwner->getVRAMRange();
                 FB_END(getVRAMRange,0,__LINE__,0);
+#if defined(__i386__) || defined(__x86_64__)
+                *options |= kIOMapWriteCombineCache;
+#endif
             }
             break;
     }

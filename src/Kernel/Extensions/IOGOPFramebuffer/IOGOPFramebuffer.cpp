@@ -476,3 +476,32 @@ IOGOPFramebuffer::getPixelInformation(IODisplayModeID      displayMode,
 
     return (kIOReturnSuccess);
 }
+
+// a drm driver (PDDRMFramebuffer) that drives this gpu has reprogrammed the planes
+// and the aperture, so drawing into the firmware buffer no longer reaches the screen
+IOReturn
+IOGOPFramebuffer::newUserClient(task_t owningTask, void *security_id, UInt32 type,
+    IOUserClient **clientH)
+{
+    IOService *gpu = getProvider();
+    OSDictionary *match = serviceMatching("IOFramebuffer");
+    OSIterator *it = match != NULL ? getMatchingServices(match) : NULL;
+    bool replaced = false;
+
+    OSSafeReleaseNULL(match);
+    if (it != NULL) {
+        IOService *drm;
+        // each drm kext names its framebuffer PDDRMFramebuffer or PDDRMFramebuffer<driver>
+        while (!replaced && (drm = OSDynamicCast(IOService, it->getNextObject())) != NULL) {
+            IOService *driver = drm->getProvider();
+            replaced = strncmp(drm->getMetaClass()->getClassName(), "PDDRMFramebuffer", 16) == 0 &&
+                gpu != NULL && driver != NULL && driver->getProvider() == gpu;
+        }
+        it->release();
+    }
+    if (replaced) {
+        IOLog("IOGOPFramebuffer: PDDRMFramebuffer drives this gpu now, refusing clients\n");
+        return kIOReturnNotPermitted;
+    }
+    return IOFramebuffer::newUserClient(owningTask, security_id, type, clientH);
+}
