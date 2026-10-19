@@ -2919,6 +2919,21 @@ sys_fcntl_nocancel(proc_t p, struct fcntl_nocancel_args *uap, int32_t *retval)
 		    cmd == F_DUPFD_CLOEXEC ? FP_CLOEXEC : 0, retval);
 		goto out;
 
+	case F_PD_SAMEFILE: {
+		// kcmp KCMP_FILE: 0 same open file, 1 or 2 orders the two
+		struct fileproc *fp2;
+		int fd2 = CAST_DOWN_EXPLICIT(int, uap->arg);
+
+		if ((error = fp_lookup(p, fd2, &fp2, 1))) {
+			goto out;
+		}
+		uintptr_t g1 = VM_KERNEL_ADDRHASH(fp->fp_glob);
+		uintptr_t g2 = VM_KERNEL_ADDRHASH(fp2->fp_glob);
+		*retval = fp->fp_glob == fp2->fp_glob ? 0 : (g1 < g2 ? 1 : 2);
+		fp_drop(p, fd2, fp2, 1);
+		goto out;
+	}
+
 	case F_GETFD:
 		*retval = (fp->fp_flags & FP_CLOEXEC) ? FD_CLOEXEC : 0;
 		error = 0;

@@ -143,7 +143,8 @@ typedef enum {
 	DTYPE_ATALK,            /* (obsolete) */
 	DTYPE_NETPOLICY,        /* networking policy */
 	DTYPE_CHANNEL,          /* Skywalk Channel */
-	DTYPE_NEXUS             /* Skywalk Nexus */
+	DTYPE_NEXUS,            /* Skywalk Nexus */
+	DTYPE_PDLFILE           /* PureDarwin: a linuxkpi object, see pd_lfile.c */
 } file_type_t;
 
 /* defines for fg_lflags */

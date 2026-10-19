@@ -391,6 +391,7 @@
 
 #ifdef PRIVATE
 #define F_DIRLSEEK              114      /* Move a directory's fd offset to the given dirent name */
+#define F_PD_SAMEFILE           0x5044   /* PureDarwin: kcmp-style order of two fds' open files */
 #endif // PRIVATE
 
 // FS-specific fcntl()'s numbers begin at 0x00010000 and go up

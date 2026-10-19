@@ -248,6 +248,7 @@ static int __attribute__ ((noinline)) snapshot_root(int dirfd, user_addr_t name,
 
 __private_extern__
 int sync_internal(void);
+int pd_lfile_lseek(proc_t p, int fd, off_t offset, int whence, off_t *retval);
 
 __private_extern__
 int unlink1(vfs_context_t, vnode_t, user_addr_t, enum uio_seg, int);
@@ -6820,7 +6821,8 @@ lseek(proc_t p, struct lseek_args *uap, off_t *retval)
 
 	if ((error = fp_getfvp(p, uap->fd, &fp, &vp))) {
 		if (error == ENOTSUP) {
-			return ESPIPE;
+			// dma-bufs answer SEEK_END with their size
+			return pd_lfile_lseek(p, uap->fd, uap->offset, uap->whence, retval);
 		}
 		return error;
 	}

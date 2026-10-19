@@ -412,6 +412,7 @@ bsd/kern/kern_lockf.c			standard
 bsd/kern/kern_fork.c			standard
 bsd/kern/kern_malloc.c			standard
 bsd/kern/kern_mman.c			standard
+bsd/kern/pd_lfile.c			standard
 bsd/kern/kern_persona.c			standard
 bsd/kern/kern_physio.c			standard
 bsd/kern/kern_priv.c			standard
