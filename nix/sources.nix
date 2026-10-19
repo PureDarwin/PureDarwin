@@ -69,6 +69,7 @@ let
     "src/Kernel/CMakeLists.txt"
     "src/Kernel/xnu/EXTERNAL_HEADERS"
     "src/Kernel/Extensions"
+    "src/Kernel/fbsdkpi"
     "src/Kernel/libkmod"
     "src/Kernel/xnu"
     "src/Kernel/libfirehose_kernel"
