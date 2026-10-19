@@ -5412,7 +5412,7 @@
           imageI915Build =linuxPackages.image-wayland-minimal.override (old: {
             kc = kcGpuBuild;
             extraPackages = dropGpuDefaults old.extraPackages ++ [ userlandBuild gpuAuxFiles i915Firmware gfxInfoTool
-              i915GlFiles i915GlNeuswcEnv pdgltriBuild pdmmaploopBuild libdrmAmdgpuBuild libelfBuild ];
+              i915GlFiles i915GlNeuswcEnv pdgltriBuild libdrmAmdgpuBuild libelfBuild ];
             imageFileName = "puredarwin-i915.img";
             bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 gopconsole=1 -noprogress csr-active-config=0x3 fbsdkpi_debug=1 drm_debug=0x4 i915_enable_dc=0 i915_disable_power_well=0 i915_enable_fbc=0";
           });
@@ -5544,12 +5544,6 @@
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libdrmAmdgpu = libdrmAmdgpuBuild;
-            };
-          # temporary: the cdev mmap pager loop test
-          pdmmaploopBuild =
-            pkgs.callPackage ./nix/pkgs/gpu/pdmmaploop.nix {
-              inherit darwinCrossToolchain nativeLd;
-              libSystem = libSystemBuild;
             };
           pdgltriBuild =
             pkgs.callPackage ./nix/pkgs/gpu/pdgltri.nix {
