@@ -85,7 +85,9 @@ PDArmGICController::initGIC(volatile uint8_t *gicd, bool v2)
 	getPlatform()->registerInterruptController((OSSymbol *)OSSymbol::withCStringNoCopy("PDArmGIC"), this);
 	IORegistryEntry *gic = IORegistryEntry::fromPath("/arm-io/gic", gIODTPlane);
 	if (gic != NULL) {
-		fDTName = IODTInterruptControllerName(gic);
+		// only a device tree that gives the gic a phandle names it, qemu virt's has none
+		if (gic->getProperty("AAPL,phandle") != NULL)
+			fDTName = IODTInterruptControllerName(gic);
 		if (fDTName != NULL)
 			getPlatform()->registerInterruptController((OSSymbol *)fDTName, this);
 		gic->release();
