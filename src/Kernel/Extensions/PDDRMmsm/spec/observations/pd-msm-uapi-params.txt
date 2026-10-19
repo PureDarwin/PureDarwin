@@ -1,0 +1,29 @@
+version 1.5.0 name msm date 0 desc Adreno for PureDarwin
+param GPU_ID           0x133 (307)
+param GMEM_SIZE        0x20000 (131072)
+param CHIP_ID          0x3000600 (50333184)
+param MAX_FREQ         0x17d78400 (400000000)
+param TIMESTAMP        error 22 (Invalid argument)
+param GMEM_BASE        0x100000 (1048576)
+param PRIORITIES       0x1 (1)
+param PP_PGTABLE       0x0 (0)
+param FAULTS           0x0 (0)
+param SUSPENDS         0x0 (0)
+param SYSPROF          error 22 (Invalid argument)
+param COMM             error 22 (Invalid argument)
+param CMDLINE          error 22 (Invalid argument)
+param VA_START         error 22 (Invalid argument)
+param VA_SIZE          error 22 (Invalid argument)
+param HIGHEST_BANK_BIT error 22 (Invalid argument)
+param RAYTRACING       error 22 (Invalid argument)
+param UBWC_SWIZZLE     error 22 (Invalid argument)
+param MACROTILE_MODE   error 22 (Invalid argument)
+param UCHE_TRAP_BASE   error 22 (Invalid argument)
+param HAS_PRR          error 22 (Invalid argument)
+bo 1 size 4096: iova 0x1009000, mmap offset 0x100009000
+bo 2 size 8192: iova 0x100a000, mmap offset 0x10000a000
+bo 3 size 16384: iova 0x100c000, mmap offset 0x10000c000
+submitqueue prio 0: ok id 1
+submitqueue prio 1: Invalid argument id 0
+submitqueue prio 2: Invalid argument id 0
+submitqueue prio 3: Invalid argument id 0

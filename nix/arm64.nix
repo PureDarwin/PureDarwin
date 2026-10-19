@@ -32,6 +32,11 @@
 , symptomReporterBuild
 , nativeLd
 , nativeMesonToolsDir
+, tllistBuild
+, localeDataBuild
+, applicationservicesBuild
+, systemFontsBuild
+, waylandSessionBuild
 , ncursesBuild
 , coreServicesSource
 , asmjitSrc
@@ -686,6 +691,298 @@ let
     corefoundation = coreFoundationArm64Build;
     iokit = iokitArm64Build;
     inherit (pkgs) meson ninja pkg-config python3 bison flex xorgproto xtrans;
+  };
+  # freedreno on the adreno msm driver through /dev/dri (PDDRMmsm), for the msm8916 stick: no x11 there
+  libdrmDriArm64Build = libdrmArm64Build.override { amdgpu = true; };
+  mesaMsmArm64Build = mesaArm64Build.override {
+    withMsmDrm = true;
+    withX11 = false;
+    libdrmAmdgpu = libdrmDriArm64Build;
+  };
+  pdgltriMsmArm64Build = mkArm64Build ./pkgs/gpu/pdgltri.nix { mesa = mesaMsmArm64Build; };
+  # argon on the msm8916 stick: neuswc over freedreno, drawing into PDVirtualFramebuffer
+  neuwldMsmArm64Build = mkArm64Build ./pkgs/wayland/neuwld.nix {
+    fontconfig = fontconfigArm64Build;
+    freetype = freetype2Arm64Build;
+    pixman = xvfbPixmanArm64Build;
+    mesaNox = mesaMsmArm64Build;
+    src = ../src/ThirdParty/neuwld;
+  };
+  # argon's desktop on the stick: the AppKit stack over the freedreno mesa, from the x86 wiring
+  iosurfaceArm64Build = mkArm64Build ./pkgs/apple/iosurface.nix {
+    corefoundation = coreFoundationArm64Build;
+    src = ../src/Frameworks/IOSurface;
+  };
+  gluMsmArm64Build = gluArm64Build.override { mesa = mesaMsmArm64Build; };
+  onyx2dArm64Build = mkArm64Build ./pkgs/apple/onyx2d.nix {
+    libobjc = libobjcArm64Build;
+    corefoundation = coreFoundationArm64Build;
+    foundation = foundationArm64Build;
+    freetype2 = freetype2Arm64Build;
+    fontconfig = fontconfigArm64Build;
+    libpng = libpngArm64Build;
+    libjpeg = libjpegArm64Build;
+    zlib = xvfbZlibArm64Build;
+    src = ../src/Frameworks/Onyx2D;
+  };
+  coregraphicsArm64Build = mkArm64Build ./pkgs/apple/coregraphics.nix {
+    libobjc = libobjcArm64Build;
+    corefoundation = coreFoundationArm64Build;
+    foundation = foundationArm64Build;
+    onyx2d = onyx2dArm64Build;
+    freetype2 = freetype2Arm64Build;
+    libpng = libpngArm64Build;
+    libjpeg = libjpegArm64Build;
+    zlib = xvfbZlibArm64Build;
+    src = ../src/Frameworks/CoreGraphics;
+  };
+  coretextArm64Build = mkArm64Build ./pkgs/apple/coretext.nix {
+    libobjc = libobjcArm64Build;
+    corefoundation = coreFoundationArm64Build;
+    foundation = foundationArm64Build;
+    onyx2d = onyx2dArm64Build;
+    coregraphics = coregraphicsArm64Build;
+    freetype = freetype2Arm64Build;
+    fontconfig = fontconfigArm64Build;
+    harfbuzz = harfbuzzArm64NoxBuild;
+    fribidi = fribidiArm64Build;
+    icu = icuCoreArm64Build;
+    src = ../src/Frameworks/CoreText;
+  };
+  corevideoMsmArm64Build = mkArm64Build ./pkgs/apple/corevideo.nix {
+    libobjc = libobjcArm64Build;
+    corefoundation = coreFoundationArm64Build;
+    foundation = foundationArm64Build;
+    openglFramework = openglFrameworkArm64NoxBuild;
+    mesa = mesaMsmArm64Build;
+    glu = gluMsmArm64Build;
+    iosurface = iosurfaceArm64Build;
+    coregraphics = coregraphicsArm64Build;
+    src = ../src/Frameworks/CoreVideo;
+  };
+  quartzcoreMsmArm64Build = mkArm64Build ./pkgs/apple/quartzcore.nix {
+    libobjc = libobjcArm64Build;
+    corefoundation = coreFoundationArm64Build;
+    foundation = foundationArm64Build;
+    onyx2d = onyx2dArm64Build;
+    coregraphics = coregraphicsArm64Build;
+    coretext = coretextArm64Build;
+    openglFramework = openglFrameworkArm64NoxBuild;
+    corevideo = corevideoMsmArm64Build;
+    applicationservices = applicationservicesBuild;
+    mesa = mesaMsmArm64Build;
+    glu = gluMsmArm64Build;
+    src = ../src/Frameworks/QuartzCore;
+  };
+  windowserverArm64Build = mkArm64Build ./pkgs/apple/windowserver.nix {
+    coregraphics = coregraphicsArm64Build;
+    corefoundation = coreFoundationArm64Build;
+    wayland = waylandArm64Build;
+    xkbcommon = xkbcommonArm64Build;
+    waylandProtocols = waylandProtocolsBuild;
+    waylandScanner = pkgs.wayland-scanner;
+    src = ../src/Frameworks/WindowServer;
+  };
+  appkitMsmArm64Build = mkArm64Build ./pkgs/apple/appkit.nix {
+    libobjc = libobjcArm64Build;
+    corefoundation = coreFoundationArm64Build;
+    foundation = foundationArm64Build;
+    onyx2d = onyx2dArm64Build;
+    coregraphics = coregraphicsArm64Build;
+    coretext = coretextArm64Build;
+    quartzcore = quartzcoreMsmArm64Build;
+    applicationservices = applicationservicesBuild;
+    coreservices = coreServicesArm64Build;
+    openglFramework = openglFrameworkArm64NoxBuild;
+    windowserver = windowserverArm64Build;
+    freetype2 = freetype2Arm64Build;
+    fontconfig = fontconfigArm64Build;
+    mesa = mesaMsmArm64Build;
+    glu = gluMsmArm64Build;
+    src = ../src/Frameworks/AppKit;
+  };
+  coredataArm64Build = mkArm64Build ./pkgs/apple/coredata.nix {
+    libobjc = libobjcArm64Build;
+    corefoundation = coreFoundationArm64Build;
+    foundation = foundationArm64Build;
+    src = ../src/Frameworks/CoreData;
+  };
+  cocoaMsmArm64Build = mkArm64Build ./pkgs/apple/cocoa.nix {
+    foundation = foundationArm64Build;
+    appkit = appkitMsmArm64Build;
+    coredata = coredataArm64Build;
+    src = ../src/Frameworks/Cocoa;
+  };
+  carbonArm64Build = mkArm64Build ./pkgs/apple/carbon.nix {
+    libobjc = libobjcArm64Build;
+    corefoundation = coreFoundationArm64Build;
+    coregraphics = coregraphicsArm64Build;
+    coreservices = coreServicesArm64Build;
+    src = ../src/Frameworks/Carbon;
+  };
+  pddecorMsmArm64Build = mkArm64Build ./pkgs/apps/pddecor.nix ({
+    iokit = iokitArm64Build;
+    iokitHeaders = iokitCFStaticArm64Build;
+    wayland = waylandArm64Build;
+    waylandScanner = pkgs.wayland-scanner;
+    src = ../src/Userspace/pddecor;
+    protocol = ../src/ThirdParty/neuswc/protocol/pd-decoration-v1.xml;
+  } // argonAppDeps);
+  dockMsmArm64Build = mkArm64Build ./pkgs/apps/dock.nix ({
+    librsvg = pkgs.librsvg;
+    libjpeg = pkgs.libjpeg;
+    src = ../src/Userspace/Dock;
+  } // argonAppDeps);
+  menubarMsmArm64Build = mkArm64Build ./pkgs/apps/menubar.nix ({
+    librsvg = pkgs.librsvg;
+    iokit = iokitArm64Build;
+    iokitHeaders = iokitCFStaticArm64Build;
+    src = ../src/Userspace/MenuBar;
+  } // argonAppDeps);
+  terminalMsmArm64Build = mkArm64Build ./pkgs/apps/terminal.nix ({
+    src = ../src/Userspace/Terminal;
+  } // argonAppDeps);
+  finderMsmArm64Build = mkArm64Build ./pkgs/apps/finder.nix ({
+    librsvg = pkgs.librsvg;
+    src = ../src/Userspace/Finder;
+  } // argonAppDeps);
+  calculatorMsmArm64Build = mkArm64Build ./pkgs/apps/calculator.nix ({
+    iokit = iokitArm64Build;
+    iokitHeaders = iokitCFStaticArm64Build;
+    src = ../src/Userspace/Calculator;
+  } // argonAppDeps);
+  # argon's desktop for the stick, on top of argonMsmArm64Bundle and pdroot's own Foundation
+  argonDesktopMsmArm64Bundle = pkgs.runCommand "puredarwin-argon-desktop-msm-arm64" { } ''
+    mkdir -p $out
+    for d in ${onyx2dArm64Build} ${coregraphicsArm64Build} ${coretextArm64Build} \
+             ${harfbuzzArm64NoxBuild} ${fribidiArm64Build} ${libpngArm64Build} ${libjpegArm64Build} \
+             ${xvfbZlibArm64Build} ${iosurfaceArm64Build} ${gluMsmArm64Build} ${openglFrameworkArm64NoxBuild} \
+             ${corevideoMsmArm64Build} ${quartzcoreMsmArm64Build} ${windowserverArm64Build} \
+             ${coreServicesArm64Build} ${appkitMsmArm64Build} ${coredataArm64Build} ${cocoaMsmArm64Build} \
+             ${carbonArm64Build} ${pddecorMsmArm64Build} ${dockMsmArm64Build} ${menubarMsmArm64Build} \
+             ${terminalMsmArm64Build} ${finderMsmArm64Build} ${calculatorMsmArm64Build} \
+             ${systemFontsBuild} ${waylandSessionBuild}; do
+      cp -rL --no-preserve=mode $d/. $out/ 2>/dev/null || cp -rL --no-preserve=mode $d/. $out/ || true
+    done
+    # what only a build needs, and what the stick has already
+    rm -rf $out/usr/include $out/include $out/nix-support $out/usr/lib/pkgconfig $out/lib/pkgconfig $out/usr/share/man
+    find $out -name '*.a' -delete
+    find $out -path '*/Headers' -prune -exec rm -rf {} +
+    find $out -type f -path '*/bin/*' -exec chmod 755 {} +
+    find $out -type f \( -name '*.dylib' -o -path '*/MacOS/*' -o -path '*.framework/*' \) -exec chmod 755 {} + 2>/dev/null || true
+    chmod 755 $out/usr/libexec/pd-wayland-session 2>/dev/null || true
+  '';
+  # what every AppKit app above links
+  argonAppDeps = {
+    libobjc = libobjcArm64Build;
+    corefoundation = coreFoundationArm64Build;
+    foundation = foundationArm64Build;
+    appkit = appkitMsmArm64Build;
+    onyx2d = onyx2dArm64Build;
+    coretext = coretextArm64Build;
+    quartzcore = quartzcoreMsmArm64Build;
+    coregraphics = coregraphicsArm64Build;
+    applicationservices = applicationservicesBuild;
+    coreservices = coreServicesArm64Build;
+    windowserver = windowserverArm64Build;
+    openglFramework = openglFrameworkArm64NoxBuild;
+    mesa = mesaMsmArm64Build;
+  };
+
+  # foot, a terminal to run in argon on the stick
+  pdEpollShimArm64Build = mkArm64Build ./pkgs/wayland/pd-epoll-shim.nix {
+    src = ../src/Libraries/pd-epoll-shim;
+  };
+  fcftArm64Build = mkArm64Build ./pkgs/wayland/fcft.nix {
+    nativeMesonTools = nativeMesonToolsDir;
+    fontconfig = fontconfigArm64Build;
+    freetype = freetype2Arm64Build;
+    pixman = xvfbPixmanArm64Build;
+    harfbuzz = harfbuzzArm64NoxBuild;
+    libutf8proc = libutf8procArm64Build;
+    tllist = tllistBuild;
+    expat = expatArm64Build;
+    zlib = xvfbZlibArm64Build;
+    libpng = libpngArm64Build;
+    libiconv = libiconvArm64Build;
+    glib = glibArm64Build;
+    pcre2 = pcre2Arm64Build;
+    libffi = libffiArm64Build;
+  };
+  footArm64Build = mkArm64Build ./pkgs/wayland/foot.nix {
+    nativeMesonTools = nativeMesonToolsDir;
+    wayland = waylandArm64Build;
+    waylandProtocols = waylandProtocolsBuild;
+    waylandScanner = waylandScannerBuild;
+    xkbcommon = xkbcommonArm64NoxBuild;
+    fontconfig = fontconfigArm64Build;
+    freetype = freetype2Arm64Build;
+    pixman = xvfbPixmanArm64Build;
+    harfbuzz = harfbuzzArm64NoxBuild;
+    libutf8proc = libutf8procArm64Build;
+    tllist = tllistBuild;
+    fcft = fcftArm64Build;
+    epollShim = pdEpollShimArm64Build;
+    expat = expatArm64Build;
+    zlib = xvfbZlibArm64Build;
+    libpng = libpngArm64Build;
+    libiconv = libiconvArm64Build;
+    glib = glibArm64Build;
+    pcre2 = pcre2Arm64Build;
+    libffi = libffiArm64Build;
+    ncurses = ncursesArm64Build;
+  };
+  # what the stick needs on top of pdroot to run neuswc: copied in with adb, not an image
+  argonMsmArm64Bundle = pkgs.runCommand "puredarwin-argon-msm-arm64" { } ''
+    mkdir -p $out/bin $out/usr/bin $out/usr/lib/pd-msm-mesa $out/etc
+    cp ${neuswcMsmArm64Build}/bin/neuswc $out/bin/
+    cp ${neuswcMsmArm64Build}/bin/swcsnap $out/usr/bin/
+    cp -P ${waylandArm64Build}/lib/*.dylib $out/usr/lib/
+    # their usr/lib entries point at ../../lib in the store, so take the files
+    cp -L ${fontconfigArm64Build}/usr/lib/*.dylib ${freetype2Arm64Build}/usr/lib/*.dylib $out/usr/lib/
+    cp -rP --no-preserve=mode ${mesaMsmArm64Build}/usr/lib/. $out/usr/lib/pd-msm-mesa/
+    rm -rf $out/usr/lib/pd-msm-mesa/pkgconfig
+    cp -r ${fontconfigArm64Build}/etc/fonts $out/etc/
+    for d in ${xkeyboardConfigArm64Build} ${xvfbFontsArm64Build} ${localeDataBuild}; do
+      cp -rn --no-preserve=mode $d/. $out/
+    done
+    # foot and what it brings, utf8proc's install name is /lib, so these are found by DYLD_LIBRARY_PATH
+    mkdir -p $out/usr/lib/argon
+    cp ${footArm64Build}/bin/foot $out/usr/bin/
+    cp -r --no-preserve=mode ${footArm64Build}/share/foot $out/usr/share/
+    mkdir -p $out/etc/xdg/foot
+    # a first size larger than the screen leaves foot waiting on a resize that never lands
+    printf '[main]\nfont=DejaVu Sans Mono:size=9\ninitial-window-size-chars=60x16\n' > $out/etc/xdg/foot/foot.ini
+    cp -L ${fcftArm64Build}/usr/lib/libfcft.4.dylib ${pdEpollShimArm64Build}/usr/lib/libepoll-shim.dylib $out/usr/lib/argon/
+    cp -L $(find ${libutf8procArm64Build} -name libutf8proc.dylib | head -n 1) $out/usr/lib/argon/
+    # terminfo for foot's TERM and the usual fallbacks, under both the letter and the hex directory names
+    for t in foot foot-direct xterm xterm-256color vt100 dumb linux; do
+      src=$(find ${pkgs.ncurses}/share/terminfo -name "$t" | head -n 1)
+      [ -n "$src" ] || continue
+      c=$(printf %s "$t" | cut -c1)
+      h=$(printf %s "$c" | od -An -tx1 | tr -d ' ')
+      mkdir -p $out/usr/share/terminfo/$c $out/usr/share/terminfo/$h
+      cp $src $out/usr/share/terminfo/$c/$t
+      cp $src $out/usr/share/terminfo/$h/$t
+    done
+    rm -rf $out/nix-support $out/include $out/lib/pkgconfig
+  '';
+  neuswcMsmArm64Build = mkArm64Build ./pkgs/wayland/neuswc.nix {
+    pdwmSource = ../src/Userspace/pdwm/pdwm.c;
+    corefoundation = coreFoundationArm64Build;
+    fontconfig = fontconfigArm64Build;
+    freetype = freetype2Arm64Build;
+    iokit = iokitArm64Build;
+    iokitHeaders = iokitCFStaticArm64Build;
+    neuwld = neuwldMsmArm64Build;
+    mesaNox = mesaMsmArm64Build;
+    pdsurface = pdsurfaceArm64Build;
+    pixman = xvfbPixmanArm64Build;
+    wayland = waylandArm64Build;
+    waylandProtocols = waylandProtocolsBuild;
+    waylandScanner = waylandScannerBuild;
+    xkbcommon = xkbcommonArm64NoxBuild;
+    src = ../src/ThirdParty/neuswc;
   };
   # the powervr vulkan driver for PDPowerVR, on the mesa release the linux reference runs
   mesaPowervrVersion = "26.0.3";
@@ -2780,9 +3077,10 @@ let
       "IOUSBCompositeDriver.kext"
       "IOUSBHIDDriver.kext" "AppleUSBMergeNub.kext"
       "RavynXHCIPort.kext" "IOVirtIOGPU.kext" "IOVirtIOBlock.kext"
-      "IOGraphicsFamily.kext" "IOGOPFramebuffer.kext"
+      "IOGraphicsFamily.kext" "IOGOPFramebuffer.kext" "PDVirtualFramebuffer.kext"
       "IONVMEFamily.kext"
       "RavynHDAudio.kext" "PDE1000.kext" "PDRealtek8111.kext"
+      "IO80211Family.kext" "PDQwx.kext"
       "PDBcm2835SD.kext" "PDSun50iMMC.kext" "PDSg2002SD.kext" "PDSg2002Eth.kext"
       "PDI2CFamily.kext" "PDQcomTLMM.kext" "PDQcomGeniI2C.kext" "PDI2CHID.kext"
       "PDPowerVR.kext" "PDSun60iDisplay.kext"
@@ -2808,9 +3106,10 @@ let
       "IOUSBCompositeDriver.kext"
       "IOUSBHIDDriver.kext" "AppleUSBMergeNub.kext"
       "RavynXHCIPort.kext" "IOVirtIOGPU.kext" "IOVirtIOBlock.kext"
-      "IOGraphicsFamily.kext" "IOGOPFramebuffer.kext"
+      "IOGraphicsFamily.kext" "IOGOPFramebuffer.kext" "PDVirtualFramebuffer.kext"
       "IONVMEFamily.kext"
       "RavynHDAudio.kext" "PDE1000.kext" "PDRealtek8111.kext"
+      "IO80211Family.kext" "PDQwx.kext"
     ];
     enableIOGraphicsFamily = true;
     puredarwinArch = "arm64";
@@ -3278,6 +3577,32 @@ in
     swayArm64Build
     libdrmArm64Build
     libdrmPdpvrArm64Build
+    libdrmDriArm64Build
+    mesaMsmArm64Build
+    neuwldMsmArm64Build
+    neuswcMsmArm64Build
+    argonMsmArm64Bundle
+    footArm64Build
+    iosurfaceArm64Build
+    gluMsmArm64Build
+    onyx2dArm64Build
+    coregraphicsArm64Build
+    coretextArm64Build
+    corevideoMsmArm64Build
+    quartzcoreMsmArm64Build
+    windowserverArm64Build
+    appkitMsmArm64Build
+    coredataArm64Build
+    cocoaMsmArm64Build
+    carbonArm64Build
+    pddecorMsmArm64Build
+    dockMsmArm64Build
+    menubarMsmArm64Build
+    terminalMsmArm64Build
+    finderMsmArm64Build
+    calculatorMsmArm64Build
+    argonDesktopMsmArm64Bundle
+    pdgltriMsmArm64Build
     mesaPvrNativeToolsBuild
     mesaPowervrArm64Build
     vulkanLoaderArm64Build
