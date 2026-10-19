@@ -86,6 +86,8 @@ extern kern_return_t device_close(
 
 extern boolean_t vm_swap_files_pinned(void);
 
+extern void device_pager_set_release(memory_object_t device,
+    void (*fn)(void *), void *arg);
 extern kern_return_t device_pager_populate_object(
 	memory_object_t         device,
 	memory_object_offset_t  offset,

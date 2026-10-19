@@ -100,6 +100,9 @@ typedef struct device_pager {
 #endif
 	int             flags;
 	boolean_t       is_mapped;
+	/* PureDarwin: called when the last mapping goes, see device_pager_set_release */
+	void            (*pd_release)(void *);
+	void            *pd_release_arg;
 } *device_pager_t;
 
 __header_always_inline os_ref_count_t
@@ -171,6 +174,18 @@ device_pager_setup(
 	vm_object_unlock(object);
 
 	return (memory_object_t)device_object;
+}
+
+/* PureDarwin: a callback for when the pager's named reference is dropped */
+void
+device_pager_set_release(memory_object_t device, void (*fn)(void *), void *arg)
+{
+	device_pager_t device_object = device_pager_lookup(device);
+
+	if (device_object != DEVICE_PAGER_NULL) {
+		device_object->pd_release = fn;
+		device_object->pd_release_arg = arg;
+	}
 }
 
 /*
@@ -410,6 +425,10 @@ device_pager_deallocate(
 		    unsigned int, device_pager_get_refcount(device_object));
 
 		assert(device_object->is_mapped == FALSE);
+		if (device_object->pd_release != NULL) {
+			device_object->pd_release(device_object->pd_release_arg);
+			device_object->pd_release = NULL;
+		}
 		if (device_object->device_handle != (device_port_t) NULL) {
 			device_close(device_object->device_handle);
 			device_object->device_handle = (device_port_t) NULL;

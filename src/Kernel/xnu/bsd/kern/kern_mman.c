@@ -275,6 +275,113 @@ mmap_sanitize(
  * XXX usage is PROT_* from an interface perspective.  Thus the values of
  * XXX VM_PROT_* and PROT_* need to correspond.
  */
+/*
+ * PureDarwin: character devices whose memory user space maps, /dev/dri first.
+ * A driver registers a handler per major. At mmap time the handler lists the
+ * physical pages behind [offset, offset + size) and their cache mode, and the
+ * range is mapped shared through a device pager populated with those pages.
+ */
+#include <device/device_port.h>
+#include <vm/vm_iokit.h>
+#include <vm/vm_memory_entry_xnu.h>
+
+typedef int pd_cdev_mmap_fn(dev_t dev, off_t offset, vm_size_t size, int prot,
+    ppnum_t *pages, unsigned int *wimg, void (**release)(void *), void **release_arg);
+
+extern kern_return_t mach_memory_object_memory_entry_64(host_t host, boolean_t internal,
+    vm_object_size_ut size, vm_prot_ut permission, memory_object_t pager,
+    ipc_port_t *entry_handle);
+
+#define PD_CDEV_MMAP_MAJORS     256
+static pd_cdev_mmap_fn *pd_cdev_mmap_fns[PD_CDEV_MMAP_MAJORS];
+
+int pd_cdev_mmap_register(int major, pd_cdev_mmap_fn *fn);
+
+int
+pd_cdev_mmap_register(int major, pd_cdev_mmap_fn *fn)
+{
+	if (major < 0 || major >= PD_CDEV_MMAP_MAJORS) {
+		return EINVAL;
+	}
+	pd_cdev_mmap_fns[major] = fn;
+	return 0;
+}
+
+static pd_cdev_mmap_fn *
+pd_cdev_mmap_lookup(vnode_t vp)
+{
+	int major_num = major(vnode_specrdev(vp));
+
+	if (vp->v_type != VCHR || major_num < 0 || major_num >= PD_CDEV_MMAP_MAJORS) {
+		return NULL;
+	}
+	return pd_cdev_mmap_fns[major_num];
+}
+
+/* a named memory entry over a device pager filled with the device's pages */
+static int
+pd_cdev_mmap_entry(vnode_t vp, pd_cdev_mmap_fn *fn, off_t offset, vm_size_t size,
+    vm_prot_t prot, ipc_port_t *entry, memory_object_t *pager_ref)
+{
+	unsigned int npages = (unsigned int)(size >> PAGE_SHIFT);
+	unsigned int wimg = VM_WIMG_DEFAULT;
+	void (*release)(void *) = NULL;
+	void *release_arg = NULL;
+	memory_object_t pager;
+	ppnum_t *pages;
+	kern_return_t kr;
+	int error;
+
+	if (size == 0 || (size & PAGE_MASK) != 0 || (offset & PAGE_MASK) != 0) {
+		return EINVAL;
+	}
+	pages = kalloc_data(npages * sizeof(ppnum_t), Z_WAITOK | Z_ZERO);
+	if (pages == NULL) {
+		return ENOMEM;
+	}
+	error = fn(vnode_specrdev(vp), offset, size, prot, pages, &wimg, &release, &release_arg);
+	if (error != 0) {
+		printf("pd_cdev_mmap: driver refused 0x%llx bytes at 0x%llx (%d)\n", (uint64_t)size, (uint64_t)offset, error);
+		kfree_data(pages, npages * sizeof(ppnum_t));
+		return error;
+	}
+
+	/* a cached mapping keeps each page's own attributes, setting them per page flushes the tlb every time */
+	if (wimg == VM_WIMG_DEFAULT) {
+		wimg = VM_WIMG_USE_DEFAULT;
+	}
+	/* no device handle: device_pager_deallocate hands a non-null one to IOKit's device_close */
+	pager = device_pager_setup(MEMORY_OBJECT_NULL, 0, size,
+	    (int)(wimg & VM_WIMG_MASK) | DEVICE_PAGER_NOPHYSCACHE);
+	/* the driver's hold on the pages ends with the pager, failures below included */
+	if (release != NULL) {
+		device_pager_set_release(pager, release, release_arg);
+	}
+	for (unsigned int i = 0; i < npages; i++) {
+		kr = device_pager_populate_object(pager, (memory_object_offset_t)i << PAGE_SHIFT,
+		    pages[i], PAGE_SIZE);
+		if (kr != KERN_SUCCESS) {
+			printf("pd_cdev_mmap: page %u (0x%x) not populated (%d)\n", i, pages[i], kr);
+			kfree_data(pages, npages * sizeof(ppnum_t));
+			memory_object_deallocate(pager);
+			return EINVAL;
+		}
+	}
+	kfree_data(pages, npages * sizeof(ppnum_t));
+
+	kr = mach_memory_object_memory_entry_64((host_t)1, FALSE,
+	    vm_sanitize_wrap_size(size), vm_sanitize_wrap_prot(prot | VM_PROT_READ),
+	    pager, entry);
+	/* on success the caller drops setup's reference once the range is mapped */
+	if (kr != KERN_SUCCESS) {
+		memory_object_deallocate(pager);
+		printf("pd_cdev_mmap: memory entry for 0x%llx bytes failed (%d)\n", (uint64_t)size, kr);
+		return ENOMEM;
+	}
+	*pager_ref = pager;
+	return 0;
+}
+
 int
 mmap(proc_t p, struct mmap_args *uap, user_addr_t *retval)
 {
@@ -603,6 +710,27 @@ mmap(proc_t p, struct mmap_args *uap, user_addr_t *retval)
 		 * XXX hack to handle use of /dev/zero to map anon memory (ala
 		 * SunOS).
 		 */
+		if (vp->v_type == VCHR && (flags & MAP_SHARED) && pd_cdev_mmap_lookup(vp) != NULL) {
+			ipc_port_t entry = IPC_PORT_NULL;
+			memory_object_t pager_ref = MEMORY_OBJECT_NULL;
+
+			error = pd_cdev_mmap_entry(vp, pd_cdev_mmap_lookup(vp), (off_t)file_pos,
+			    (vm_size_t)user_size, prot, &entry, &pager_ref);
+			(void)vnode_put(vp);
+			if (error != 0) {
+				goto bad;
+			}
+			maxprot = prot | VM_PROT_READ;
+			result = mach_vm_map_kernel(user_map,
+			    vm_sanitize_wrap_addr_ref(&user_addr), user_size, 0, vmk_flags,
+			    entry, 0, FALSE, prot, maxprot, VM_INHERIT_SHARE);
+			mach_memory_entry_port_release(entry);
+			/* setup's pager reference, which IOKit drops itself: a mapping holds its own, a failed one frees it */
+			memory_object_deallocate(pager_ref);
+			mapanon = 1;
+			file_pos = 0;
+			goto pd_cdev_mapped;
+		}
 		if (vp->v_type == VCHR || vp->v_type == VSTR) {
 			(void)vnode_put(vp);
 			error = ENODEV;
@@ -920,6 +1048,7 @@ map_file_retry:
 		(void)vnode_put(vp);
 	}
 
+pd_cdev_mapped:
 	switch (result) {
 	case KERN_SUCCESS:
 		*retval = user_addr + (file_pos & user_mask);
