@@ -42,6 +42,26 @@
 , waylandScanner
 , xkbcommon
 , libxml2
+  # PD's own frameworks, for winemac.drv and winecoreaudio.drv
+, libobjc ? null
+, foundation ? null
+, appkit ? null
+, carbon ? null
+, corevideo ? null
+, quartzcore ? null
+, coregraphics ? null
+, coretext ? null
+, applicationservices ? null
+, audiotoolbox ? null
+, appFrameworks ? null
+, iosurface ? null
+, metalObjc ? null
+, openglFramework ? null
+, onyx2d ? null
+, windowserver ? null
+, cocoa ? null
+, coredata ? null
+, glu ? null
 , targetTriple ? "x86_64-apple-darwin20.4"
 , targetArch ? "x86_64"
   # aarch64-w64-mingw32 clang wrapper. Required when targetArch is "arm64" and
@@ -76,10 +96,12 @@ let
     libXrender libXfixes libXi libXcursor libXrandr
   ];
   waylandDeps = [ wayland waylandProtocols xkbcommon ];
-  # The 11.3 SDK carries AppKit/Metal headers, so Wine's configure would find
-  # them and enable winemac.drv against frameworks PureDarwin does not have.
-  # Pre-seed the header caches to no so the X11 driver is chosen instead.
-  macFrameworkOverrides = lib.concatStringsSep " " [
+  # winemac.drv and winecoreaudio.drv build against PD's own frameworks when they are passed in,
+  # otherwise the header caches are seeded to no so only the X11 driver is chosen
+  enableMac = appkit != null;
+  macFrameworkOverrides = lib.concatStringsSep " " ([
+    "ac_cv_header_OpenAL_al_h=no"
+  ] ++ lib.optionals (!enableMac) [
     "ac_cv_header_AppKit_AppKit_h=no"
     "ac_cv_header_Metal_Metal_h=no"
     "ac_cv_header_CoreGraphics_CoreGraphics_h=no"
@@ -91,15 +113,25 @@ let
     "ac_cv_header_AudioUnit_AudioUnit_h=no"
     "ac_cv_header_IOKit_IOKit_h=no"
     "ac_cv_header_Security_Security_h=no"
-    "ac_cv_header_OpenAL_al_h=no"
+  ]);
+  # every framework winemac.drv and winecoreaudio.drv name, from the PD package that builds it
+  pdFrameworkPackages = lib.optionals enableMac [
+    foundation appkit carbon corevideo quartzcore coregraphics coretext applicationservices
+    audiotoolbox appFrameworks iosurface metalObjc openglFramework cocoa coredata
   ];
+  pdHeaderDirs = map (p: "-I${p}/usr/include") (lib.optionals enableMac [ libobjc foundation onyx2d coregraphics coretext quartzcore applicationservices corevideo windowserver ]);
 in
 stdenv.mkDerivation {
   pname = "puredarwin-wine";
   inherit (wine) version;
   src = wine.src;
 
-  postPatch = lib.optionalString isArm64 ''
+  postPatch = lib.optionalString enableMac ''
+    # window.c asks Carbon's IsWindowVisible about an HWND, it links on macOS only because HIToolbox still
+    # exports that name. The unix side means win32u's call
+    substituteInPlace dlls/winemac.drv/window.c \
+      --replace-fail '|| !IsWindowVisible(hwnd)) return -1;' '|| !NtUserIsWindowVisible(hwnd)) return -1;'
+  '' + lib.optionalString isArm64 ''
     # Clang provides the C11 atomic builtins on both AArch64 and ARM64EC, but
     # Wine's old guard only recognizes GCC. ARM64EC also defines __x86_64__, so
     # falling through selects x86 lock/xchg assembly and fails the AArch64
@@ -151,9 +183,28 @@ stdenv.mkDerivation {
     export AR="${darwinCrossToolchain}/bin/${targetTriple}-ar"
     export RANLIB="${darwinCrossToolchain}/bin/${targetTriple}-ranlib"
     export STRIP="${darwinCrossToolchain}/bin/${targetTriple}-strip"
-    export CPPFLAGS="-F${coreservices}/System/Library/Frameworks -F${security}/System/Library/Frameworks -F${diskArbitration}/System/Library/Frameworks -F${systemConfiguration}/System/Library/Frameworks -I${mesa}/usr/include -I${libSystem}/usr/include -I${../wayland/pd-compat-include} ${lib.concatMapStringsSep " " (dep: "-I${lib.getDev dep}/include") (xDeps ++ waylandDeps)}"
+    # one -F directory holding every PD framework, so <AppKit/AppKit.h> and -framework AppKit both resolve
+    pdfw="$TMPDIR/pd-frameworks"
+    mkdir -p "$pdfw"
+    for pkg in ${lib.concatStringsSep " " pdFrameworkPackages}; do
+      # a framework can come in parts, ApplicationServices has its headers in one package and its binary in another
+      for fw in "$pkg"/System/Library/Frameworks/*.framework; do
+        if [ -e "$fw" ]; then cp -rsn "$fw" "$pdfw/"; chmod -R u+w "$pdfw"; fi
+      done
+    done
+    # the SDK's <libkern/OSAtomic.h> is xnu's kernel one, winemac needs the user one libplatform ships.
+    # The SDK should publish that one itself, a change that rebuilds everything, so only libkern/ is staged here
+    mkdir -p "$TMPDIR/pd-libkern/libkern"
+    ${lib.optionalString enableMac ''cp ${../../../src/Libraries/libSystem/libplatform/include/libkern}/*.h "$TMPDIR/pd-libkern/libkern/"''}
+    export CPPFLAGS="-I$TMPDIR/pd-libkern -F$pdfw ${lib.concatStringsSep " " pdHeaderDirs} -F${coreservices}/System/Library/Frameworks -F${security}/System/Library/Frameworks -F${diskArbitration}/System/Library/Frameworks -F${systemConfiguration}/System/Library/Frameworks -I${mesa}/usr/include -I${libSystem}/usr/include -I${../wayland/pd-compat-include} ${lib.concatMapStringsSep " " (dep: "-I${lib.getDev dep}/include") (xDeps ++ waylandDeps)}"
     export CFLAGS="-isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector"
-    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${mesa}/usr/lib ${lib.concatMapStringsSep " " (dep: "-L${dep}/lib") (xDeps ++ waylandDeps)} -Wl,-platform_version,macos,26.5,26.5 -F${coreservices}/System/Library/Frameworks -framework CoreServices -F${security}/System/Library/Frameworks -framework Security -F${diskArbitration}/System/Library/Frameworks -framework DiskArbitration -F${systemConfiguration}/System/Library/Frameworks -framework SystemConfiguration -F${iokit}/System/Library/Frameworks -F${corefoundation}/System/Library/Frameworks -lSystem"
+    # OpenGL.framework re-exports libGL and libGLU by their /usr/lib install names, which ld has to find
+    glReexports="${lib.optionalString enableMac "-Wl,-dylib_file,/usr/lib/libGL.1.dylib:${mesa}/usr/lib/libGL.1.dylib -Wl,-dylib_file,/usr/lib/libGLU.1.dylib:${glu}/usr/lib/libGLU.1.dylib"}"
+    # clang adds -lobjc for Objective-C links by itself, -nostdlib takes that away
+    # and the SDK's tbds don't record that Carbon re-exports ApplicationServices and CoreServices re-exports
+    # CoreFoundation, so ld can't follow them the way it does against Apple's SDK
+    objcLib="${lib.optionalString enableMac "-L${libobjc}/usr/lib -lobjc -framework ApplicationServices -framework CoreFoundation"}"
+    export LDFLAGS="$glReexports $objcLib -F$pdfw -isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${mesa}/usr/lib ${lib.concatMapStringsSep " " (dep: "-L${dep}/lib") (xDeps ++ waylandDeps)} -Wl,-platform_version,macos,26.5,26.5 -F${coreservices}/System/Library/Frameworks -framework CoreServices -F${security}/System/Library/Frameworks -framework Security -F${diskArbitration}/System/Library/Frameworks -framework DiskArbitration -F${systemConfiguration}/System/Library/Frameworks -framework SystemConfiguration -F${iokit}/System/Library/Frameworks -F${corefoundation}/System/Library/Frameworks -lSystem"
 
     # The cross build invokes widl for IDLs that import stdole2.tlb. The
     # native-tools derivation deliberately builds only the host tools, so its
@@ -189,16 +240,16 @@ stdenv.mkDerivation {
     export XKBREGISTRY_CFLAGS="-I${lib.getDev xkbcommon}/include"
     export XKBREGISTRY_LIBS="-L${xkbcommon}/lib -lxkbregistry ${libxml2}/lib/libxml2.a"
 
-    # Makefile.in files list these unconditionally (win32u: UNIX_LIBS =
-    # $(CORETEXT_LIBS) $(APPKIT_LIBS); localspl: $(APPLICATIONSERVICES_LIBS)).
-    # None of these frameworks exist here. Blank them.
+    # PD has no PC/SC smart card framework, and without the mac frameworks win32u and localspl drop theirs too
+    sed -i -e 's|PCSCLITE_LIBS="-framework PCSC"|PCSCLITE_LIBS=""|' configure
+    ${lib.optionalString (!enableMac) ''
     sed -i -e 's|^CORETEXT_LIBS=.*|CORETEXT_LIBS=""|' \
            -e 's|^APPKIT_LIBS=.*|APPKIT_LIBS=""|' \
            -e 's|^APPLICATIONSERVICES_LIBS=.*|APPLICATIONSERVICES_LIBS=""|' \
            -e 's|CORETEXT_LIBS="-framework CoreText"|CORETEXT_LIBS=""|' \
            -e 's|APPKIT_LIBS="-framework AppKit"|APPKIT_LIBS=""|' \
-           -e 's|APPLICATIONSERVICES_LIBS="-framework ApplicationServices"|APPLICATIONSERVICES_LIBS=""|' \
-           -e 's|PCSCLITE_LIBS="-framework PCSC"|PCSCLITE_LIBS=""|' configure
+           -e 's|APPLICATIONSERVICES_LIBS="-framework ApplicationServices"|APPLICATIONSERVICES_LIBS=""|' configure
+    ''}
 
     # cups.c pulls ApplicationServices for Carbon Print Manager (PMCreateSession,
     # PMPaperGetPPDPaperName). No printing stack here and we configure
@@ -241,8 +292,7 @@ ${lib.optionalString isArm64 ''
       --with-wine-tools="$wine_tools_build" \
       --enable-win64 \
       --with-x \
-      --disable-winemac.drv \
-      --disable-winecoreaudio.drv \
+      ${if enableMac then "--disable-winecoreaudio.drv" else "--disable-winemac.drv --disable-winecoreaudio.drv"} \
       --with-mingw \
       --enable-archs=${peArchs} \
       --with-fontconfig \
