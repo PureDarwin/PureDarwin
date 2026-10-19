@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>English</string>
+    <key>CFBundleExecutable</key>
+    <string>PDDRMi915</string>
+    <key>CFBundleGetInfoString</key>
+    <string>1.0.0, Copyright (C) 2026 PureDarwin Project. All rights reserved.</string>
+    <key>CFBundleIdentifier</key>
+    <string>org.puredarwin.driver.PDDRMi915</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>PDDRMi915</string>
+    <key>CFBundlePackageType</key>
+    <string>KEXT</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>CFBundleVersion</key>
+    <string>1.0.0</string>
+    <key>IOKitPersonalities</key>
+    <dict>
+        <key>PDDRMi915</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>org.puredarwin.driver.PDDRMi915</string>
+            <key>IOClass</key>
+            <string>PDDRMi915</string>
+            <key>IOMatchCategory</key>
+            <string>PDDRMDevice</string>
+            <key>IOPCIPrimaryMatch</key>
+            <string>0x01528086 0x01568086 0x015a8086 0x01628086 0x01668086 0x016a8086 0x19028086 0x19068086 0x190a8086 0x190b8086 0x190e8086 0x19128086 0x19138086 0x19158086 0x19168086 0x19178086 0x191a8086 0x191b8086 0x191d8086 0x191e8086 0x19218086 0x19238086 0x19268086 0x19278086 0x192a8086 0x192b8086 0x192d8086 0x19328086 0x193a8086 0x193b8086 0x193d8086 0x59028086 0x59068086 0x59088086 0x590a8086 0x590b8086 0x590e8086 0x59128086 0x59138086 0x59158086 0x59168086 0x59178086 0x591a8086 0x591b8086 0x591c8086 0x591d8086 0x591e8086 0x59218086 0x59238086 0x59268086 0x59278086 0x593b8086 0x87c08086 0x3e908086 0x3e918086 0x3e928086 0x3e938086 0x3e948086 0x3e968086 0x3e988086 0x3e998086 0x3e9a8086 0x3e9b8086 0x3e9c8086 0x3ea58086 0x3ea68086 0x3ea78086 0x3ea88086 0x3ea98086 0x87ca8086 0x9b218086 0x9b418086 0x9ba28086 0x9ba48086 0x9ba58086 0x9ba88086 0x9baa8086 0x9bac8086 0x9bc28086 0x9bc48086 0x9bc58086 0x9bc68086 0x9bc88086 0x9bca8086 0x9bcc8086 0x9be68086 0x9bf68086 0x0a848086 0x1a848086 0x1a858086 0x5a848086 0x5a858086 0x31848086 0x31858086 0x9a408086 0x9a498086 0x9a598086 0x9a608086 0x9a688086 0x9a708086 0x9a788086 0x9ac08086 0x9ac98086 0x9ad98086 0x9af88086 0x4c808086 0x4c8a8086 0x4c8b8086 0x4c8c8086 0x4c908086 0x4c9a8086 0x46808086 0x46828086 0x46888086 0x468a8086 0x468b8086 0x46908086 0x46928086 0x46938086 0x46268086 0x46288086 0x462a8086 0x46a08086 0x46a18086 0x46a28086 0x46a38086 0x46a68086 0x46a88086 0x46aa8086 0x46b08086 0x46b18086 0x46b28086 0x46b38086 0x46c08086 0x46c18086 0x46c28086 0x46c38086 0x46d08086 0x46d18086 0x46d28086 0x46d38086 0x46d48086 0xa7808086 0xa7818086 0xa7828086 0xa7838086 0xa7888086 0xa7898086 0xa78a8086 0xa78b8086 0xa7218086 0xa7a18086 0xa7a98086 0xa7ac8086 0xa7ad8086 0xa7208086 0xa7a08086 0xa7a88086 0xa7aa8086 0xa7ab8086 0x7d408086 0x7d458086 0x7d558086 0x7d608086 0x7dd58086 0x01028086 0x01068086 0x010a8086 0x01128086 0x01168086 0x01228086 0x01268086 0x0f308086 0x0f318086 0x0f328086 0x0f338086 0x04028086 0x04068086 0x040a8086 0x040b8086 0x040e8086 0x04128086 0x04168086 0x041a8086 0x041b8086 0x041e8086 0x04228086 0x04268086 0x042a8086 0x042b8086 0x042e8086 0x0a028086 0x0a068086 0x0a0a8086 0x0a0b8086 0x0a0e8086 0x0a128086 0x0a168086 0x0a1a8086 0x0a1b8086 0x0a1e8086 0x0a228086 0x0a268086 0x0a2a8086 0x0a2b8086 0x0a2e8086 0x0c028086 0x0c068086 0x0c0a8086 0x0c0b8086 0x0c0e8086 0x0c128086 0x0c168086 0x0c1a8086 0x0c1b8086 0x0c1e8086 0x0c228086 0x0c268086 0x0c2a8086 0x0c2b8086 0x0c2e8086 0x0d028086 0x0d068086 0x0d0a8086 0x0d0b8086 0x0d0e8086 0x0d128086 0x0d168086 0x0d1a8086 0x0d1b8086 0x0d1e8086 0x0d228086 0x0d268086 0x0d2a8086 0x0d2b8086 0x0d2e8086 0x16028086 0x16068086 0x160a8086 0x160b8086 0x160d8086 0x160e8086 0x16128086 0x16168086 0x161a8086 0x161b8086 0x161d8086 0x161e8086 0x16228086 0x16268086 0x162a8086 0x162b8086 0x162d8086 0x162e8086 0x16328086 0x16368086 0x163a8086 0x163b8086 0x163d8086 0x163e8086 0x22b08086 0x22b18086 0x22b28086 0x22b38086</string>
+            <key>IOProbeScore</key>
+            <integer>6000</integer>
+            <key>IOProviderClass</key>
+            <string>IOPCIDevice</string>
+        </dict>
+        <key>PDDRMFramebufferI915</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>org.puredarwin.driver.PDDRMi915</string>
+            <key>IOClass</key>
+            <string>PDDRMFramebufferI915</string>
+            <key>IOProviderClass</key>
+            <string>PDDRMi915</string>
+        </dict>
+    </dict>
+    <key>OSBundleLibraries</key>
+    <dict>
+        <key>org.puredarwin.driver.PDDRMDri</key>
+        <string>1.0.0</string>
+        <key>com.apple.iokit.IOGraphicsFamily</key>
+        <string>576.1</string>
+        <key>com.apple.iokit.IOPCIFamily</key>
+        <string>2.9</string>
+        <key>com.apple.kpi.iokit</key>
+        <string>10.0.0d1</string>
+        <key>com.apple.kpi.libkern</key>
+        <string>10.0.0d1</string>
+        <key>com.apple.kpi.mach</key>
+        <string>10.0.0d1</string>
+        <key>com.apple.kpi.unsupported</key>
+        <string>10.0.0d1</string>
+        <key>com.apple.kpi.bsd</key>
+        <string>10.0.0d1</string>
+    </dict>
+    <key>OSBundleCompatibleVersion</key>
+    <string>1.0.0</string>
+</dict>
+</plist>

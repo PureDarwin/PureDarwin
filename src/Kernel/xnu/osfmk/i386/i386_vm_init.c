@@ -83,6 +83,7 @@
 #include <i386/pal_routines.h>
 #include <vm/vm_page_internal.h>
 
+#include <architecture/i386/pio.h>
 #include <mach-o/loader.h>
 #include <libkern/kernel_mach_header.h>
 
@@ -245,6 +246,49 @@ kprint_memmap(vm_offset_t maddr, unsigned int msize, unsigned int mcount)
 
 #define DPRINTF(x...)
 #endif /* DEBUG */
+
+// intel graphics stolen memory belongs to the gpu. firmware normally keeps it out of
+// the memory map, this makes sure no conventional range hands it to the vm
+static uint32_t
+pd_igd_config_read(uint32_t off)
+{
+	outl(0xcf8, 0x80000000u | (2u << 11) | (off & 0xfc));
+	return inl(0xcfc);
+}
+
+static boolean_t
+pd_igd_stolen_pages(ppnum_t *first, ppnum_t *last)
+{
+	uint32_t id = pd_igd_config_read(0x00);
+	uint64_t bdsm, size;
+	uint32_t gms;
+
+	if ((id & 0xffff) != 0x8086 || (pd_igd_config_read(0x08) >> 16) != 0x0300) {
+		return FALSE;
+	}
+	// gen6 to gen10 keep the base in the 32 bit bdsm, gen11 and later in a 64 bit one
+	bdsm = pd_igd_config_read(0x5c) & 0xfff00000u;
+	if (bdsm == 0) {
+		bdsm = ((uint64_t)pd_igd_config_read(0xc4) << 32) |
+		    (pd_igd_config_read(0xc0) & 0xfff00000u);
+	}
+	// gen6 and gen7 (device ids below 0x1000): gms in ggc bits 7:3, 32 MB units.
+	// gen8 and later: bits 15:8, 32 MB units below 0xf0 and 4 MB units from there
+	if ((id >> 16) < 0x1000) {
+		gms = (pd_igd_config_read(0x50) >> 3) & 0x1f;
+		size = (uint64_t)gms << 25;
+	} else {
+		gms = (pd_igd_config_read(0x50) >> 8) & 0xff;
+		size = gms < 0xf0 ? (uint64_t)gms << 25 : (uint64_t)(gms - 0xf0 + 1) << 22;
+	}
+	if (bdsm == 0 || size == 0) {
+		return FALSE;
+	}
+	*first = (ppnum_t)(bdsm >> I386_PGSHIFT);
+	*last = (ppnum_t)((bdsm + size - 1) >> I386_PGSHIFT);
+	kprintf("IGD stolen memory 0x%llx-0x%llx\n", bdsm, bdsm + size - 1);
+	return TRUE;
+}
 
 /*
  * Basic VM initialization.
@@ -456,6 +500,9 @@ i386_vm_init(uint64_t   maxmem,
 #define FOURGIG 0x0000000100000000ULL
 #define ONEGIG  0x0000000040000000ULL
 
+	ppnum_t igd_first = 0, igd_last = 0;
+	boolean_t igd_stolen = pd_igd_stolen_pages(&igd_first, &igd_last);
+
 	for (i = 0; i < mcount; i++, mptr = (EfiMemoryRange *)(((vm_offset_t)mptr) + msize)) {
 		ppnum_t base, top;
 		uint64_t region_bytes = 0;
@@ -581,6 +628,18 @@ i386_vm_init(uint64_t   maxmem,
 			/*
 			 * Usable memory region
 			 */
+			if (igd_stolen && base <= igd_last && top >= igd_first) {
+				kprintf("IGD stolen memory overlaps usable pages 0x%x-0x%x, clipped\n", base, top);
+				if (base >= igd_first && top <= igd_last) {
+					prev_pmptr = 0;
+					continue;
+				}
+				if (base < igd_first) {
+					top = igd_first - 1;
+				} else {
+					base = igd_last + 1;
+				}
+			}
 			if (top < I386_LOWMEM_RESERVED ||
 			    !pal_is_usable_memory(base, top)) {
 				prev_pmptr = 0;

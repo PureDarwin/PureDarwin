@@ -1,0 +1,214 @@
+diff --git a/drivers/gpu/drm/i915/display/intel_backlight.c b/drivers/gpu/drm/i915/display/intel_backlight.c
+--- a/drivers/gpu/drm/i915/display/intel_backlight.c
++++ b/drivers/gpu/drm/i915/display/intel_backlight.c
+@@ -765,6 +765,11 @@
+ 
+ 	WARN_ON(panel->backlight.max == 0);
+ 
++#ifdef __PUREDARWIN__
++	/* nothing in userspace sets a brightness yet, a dark level becomes full */
++	if (panel->backlight.level == 0)
++		panel->backlight.level = panel->backlight.max;
++#endif
+ 	if (panel->backlight.level < panel->backlight.min) {
+ 		panel->backlight.level = panel->backlight.min;
+ 		if (panel->backlight.device)
+diff --git a/drivers/gpu/drm/i915/display/intel_display_params.c b/drivers/gpu/drm/i915/display/intel_display_params.c
+--- a/drivers/gpu/drm/i915/display/intel_display_params.c
++++ b/drivers/gpu/drm/i915/display/intel_display_params.c
+@@ -27,6 +27,38 @@
+ 	INTEL_DISPLAY_PARAMS_FOR_EACH(MEMBER)
+ #undef MEMBER
+ };
++
++#ifdef __PUREDARWIN__
++/* boot-args set these params on PureDarwin: i915_<name>=<value> */
++long pd_drm_tunable_long(const char *path, long def);
++int pdos_bootarg_str(const char *name, char *buf, int len);
++
++#define PD_PARAM_INT(p, T, name)						\
++	_Generic(&(p).name,							\
++	    int *: (void)(*(int *)(void *)&(p).name =				\
++		(int)pd_drm_tunable_long("i915." #name, *(int *)(void *)&(p).name)), \
++	    unsigned int *: (void)(*(unsigned int *)(void *)&(p).name =	\
++		(unsigned int)pd_drm_tunable_long("i915." #name,		\
++		    *(unsigned int *)(void *)&(p).name)),			\
++	    bool *: (void)(*(bool *)(void *)&(p).name =			\
++		pd_drm_tunable_long("i915." #name, *(bool *)(void *)&(p).name) != 0), \
++	    default: (void)0)
++#endif
++
++#ifdef __PUREDARWIN__
++void pd_i915_display_params_from_bootargs(void);
++
++void pd_i915_display_params_from_bootargs(void)
++{
++#define PD_SET(T, member, ...) PD_PARAM_INT(intel_display_modparams, T, member);
++	INTEL_DISPLAY_PARAMS_FOR_EACH(PD_SET)
++#undef PD_SET
++	// i915_vbt_firmware=i915/<name>.vbt, for passthrough guests that get no opregion
++	static char vbt_firmware[64];
++	if (pdos_bootarg_str("i915_vbt_firmware", vbt_firmware, sizeof(vbt_firmware)))
++		intel_display_modparams.vbt_firmware = vbt_firmware;
++}
++#endif
+ /*
+  * Note: As a rule, keep module parameter sysfs permissions read-only
+  * 0400. Runtime changes are only supported through i915 debugfs.
+diff --git a/drivers/gpu/drm/i915/gem/i915_gem_execbuffer.c b/drivers/gpu/drm/i915/gem/i915_gem_execbuffer.c
+--- a/drivers/gpu/drm/i915/gem/i915_gem_execbuffer.c
++++ b/drivers/gpu/drm/i915/gem/i915_gem_execbuffer.c
+@@ -6,6 +6,7 @@
+ 
+ #include <linux/dma-resv.h>
+ #include <linux/highmem.h>
++#include <linux/dma-fence-array.h>
+ #include <linux/sync_file.h>
+ #include <linux/uaccess.h>
+ 
+@@ -1896,7 +1897,8 @@
+ 
+ out:
+ 	if (have_copy) {
+-		const unsigned int count = eb->buffer_count;
++		// only userspace's objects carry copied relocations, eb_parse appends the shadow batch
++		const unsigned int count = eb->args->buffer_count;
+ 		unsigned int i;
+ 
+ 		for (i = 0; i < count; i++) {
+diff --git a/drivers/gpu/drm/i915/gem/i915_gem_mman.c b/drivers/gpu/drm/i915/gem/i915_gem_mman.c
+--- a/drivers/gpu/drm/i915/gem/i915_gem_mman.c
++++ b/drivers/gpu/drm/i915/gem/i915_gem_mman.c
+@@ -26,7 +26,7 @@
+ #include "i915_gem_ttm.h"
+ #include "i915_vma.h"
+ 
+-#ifdef __FreeBSD__
++#if defined(__FreeBSD__) && !defined(__PUREDARWIN__)
+ #include <sys/proc.h>
+ #include <sys/resourcevar.h>	/* for lim_cur_proc */
+ #include <vm/vm.h>
+@@ -77,7 +77,9 @@
+ 	struct drm_i915_private *i915 = to_i915(dev);
+ 	struct drm_i915_gem_mmap *args = data;
+ 	struct drm_i915_gem_object *obj;
+-#ifdef __FreeBSD__
++#ifdef __PUREDARWIN__
++	unsigned long addr;
++#elif defined(__FreeBSD__)
+ 	vm_offset_t addr;
+ 	vm_object_t vmobj;
+ 	struct proc *p;
+@@ -143,6 +145,10 @@
+ 		if (IS_ERR_VALUE(addr))
+ 			goto err;
+ 	}
++#elif defined(__PUREDARWIN__)
++	/* the legacy cpu mmap ioctl is not offered, mesa uses mmap_offset */
++	addr = -EOPNOTSUPP;
++	goto err;
+ #else
+ 	error = 0;
+ 	addr = 0;
+@@ -266,7 +272,10 @@
+  */
+ int i915_gem_mmap_gtt_version(void)
+ {
+-#if __FreeBSD_version < 1500508 || (__FreeBSD_version >= 1600000 && __FreeBSD_version < 1600015)
++	// pd_i915_mmap.c serves mmap offsets, mesa takes version 4+ as mmap_offset support
++#if defined(PD_LKPI_DRM)
++	return 5;
++#elif __FreeBSD_version < 1500508 || (__FreeBSD_version >= 1600000 && __FreeBSD_version < 1600015)
+ 	return 3;
+ #else
+ 	return 5;
+diff --git a/drivers/gpu/drm/i915/gt/intel_ggtt.c b/drivers/gpu/drm/i915/gt/intel_ggtt.c
+--- a/drivers/gpu/drm/i915/gt/intel_ggtt.c
++++ b/drivers/gpu/drm/i915/gt/intel_ggtt.c
+@@ -33,7 +33,7 @@
+ #include "gen8_ppgtt.h"
+ #include "intel_engine_pm.h"
+ 
+-#ifdef __FreeBSD__
++#if defined(__FreeBSD__) && !defined(__PUREDARWIN__)
+ #include <dev/agp/agpvar.h>
+ #endif
+ 
+diff --git a/drivers/gpu/drm/i915/i915_driver.c b/drivers/gpu/drm/i915/i915_driver.c
+--- a/drivers/gpu/drm/i915/i915_driver.c
++++ b/drivers/gpu/drm/i915/i915_driver.c
+@@ -843,6 +843,19 @@
+ 
+ 	i915_driver_register(i915);
+ 
++#ifdef __PUREDARWIN__
++	/* the display client PDDRMFramebuffer drives, or colour bars with drm_testpattern=1 */
++	{
++		extern long pd_drm_tunable_long(const char *path, long def);
++		extern int pd_drm_test_client(struct drm_device *dev);
++		extern void pd_i915_fb_register(struct drm_device *dev);
++		if (pd_drm_tunable_long("drm.testpattern", 0) != 0)
++			pd_drm_test_client(&i915->drm);
++		else
++			pd_i915_fb_register(&i915->drm);
++	}
++#endif
++
+ 	enable_rpm_wakeref_asserts(&i915->runtime_pm);
+ 
+ 	i915_welcome_messages(i915);
+diff --git a/drivers/gpu/drm/i915/i915_module.c b/drivers/gpu/drm/i915/i915_module.c
+--- a/drivers/gpu/drm/i915/i915_module.c
++++ b/drivers/gpu/drm/i915/i915_module.c
+@@ -19,7 +19,7 @@
+ #include "i915_vma.h"
+ #include "i915_vma_resource.h"
+ 
+-#ifdef __FreeBSD__
++#if defined(__FreeBSD__) && !defined(__PUREDARWIN__)
+ /*
+  * intel_graphics_stolen_* are defined in sys/dev/pci/pcivar.h
+  * and set at early boot from machdep.c. Copy over the values
+@@ -95,7 +95,7 @@
+ {
+ 	int err, i;
+ 
+-#ifdef __FreeBSD__
++#if defined(__FreeBSD__) && !defined(__PUREDARWIN__)
+ #if defined(__amd64__)
+ 	intel_graphics_stolen_res = (struct resource)
+ 		DEFINE_RES_MEM(intel_graphics_stolen_base,
+diff --git a/drivers/gpu/drm/i915/i915_params.c b/drivers/gpu/drm/i915/i915_params.c
+--- a/drivers/gpu/drm/i915/i915_params.c
++++ b/drivers/gpu/drm/i915/i915_params.c
+@@ -240,3 +240,30 @@
+ 	I915_PARAMS_FOR_EACH(FREE);
+ #undef FREE
+ }
++
++#ifdef __PUREDARWIN__
++/* boot-args set these params on PureDarwin: i915_<name>=<value> */
++long pd_drm_tunable_long(const char *path, long def);
++
++#define PD_PARAM_INT(p, T, name)						\
++	_Generic(&(p).name,							\
++	    int *: (void)(*(int *)(void *)&(p).name =				\
++		(int)pd_drm_tunable_long("i915." #name, *(int *)(void *)&(p).name)), \
++	    unsigned int *: (void)(*(unsigned int *)(void *)&(p).name =	\
++		(unsigned int)pd_drm_tunable_long("i915." #name,		\
++		    *(unsigned int *)(void *)&(p).name)),			\
++	    bool *: (void)(*(bool *)(void *)&(p).name =			\
++		pd_drm_tunable_long("i915." #name, *(bool *)(void *)&(p).name) != 0), \
++	    default: (void)0)
++#endif
++
++#ifdef __PUREDARWIN__
++void pd_i915_params_from_bootargs(void);
++
++void pd_i915_params_from_bootargs(void)
++{
++#define PD_SET(T, member, ...) PD_PARAM_INT(i915_modparams, T, member);
++	I915_PARAMS_FOR_EACH(PD_SET)
++#undef PD_SET
++}
++#endif
