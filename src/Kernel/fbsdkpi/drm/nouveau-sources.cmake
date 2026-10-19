@@ -719,4 +719,5 @@ set(PD_DRM_NOUVEAU_SOURCES
     nvc0_fence.c
 )
 
-set(PD_DRM_NOUVEAU_PD_SOURCES pd_nouveau_glue.c pd_nouveau_mmap.c pd_nouveau_pstate.c)
+set(PD_DRM_NOUVEAU_PD_SOURCES pd_nouveau_glue.c pd_nouveau_mmap.c pd_nouveau_pstate.c
+    pd_nouveau_fb.c pd_amdgpu_fb.c)

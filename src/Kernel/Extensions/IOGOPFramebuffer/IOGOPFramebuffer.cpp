@@ -260,6 +260,16 @@ IOService *
 IOGOPFramebuffer::probe(IOService *provider, SInt32 *score)
 {
     DEBUG("probe %p\n", provider);
+
+    // with pdnouveau=1 nouveau takes BAR 1 over and the firmware framebuffer in it loses its mapping
+    int nouveau = 0;
+    OSData *vendor = OSDynamicCast(OSData, provider->getProperty("vendor-id"));
+    PE_parse_boot_argn("pdnouveau", &nouveau, sizeof(nouveau));
+    if (nouveau && vendor != NULL && vendor->getLength() >= 2 &&
+        *(const uint16_t *)vendor->getBytesNoCopy() == 0x10de) {
+        IOLog("IOGOPFramebuffer: pdnouveau=1, leaving the nvidia gpu to nouveau\n");
+        return NULL;
+    }
     return this;
 }
 

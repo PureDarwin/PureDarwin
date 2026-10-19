@@ -45,7 +45,8 @@ foreach(src IN LISTS PD_DRM_NOUVEAU_PD_SOURCES)
 endforeach()
 _fbsdkpi_objects(PDDRMnouveau_nouveau SOURCES ${nv}
     INCLUDES ${lkpiinc} ${coreinc} ${nvinc}
-    DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${drmdefs} CONFIG_DRM_NOUVEAU
+    DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${drmdefs} CONFIG_DRM_NOUVEAU PD_DRM_FB_DRIVER_BUFFERS
+        CONFIG_NOUVEAU_I2C_INTERNAL CONFIG_NOUVEAU_I2C_INTERNAL_DEFAULT
         KBUILD_MODNAME=\"nouveau\" LINUXKPI_PARAM_PREFIX=nouveau_
     OPTIONS ${lkpiopt} "SHELL:-include ${PD_DRM_DIR}/include/pd_nouveau_pre.h"
         -Wno-pointer-arith -Wno-format -Wno-cast-qual)

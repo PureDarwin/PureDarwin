@@ -33,10 +33,6 @@ strcspn(const char *s, const char *reject)
 }
 
 #include <linux/acpi.h>
-#include "pd_drm_fb.h"
-
-// nouveau has no display client yet, so PDDRMFramebufferNV declines and the firmware framebuffer stays
-struct pd_drm_fb_ops *pd_drm_fb;
 
 // the amdgpu kext answers this one for itself, nouveau needs its own
 acpi_status

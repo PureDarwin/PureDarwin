@@ -19,7 +19,7 @@ diff --git a/drivers/gpu/drm/nouveau/nouveau_drm.c b/drivers/gpu/drm/nouveau/nou
 index 5664c4c..a789ce9 100644
 --- a/drivers/gpu/drm/nouveau/nouveau_drm.c
 +++ b/drivers/gpu/drm/nouveau/nouveau_drm.c
-@@ -94,6 +94,27 @@ MODULE_PARM_DESC(debug, "debug string to pass to driver core");
+@@ -94,6 +94,29 @@ MODULE_PARM_DESC(debug, "debug string to pass to driver core");
  static char *nouveau_debug;
  module_param_named(debug, nouveau_debug, charp, 0400);
  
@@ -27,6 +27,8 @@ index 5664c4c..a789ce9 100644
 +// experimental reclocking sysctl, PD's own file pd_nouveau_pstate.c
 +void pd_nouveau_pstate_init(struct nouveau_drm *drm);
 +void pd_nouveau_pstate_fini(struct nouveau_drm *drm);
++// the display client behind PDDRMFramebufferNV, pd_nouveau_fb.c
++void pd_nouveau_fb_register(struct drm_device *dev);
 +
 +// the config and debug strings come from the nouveau_config= and nouveau_debug= boot-args
 +int pdos_bootarg_str(const char *name, char *buf, int len);
@@ -47,7 +49,7 @@ index 5664c4c..a789ce9 100644
  MODULE_PARM_DESC(noaccel, "disable kernel/abi16 acceleration");
  static int nouveau_noaccel = 0;
  module_param_named(noaccel, nouveau_noaccel, int, 0400);
-@@ -586,6 +607,9 @@ nouveau_drm_device_fini(struct nouveau_drm *drm)
+@@ -586,6 +609,9 @@ nouveau_drm_device_fini(struct nouveau_drm *drm)
  	nouveau_svm_fini(drm);
  	nouveau_hwmon_fini(dev);
  	nouveau_debugfs_fini(drm);
@@ -57,17 +59,18 @@ index 5664c4c..a789ce9 100644
  
  	if (dev->mode_config.num_crtc)
  		nouveau_display_fini(dev, false, false);
-@@ -688,6 +712,9 @@ nouveau_drm_device_init(struct nouveau_drm *drm)
+@@ -688,6 +714,10 @@ nouveau_drm_device_init(struct nouveau_drm *drm)
  		nouveau_drm_device_fini(drm);
  		return ret;
  	}
 +#ifndef __linux__
 +	pd_nouveau_pstate_init(drm);
++	pd_nouveau_fb_register(drm->dev);
 +#endif
  
  	return 0;
  fail_dispinit:
-@@ -841,8 +868,10 @@ static void quirk_broken_nv_runpm(struct pci_dev *pdev)
+@@ -841,8 +871,10 @@ static void quirk_broken_nv_runpm(struct pci_dev *pdev)
  
  	switch (bridge->device) {
  	case 0x1901:
@@ -78,7 +81,7 @@ index 5664c4c..a789ce9 100644
  		NV_INFO(drm, "Disabling PCI power management to avoid bug\n");
  		break;
  	}
-@@ -859,6 +888,10 @@ static int nouveau_drm_probe(struct pci_dev *pdev,
+@@ -859,6 +891,10 @@ static int nouveau_drm_probe(struct pci_dev *pdev,
  	if (vga_switcheroo_client_probe_defer(pdev))
  		return -EPROBE_DEFER;
  
@@ -89,7 +92,7 @@ index 5664c4c..a789ce9 100644
  	/* We need to check that the chipset is supported before booting
  	 * fbdev off the hardware, as there's no way to put it back.
  	 */
-@@ -927,8 +960,10 @@ nouveau_drm_remove(struct pci_dev *pdev)
+@@ -927,8 +963,10 @@ nouveau_drm_remove(struct pci_dev *pdev)
  	struct nouveau_drm *drm = pci_get_drvdata(pdev);
  
  	/* revert our workaround */
@@ -100,7 +103,7 @@ index 5664c4c..a789ce9 100644
  	nouveau_drm_device_remove(drm);
  	pci_disable_device(pdev);
  }
-@@ -1185,10 +1220,14 @@ nouveau_drm_open(struct drm_device *dev, struct drm_file *fpriv)
+@@ -1185,10 +1223,14 @@ nouveau_drm_open(struct drm_device *dev, struct drm_file *fpriv)
  		return ret;
  	}
  
