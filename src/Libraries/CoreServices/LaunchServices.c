@@ -16,6 +16,8 @@
  */
 
 #include <CoreServices/LaunchServices.h>
+#include <CoreServices/FileManager.h>
+#include <CoreServices/UTType.h>
 #include <spawn.h>
 #include <dirent.h>
 #include <stdio.h>
@@ -40,6 +42,8 @@ static CFMutableArrayRef sApplicationURLs;      /* CFURLRef of each .app */
 static CFMutableDictionaryRef sExtensionMap;    /* lowercase ext -> CFURLRef */
 static CFMutableDictionaryRef sSchemeMap;       /* lowercase scheme -> CFURLRef */
 static CFMutableDictionaryRef sIdentifierMap;   /* bundle id -> CFURLRef */
+static CFMutableDictionaryRef sMIMEMap;         // lowercase MIME type -> CFURLRef
+static CFMutableDictionaryRef sContentTypeMap;  // lowercase UTI -> CFURLRef
 
 static CFStringRef copyLowercase(CFStringRef string)
 {
@@ -51,6 +55,26 @@ static CFStringRef copyLowercase(CFStringRef string)
         CFStringLowercase(lower, NULL);
     }
     return lower;
+}
+
+// the strings of a document type's array under key, lowercased into map, first writer wins
+static void addStrings(CFMutableDictionaryRef map, CFDictionaryRef entry, CFStringRef key, CFURLRef appURL)
+{
+    CFArrayRef list = CFDictionaryGetValue(entry, key);
+
+    if (list == NULL || CFGetTypeID(list) != CFArrayGetTypeID())
+        return;
+    for (CFIndex j = 0; j < CFArrayGetCount(list); j++) {
+        CFStringRef value = CFArrayGetValueAtIndex(list, j);
+        if (value == NULL || CFGetTypeID(value) != CFStringGetTypeID())
+            continue;
+        CFStringRef lower = copyLowercase(value);
+        if (lower != NULL) {
+            if (!CFDictionaryContainsKey(map, lower))
+                CFDictionarySetValue(map, lower, appURL);
+            CFRelease(lower);
+        }
+    }
 }
 
 /* Record every extension and scheme the bundle claims. First writer wins, so a
@@ -68,6 +92,9 @@ static void registerBundleTypes(CFBundleRef bundle, CFURLRef appURL)
             if (entry == NULL || CFGetTypeID(entry) != CFDictionaryGetTypeID()) {
                 continue;
             }
+
+            addStrings(sMIMEMap, entry, CFSTR("CFBundleTypeMIMETypes"), appURL);
+            addStrings(sContentTypeMap, entry, CFSTR("LSItemContentTypes"), appURL);
 
             CFArrayRef extensions = CFDictionaryGetValue(entry, CFSTR("CFBundleTypeExtensions"));
             if (extensions == NULL || CFGetTypeID(extensions) != CFArrayGetTypeID()) {
@@ -212,6 +239,10 @@ static void buildRegistryIfNeeded(void)
         &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     sIdentifierMap = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
         &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    sMIMEMap = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    sContentTypeMap = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 
     for (int i = 0; kApplicationFolders[i] != NULL; i++) {
         scanFolder(kApplicationFolders[i]);
@@ -233,6 +264,10 @@ void LSRefreshApplicationRegistry(void)
         CFRelease(sExtensionMap);
         CFRelease(sSchemeMap);
         CFRelease(sIdentifierMap);
+        CFRelease(sMIMEMap);
+        CFRelease(sContentTypeMap);
+        sMIMEMap = NULL;
+        sContentTypeMap = NULL;
         sApplicationURLs = NULL;
         sExtensionMap = NULL;
         sSchemeMap = NULL;
@@ -259,6 +294,85 @@ static Boolean urlIsApplication(CFURLRef url)
     return isApp;
 }
 
+// the user's chosen handlers, kept as macOS keeps them: LSHandlers dictionaries in LaunchServices' preferences
+#define kLSPrefsDomain CFSTR("com.apple.LaunchServices")
+
+static CFArrayRef copyHandlerOverrides(void)
+{
+    CFPropertyListRef list = CFPreferencesCopyAppValue(CFSTR("LSHandlers"), kLSPrefsDomain);
+
+    if (list != NULL && CFGetTypeID(list) != CFArrayGetTypeID()) {
+        CFRelease(list);
+        list = NULL;
+    }
+    return list;
+}
+
+// the bundle the user chose for a scheme or content type, kind being LSHandlerURLScheme or LSHandlerContentType
+static CFURLRef copyOverrideHandler(CFStringRef kind, CFStringRef value)
+{
+    CFArrayRef list = copyHandlerOverrides();
+    CFURLRef result = NULL;
+
+    if (list == NULL || value == NULL) {
+        if (list)
+            CFRelease(list);
+        return NULL;
+    }
+    buildRegistryIfNeeded();
+    for (CFIndex i = 0; i < CFArrayGetCount(list) && result == NULL; i++) {
+        CFDictionaryRef entry = CFArrayGetValueAtIndex(list, i);
+        if (CFGetTypeID(entry) != CFDictionaryGetTypeID())
+            continue;
+        CFStringRef v = CFDictionaryGetValue(entry, kind);
+        if (v == NULL || CFGetTypeID(v) != CFStringGetTypeID() ||
+            CFStringCompare(v, value, kCFCompareCaseInsensitive) != kCFCompareEqualTo)
+            continue;
+        CFStringRef bundleID = CFDictionaryGetValue(entry, CFSTR("LSHandlerRoleAll"));
+        if (bundleID == NULL)
+            bundleID = CFDictionaryGetValue(entry, CFSTR("LSHandlerRoleViewer"));
+        if (bundleID != NULL && CFGetTypeID(bundleID) == CFStringGetTypeID()) {
+            CFURLRef app = CFDictionaryGetValue(sIdentifierMap, bundleID);
+            if (app != NULL)
+                result = CFRetain(app);
+        }
+    }
+    CFRelease(list);
+    return result;
+}
+
+static OSStatus setOverrideHandler(CFStringRef kind, CFStringRef value, CFStringRef role, CFStringRef bundleID)
+{
+    CFArrayRef old = copyHandlerOverrides();
+    CFMutableArrayRef list = old ? CFArrayCreateMutableCopy(kCFAllocatorDefault, 0, old)
+                                 : CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
+
+    if (old)
+        CFRelease(old);
+    if (list == NULL || value == NULL || bundleID == NULL) {
+        if (list)
+            CFRelease(list);
+        return paramErr;
+    }
+    for (CFIndex i = CFArrayGetCount(list) - 1; i >= 0; i--) {
+        CFDictionaryRef entry = CFArrayGetValueAtIndex(list, i);
+        CFStringRef v = CFGetTypeID(entry) == CFDictionaryGetTypeID() ? CFDictionaryGetValue(entry, kind) : NULL;
+        if (v != NULL && CFGetTypeID(v) == CFStringGetTypeID() &&
+            CFStringCompare(v, value, kCFCompareCaseInsensitive) == kCFCompareEqualTo)
+            CFArrayRemoveValueAtIndex(list, i);
+    }
+    const void *keys[2] = { kind, role };
+    const void *values[2] = { value, bundleID };
+    CFDictionaryRef entry = CFDictionaryCreate(kCFAllocatorDefault, keys, values, 2, &kCFTypeDictionaryKeyCallBacks,
+                                               &kCFTypeDictionaryValueCallBacks);
+    CFArrayAppendValue(list, entry);
+    CFRelease(entry);
+    CFPreferencesSetAppValue(CFSTR("LSHandlers"), list, kLSPrefsDomain);
+    Boolean saved = CFPreferencesAppSynchronize(kLSPrefsDomain);
+    CFRelease(list);
+    return saved ? noErr : kLSUnknownErr;
+}
+
 static CFURLRef copyHandlerForURL(CFURLRef inURL)
 {
     buildRegistryIfNeeded();
@@ -269,6 +383,11 @@ static CFURLRef copyHandlerForURL(CFURLRef inURL)
 
     CFStringRef scheme = CFURLCopyScheme(inURL);
     if (scheme != NULL && !CFStringHasPrefix(scheme, CFSTR("file"))) {
+        CFURLRef chosen = copyOverrideHandler(CFSTR("LSHandlerURLScheme"), scheme);
+        if (chosen != NULL) {
+            CFRelease(scheme);
+            return chosen;
+        }
         CFStringRef key = copyLowercase(scheme);
         CFURLRef handler = key ? CFDictionaryGetValue(sSchemeMap, key) : NULL;
 
@@ -519,4 +638,288 @@ CFStringRef LSCopyKindStringForURL(CFURLRef inURL)
         CFRelease(upper);
     }
     return kind;
+}
+
+// the Carbon-era LaunchServices calls, FSRef and launch specifications over the same registry
+
+const CFStringRef kLSItemDisplayName = CFSTR("LSItemDisplayName");
+const CFStringRef kLSItemContentType = CFSTR("LSItemContentType");
+const CFStringRef kLSItemExtension = CFSTR("LSItemExtension");
+const CFStringRef kLSQuarantineTypeKey = CFSTR("LSQuarantineType");
+const CFStringRef kLSQuarantineOriginURLKey = CFSTR("LSQuarantineOriginURL");
+const CFStringRef kLSQuarantineDataURLKey = CFSTR("LSQuarantineDataURL");
+const CFStringRef kLSQuarantineAgentNameKey = CFSTR("LSQuarantineAgentName");
+const CFStringRef kLSQuarantineAgentBundleIdentifierKey = CFSTR("LSQuarantineAgentBundleIdentifier");
+const CFStringRef kLSQuarantineTimeStampKey = CFSTR("LSQuarantineTimeStamp");
+const CFStringRef kLSQuarantineTypeWebDownload = CFSTR("LSQuarantineTypeWebDownload");
+const CFStringRef kLSQuarantineTypeOtherDownload = CFSTR("LSQuarantineTypeOtherDownload");
+
+static CFURLRef copyURLForFSRef(const FSRef *ref)
+{
+    UInt8 path[PATH_MAX];
+
+    if (ref == NULL || FSRefMakePath(ref, path, sizeof(path)) != noErr)
+        return NULL;
+    return CFURLCreateFromFileSystemRepresentation(kCFAllocatorDefault, path, (CFIndex)strlen((char *)path), false);
+}
+
+static Boolean fsRefForURL(CFURLRef url, FSRef *ref)
+{
+    UInt8 path[PATH_MAX];
+
+    return url != NULL && ref != NULL && CFURLGetFileSystemRepresentation(url, true, path, sizeof(path)) &&
+           FSPathMakeRef(path, ref, NULL) == noErr;
+}
+
+// a bundle the user chose, then what the installed bundles declare, for a MIME type
+static CFURLRef copyHandlerForMIMEType(CFStringRef mime)
+{
+    CFStringRef uti = UTTypeCreatePreferredIdentifierForTag(kUTTagClassMIMEType, mime, NULL);
+    CFURLRef handler = uti ? copyOverrideHandler(CFSTR("LSHandlerContentType"), uti) : NULL;
+
+    buildRegistryIfNeeded();
+    if (handler == NULL) {
+        CFStringRef key = copyLowercase(mime);
+        CFURLRef app = key ? CFDictionaryGetValue(sMIMEMap, key) : NULL;
+        if (key)
+            CFRelease(key);
+        if (app == NULL && uti != NULL) {
+            CFStringRef lowerUTI = copyLowercase(uti);
+            app = lowerUTI ? CFDictionaryGetValue(sContentTypeMap, lowerUTI) : NULL;
+            if (lowerUTI)
+                CFRelease(lowerUTI);
+        }
+        if (app == NULL && uti != NULL) {
+            CFStringRef ext = UTTypeCopyPreferredTagWithClass(uti, kUTTagClassFilenameExtension);
+            CFStringRef lowerExt = ext ? copyLowercase(ext) : NULL;
+            app = lowerExt ? CFDictionaryGetValue(sExtensionMap, lowerExt) : NULL;
+            if (ext)
+                CFRelease(ext);
+            if (lowerExt)
+                CFRelease(lowerExt);
+        }
+        if (app != NULL)
+            handler = CFRetain(app);
+    }
+    if (uti)
+        CFRelease(uti);
+    return handler;
+}
+
+OSStatus LSCopyApplicationForMIMEType(CFStringRef inMIMEType, LSRolesMask inRoleMask, CFURLRef *outAppURL)
+{
+    (void)inRoleMask;
+    if (inMIMEType == NULL || outAppURL == NULL)
+        return paramErr;
+    *outAppURL = copyHandlerForMIMEType(inMIMEType);
+    return *outAppURL != NULL ? noErr : kLSApplicationNotFoundErr;
+}
+
+CFStringRef LSCopyDefaultHandlerForURLScheme(CFStringRef inURLScheme)
+{
+    CFURLRef app = copyOverrideHandler(CFSTR("LSHandlerURLScheme"), inURLScheme);
+    CFStringRef bundleID = NULL;
+
+    buildRegistryIfNeeded();
+    if (app == NULL && inURLScheme != NULL) {
+        CFStringRef key = copyLowercase(inURLScheme);
+        CFURLRef found = key ? CFDictionaryGetValue(sSchemeMap, key) : NULL;
+        if (key)
+            CFRelease(key);
+        if (found)
+            app = CFRetain(found);
+    }
+    if (app != NULL) {
+        CFBundleRef bundle = CFBundleCreate(kCFAllocatorDefault, app);
+        if (bundle != NULL) {
+            CFStringRef identifier = CFBundleGetIdentifier(bundle);
+            if (identifier)
+                bundleID = CFStringCreateCopy(kCFAllocatorDefault, identifier);
+            CFRelease(bundle);
+        }
+        CFRelease(app);
+    }
+    return bundleID;
+}
+
+OSStatus LSSetDefaultHandlerForURLScheme(CFStringRef inURLScheme, CFStringRef inHandlerBundleID)
+{
+    if (inURLScheme == NULL || inHandlerBundleID == NULL)
+        return paramErr;
+    CFStringRef scheme = copyLowercase(inURLScheme);
+    OSStatus status = setOverrideHandler(CFSTR("LSHandlerURLScheme"), scheme, CFSTR("LSHandlerRoleAll"), inHandlerBundleID);
+    CFRelease(scheme);
+    return status;
+}
+
+OSStatus LSSetDefaultRoleHandlerForContentType(CFStringRef inContentType, LSRolesMask inRole, CFStringRef inHandlerBundleID)
+{
+    CFStringRef role = inRole == kLSRolesViewer ? CFSTR("LSHandlerRoleViewer")
+                     : inRole == kLSRolesEditor ? CFSTR("LSHandlerRoleEditor")
+                     : inRole == kLSRolesShell ? CFSTR("LSHandlerRoleShell") : CFSTR("LSHandlerRoleAll");
+
+    if (inContentType == NULL || inHandlerBundleID == NULL)
+        return paramErr;
+    return setOverrideHandler(CFSTR("LSHandlerContentType"), inContentType, role, inHandlerBundleID);
+}
+
+OSStatus LSGetApplicationForItem(const FSRef *inItemRef, LSRolesMask inRoleMask, FSRef *outAppRef, CFURLRef *outAppURL)
+{
+    CFURLRef item = copyURLForFSRef(inItemRef);
+    CFURLRef app;
+
+    if (item == NULL)
+        return paramErr;
+    app = urlIsApplication(item) ? CFRetain(item) : LSCopyDefaultApplicationURLForURL(item, inRoleMask, NULL);
+    CFRelease(item);
+    if (app == NULL)
+        return kLSApplicationNotFoundErr;
+    if (outAppRef != NULL && !fsRefForURL(app, outAppRef)) {
+        CFRelease(app);
+        return kLSApplicationNotFoundErr;
+    }
+    if (outAppURL != NULL)
+        *outAppURL = app;
+    else
+        CFRelease(app);
+    return noErr;
+}
+
+OSStatus LSGetApplicationForInfo(OSType inType, OSType inCreator, CFStringRef inExtension, LSRolesMask inRoleMask,
+                                 FSRef *outAppRef, CFURLRef *outAppURL)
+{
+    CFURLRef app = NULL;
+
+    (void)inType;
+    (void)inRoleMask;
+    buildRegistryIfNeeded();
+    if (inExtension != NULL) {
+        CFStringRef uti = UTTypeCreatePreferredIdentifierForTag(kUTTagClassFilenameExtension, inExtension, NULL);
+        if (uti != NULL) {
+            app = copyOverrideHandler(CFSTR("LSHandlerContentType"), uti);
+            CFRelease(uti);
+        }
+        if (app == NULL) {
+            CFStringRef key = copyLowercase(inExtension);
+            CFURLRef found = key ? CFDictionaryGetValue(sExtensionMap, key) : NULL;
+            if (key)
+                CFRelease(key);
+            if (found)
+                app = CFRetain(found);
+        }
+    }
+    // creator codes name an application by its four-character signature, which no bundle here declares
+    (void)inCreator;
+    if (app == NULL)
+        return kLSApplicationNotFoundErr;
+    if (outAppRef != NULL && !fsRefForURL(app, outAppRef)) {
+        CFRelease(app);
+        return kLSApplicationNotFoundErr;
+    }
+    if (outAppURL != NULL)
+        *outAppURL = app;
+    else
+        CFRelease(app);
+    return noErr;
+}
+
+OSStatus LSCopyItemAttribute(const FSRef *inItem, LSRolesMask inRoles, CFStringRef inAttributeName, CFTypeRef *outValue)
+{
+    CFURLRef item = copyURLForFSRef(inItem);
+
+    (void)inRoles;
+    if (item == NULL || inAttributeName == NULL || outValue == NULL) {
+        if (item)
+            CFRelease(item);
+        return paramErr;
+    }
+    *outValue = NULL;
+    if (CFEqual(inAttributeName, kLSItemDisplayName)) {
+        *outValue = LSCopyDisplayNameForURL(item);
+    } else if (CFEqual(inAttributeName, kLSItemExtension)) {
+        *outValue = CFURLCopyPathExtension(item);
+    } else if (CFEqual(inAttributeName, kLSItemContentType)) {
+        CFStringRef ext = CFURLCopyPathExtension(item);
+        *outValue = ext ? UTTypeCreatePreferredIdentifierForTag(kUTTagClassFilenameExtension, ext, NULL)
+                        : CFStringCreateCopy(kCFAllocatorDefault, CFSTR("public.data"));
+        if (ext)
+            CFRelease(ext);
+    }
+    CFRelease(item);
+    return *outValue != NULL ? noErr : kLSAttributeNotFoundErr;
+}
+
+OSStatus LSRegisterURL(CFURLRef inURL, Boolean inUpdate)
+{
+    CFStringRef path;
+
+    (void)inUpdate;
+    if (inURL == NULL || !urlIsApplication(inURL))
+        return paramErr;
+    path = CFURLCopyFileSystemPath(inURL, kCFURLPOSIXPathStyle);
+    if (path == NULL)
+        return paramErr;
+    buildRegistryIfNeeded();
+    // a later registration of the same bundle refreshes its claims, earlier bundles keep priority
+    if (!CFArrayContainsValue(sApplicationURLs, CFRangeMake(0, CFArrayGetCount(sApplicationURLs)), inURL))
+        registerApplication(path);
+    CFRelease(path);
+    return noErr;
+}
+
+// open each item with the given or default application, launching it once with all of its items
+static OSStatus openItems(CFArrayRef itemURLs, CFURLRef appURL, LSLaunchFlags flags, CFURLRef *outLaunched)
+{
+    CFIndex count = itemURLs ? CFArrayGetCount(itemURLs) : 0;
+
+    (void)flags;
+    if (appURL != NULL)
+        return LSOpenApplicationAtURL(appURL, itemURLs, outLaunched);
+    if (count == 0)
+        return paramErr;
+    OSStatus status = noErr;
+    for (CFIndex i = 0; i < count; i++) {
+        OSStatus s = LSOpenCFURLRef(CFArrayGetValueAtIndex(itemURLs, i), i == 0 ? outLaunched : NULL);
+        if (s != noErr)
+            status = s;
+    }
+    return status;
+}
+
+OSStatus LSOpenFromURLSpec(const LSLaunchURLSpec *inLaunchSpec, CFURLRef *outLaunchedURL)
+{
+    if (inLaunchSpec == NULL || (inLaunchSpec->appURL == NULL && inLaunchSpec->itemURLs == NULL))
+        return paramErr;
+    return openItems(inLaunchSpec->itemURLs, inLaunchSpec->appURL, inLaunchSpec->launchFlags, outLaunchedURL);
+}
+
+OSStatus LSOpenFromRefSpec(const LSLaunchFSRefSpec *inLaunchSpec, FSRef *outLaunchedRef)
+{
+    CFMutableArrayRef items;
+    CFURLRef app = NULL, launched = NULL;
+    OSStatus status;
+
+    if (inLaunchSpec == NULL)
+        return paramErr;
+    items = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
+    for (ItemCount i = 0; i < inLaunchSpec->numDocs; i++) {
+        CFURLRef url = copyURLForFSRef(&inLaunchSpec->itemRefs[i]);
+        if (url != NULL) {
+            CFArrayAppendValue(items, url);
+            CFRelease(url);
+        }
+    }
+    if (inLaunchSpec->appRef != NULL && (app = copyURLForFSRef(inLaunchSpec->appRef)) == NULL) {
+        CFRelease(items);
+        return kLSApplicationNotFoundErr;
+    }
+    status = openItems(items, app, inLaunchSpec->launchFlags, &launched);
+    CFRelease(items);
+    if (app)
+        CFRelease(app);
+    if (status == noErr && launched != NULL && outLaunchedRef != NULL && !fsRefForURL(launched, outLaunchedRef))
+        status = kLSApplicationNotFoundErr;
+    if (launched)
+        CFRelease(launched);
+    return status;
 }

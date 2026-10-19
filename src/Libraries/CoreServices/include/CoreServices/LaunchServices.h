@@ -10,16 +10,65 @@
 #define __CORESERVICES_LAUNCHSERVICES__
 
 #include <CoreFoundation/CoreFoundation.h>
+#include <CoreServices/FileManager.h>
+#include <CoreServices/UTType.h>
 
 CF_EXTERN_C_BEGIN
 
 typedef OSStatus LSStatus;
 
 enum {
+    kLSAttributeNotFoundErr      = -10662,
     kLSUnknownErr                = -10810,
+    kLSNotAnApplicationErr       = -10811,
+    kLSDataUnavailableErr        = -10813,
     kLSApplicationNotFoundErr    = -10814,
+    kLSUnknownTypeErr            = -10815,
     kLSDataErr                   = -10817,
 };
+
+typedef CF_OPTIONS(OptionBits, LSLaunchFlags) {
+    kLSLaunchDefaults            = 0x00000001,
+    kLSLaunchAndPrint            = 0x00000002,
+    kLSLaunchAndDisplayErrors    = 0x00000040,
+    kLSLaunchDontAddToRecents    = 0x00000100,
+    kLSLaunchDontSwitch          = 0x00000200,
+    kLSLaunchAsync               = 0x00010000,
+    kLSLaunchNewInstance         = 0x00080000,
+    kLSLaunchAndHide             = 0x00100000,
+    kLSLaunchAndHideOthers       = 0x00200000,
+};
+
+typedef struct AEDesc AEDesc;
+
+typedef struct LSLaunchURLSpec {
+    CFURLRef appURL;
+    CFArrayRef itemURLs;
+    const AEDesc *passThruParams;
+    LSLaunchFlags launchFlags;
+    void *asyncRefCon;
+} LSLaunchURLSpec;
+
+typedef struct LSLaunchFSRefSpec {
+    const FSRef *appRef;
+    ItemCount numDocs;
+    const FSRef *itemRefs;
+    const AEDesc *passThruParams;
+    LSLaunchFlags launchFlags;
+    void *asyncRefCon;
+} LSLaunchFSRefSpec;
+
+CF_EXPORT const CFStringRef kLSItemDisplayName;
+CF_EXPORT const CFStringRef kLSItemContentType;
+CF_EXPORT const CFStringRef kLSItemExtension;
+CF_EXPORT const CFStringRef kLSQuarantineTypeKey;
+CF_EXPORT const CFStringRef kLSQuarantineOriginURLKey;
+CF_EXPORT const CFStringRef kLSQuarantineDataURLKey;
+CF_EXPORT const CFStringRef kLSQuarantineAgentNameKey;
+CF_EXPORT const CFStringRef kLSQuarantineAgentBundleIdentifierKey;
+CF_EXPORT const CFStringRef kLSQuarantineTimeStampKey;
+CF_EXPORT const CFStringRef kLSQuarantineTypeWebDownload;
+CF_EXPORT const CFStringRef kLSQuarantineTypeOtherDownload;
 
 typedef CF_OPTIONS(CFOptionFlags, LSRolesMask) {
     kLSRolesNone    = 0x00000001,
@@ -61,6 +110,18 @@ CF_EXPORT CFArrayRef LSCopyAllApplicationURLs(void);
 
 /* Drop the cached scan; the next lookup re-reads the application folders. */
 CF_EXPORT void LSRefreshApplicationRegistry(void);
+
+CF_EXPORT OSStatus LSCopyApplicationForMIMEType(CFStringRef inMIMEType, LSRolesMask inRoleMask, CFURLRef *outAppURL);
+CF_EXPORT CFStringRef LSCopyDefaultHandlerForURLScheme(CFStringRef inURLScheme);
+CF_EXPORT OSStatus LSSetDefaultHandlerForURLScheme(CFStringRef inURLScheme, CFStringRef inHandlerBundleID);
+CF_EXPORT OSStatus LSSetDefaultRoleHandlerForContentType(CFStringRef inContentType, LSRolesMask inRole, CFStringRef inHandlerBundleID);
+CF_EXPORT OSStatus LSGetApplicationForItem(const FSRef *inItemRef, LSRolesMask inRoleMask, FSRef *outAppRef, CFURLRef *outAppURL);
+CF_EXPORT OSStatus LSGetApplicationForInfo(OSType inType, OSType inCreator, CFStringRef inExtension, LSRolesMask inRoleMask,
+                                           FSRef *outAppRef, CFURLRef *outAppURL);
+CF_EXPORT OSStatus LSCopyItemAttribute(const FSRef *inItem, LSRolesMask inRoles, CFStringRef inAttributeName, CFTypeRef *outValue);
+CF_EXPORT OSStatus LSRegisterURL(CFURLRef inURL, Boolean inUpdate);
+CF_EXPORT OSStatus LSOpenFromURLSpec(const LSLaunchURLSpec *inLaunchSpec, CFURLRef *outLaunchedURL);
+CF_EXPORT OSStatus LSOpenFromRefSpec(const LSLaunchFSRefSpec *inLaunchSpec, FSRef *outLaunchedRef);
 
 CF_EXTERN_C_END
 

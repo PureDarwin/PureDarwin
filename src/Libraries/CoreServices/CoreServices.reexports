@@ -1,0 +1,3 @@
+# libSystem symbols CoreServices hands on, binaries linked against macOS bind them here
+# (CarbonCore exports the fp.h math set, nixpkgs clang binds exp2 to CoreServices)
+_exp2

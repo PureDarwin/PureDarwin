@@ -164,3 +164,142 @@ IOPMRequestSysWake(CFDictionaryRef request)
 	(void)request;
 	return kIOReturnUnsupported;
 }
+
+// PureDarwin never sleeps, so every assertion is honoured by construction
+// they are tracked so that releasing an unknown ID still fails as powerd's would
+#include <pthread.h>
+#include <stdlib.h>
+#include <mach/mach_time.h>
+
+static pthread_mutex_t assertionLock = PTHREAD_MUTEX_INITIALIZER;
+static CFMutableDictionaryRef assertions;
+static IOPMAssertionID nextAssertionID = 1;
+
+IOReturn
+IOPMAssertionCreateWithName(CFStringRef assertionType, IOPMAssertionLevel assertionLevel,
+                            CFStringRef assertionName, IOPMAssertionID *assertionID)
+{
+	if (assertionType == NULL || assertionName == NULL || assertionID == NULL ||
+	    (assertionLevel != kIOPMAssertionLevelOn && assertionLevel != kIOPMAssertionLevelOff)) {
+		return kIOReturnBadArgument;
+	}
+	CFStringRef keys[] = { kIOPMAssertionTypeKey, kIOPMAssertionNameKey };
+	CFTypeRef values[] = { assertionType, assertionName };
+	CFDictionaryRef props = CFDictionaryCreate(kCFAllocatorDefault, (const void **)keys, values, 2,
+	    &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+
+	pthread_mutex_lock(&assertionLock);
+	if (assertions == NULL) {
+		assertions = CFDictionaryCreateMutable(kCFAllocatorDefault, 0, NULL, &kCFTypeDictionaryValueCallBacks);
+	}
+	*assertionID = nextAssertionID++;
+	CFDictionarySetValue(assertions, (const void *)(uintptr_t)*assertionID, props);
+	pthread_mutex_unlock(&assertionLock);
+	CFRelease(props);
+	return kIOReturnSuccess;
+}
+
+IOReturn
+IOPMAssertionCreateWithDescription(CFStringRef assertionType, CFStringRef name, CFStringRef details,
+                                   CFStringRef humanReadableReason, CFStringRef localizationBundlePath,
+                                   CFTimeInterval timeout, CFStringRef timeoutAction, IOPMAssertionID *assertionID)
+{
+	(void)details;
+	(void)humanReadableReason;
+	(void)localizationBundlePath;
+	(void)timeout;
+	(void)timeoutAction;
+	return IOPMAssertionCreateWithName(assertionType, kIOPMAssertionLevelOn, name, assertionID);
+}
+
+IOReturn
+IOPMAssertionRelease(IOPMAssertionID assertionID)
+{
+	Boolean found = false;
+
+	pthread_mutex_lock(&assertionLock);
+	if (assertions != NULL && CFDictionaryContainsKey(assertions, (const void *)(uintptr_t)assertionID)) {
+		CFDictionaryRemoveValue(assertions, (const void *)(uintptr_t)assertionID);
+		found = true;
+	}
+	pthread_mutex_unlock(&assertionLock);
+	return found ? kIOReturnSuccess : kIOReturnNotFound;
+}
+
+// user activity is an assertion that also resets the idle time, through the same notify state the
+// compositor publishes input times to
+extern uint32_t notify_register_check(const char *name, int *out_token);
+extern uint32_t notify_set_state(int token, uint64_t state);
+
+IOReturn
+IOPMAssertionDeclareUserActivity(CFStringRef AssertionName, IOPMUserActiveType userType, IOPMAssertionID *AssertionID)
+{
+	static int token = -1;
+	static mach_timebase_info_data_t timebase;
+
+	(void)userType;
+	if (AssertionName == NULL || AssertionID == NULL) {
+		return kIOReturnBadArgument;
+	}
+	if (timebase.denom == 0) {
+		mach_timebase_info(&timebase);
+	}
+	if (token >= 0 || notify_register_check("org.puredarwin.hid.lastinput", &token) == 0) {
+		notify_set_state(token, mach_absolute_time() * timebase.numer / timebase.denom);
+	}
+	if (*AssertionID != kIOPMNullAssertionID) {
+		pthread_mutex_lock(&assertionLock);
+		Boolean held = assertions != NULL && CFDictionaryContainsKey(assertions, (const void *)(uintptr_t)*AssertionID);
+		pthread_mutex_unlock(&assertionLock);
+		if (held) {
+			return kIOReturnSuccess;
+		}
+	}
+	return IOPMAssertionCreateWithName(kIOPMAssertPreventUserIdleDisplaySleep, kIOPMAssertionLevelOn,
+	                                   AssertionName, AssertionID);
+}
+
+// the level of each assertion type, on while any assertion of that type is held
+IOReturn
+IOPMCopyAssertionsStatus(CFDictionaryRef *AssertionsStatus)
+{
+	if (AssertionsStatus == NULL) {
+		return kIOReturnBadArgument;
+	}
+
+	CFMutableDictionaryRef status = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+	    &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+	int on = kIOPMAssertionLevelOn;
+	CFNumberRef onNumber = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &on);
+
+	pthread_mutex_lock(&assertionLock);
+	if (assertions != NULL) {
+		CFIndex count = CFDictionaryGetCount(assertions);
+		const void **values = malloc(sizeof(void *) * (count ? count : 1));
+
+		CFDictionaryGetKeysAndValues(assertions, NULL, values);
+		for (CFIndex i = 0; i < count; i++) {
+			CFStringRef type = CFDictionaryGetValue((CFDictionaryRef)values[i], kIOPMAssertionTypeKey);
+			if (type != NULL) {
+				CFDictionarySetValue(status, type, onNumber);
+			}
+		}
+		free(values);
+	}
+	pthread_mutex_unlock(&assertionLock);
+	CFRelease(onNumber);
+	*AssertionsStatus = status;
+	return kIOReturnSuccess;
+}
+
+// IORegisterForSystemPower never hands out a notifier, so there is nothing to undo
+IOReturn
+IODeregisterForSystemPower(io_object_t *notifier)
+{
+	if (notifier == NULL || *notifier == IO_OBJECT_NULL) {
+		return kIOReturnBadArgument;
+	}
+	IOObjectRelease(*notifier);
+	*notifier = IO_OBJECT_NULL;
+	return kIOReturnSuccess;
+}

@@ -62,6 +62,7 @@ target_sources(IOKitCF PRIVATE
     # sources; the notification API is already in IOKitLib.c.)
     iokituser/IOCFPlugIn.c
     iokituser/pd_oskext_folders.c
+    iokituser/pd_sc_forward.c
     iokituser/IODataQueueClient.c
     iokituser/IOMIGMachPort.c
     # IOHIDLib's C API. The IOHIDEventSystem*/IOHIDService*/IOHIDSession* half

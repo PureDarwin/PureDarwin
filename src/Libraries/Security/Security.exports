@@ -943,6 +943,7 @@ _SecCertificateShow
 _SecCertificateVersion
 _SecCertificateXPCArrayCopyArray
 _SecCheckErrno
+_SecCodeCopySigningInformation
 _SecCopyBaseFilesURL
 _SecCopyDecryptedForServer
 _SecCopyEncryptedToServer
@@ -1040,6 +1041,7 @@ _SecGetAppleTrustAnchors
 _SecGetCurrentServerLoggingInfo
 _SecGetDebugDescriptionFormatOptions
 _SecIdentityCopyCertificate
+_SecIdentityCopyPreferred
 _SecIdentityCopyPrivateKey
 _SecIdentityCreate
 _SecIdentityGetTypeID
@@ -1300,6 +1302,8 @@ _SecSetCustomHomeURLString
 _SecSetLoggingInfoForCircleScope
 _SecSetLoggingInfoForXPCScope
 _SecSignatureHashAlgorithmForAlgorithmOid
+_SecStaticCodeCheckValidity
+_SecStaticCodeCreateWithPath
 _SecTaskCopySigningIdentifier
 _SecTaskCopyTeamIdentifier
 _SecTaskCopyValueForEntitlement
@@ -1371,6 +1375,7 @@ _SecTrustSetSignedCertificateTimestamps
 _SecTrustSetTrustedLogs
 _SecTrustSetVerifyDate
 _SecTrustSettingsCopyCertificates
+_SecTrustSettingsCopyTrustSettings
 _SecTrustStoreContains
 _SecTrustStoreCopyAll
 _SecTrustStoreCopyCARevocationAdditions
@@ -1413,6 +1418,8 @@ _SecXPCDictionarySetPListOptional
 _SecXPCDictionarySetPListWithRepair
 _SecXPCDictionarySetString
 _SecXPCDictionarySetStringOptional
+_SessionCreate
+_SessionGetInfo
 _SetCustomHomePath
 _TKTokenControl
 _TKTokenCopyObjectAccessControl
@@ -2469,6 +2476,17 @@ _kSecClassGenericPassword
 _kSecClassIdentity
 _kSecClassInternetPassword
 _kSecClassKey
+_kSecCodeInfoCMS
+_kSecCodeInfoCertificates
+_kSecCodeInfoDigestAlgorithm
+_kSecCodeInfoFlags
+_kSecCodeInfoFormat
+_kSecCodeInfoIdentifier
+_kSecCodeInfoMainExecutable
+_kSecCodeInfoPList
+_kSecCodeInfoSource
+_kSecCodeInfoTeamIdentifier
+_kSecCodeInfoUnique
 _kSecDataInetExtraClientDefined0
 _kSecDataInetExtraClientDefined1
 _kSecDataInetExtraClientDefined2

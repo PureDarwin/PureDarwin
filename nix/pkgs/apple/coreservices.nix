@@ -9,8 +9,9 @@
 , appleSdk
 }:
 
-# CoreServices umbrella: the CarbonCore Multiprocessing entry points and a
-# LaunchServices built on a directory scan of the application folders.
+# CoreServices umbrella: the CarbonCore Multiprocessing entry points, a
+# LaunchServices built on a directory scan of the application folders, and
+# the FSEvents stream API over /dev/fsevents or kqueue.
 # See src/Libraries/CoreServices.
 
 let
@@ -37,9 +38,15 @@ stdenv.mkDerivation {
       -Wl,-platform_version,macos,26.5,26.5 \
       -Wl,-install_name,/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices \
       -Wl,-fixup_chains \
+      -Wl,-reexported_symbols_list,src/Libraries/CoreServices/CoreServices.reexports \
       src/Libraries/CoreServices/MultiprocessingCompat.c \
       src/Libraries/CoreServices/LaunchServices.c \
-      -lCoreFoundation -lSystem \
+      src/Libraries/CoreServices/FSEvents.c \
+      src/Libraries/CoreServices/FileManager.c \
+      src/Libraries/CoreServices/UTType.c \
+      src/Libraries/CoreServices/SharedFileList.c \
+      src/Libraries/CoreServices/UnicodeUtilities.c \
+      -Wl,-reexport-lCoreFoundation -lSystem \
       -o CoreServices
 
     runHook postBuild
@@ -51,9 +58,7 @@ stdenv.mkDerivation {
     mkdir -p "$fwdir/Versions/A/Resources"
     cp CoreServices "$fwdir/Versions/A/CoreServices"
     mkdir -p "$fwdir/Versions/A/Headers"
-    cp src/Libraries/CoreServices/include/CoreServices/CoreServices.h \
-       src/Libraries/CoreServices/include/CoreServices/LaunchServices.h \
-       "$fwdir/Versions/A/Headers/"
+    cp src/Libraries/CoreServices/include/CoreServices/*.h "$fwdir/Versions/A/Headers/"
     mkdir -p "$out/usr/include/CoreServices"
     cp src/Libraries/CoreServices/include/CoreServices/*.h "$out/usr/include/CoreServices/"
     ln -sf A "$fwdir/Versions/Current"

@@ -43,6 +43,7 @@ _IOConnectTrap5
 _IOConnectTrap6
 _IOConnectUnmapMemory
 _IOConnectUnmapMemory64
+_IOCreateDisplayInfoDictionary
 _IOCreatePlugInInterfaceForService
 _IOCreateReceivePort
 _IODataQueueAllocateNotificationPort
@@ -52,9 +53,11 @@ _IODataQueueEnqueue
 _IODataQueuePeek
 _IODataQueueSetNotificationPort
 _IODataQueueWaitForAvailableData
+_IODeregisterForSystemPower
 _IODestroyPlugInInterface
 _IODispatchCalloutFromCFMessage
 _IODispatchCalloutFromMessage
+_IODisplayCreateInfoDictionary
 _IOHIDDeviceActivate
 _IOHIDDeviceCancel
 _IOHIDDeviceClose
@@ -236,6 +239,10 @@ _IOObjectRelease
 _IOObjectRetain
 _IOOpenConnection
 _IOOpenFirmwarePathMatching
+_IOPMAssertionCreateWithDescription
+_IOPMAssertionCreateWithName
+_IOPMAssertionDeclareUserActivity
+_IOPMAssertionRelease
 _IOPMCancelScheduledPowerEvent
 _IOPMConnectionAcknowledgeEvent
 _IOPMConnectionAcknowledgeEventWithOptions
@@ -244,12 +251,14 @@ _IOPMConnectionRelease
 _IOPMConnectionScheduleWithRunLoop
 _IOPMConnectionSetNotification
 _IOPMConnectionUnscheduleFromRunLoop
+_IOPMCopyAssertionsStatus
 _IOPMCopyScheduledPowerEvents
 _IOPMRequestSysWake
 _IOPMSchedulePowerEvent
 _IOPSCopyPowerSourcesInfo
 _IOPSCopyPowerSourcesList
 _IOPSGetPowerSourceDescription
+_IOPSNotificationCreateRunLoopSource
 _IORegisterClient
 _IORegisterForSystemPower
 _IORegistryCreateEnumerator
@@ -308,6 +317,10 @@ _OBJC_METACLASS_$_HIDDevice
 _OBJC_METACLASS_$_HIDElement
 _OSGetNotificationFromMessage
 _OSKextGetSystemExtensionsFolderURLs
+_SCDynamicStoreCreate
+_SCDynamicStoreCreateRunLoopSource
+_SCDynamicStoreSetNotificationKeys
+_SCError
 __IODataQueueDequeue
 __IODataQueueEnqueueWithReadCallback
 __IODataQueuePeek

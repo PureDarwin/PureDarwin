@@ -24,9 +24,9 @@ endforeach()
 # Apple's base/Security.h would land in the farm as Security.h and drag in the
 # CDSA headers; our umbrella takes its place for our own sources as well as for
 # consumers. Authorization.h is ours too - libsecurity_authorization is not
-# vendored. Everything else, including the keychain headers, is Apple's own.
+# vendored, nor is AuthSession.h's. Everything else, including the keychain headers, is Apple's own.
 file(REMOVE ${_sec_farm}/Security/Security.h)
-foreach(_h Security.h Authorization.h)
+foreach(_h Security.h Authorization.h AuthSession.h)
     file(CREATE_LINK ${CMAKE_CURRENT_SOURCE_DIR}/include/Security/${_h}
          ${_sec_farm}/Security/${_h} SYMBOLIC)
 endforeach()
@@ -110,6 +110,8 @@ target_sources(Security PRIVATE
     compat/pd_coreauthd.c
     compat/pd_libaks_acl.c
     compat/pd_security_unvendored.c
+    compat/pd_security_codesign.c
+    compat/pd_authsession.c
 )
 
 target_include_directories(Security PRIVATE

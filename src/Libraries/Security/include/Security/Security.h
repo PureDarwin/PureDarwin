@@ -35,5 +35,6 @@
 #include <Security/SecTrustedApplication.h>
 
 #include <Security/Authorization.h>
+#include <Security/AuthSession.h>
 
 #endif /* _PUREDARWIN_SECURITY_H_ */

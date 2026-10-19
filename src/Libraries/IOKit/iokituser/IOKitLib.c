@@ -30,6 +30,7 @@
 
 #include <mach/mach.h>
 #include <mach/mach_port.h>
+#include <mach/mach_time.h>
 
 extern kern_return_t host_get_io_master(host_t, io_main_t *);
 
@@ -2395,6 +2396,28 @@ IORegistryEntryGetRegistryEntryID(
     return (kr);
 }
 
+// the compositor reads input itself, so IOHIDSystem never sees it and its idle time only grows,
+// the time of the last input comes from the notify state the compositor publishes instead
+extern uint32_t notify_register_check(const char *name, int *out_token);
+extern uint32_t notify_get_state(int token, uint64_t *state);
+
+static CFNumberRef
+pd_copy_hid_idle_time(io_registry_entry_t entry)
+{
+    static int token = -1;
+    static mach_timebase_info_data_t timebase;
+    uint64_t last = 0, now;
+    SInt64 idle;
+
+    if (!IOObjectConformsTo(entry, "IOHIDSystem")) return NULL;
+    if (token < 0 && notify_register_check("org.puredarwin.hid.lastinput", &token) != 0) return NULL;
+    if (notify_get_state(token, &last) != 0 || last == 0) return NULL;
+    if (timebase.denom == 0) mach_timebase_info(&timebase);
+    now = mach_absolute_time() * timebase.numer / timebase.denom;
+    idle = now > last ? (SInt64)(now - last) : 0;
+    return CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt64Type, &idle);
+}
+
 kern_return_t
 IORegistryEntryCreateCFProperties(
 	io_registry_entry_t	entry,
@@ -2453,6 +2476,15 @@ IORegistryEntryCreateCFProperties(
 	    vm_deallocate(mach_task_self(), (vm_address_t)propertiesBuffer, size);
     }
 
+    if (*properties) {
+        CFNumberRef idle = pd_copy_hid_idle_time(entry);
+
+        if (idle) {
+            CFDictionarySetValue(*properties, CFSTR("HIDIdleTime"), idle);
+            CFRelease(idle);
+        }
+    }
+
     return( *properties ? kIOReturnSuccess : kIOReturnInternalError );
 }
 
@@ -2463,6 +2495,11 @@ IORegistryEntryCreateCFProperty(
         CFAllocatorRef		allocator,
 	IOOptionBits   options __unused )
 {
+    if (CFEqual(key, CFSTR("HIDIdleTime"))) {
+        CFNumberRef idle = pd_copy_hid_idle_time(entry);
+
+        if (idle) return idle;
+    }
     return (IORegistryEntrySearchCFProperty(entry, NULL, key, allocator, kNilOptions));
 }
 
@@ -3368,4 +3405,24 @@ boolean_t ev_try_lock(OSSpinLock * l)
 void ev_unlock(OSSpinLock * l)
 {
     OSSpinLockUnlock(l);
+}
+
+// a display's info is its registry properties, which carry the EDID when the driver published one
+CFDictionaryRef
+IODisplayCreateInfoDictionary(io_service_t framebuffer, IOOptionBits options)
+{
+    CFMutableDictionaryRef props = NULL;
+
+    (void)options;
+    if (framebuffer == IO_OBJECT_NULL)
+        return NULL;
+    if (IORegistryEntryCreateCFProperties(framebuffer, &props, kCFAllocatorDefault, 0) != kIOReturnSuccess)
+        return NULL;
+    return props;
+}
+
+CFDictionaryRef
+IOCreateDisplayInfoDictionary(io_service_t framebuffer, IOOptionBits options)
+{
+    return IODisplayCreateInfoDictionary(framebuffer, options);
 }
