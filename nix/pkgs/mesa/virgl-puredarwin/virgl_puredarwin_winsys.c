@@ -40,6 +40,15 @@ struct virgl_hw_res {
    bool attached;        /* attached to the winsys context yet? */
 };
 
+// the host resource id behind a gallium resource, for gl interop's scanout export
+uint32_t virgl_puredarwin_res_handle(struct virgl_hw_res *res);
+
+uint32_t
+virgl_puredarwin_res_handle(struct virgl_hw_res *res)
+{
+   return res ? res->res_handle : 0;
+}
+
 struct virgl_pd_fence {
    struct pipe_reference reference;
 };

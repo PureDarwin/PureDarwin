@@ -13,17 +13,23 @@
 , src
 , targetTriple ? "x86_64-apple-darwin20.4"
 , appleSdk
+# the amdgpu library and /dev/dri device lookup, for mesa's radeonsi and radv
+, amdgpu ? false
+# libdrm_nouveau for mesa's nouveau driver, built with the amdgpu library
+, nouveau ? false
 }:
 
 let
   targetInfo = import ../../lib/target-info.nix targetTriple;
 in
 stdenv.mkDerivation {
-  pname = "puredarwin-libdrm";
+  pname = if amdgpu then "puredarwin-libdrm-amdgpu" else "puredarwin-libdrm";
   version = "2.4.133";
   inherit src;
 
   nativeBuildInputs = [ meson ninja pkg-config python3 ];
+
+  patches = lib.optional amdgpu "${puredarwinSource}/puredarwin-dri.patch";
 
   postPatch = ''
     mkdir -p compat/sys
@@ -80,9 +86,9 @@ EOF
       --libdir=lib \
       --buildtype=release \
       -Ddefault_library=both \
-      -Damdgpu=disabled \
+      -Damdgpu=${if amdgpu then "enabled" else "disabled"} \
       -Dintel=disabled \
-      -Dnouveau=disabled \
+      -Dnouveau=${if nouveau then "enabled" else "disabled"} \
       -Dradeon=disabled \
       -Dvmwgfx=disabled \
       -Dtests=false \
@@ -101,8 +107,14 @@ EOF
     DESTDIR=$out ninja -C build install
     # The image flattens this package under /, but dependent cross-builds
     # consume the pkg-config file from the Nix store first.
+  '' + (if amdgpu then ''
+    for pc in $out/lib/pkgconfig/*.pc; do
+      substituteInPlace "$pc" --replace-fail 'prefix=/' "prefix=$out"
+    done
+  '' else ''
     substituteInPlace $out/lib/pkgconfig/libdrm.pc \
       --replace-fail 'prefix=/' "prefix=$out"
+  '') + ''
     runHook postInstall
   '';
 

@@ -40,6 +40,20 @@
   # Wayland-only build: no x11 platform, no GLX, and no X11 library anywhere in
   # the closure. See the with_dri patch in postPatch for why that needs help.
 , withX11 ? true
+# radv on the amdgpu kernel driver through /dev/dri, instead of the IOKit
+# virgl and r600 paths; Darwin is treated as a drm system for this build
+, withAmdgpuDrm ? false
+# crocus (gen4-7) and iris (gen8+) for i915, their CL kernels compile with the host's
+# mesa_clc (anv and hasvk need dl_iterate_phdr, which PD's libc lacks)
+, withIntelDrm ? false
+# freedreno on the msm kernel driver through /dev/dri (adreno), the same drm platform as amdgpu
+, withMsmDrm ? false
+# gallium nouveau on the nouveau kernel driver through /dev/dri, next to the amdgpu and intel drivers
+, withNouveauDrm ? false
+# host mesa_clc and vtn_bindgen2, crocus precompiles its CL kernels with them
+, mesaClcTools ? null
+, libdrmAmdgpu ? null
+, libelf ? null
 , targetTriple ? "x86_64-apple-darwin20.4"
 , appleSdk
 }:
@@ -49,13 +63,25 @@ let
 
   pythonEnv = python3.withPackages (ps: [ ps.mako ps.pyyaml ps.setuptools ]);
 
-  depIncludes = [
+  # /dev/dri drivers: Darwin is a drm system, libdrm comes from PD's /dev/dri build
+  drm = withAmdgpuDrm || withMsmDrm;
+
+  depIncludes = lib.optionals withAmdgpuDrm [
+    "-I${libelf}/usr/include"
+  ] ++ lib.optionals drm [
+    "-I${libdrmAmdgpu}/include"
+    "-I${libdrmAmdgpu}/include/libdrm"
+  ] ++ [
     "-I${lib.getDev zlib}/include"
     "-I${lib.getDev expat}/include"
     "-I${llvm}/usr/include"
     "-I${corefoundation}/include"
   ] ++ map (p: "-I${lib.getDev p}/include") xDeps;
-  depLibs = [
+  depLibs = lib.optionals withAmdgpuDrm [
+    "-L${libelf}/usr/lib"
+  ] ++ lib.optionals drm [
+    "-L${libdrmAmdgpu}/lib"
+  ] ++ [
     "-L${zlib}/lib"
     "-L${expat}/lib"
     "-L${llvm}/usr/lib"
@@ -70,10 +96,12 @@ let
     ++ lib.optionals withX11 [ libX11 libXext libxcb libXau libXdmcp libXxf86vm
                                xorgproto xtrans libxshmfence ];
   xPkgConfigPath = lib.concatMapStringsSep ":"
-    (p: "${p}/lib/pkgconfig:${p}/share/pkgconfig") xDeps;
+    (p: "${p}/lib/pkgconfig:${p}/share/pkgconfig")
+    (xDeps ++ lib.optional drm libdrmAmdgpu)
+    + lib.optionalString withAmdgpuDrm ":${libelf}/usr/lib/pkgconfig";
 in
 stdenv.mkDerivation rec {
-  pname = "puredarwin-mesa${lib.optionalString (!withX11) "-nox"}";
+  pname = "puredarwin-mesa${lib.optionalString (!withX11) "-nox"}${lib.optionalString withAmdgpuDrm "-amdgpu"}${lib.optionalString withIntelDrm "-intel"}${lib.optionalString withNouveauDrm "-nouveau"}${lib.optionalString withMsmDrm "-msm"}";
   version = "26.1.6";
 
   # archive.mesa3d.org and the rest of freedesktop have been unreachable, so
@@ -88,7 +116,8 @@ stdenv.mkDerivation rec {
     sha256 = "01l62p9a90rwnhmgp975h752ixxdpfi518ddp4n2w08y1y5bi5jj";
   };
 
-  nativeBuildInputs = [ meson ninja pkg-config pythonEnv bison flex glslang spirv-tools waylandScanner ];
+  nativeBuildInputs = [ meson ninja pkg-config pythonEnv bison flex glslang spirv-tools waylandScanner ]
+    ++ lib.optional withIntelDrm mesaClcTools;
   buildInputs = [ zlib expat ];
 
   postPatch = ''
@@ -118,9 +147,20 @@ stdenv.mkDerivation rec {
     # unsatisfiable /usr/lib/libXplugin.1.dylib dependency and nothing that
     # links it can be loaded at all. pseudo-drm is the platform for exactly
     # this shape: real X11, no KMS/DRM device underneath.
+  '' + (if drm then ''
+    # /dev/dri is a real drm device here, so Darwin takes the drm platform
+    substituteInPlace meson.build \
+      --replace-fail "  with_dri_platform = 'apple'" \
+                     "  with_dri_platform = 'drm'" \
+      --replace-fail "'android', 'managarm'].contains(host_machine.system())" \
+                     "'android', 'managarm', 'darwin'].contains(host_machine.system())" \
+      --replace-fail "llvm_modules += ['amdgpu', 'bitreader', 'ipo']" \
+                     "llvm_modules += amd_with_llvm ? ['amdgpu', 'bitreader', 'ipo'] : []"
+  '' else ''
     substituteInPlace meson.build \
       --replace "  with_dri_platform = 'apple'" \
                 "  with_dri_platform = 'pseudo-drm'"
+  '') + ''
 
   '' + lib.optionalString (!withX11) ''
     # with_dri is what EGL requires, and Mesa only sets it from
@@ -143,7 +183,64 @@ stdenv.mkDerivation rec {
     # src/meson.build every variable the target needs (shared_glapi_lib,
     # glapi_xml_py_deps, inc_mesa, gl_priv_libs) is already in scope.
     echo "subdir('mesa/glapi/openglapi')" >> src/meson.build
+  '' + lib.optionalString withMsmDrm ''
+    # freedreno sizes its buffer cache from linux's sysinfo, mesa's own portable call works here
+    substituteInPlace src/gallium/drivers/freedreno/freedreno_screen.c \
+      --replace-fail '#include <sys/sysinfo.h>' '#include "util/os_misc.h"' \
+      --replace-fail 'struct sysinfo si;' 'uint64_t ram = 0;' \
+      --replace-fail 'sysinfo(&si);' 'os_get_total_physical_memory(&ram);' \
+      --replace-fail 'screen->ram_size = si.totalram;' 'screen->ram_size = ram;'
+  '' + lib.optionalString drm ''
+    # the few files that call ppoll take it from a small compat header
+    cp ${./amdgpu-puredarwin/pd_mesa_compat.h} src/util/pd_mesa_compat.h
+    for f in src/gallium/drivers/llvmpipe/lp_fence.c src/loader/loader_wayland_helper.c; do
+      sed -i '0,/^#include/s//#include "util\/pd_mesa_compat.h"\n#include/' "$f"
+    done
+    # addrlib's __APPLE__ branches are for Apple's own driver build, PD takes
+    # the ordinary userspace path that HAVE_TSERVER also selects
+    sed -i -e 's/defined(__APPLE__) && !defined(HAVE_TSERVER)/0/' \
+           -e 's/!defined(__APPLE__) || defined(HAVE_TSERVER)/1/' \
+      src/amd/addrlib/inc/addrtypes.h src/amd/addrlib/src/core/addrcommon.h
+    # PD's drm answers DRM_CAP_PRIME like Linux, without it EGL refuses dma-buf imports
+    substituteInPlace src/gallium/auxiliary/util/u_screen.c \
+      --replace-fail "(DETECT_OS_LINUX || DETECT_OS_BSD || DETECT_OS_MANAGARM)" \
+                     "(DETECT_OS_LINUX || DETECT_OS_BSD || DETECT_OS_MANAGARM || DETECT_OS_APPLE)"
+    # PD's kernel answers the kcmp file comparison through a private fcntl
+    python3 -c 'import sys; p=sys.argv[1]; s=open(p).read(); s=s.replace("#ifdef SYS_kcmp\n   return syscall", "#if DETECT_OS_APPLE\n   return fcntl(fd1, 0x5044 /* F_PD_SAMEFILE */, fd2);\n#elif defined(SYS_kcmp)\n   return syscall"); open(p, "w").write(s)' src/util/os_file.c
+    grep -q F_PD_SAMEFILE src/util/os_file.c
+    # radv's layer tables name optional entry points as weak symbols; on
+    # mach-o those link only as flat lookups, and the missing ones bind to NULL
+    substituteInPlace src/amd/vulkan/meson.build \
+      --replace-fail "ld_args_build_id, ld_args_bsymbolic, ld_args_gc_sections, vulkan_icd_link_args," \
+                     "ld_args_build_id, ld_args_bsymbolic, ld_args_gc_sections, vulkan_icd_link_args, '-Wl,-undefined,dynamic_lookup',"
   '' + ''
+    # zink runs on PD's own vulkan devices (venus, lavapipe), not MoltenVK, so the darwin branch that demands
+    # MoltenVK headers and objective-c mode goes, and the MoltenVK includes stay off
+    substituteInPlace src/gallium/drivers/zink/meson.build \
+      --replace-fail "if host_machine.system() == 'darwin'" "if false"
+    for f in src/gallium/drivers/zink/zink_resource.c src/gallium/drivers/zink/zink_screen.c \
+             src/gallium/drivers/zink/zink_instance.py; do
+      substituteInPlace "$f" --replace-quiet '#ifdef __APPLE__' '#if defined(__APPLE__) && defined(PD_ZINK_MOLTENVK)'
+    done
+    # with no DRM device zink takes the first device the loader lists and drops it when that is a CPU one,
+    # so a lavapipe listed before venus would turn zink off. take the first non-CPU device instead
+    substituteInPlace src/gallium/drivers/zink/zink_screen.c \
+      --replace-fail '      VkPhysicalDevice pdev;
+          unsigned pdev_count = 1;
+          VkResult result = VKSCR(EnumeratePhysicalDevices)(screen->instance, &pdev_count, &pdev);' \
+                         '      VkPhysicalDevice pdev, pdevs[16];
+          unsigned pdev_count = 16;
+          VkResult result = VKSCR(EnumeratePhysicalDevices)(screen->instance, &pdev_count, pdevs);
+          pdev = pdev_count ? pdevs[0] : VK_NULL_HANDLE;
+          for (unsigned i = 0; i < pdev_count; i++) {
+             VkPhysicalDeviceProperties p;
+             VKSCR(GetPhysicalDeviceProperties)(pdevs[i], &p);
+             if (p.deviceType != VK_PHYSICAL_DEVICE_TYPE_CPU) {
+                pdev = pdevs[i];
+                break;
+             }
+          }'
+  '' + lib.optionalString (!drm) ''
     mkdir -p src/gallium/winsys/radeon/puredarwin
     cp ${radeonWinsysSrc}/* src/gallium/winsys/radeon/puredarwin/
     cp ${radeonAbiHeader} src/gallium/winsys/radeon/puredarwin/PDRadeonRenderShared.h
@@ -155,6 +252,37 @@ stdenv.mkDerivation rec {
     cp ${virglWinsysSrc}/virgl_puredarwin_public.h src/gallium/winsys/virgl/puredarwin/
     cp ${pdVirglShim}/include/pd_virgl_shim.h src/gallium/winsys/virgl/puredarwin/
     cp ${virglAbiHeader} src/gallium/winsys/virgl/puredarwin/IOVirtIOGPU3DShared.h
+
+    # gl interop hands neuswc the host resource id to scan out, virgl had no interop_export_object
+    # so st fell back to resource_get_handle, which this winsys does not have
+    cat >> src/gallium/drivers/virgl/virgl_resource.c <<'EOF'
+
+uint32_t virgl_puredarwin_res_handle(struct virgl_hw_res *res);
+void virgl_pd_init_interop(struct pipe_screen *screen);
+
+static uint32_t
+virgl_pd_interop_export_object(struct pipe_screen *screen, struct pipe_resource *res,
+                               uint32_t size, void *data, bool *need_export_dmabuf)
+{
+   uint32_t id = virgl_puredarwin_res_handle(virgl_resource(res)->hw_res);
+
+   *need_export_dmabuf = false;
+   if (size < sizeof(id) || !id)
+      return 0;
+   memcpy(data, &id, sizeof(id));
+   return sizeof(id);
+}
+
+void
+virgl_pd_init_interop(struct pipe_screen *screen)
+{
+   screen->interop_export_object = virgl_pd_interop_export_object;
+}
+EOF
+    substituteInPlace src/gallium/drivers/virgl/virgl_resource.c \
+      --replace-fail '    screen->resource_get_handle = virgl_resource_get_handle;' \
+                     '    screen->resource_get_handle = virgl_resource_get_handle;
+    { void virgl_pd_init_interop(struct pipe_screen *); virgl_pd_init_interop(screen); }'
 
     # Two changes beyond swapping vtest for our winsys. The wrap returns NULL
     # when IOVirtIOGPU has no 3D user client (real hardware, or virtio-gpu
@@ -278,8 +406,11 @@ EOF
       --libdir=lib \
       --buildtype=release \
       -Ddefault_library=shared \
-      -Dgallium-drivers=llvmpipe,softpipe,virgl,r600 \
-      -Dvulkan-drivers=swrast \
+      -Dgallium-drivers=${if withMsmDrm then "llvmpipe,softpipe,freedreno" else if withAmdgpuDrm then "llvmpipe,softpipe,radeonsi,zink${lib.optionalString withIntelDrm ",crocus,iris"}${lib.optionalString withNouveauDrm ",nouveau"}" else "llvmpipe,softpipe,virgl,r600,zink"} \
+      -Dvulkan-drivers=${if withAmdgpuDrm then "swrast,amd" else "swrast"} \
+      ${lib.optionalString withMsmDrm "-Dfreedreno-kmds=msm"} \
+      ${lib.optionalString withAmdgpuDrm "-Damd-use-llvm=false"} \
+      ${lib.optionalString withIntelDrm "-Dmesa-clc=system"} \
       -Dplatforms=${if withX11 then "x11,wayland" else "wayland"} \
       -Dopengl=true \
       -Dgles1=disabled \

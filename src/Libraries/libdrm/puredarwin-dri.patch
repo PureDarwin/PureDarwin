@@ -1,0 +1,207 @@
+--- a/xf86drm.c
++++ b/xf86drm.c
+@@ -81,6 +81,126 @@
+ 
+ #include "util_math.h"
+ 
++#ifdef __APPLE__
++/*
++ * PureDarwin: the dri nodes clone, so an open node's minor carries the open
++ * slot above the drm minor. The kernel lists each drm minor's pci device in
++ * the kern.pd_dri sysctls.
++ */
++#undef minor
++#define minor(dev) ((int)((dev) & 0xff))
++
++static int pd_dri_major(void)
++{
++    int major = -1;
++    size_t len = sizeof(major);
++
++    if (sysctlbyname("kern.pd_dri.major", &major, &len, NULL, 0) != 0)
++        return -1;
++    return major;
++}
++
++/* the kern.pd_dri.devices line for a drm minor */
++static int pd_dri_lookup(int min, char *busid, size_t busid_len,
++                         drmPciDeviceInfoPtr device)
++{
++    char *text, *line, *next;
++    size_t len = 0;
++    int ret = -ENODEV;
++
++    if (sysctlbyname("kern.pd_dri.devices", NULL, &len, NULL, 0) != 0 || len == 0)
++        return -ENODEV;
++    text = malloc(len + 1);
++    if (!text)
++        return -ENOMEM;
++    if (sysctlbyname("kern.pd_dri.devices", text, &len, NULL, 0) != 0) {
++        free(text);
++        return -ENODEV;
++    }
++    text[len] = '\0';
++    for (line = text; line && *line; line = next) {
++        unsigned int m, vendor, dev, subvendor, subdevice, revision;
++        char id[32];
++
++        next = strchr(line, '\n');
++        if (next)
++            *next++ = '\0';
++        if (sscanf(line, "%u %31s %x %x %x %x %x", &m, id, &vendor, &dev,
++                   &subvendor, &subdevice, &revision) != 7 || (int)m != min)
++            continue;
++        if (busid)
++            snprintf(busid, busid_len, "%s", id);
++        if (device) {
++            device->vendor_id = vendor;
++            device->device_id = dev;
++            device->subvendor_id = subvendor;
++            device->subdevice_id = subdevice;
++            device->revision_id = revision;
++        }
++        ret = 0;
++        break;
++    }
++    free(text);
++    return ret;
++}
++
++// a device tree device's line: "minor platform:<node> <compatible>"
++static int pd_dri_platform_lookup(int min, char *fullname, size_t fullname_len,
++                                  char *compat, size_t compat_len)
++{
++    char *text, *line, *next;
++    size_t len = 0;
++    int ret = -ENODEV;
++
++    if (sysctlbyname("kern.pd_dri.devices", NULL, &len, NULL, 0) != 0 || len == 0)
++        return -ENODEV;
++    text = malloc(len + 1);
++    if (!text)
++        return -ENOMEM;
++    if (sysctlbyname("kern.pd_dri.devices", text, &len, NULL, 0) != 0) {
++        free(text);
++        return -ENODEV;
++    }
++    text[len] = '\0';
++    for (line = text; line && *line; line = next) {
++        unsigned int m;
++        char id[128], c[128];
++
++        next = strchr(line, '\n');
++        if (next)
++            *next++ = '\0';
++        if (sscanf(line, "%u %127s %127s", &m, id, c) != 3 || (int)m != min ||
++            strncmp(id, "platform:", 9) != 0)
++            continue;
++        if (fullname)
++            snprintf(fullname, fullname_len, "%s", id + 9);
++        if (compat)
++            snprintf(compat, compat_len, "%s", c);
++        ret = 0;
++        break;
++    }
++    free(text);
++    return ret;
++}
++
++static int pd_dri_bus_info(int min, drmPciBusInfoPtr info)
++{
++    unsigned int domain, bus, dev, func;
++    char busid[32];
++    int ret = pd_dri_lookup(min, busid, sizeof(busid), NULL);
++
++    if (ret)
++        return ret;
++    if (sscanf(busid, "pci:%04x:%02x:%02x.%u", &domain, &bus, &dev, &func) != 4)
++        return -EINVAL;
++    info->domain = domain;
++    info->bus = bus;
++    info->dev = dev;
++    info->func = func;
++    return 0;
++}
++#endif
++
+ #ifdef __DragonFly__
+ #define DRM_MAJOR 145
+ #endif
+@@ -3330,6 +3450,8 @@
+     snprintf(path, sizeof(path), "/sys/dev/char/%d:%d/device/drm",
+              maj, min);
+     return stat(path, &sbuf) == 0;
++#elif defined(__APPLE__)
++    return maj == pd_dri_major();
+ #elif defined(__FreeBSD__)
+     char name[SPECNAMELEN];
+ 
+@@ -3639,6 +3761,9 @@
+             return DRM_BUS_VIRTIO;
+      }
+     return subsystem_type;
++#elif defined(__APPLE__)
++    // a device tree gpu has a platform line, everything else is pci
++    return pd_dri_platform_lookup(min, NULL, 0, NULL, 0) == 0 ? DRM_BUS_PLATFORM : DRM_BUS_PCI;
+ #elif defined(__OpenBSD__) || defined(__DragonFly__) || defined(__FreeBSD__)
+     return DRM_BUS_PCI;
+ #else
+@@ -3771,6 +3896,8 @@
+     info->func = pinfo.func;
+ 
+     return 0;
++#elif defined(__APPLE__)
++    return pd_dri_bus_info(min, info);
+ #elif defined(__FreeBSD__)
+     return get_sysctl_pci_bus_info(maj, min, info);
+ #else
+@@ -3943,6 +4070,8 @@
+     device->subdevice_id = pinfo.subdevice_id;
+ 
+     return 0;
++#elif defined(__APPLE__)
++    return pd_dri_lookup(min, NULL, 0, device);
+ #elif defined(__FreeBSD__)
+     drmPciBusInfo info;
+     struct pci_conf_io pc;
+@@ -4319,6 +4448,8 @@
+     free(name);
+ 
+     return 0;
++#elif defined(__APPLE__)
++    return pd_dri_platform_lookup(min, fullname, DRM_PLATFORM_DEVICE_NAME_LEN, NULL, 0);
+ #else
+ #warning "Missing implementation of drmParseOFBusInfo"
+     return -EINVAL;
+@@ -4379,6 +4510,17 @@
+ 
+     free(*compatible);
+     return err;
++#elif defined(__APPLE__)
++    char compat[128];
++    int ret = pd_dri_platform_lookup(min, NULL, 0, compat, sizeof(compat));
++
++    if (ret)
++        return ret;
++    *compatible = calloc(2, sizeof(char *));
++    if (!*compatible)
++        return -ENOMEM;
++    (*compatible)[0] = strdup(compat);
++    return (*compatible)[0] ? 0 : -ENOMEM;
+ #else
+ #warning "Missing implementation of drmParseOFDeviceInfo"
+     return -EINVAL;
+@@ -4618,7 +4760,13 @@
+     for (int i = 0; i < DRM_NODE_MAX; i++) {
+         if (device->available_nodes & 1 << i) {
+             if (stat(device->nodes[i], &sbuf) == 0 &&
++#ifdef __APPLE__
++                /* an open clone carries its slot above the drm minor */
++                major(sbuf.st_rdev) == major(find_rdev) &&
++                minor(sbuf.st_rdev) == minor(find_rdev))
++#else
+                 sbuf.st_rdev == find_rdev)
++#endif
+                 return true;
+         }
+     }
