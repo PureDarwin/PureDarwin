@@ -59,6 +59,9 @@ public:
     // contents forever.
     void stopStream();
 
+    // Blocks until the queued PCM has played, so close() doesn't cut it off.
+    void drainStream();
+
 private:
     IOPCIDevice        *fPCIDevice;
     IOMemoryMap        *fRegMap;
@@ -92,6 +95,7 @@ private:
     uint32_t sendVerb(uint8_t codecAddr, uint16_t nid, uint32_t verb, uint32_t payload);
     bool  enumerateCodec(uint8_t codecAddr);
     bool  programWidgets(uint8_t codecAddr, uint16_t afgNid);
+    void  unmuteOutAmp(uint8_t codecAddr, uint16_t nid, uint16_t afgNid);
 
     inline uint8_t  reg8(uint32_t off)  { return fRegs[off]; }
     inline uint16_t reg16(uint32_t off) { return *(volatile uint16_t *)(fRegs + off); }

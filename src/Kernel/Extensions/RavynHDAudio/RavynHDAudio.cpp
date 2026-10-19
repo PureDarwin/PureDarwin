@@ -72,6 +72,7 @@ OSDefineMetaClassAndStructors(RavynHDAudio, IOAudioDevice);
 #define PARAM_FUNCTION_GROUP   0x05
 #define PARAM_AUDIO_WIDGET_CAP 0x09
 #define PARAM_PIN_CAP          0x0C
+#define PARAM_OUT_AMP_CAP      0x12
 
 #define AW_TYPE_OUTPUT   0x0   // DAC
 #define AW_TYPE_PIN      0x4   // Pin Complex
@@ -291,6 +292,26 @@ bool RavynHDAudio::setupCorbRirb()
     return true;
 }
 
+// unmute a widget's output amp at its 0 dB step, gain 0 is the bottom step and silent
+void RavynHDAudio::unmuteOutAmp(uint8_t codecAddr, uint16_t nid, uint16_t afgNid)
+{
+    uint32_t caps = sendVerb(codecAddr, nid, VERB_GET_PARAM, PARAM_AUDIO_WIDGET_CAP);
+
+    // no amp to set, and qemu forwards the verb to the dac's stream, muting it again
+    if (!(caps & (1u << 2)))
+        return;
+
+    // the widget's own amp caps count only with amp param override, else the afg's
+    uint32_t amp = sendVerb(codecAddr, (caps & (1u << 3)) ? nid : afgNid,
+                            VERB_GET_PARAM, PARAM_OUT_AMP_CAP);
+    uint32_t offset = amp & 0x7F;
+    uint32_t steps = (amp >> 8) & 0x7F;
+    if (offset > steps)
+        offset = steps;
+
+    sendVerb(codecAddr, nid, VERB_SET_AMP_GAIN_MUTE_ID4, 0xB000 | offset);
+}
+
 bool RavynHDAudio::programWidgets(uint8_t codecAddr, uint16_t afgNid)
 {
     uint32_t nc = sendVerb(codecAddr, afgNid, VERB_GET_PARAM, PARAM_NODE_COUNT);
@@ -336,9 +357,8 @@ bool RavynHDAudio::programWidgets(uint8_t codecAddr, uint16_t afgNid)
     sendVerb(codecAddr, pinNid, VERB_SET_PIN_WIDGET_CTL, 0x40);
     sendVerb(codecAddr, pinNid, VERB_SET_EAPD_BTL, 0x02);
 
-    // Unmute the DAC's output amp, 0 dB gain, both channels.
-    sendVerb(codecAddr, dacNid, VERB_SET_AMP_GAIN_MUTE_ID4, 0xB000);
-    sendVerb(codecAddr, pinNid, VERB_SET_AMP_GAIN_MUTE_ID4, 0xB000);
+    unmuteOutAmp(codecAddr, dacNid, afgNid);
+    unmuteOutAmp(codecAddr, pinNid, afgNid);
 
     // Route stream tag 1 (matches SD_CTL's stream number field, set in
     // setupOutputStream) / channel 0 to the DAC, and program its format.
@@ -649,6 +669,34 @@ void RavynHDAudio::stop(IOService *provider)
     super::stop(provider);
 }
 
+// wait for the hardware to play what is queued, bounded by one ring of audio
+void RavynHDAudio::drainStream()
+{
+    if (!fRegs)
+        return;
+
+    uint32_t sdBase = HDA_SD_BASE + fOutStreamIndex * HDA_SD_SIZE;
+    // ring length at 48 kHz s16 stereo plus slack, in 5 ms polls
+    int polls = (int)(kHDARingBufBytes / (48000 * 4 / 1000) / 5) + 100;
+
+    while (polls-- > 0) {
+        IOSimpleLockLock(fLock);
+        uint32_t ctl = *(volatile uint32_t *)(fRegs + sdBase + SD_CTL_STS);
+        bool done = !(ctl & SD_CTL_RUN);
+        if (!done) {
+            uint32_t lpib = *(volatile uint32_t *)(fRegs + sdBase + SD_LPIB) % kHDARingBufBytes;
+            if (lpib < fLastLpib)
+                fConsumedBase += kHDARingBufBytes;
+            fLastLpib = lpib;
+            done = fConsumedBase + lpib >= fTotalWritten;
+        }
+        IOSimpleLockUnlock(fLock);
+        if (done)
+            return;
+        IOSleep(5);
+    }
+}
+
 void RavynHDAudio::stopStream()
 {
     if (!fRegs)
@@ -816,6 +864,7 @@ static int dsp0_open(dev_t, int, int, struct proc *)
 static int dsp0_close(dev_t, int, int, struct proc *)
 {
     if (gDsp0Driver) {
+        gDsp0Driver->drainStream();
         gDsp0Driver->stopStream();
         gDsp0Driver->releaseStream(false);
     }
