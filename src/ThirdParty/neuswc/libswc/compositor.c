@@ -28,6 +28,9 @@
  */
 
 #include "compositor.h"
+#ifndef ENABLE_DRM
+#include "fb.h"
+#endif
 #include "pd_decoration.h"
 
 // how far the background blur reaches, as the demo blur(30px)
@@ -1385,6 +1388,13 @@ view_at(int32_t x, int32_t y)
 	return NULL;
 }
 
+// the view that takes input at a screen point, for grabs outside this file such as a drag
+struct compositor_view *
+compositor_view_at(int32_t x, int32_t y)
+{
+	return view_at(x, y);
+}
+
 static struct compositor_view *
 window_view(struct compositor_view *view)
 {
@@ -1643,8 +1653,15 @@ compositor_create_view(struct surface *surface)
 void
 compositor_view_destroy(struct compositor_view *view)
 {
+	struct compositor_view *other;
+
 	wl_signal_emit(&view->destroy_signal, NULL);
 	compositor_view_hide(view);
+	// subsurface views outlive a parent whose role went away, they must not keep pointing at it
+	wl_list_for_each(other, &compositor.views, link) {
+		if (other->parent == view)
+			other->parent = NULL;
+	}
 	surface_set_view(view->surface, NULL);
 	view_finalize(&view->base);
 	decor_view_finalize(view);
@@ -1953,6 +1970,9 @@ update_screen(struct screen *screen)
 	if (!(target = target_get(screen))) {
 		return;
 	}
+#ifndef ENABLE_DRM
+	fb_frame_begin();
+#endif
 
 	pixman_region32_init(&damage);
 	pixman_region32_intersect_rect(&damage, &compositor.damage, geom->x,
@@ -1990,12 +2010,33 @@ update_screen(struct screen *screen)
 		pixman_region32_translate(&damage, geom->x, geom->y);
 		pixman_region32_init(&base_damage);
 		pixman_region32_subtract(&base_damage, &damage, &compositor.opaque);
+		static int trace = -1;
+		if (trace < 0)
+			trace = getenv("ARGON_GFX_TRACE") != NULL;
+		if (trace)
+			fprintf(stderr, "ARGON-GL repaint\n");
 		renderer_repaint(target, &damage, &base_damage, &compositor.views,
 		                 screen);
+		if (trace)
+			fprintf(stderr, "ARGON-GL repainted\n");
 		pixman_region32_fini(&damage);
 		pixman_region32_fini(&base_damage);
 	}
 
+#ifndef ENABLE_DRM
+	// the scanout copy only needs what changed this frame, the zoomed path redraws everything
+	if (compositor.zoom != 1.0f) {
+		fb_set_damage(NULL);
+	} else {
+		pixman_region32_t frame;
+
+		pixman_region32_init(&frame);
+		pixman_region32_intersect_rect(&frame, &compositor.damage, geom->x, geom->y, geom->width, geom->height);
+		pixman_region32_translate(&frame, -geom->x, -geom->y);
+		fb_set_damage(&frame);
+		pixman_region32_fini(&frame);
+	}
+#endif
 	switch (target_swap_buffers(target)) {
 	case -EACCES:
 		/* If we get an EACCES, it is because this session is being deactivated,

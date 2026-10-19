@@ -16,6 +16,8 @@ struct window_position {
 	struct view *view;
 	struct view_handler handler;
 	struct wl_listener surface_destroy;
+	// a window's view goes away with its role, which can be long before the surface does
+	struct wl_listener view_destroy;
 };
 
 static void
@@ -44,7 +46,16 @@ detach(struct window_position *position)
 		return;
 	wl_list_remove(&position->handler.link);
 	wl_list_remove(&position->surface_destroy.link);
+	wl_list_remove(&position->view_destroy.link);
 	position->view = NULL;
+}
+
+static void
+handle_view_destroy(struct wl_listener *listener, void *data)
+{
+	struct window_position *position = wl_container_of(listener, position, view_destroy);
+
+	detach(position);
 }
 
 static void
@@ -98,8 +109,10 @@ get_window_position(struct wl_client *client, struct wl_resource *resource, uint
 	}
 	wl_resource_set_implementation(position->resource, &position_impl, position, position_destroyed);
 	// a surface gets its view when its window role is made, asked for later than that it has one
-	if (surface->view) {
+	if (surface->view && compositor_view(surface->view)) {
 		position->view = surface->view;
+		position->view_destroy.notify = handle_view_destroy;
+		wl_signal_add(&compositor_view(surface->view)->destroy_signal, &position->view_destroy);
 		position->handler.impl = &handler_impl;
 		wl_list_insert(&position->view->handlers, &position->handler.link);
 		position->surface_destroy.notify = handle_surface_destroy;

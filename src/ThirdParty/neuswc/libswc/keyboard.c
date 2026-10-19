@@ -290,6 +290,45 @@ error0:
 	return NULL;
 }
 
+// swaps in a keymap built from new rule names and sends it to every bound client
+bool
+keyboard_set_keymap(struct keyboard *keyboard, struct xkb_rule_names *names)
+{
+	struct xkb next = keyboard->xkb, old = keyboard->xkb;
+	struct wl_resource *resource;
+
+	if (!(next.keymap.map = xkb_keymap_new_from_names(next.context, names, 0))) {
+		WARNING("Could not create XKB keymap for layout %s\n", names->layout);
+		return false;
+	}
+	if (!(next.state = xkb_state_new(next.keymap.map))) {
+		xkb_keymap_unref(next.keymap.map);
+		return false;
+	}
+	if (!update_keymap(&next)) {
+		xkb_state_unref(next.state);
+		xkb_keymap_unref(next.keymap.map);
+		return false;
+	}
+
+	keyboard->xkb = next;
+	keyboard->modifier_state = (struct keyboard_modifier_state){0};
+	keyboard->modifiers = 0;
+	munmap(old.keymap.area, old.keymap.size);
+	close(old.keymap.fd);
+	xkb_state_unref(old.state);
+	xkb_keymap_unref(old.keymap.map);
+
+	wl_resource_for_each(resource, &keyboard->focus.active)
+	    wl_keyboard_send_keymap(resource, WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1,
+	                            next.keymap.fd, next.keymap.size - 1);
+	wl_resource_for_each(resource, &keyboard->focus.inactive)
+	    wl_keyboard_send_keymap(resource, WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1,
+	                            next.keymap.fd, next.keymap.size - 1);
+	client_handle_modifiers(keyboard, &keyboard->modifier_state);
+	return true;
+}
+
 void
 keyboard_destroy(struct keyboard *keyboard)
 {

@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <sys/event.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/ioctl.h>
 #include <sys/un.h>
 #include <stdio.h>
 #include <string.h>
@@ -13,6 +15,10 @@
 
 struct pd_timer {
 	int fd, kq;
+	// fd is the read end of a pipe, an expiry seen by epoll_wait writes its count to wfd
+	int wfd;
+	dev_t dev;
+	ino_t ino;
 	void *udata;
 	/* Kept so timerfd_gettime can report what is left: kqueue's EVFILT_TIMER
 	 * has no way to read a pending timer back out. */
@@ -31,6 +37,69 @@ set_nonblock_cloexec(int fd)
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
     flags = fcntl(fd, F_GETFD);
     fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+}
+
+// the timer behind fd, if fd is still that timer's pipe: a closed timerfd's number gets reused
+static struct pd_timer *
+timer_lookup(int fd)
+{
+    struct pd_timer **link, *timer;
+    struct stat st;
+    for (link = &timers; (timer = *link) != NULL; link = &timer->next) {
+        if (timer->fd != fd) continue;
+        if (fstat(fd, &st) == 0 && st.st_dev == timer->dev && st.st_ino == timer->ino)
+            return timer;
+        *link = timer->next;
+        close(timer->wfd);
+        free(timer);
+        return NULL;
+    }
+    return NULL;
+}
+
+// one shot at the next expiry, epoll_wait re-arms periodic ones
+static int
+timer_arm(struct pd_timer *timer, int64_t nanoseconds)
+{
+    struct kevent change;
+    if (timer->kq < 0) return 0;
+    if (nanoseconds < 1) nanoseconds = 1;
+    // xnu's unit flags differ from FreeBSD's, 0x2 there is microseconds, so say nanoseconds outright
+    EV_SET(&change, (uintptr_t)timer->fd, EVFILT_TIMER,
+           EV_ADD | EV_ENABLE | EV_ONESHOT, NOTE_NSECONDS, nanoseconds, timer);
+    return kevent(timer->kq, &change, 1, NULL, 0, NULL);
+}
+
+static int64_t
+timer_remaining(struct pd_timer *timer)
+{
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (int64_t)(timer->deadline.tv_sec - now.tv_sec) * 1000000000
+         + (timer->deadline.tv_nsec - now.tv_nsec);
+}
+
+// an expiry: the count goes into the pipe for read(), a periodic timer is armed again
+static void
+timer_fired(struct pd_timer *timer)
+{
+    uint64_t count = 1, pending = 0;
+    int64_t interval = (int64_t)timer->armed.it_interval.tv_sec * 1000000000
+                     + timer->armed.it_interval.tv_nsec;
+    int queued = 0;
+    // an unread count is folded in, without ever blocking on a blocking timerfd
+    if (ioctl(timer->fd, FIONREAD, &queued) == 0 && queued >= (int)sizeof(pending) &&
+        read(timer->fd, &pending, sizeof(pending)) == (ssize_t)sizeof(pending))
+        count += pending;
+    (void)write(timer->wfd, &count, sizeof(count));
+    if (interval > 0) {
+        int64_t deadline = (int64_t)timer->deadline.tv_sec * 1000000000 + timer->deadline.tv_nsec + interval;
+        timer->deadline.tv_sec = deadline / 1000000000;
+        timer->deadline.tv_nsec = deadline % 1000000000;
+        timer_arm(timer, timer_remaining(timer));
+    } else {
+        memset(&timer->armed, 0, sizeof(timer->armed));
+    }
 }
 
 int epoll_create(int size) { (void)size; return kqueue(); }
@@ -66,14 +135,18 @@ epoll_ctl(int epfd, int operation, int fd, struct epoll_event *event)
         change_filter(epfd, fd, EVFILT_READ, EV_DELETE, NULL);
         change_filter(epfd, fd, EVFILT_WRITE, EV_DELETE, NULL);
         change_filter(epfd, fd, EVFILT_TIMER, EV_DELETE, NULL);
-        if (operation == EPOLL_CTL_DEL) return 0;
-    }
-    for (timer = timers; timer; timer = timer->next) {
-        if (timer->fd == fd) {
-            timer->kq = epfd;
-            timer->udata = event->data.ptr;
+        if (operation == EPOLL_CTL_DEL) {
+            if ((timer = timer_lookup(fd)) != NULL && timer->kq == epfd) timer->kq = -1;
             return 0;
         }
+    }
+    if ((timer = timer_lookup(fd)) != NULL) {
+        timer->kq = epfd;
+        timer->udata = event->data.ptr;
+        // armed before it was added: the kqueue gets it now
+        if (timer->armed.it_value.tv_sec || timer->armed.it_value.tv_nsec)
+            return timer_arm(timer, timer_remaining(timer));
+        return 0;
     }
     if ((event->events & EPOLLIN) &&
         change_filter(epfd, fd, EVFILT_READ, flags, event->data.ptr) < 0)
@@ -99,6 +172,13 @@ epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
     }
     if (count < 0) return -1;
     for (i = 0; i < count; i++) {
+        if (ready[i].filter == EVFILT_TIMER) {
+            struct pd_timer *timer = ready[i].udata;
+            timer_fired(timer);
+            events[i].events = EPOLLIN;
+            events[i].data.ptr = timer->udata;
+            continue;
+        }
         events[i].events = 0;
         if (ready[i].filter == EVFILT_READ) events[i].events |= EPOLLIN;
         if (ready[i].filter == EVFILT_WRITE) events[i].events |= EPOLLOUT;
@@ -113,15 +193,24 @@ int
 timerfd_create(int clockid, int flags)
 {
     struct pd_timer *timer;
-    int fd;
+    struct stat st;
+    int fds[2];
     (void)clockid;
-    fd = open("/dev/null", O_RDONLY);
-    if (fd < 0) return -1;
-    if (flags & TFD_CLOEXEC) set_nonblock_cloexec(fd);
+    if (pipe(fds) < 0) return -1;
+    // the write end never blocks the loop, the read end follows the caller's flags
+    fcntl(fds[1], F_SETFL, fcntl(fds[1], F_GETFL) | O_NONBLOCK);
+    fcntl(fds[1], F_SETFD, FD_CLOEXEC);
+    if (flags & TFD_NONBLOCK) fcntl(fds[0], F_SETFL, fcntl(fds[0], F_GETFL) | O_NONBLOCK);
+    if (flags & TFD_CLOEXEC) fcntl(fds[0], F_SETFD, FD_CLOEXEC);
     timer = calloc(1, sizeof(*timer));
-    if (!timer) { close(fd); errno = ENOMEM; return -1; }
-    timer->fd = fd; timer->kq = -1; timer->next = timers; timers = timer;
-    return fd;
+    if (!timer || fstat(fds[0], &st) < 0) {
+        free(timer); close(fds[0]); close(fds[1]); errno = ENOMEM; return -1;
+    }
+    (void)timer_lookup(fds[0]);
+    timer->fd = fds[0]; timer->wfd = fds[1]; timer->kq = -1;
+    timer->dev = st.st_dev; timer->ino = st.st_ino;
+    timer->next = timers; timers = timer;
+    return fds[0];
 }
 
 int
@@ -131,13 +220,19 @@ timerfd_settime(int fd, int flags, const struct itimerspec *value,
     struct pd_timer *timer;
     struct kevent change;
     struct timespec now;
-    int64_t milliseconds;
-    (void)flags;
-    for (timer = timers; timer && timer->fd != fd; timer = timer->next);
-    if (!timer || timer->kq < 0) { errno = EINVAL; return -1; }
-    EV_SET(&change, (uintptr_t)fd, EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
-    kevent(timer->kq, &change, 1, NULL, 0, NULL);
-    if (old_value != NULL) *old_value = timer->armed;
+    int64_t nanoseconds;
+    uint64_t stale;
+    if ((timer = timer_lookup(fd)) == NULL) { errno = EINVAL; return -1; }
+    if (timer->kq >= 0) {
+        EV_SET(&change, (uintptr_t)fd, EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
+        kevent(timer->kq, &change, 1, NULL, 0, NULL);
+    }
+    if (old_value != NULL) timerfd_gettime(fd, old_value);
+    // a new setting starts the expiration count over, as on linux
+    int fl = fcntl(fd, F_GETFL);
+    fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+    while (read(fd, &stale, sizeof(stale)) > 0);
+    fcntl(fd, F_SETFL, fl);
     if (!value->it_value.tv_sec && !value->it_value.tv_nsec) {
         memset(&timer->armed, 0, sizeof(timer->armed));
         return 0;
@@ -145,13 +240,15 @@ timerfd_settime(int fd, int flags, const struct itimerspec *value,
     clock_gettime(CLOCK_MONOTONIC, &now);
     timer->armed = *value;
     timer->deadline = value->it_value;
-    milliseconds = (int64_t)(value->it_value.tv_sec - now.tv_sec) * 1000;
-    milliseconds += (value->it_value.tv_nsec - now.tv_nsec) / 1000000;
-    if (milliseconds < 1) milliseconds = 1;
-    EV_SET(&change, (uintptr_t)fd, EVFILT_TIMER,
-           EV_ADD | EV_ENABLE | EV_ONESHOT, NOTE_MSECONDS, milliseconds,
-           timer->udata);
-    return kevent(timer->kq, &change, 1, NULL, 0, NULL);
+    nanoseconds = (int64_t)value->it_value.tv_sec * 1000000000 + value->it_value.tv_nsec;
+    if (flags & TFD_TIMER_ABSTIME)
+        nanoseconds -= (int64_t)now.tv_sec * 1000000000 + now.tv_nsec;
+    else {
+        int64_t deadline = (int64_t)now.tv_sec * 1000000000 + now.tv_nsec + nanoseconds;
+        timer->deadline.tv_sec = deadline / 1000000000;
+        timer->deadline.tv_nsec = deadline % 1000000000;
+    }
+    return timer_arm(timer, nanoseconds);
 }
 
 static void
@@ -298,8 +395,7 @@ timerfd_gettime(int fd, struct itimerspec *curr_value)
     struct timespec now;
     int64_t remaining_ns;
 
-    for (timer = timers; timer && timer->fd != fd; timer = timer->next);
-    if (!timer) { errno = EINVAL; return -1; }
+    if ((timer = timer_lookup(fd)) == NULL) { errno = EINVAL; return -1; }
     if (curr_value == NULL) { errno = EFAULT; return -1; }
 
     memset(curr_value, 0, sizeof(*curr_value));

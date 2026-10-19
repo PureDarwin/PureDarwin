@@ -24,6 +24,7 @@
 #ifndef SWC_DATA_H
 #define SWC_DATA_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 struct wl_client;
@@ -35,5 +36,13 @@ data_offer_new(struct wl_client *client, struct wl_resource *source,
                uint32_t version);
 void
 data_send_mime_types(struct wl_resource *source, struct wl_resource *offer);
+void
+data_offer_start_drag(struct wl_resource *offer);
+bool
+data_source_drop_ok(struct wl_resource *source);
+void
+data_source_set_dropped(struct wl_resource *source, void (*finished)(void *context), void *context);
+void
+data_source_clear_finished(struct wl_resource *source);
 
 #endif

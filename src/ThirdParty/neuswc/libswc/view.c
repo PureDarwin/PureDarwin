@@ -54,8 +54,15 @@ view_initialize(struct view *view, const struct view_impl *impl)
 void
 view_finalize(struct view *view)
 {
+	struct view_handler *handler, *next;
+
 	if (view->buffer) {
 		wld_buffer_unreference(view->buffer);
+	}
+	// a handler still listed would keep pointing into this view's memory after it is freed
+	wl_list_for_each_safe(handler, next, &view->handlers, link) {
+		wl_list_remove(&handler->link);
+		wl_list_init(&handler->link);
 	}
 }
 

@@ -92,6 +92,8 @@ void
 keyboard_destroy(struct keyboard *keyboard);
 bool
 keyboard_reset(struct keyboard *keyboard);
+bool
+keyboard_set_keymap(struct keyboard *keyboard, struct xkb_rule_names *names);
 void
 keyboard_set_focus(struct keyboard *keyboard, struct compositor_view *view);
 struct wl_resource *

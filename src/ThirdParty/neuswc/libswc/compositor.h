@@ -200,6 +200,9 @@ void
 compositor_view_set_stack_layer(struct compositor_view *view, uint32_t layer,
 	                            bool raise);
 
+struct compositor_view *
+compositor_view_at(int32_t x, int32_t y);
+
 struct screen;
 // the screen changed size, its render target is rebuilt at the new size
 void

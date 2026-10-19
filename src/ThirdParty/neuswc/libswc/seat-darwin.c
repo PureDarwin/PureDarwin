@@ -39,8 +39,12 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
+#include <sys/resource.h>
+#include <mach/mach.h>
 #include <string.h>
 #include <unistd.h>
+#include <mach/mach_time.h>
 #include <wayland-server.h>
 
 enum {
@@ -73,6 +77,10 @@ struct seat {
 
 	struct wl_global *global;
 	struct wl_list resources;
+
+	int layout_token;
+	struct wl_event_source *layout_source;
+	int layout;
 };
 
 #ifdef __PUREDARWIN__
@@ -219,6 +227,132 @@ bind_seat(struct wl_client *client, void *data, uint32_t version, uint32_t id)
 	wl_seat_send_capabilities(resource, seat->capabilities);
 }
 
+/* libnotify ships in libSystem without its header in this SDK */
+extern uint32_t notify_register_check(const char *name, int *out_token);
+extern uint32_t notify_set_state(int token, uint64_t state);
+
+/* Every client reads the system idle time from this notify state, in
+ * nanoseconds of mach_absolute_time, the moment of the last HID input. */
+static void
+publish_last_input(void)
+{
+	static int token = -1;
+	static uint64_t published;
+	static mach_timebase_info_data_t timebase;
+	uint64_t now;
+
+	if (timebase.denom == 0) {
+		mach_timebase_info(&timebase);
+	}
+	now = mach_absolute_time() * timebase.numer / timebase.denom;
+	if (now - published < 1000000000ULL) {
+		return;
+	}
+	published = now;
+	if (token < 0 &&
+	    notify_register_check("org.puredarwin.hid.lastinput", &token) != 0) {
+		return;
+	}
+	notify_set_state(token, now);
+}
+
+extern uint32_t notify_register_file_descriptor(const char *name, int *notify_fd,
+                                                int flags, int *out_token);
+extern uint32_t notify_get_state(int token, uint64_t *state);
+extern uint32_t notify_cancel(int token);
+
+#define LAYOUT_NOTIFY_NAME "com.apple.Carbon.TISNotifySelectedKeyboardInputSourceChanged"
+
+// Carbon's layouts in its own order, with the xkb layout that types the same characters
+static const struct {
+	const char *source_id, *layout, *variant;
+} layouts[] = {
+	{"com.apple.keylayout.US", "us", "basic"},
+	{"com.apple.keylayout.German", "de", "mac"},
+	{"com.apple.keylayout.French", "fr", "mac"},
+};
+
+// the layout Carbon last selected, from the notify state or else the saved preference
+static int
+selected_layout(struct seat *seat)
+{
+	uint64_t state = 0;
+	CFStringRef id;
+	int found = -1;
+
+	if (seat->layout_token >= 0 &&
+	    notify_get_state(seat->layout_token, &state) == 0 &&
+	    state >= 1 && state <= sizeof(layouts) / sizeof(layouts[0]))
+		return (int)state - 1;
+
+	CFPreferencesAppSynchronize(CFSTR("com.apple.HIToolbox"));
+	id = CFPreferencesCopyAppValue(CFSTR("AppleCurrentKeyboardLayoutInputSourceID"),
+	                               CFSTR("com.apple.HIToolbox"));
+	if (id && CFGetTypeID(id) == CFStringGetTypeID()) {
+		char buffer[128];
+
+		if (CFStringGetCString(id, buffer, sizeof(buffer), kCFStringEncodingUTF8)) {
+			for (size_t i = 0; i < sizeof(layouts) / sizeof(layouts[0]); i++) {
+				if (!strcmp(buffer, layouts[i].source_id))
+					found = (int)i;
+			}
+		}
+	}
+	if (id)
+		CFRelease(id);
+	return found;
+}
+
+static void
+apply_layout(struct seat *seat)
+{
+	int layout = selected_layout(seat);
+	struct xkb_rule_names names = {
+		.rules = "evdev",
+		.model = "pc105",
+	};
+
+	if (layout < 0 || layout == seat->layout)
+		return;
+	names.layout = layouts[layout].layout;
+	names.variant = layouts[layout].variant;
+	if (keyboard_set_keymap(seat->base.keyboard, &names)) {
+		seat->layout = layout;
+		DEBUG("Keyboard layout now %s(%s)\n", names.layout, names.variant);
+	}
+}
+
+static int
+handle_layout_notify(int fd, uint32_t mask, void *data)
+{
+	struct seat *seat = data;
+	int token;
+
+	(void)mask;
+	// each post leaves one token on the descriptor
+	while (read(fd, &token, sizeof(token)) == sizeof(token))
+		;
+	apply_layout(seat);
+	return 0;
+}
+
+static void
+watch_layout(struct seat *seat)
+{
+	int fd = -1, check;
+
+	seat->layout = 0;
+	seat->layout_token = -1;
+	if (notify_register_check(LAYOUT_NOTIFY_NAME, &check) == 0)
+		seat->layout_token = check;
+	if (notify_register_file_descriptor(LAYOUT_NOTIFY_NAME, &fd, 0, &check) == 0) {
+		fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+		seat->layout_source = wl_event_loop_add_fd(swc.event_loop, fd, WL_EVENT_READABLE,
+		                                           handle_layout_notify, seat);
+	}
+	apply_layout(seat);
+}
+
 static void
 handle_hid_value(void *context, IOReturn result, void *sender,
                  IOHIDValueRef value)
@@ -237,6 +371,7 @@ handle_hid_value(void *context, IOReturn result, void *sender,
 	usage = IOHIDElementGetUsage(element);
 	integer = IOHIDValueGetIntegerValue(value);
 	time = get_time();
+	publish_last_input();
 
 	if (page == HID_PAGE_KEYBOARD && usage < 256 && hid_to_evdev[usage]) {
 		keyboard_handle_key(seat->base.keyboard, time, hid_to_evdev[usage],
@@ -275,10 +410,95 @@ handle_hid_value(void *context, IOReturn result, void *sender,
 	pointer_handle_frame(seat->base.pointer);
 }
 
+// ARGON_GFX_STATS: where the compositor's CPU goes, input polling against everything else, every 5 s
+static struct {
+	int on;
+	unsigned long polls;
+	unsigned long long poll_ns, cf_ns;
+	struct timespec since;
+	double cpu_since;
+} idle_stats = { -1 };
+
+static double
+process_cpu(void)
+{
+	struct rusage usage;
+
+	getrusage(RUSAGE_SELF, &usage);
+	return usage.ru_utime.tv_sec + usage.ru_utime.tv_usec / 1e6 + usage.ru_stime.tv_sec + usage.ru_stime.tv_usec / 1e6;
+}
+
+static unsigned long long
+elapsed_ns(const struct timespec *a, const struct timespec *b)
+{
+	return (unsigned long long)(b->tv_sec - a->tv_sec) * 1000000000ull + (b->tv_nsec - a->tv_nsec);
+}
+
+static void
+idle_stats_report(void)
+{
+	struct timespec now;
+	double cpu;
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	if (now.tv_sec - idle_stats.since.tv_sec < 5)
+		return;
+	cpu = process_cpu();
+	fprintf(stderr, "ARGON-SEAT %lu polls, poll %.1f ms (CFRunLoop %.1f ms), process cpu %.1f ms in %.1f s\n",
+	        idle_stats.polls, idle_stats.poll_ns / 1e6, idle_stats.cf_ns / 1e6, (cpu - idle_stats.cpu_since) * 1000,
+	        elapsed_ns(&idle_stats.since, &now) / 1e9);
+
+	// each thread's total cpu, to tell the event loop from helper threads
+	thread_act_array_t threads;
+	mach_msg_type_number_t count;
+
+	if (task_threads(mach_task_self(), &threads, &count) == KERN_SUCCESS) {
+		for (mach_msg_type_number_t i = 0; i < count; i++) {
+			thread_basic_info_data_t info;
+			mach_msg_type_number_t size = THREAD_BASIC_INFO_COUNT;
+
+			if (thread_info(threads[i], THREAD_BASIC_INFO, (thread_info_t)&info, &size) == KERN_SUCCESS)
+				fprintf(stderr, "ARGON-THREAD %u%s user %d.%06d sys %d.%06d\n", i,
+				        threads[i] == mach_thread_self() ? " (main)" : "",
+				        info.user_time.seconds, info.user_time.microseconds,
+				        info.system_time.seconds, info.system_time.microseconds);
+			mach_port_deallocate(mach_task_self(), threads[i]);
+		}
+		vm_deallocate(mach_task_self(), (vm_address_t)threads, count * sizeof(*threads));
+	}
+	idle_stats.polls = 0;
+	idle_stats.poll_ns = idle_stats.cf_ns = 0;
+	idle_stats.since = now;
+	idle_stats.cpu_since = cpu;
+}
+
+static int dispatch_run_loop_body(struct seat *seat);
+
 static int
 dispatch_run_loop(void *data)
 {
-	struct seat *seat = data;
+	struct timespec start, end;
+	int result;
+
+	if (idle_stats.on < 0) {
+		idle_stats.on = getenv("ARGON_GFX_STATS") != NULL;
+		clock_gettime(CLOCK_MONOTONIC, &idle_stats.since);
+		idle_stats.cpu_since = process_cpu();
+	}
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	result = dispatch_run_loop_body(data);
+	if (idle_stats.on) {
+		clock_gettime(CLOCK_MONOTONIC, &end);
+		idle_stats.polls++;
+		idle_stats.poll_ns += elapsed_ns(&start, &end);
+		idle_stats_report();
+	}
+	return result;
+}
+
+static int
+dispatch_run_loop_body(struct seat *seat)
+{
 #ifdef __PUREDARWIN__
 	struct pd_hid_keyboard_event keyboard_event;
 	struct pd_hid_mouse_event mouse_event;
@@ -335,7 +555,12 @@ dispatch_run_loop(void *data)
 #else
 	/* A zero interval returns before PureDarwin's run loop services the HID
 	 * Mach port. Keep the wait bounded so Wayland remains the outer loop. */
+	struct timespec cf_start, cf_end;
+
+	clock_gettime(CLOCK_MONOTONIC, &cf_start);
 	(void)CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.001, true);
+	clock_gettime(CLOCK_MONOTONIC, &cf_end);
+	idle_stats.cf_ns += elapsed_ns(&cf_start, &cf_end);
 #endif
 	wl_event_source_timer_update(seat->run_loop_source, 8);
 	return 0;
@@ -434,6 +659,7 @@ seat_create(struct wl_display *display, const char *seat_name)
 	/* A zero timeout disarms timers on Darwin. Run the initial poll directly;
 	 * it schedules subsequent polls after the HID nodes have been checked. */
 	dispatch_run_loop(seat);
+	watch_layout(seat);
 	return &seat->base;
 
 error6:
@@ -471,6 +697,10 @@ seat_destroy(struct swc_seat *seat_base)
 	struct seat *seat = wl_container_of(seat_base, seat, base);
 
 	wl_event_source_remove(seat->run_loop_source);
+	if (seat->layout_source)
+		wl_event_source_remove(seat->layout_source);
+	if (seat->layout_token >= 0)
+		notify_cancel(seat->layout_token);
 #ifdef __PUREDARWIN__
 	if (seat->keyboard_fd >= 0) {
 		close(seat->keyboard_fd);

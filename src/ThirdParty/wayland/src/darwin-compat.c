@@ -2,7 +2,10 @@
 #include "darwin-compat.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <time.h>
 #include <sys/event.h>
 #include <unistd.h>
 
@@ -75,6 +78,46 @@ epoll_ctl(int epfd, int operation, int fd, struct epoll_event *event)
     return 0;
 }
 
+// PD_EPOLL_TRACE: every 5 s, how often the wait returned and which fd and filter woke it
+static void
+trace_wait(const struct kevent *ready, int count, int timeout)
+{
+    static int on = -1;
+    static unsigned long waits, empty;
+    static struct { uintptr_t ident; int16_t filter; uint16_t flags; unsigned long hits; } seen[32];
+    static struct timespec since;
+    struct timespec now;
+    int i, j;
+
+    if (on < 0) {
+        on = getenv("PD_EPOLL_TRACE") != NULL;
+        clock_gettime(CLOCK_MONOTONIC, &since);
+    }
+    if (!on) return;
+    waits++;
+    if (count == 0) empty++;
+    for (i = 0; i < count; i++) {
+        for (j = 0; j < 32; j++) {
+            if (seen[j].hits && (seen[j].ident != ready[i].ident || seen[j].filter != ready[i].filter))
+                continue;
+            seen[j].ident = ready[i].ident;
+            seen[j].filter = ready[i].filter;
+            seen[j].flags = ready[i].flags;
+            seen[j].hits++;
+            break;
+        }
+    }
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    if (now.tv_sec - since.tv_sec < 5) return;
+    fprintf(stderr, "PD-EPOLL %lu waits, %lu timed out, last timeout %d ms\n", waits, empty, timeout);
+    for (j = 0; j < 32 && seen[j].hits; j++)
+        fprintf(stderr, "PD-EPOLL   fd %lu filter %d flags 0x%x: %lu\n", (unsigned long)seen[j].ident,
+                seen[j].filter, seen[j].flags, seen[j].hits);
+    memset(seen, 0, sizeof(seen));
+    waits = empty = 0;
+    since = now;
+}
+
 int
 epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
 {
@@ -89,6 +132,7 @@ epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
         count = kevent(epfd, NULL, 0, ready, maxevents, &ts);
     }
     if (count < 0) return -1;
+    trace_wait(ready, count, timeout);
     for (i = 0; i < count; i++) {
         events[i].events = 0;
         if (ready[i].filter == EVFILT_READ) events[i].events |= EPOLLIN;
@@ -122,19 +166,22 @@ timerfd_settime(int fd, int flags, const struct itimerspec *value,
     struct pd_timer *timer;
     struct kevent change;
     struct timespec now;
-    int64_t milliseconds;
-    (void)flags; (void)old_value;
+    int64_t nanoseconds;
+    (void)old_value;
     for (timer = timers; timer && timer->fd != fd; timer = timer->next);
     if (!timer || timer->kq < 0) { errno = EINVAL; return -1; }
     EV_SET(&change, (uintptr_t)fd, EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
     kevent(timer->kq, &change, 1, NULL, 0, NULL);
     if (!value->it_value.tv_sec && !value->it_value.tv_nsec) return 0;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    milliseconds = (int64_t)(value->it_value.tv_sec - now.tv_sec) * 1000;
-    milliseconds += (value->it_value.tv_nsec - now.tv_nsec) / 1000000;
-    if (milliseconds < 1) milliseconds = 1;
+    nanoseconds = (int64_t)value->it_value.tv_sec * 1000000000 + value->it_value.tv_nsec;
+    if (flags & TFD_TIMER_ABSTIME) {
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        nanoseconds -= (int64_t)now.tv_sec * 1000000000 + now.tv_nsec;
+    }
+    if (nanoseconds < 1) nanoseconds = 1;
+    // xnu's unit flags differ from FreeBSD's, 0x2 there is microseconds, so say nanoseconds outright
     EV_SET(&change, (uintptr_t)fd, EVFILT_TIMER,
-           EV_ADD | EV_ENABLE | EV_ONESHOT, NOTE_MSECONDS, milliseconds,
+           EV_ADD | EV_ENABLE | EV_ONESHOT, NOTE_NSECONDS, nanoseconds,
            timer->udata);
     return kevent(timer->kq, &change, 1, NULL, 0, NULL);
 }

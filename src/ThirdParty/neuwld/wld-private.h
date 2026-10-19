@@ -123,6 +123,13 @@ struct wld_renderer_impl {
 	                  int32_t x, int32_t y, const char *text, uint32_t length,
 	                  struct wld_extents *extents);
 	void (*flush)(struct wld_renderer *renderer);
+	/* optional: the masked draws the shadow and rounded corner helpers otherwise do with pixman in the
+	 * target's memory, for a renderer whose target is not in memory. mask is an a8 image, generation
+	 * changes whenever its pixels do, its top-left sits at mask_x, mask_y on the target */
+	void (*blend_region_mask)(struct wld_renderer *renderer, struct buffer *src, int32_t dst_x, int32_t dst_y,
+	                          pixman_region32_t *region, pixman_image_t *mask, unsigned generation);
+	void (*fill_region_mask)(struct wld_renderer *renderer, uint32_t color, pixman_region32_t *region,
+	                         pixman_image_t *mask, unsigned generation, int32_t mask_x, int32_t mask_y);
 	void (*destroy)(struct wld_renderer *renderer);
 };
 

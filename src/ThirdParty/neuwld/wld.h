@@ -296,7 +296,25 @@ void wld_flush(struct wld_renderer *renderer);
 
 // optional OpenGL renderer for PureDarwin's Radeon framebuffer.
 struct wld_renderer *wld_gl_create_renderer(void);
+// gpu is ARGON_GPU's syntax: NULL or "auto", "soft", a render node, a pci id or a gallium driver
+struct wld_renderer *wld_gl_create_renderer_on(const char *gpu);
 bool wld_gl_present(struct wld_renderer *renderer, struct wld_buffer *buffer,
                     struct wld_buffer *cursor, int32_t cursor_x, int32_t cursor_y);
+
+enum wld_gl_present_result {
+	WLD_GL_PRESENT_FAILED,
+	WLD_GL_PRESENT_ON_GPU,
+	WLD_GL_PRESENT_READ_BACK,
+};
+enum wld_gl_present_result wld_gl_present_damage(struct wld_renderer *renderer, struct wld_buffer *buffer,
+                                                 struct wld_buffer *cursor, int32_t cursor_x, int32_t cursor_y,
+                                                 const pixman_region32_t *damage, uint32_t *pixels, size_t pitch);
+uint32_t wld_gl_scanout_resource(struct wld_renderer *renderer);
+bool wld_gl_set_scanout_dmabufs(struct wld_renderer *renderer, const int *fds, int count,
+                                uint32_t width, uint32_t height, uint32_t pitch);
+enum wld_gl_present_result wld_gl_present_scanout(struct wld_renderer *renderer, struct wld_buffer *buffer,
+                                                  struct wld_buffer *cursor, int32_t cursor_x, int32_t cursor_y,
+                                                  const pixman_region32_t *damage, int index);
+const char *wld_gl_renderer_name(struct wld_renderer *renderer);
 
 #endif

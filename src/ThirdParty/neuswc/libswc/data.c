@@ -33,7 +33,46 @@ struct data {
 	struct wl_array mime_types;
 	struct wl_resource *source;
 	struct wl_list offers;
+
+	// drag and drop: what the source allows, what the target took, and who to tell when it ends
+	uint32_t source_actions;
+	uint32_t offer_actions, preferred_action, action;
+	bool accepted;
+	bool dropped;
+	void (*finished)(void *context);
+	void *finished_context;
 };
+
+static uint32_t
+choose_action(struct data *data)
+{
+	uint32_t both = data->source_actions & data->offer_actions;
+
+	if (both & data->preferred_action)
+		return data->preferred_action;
+	if (both & WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY)
+		return WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY;
+	if (both & WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE)
+		return WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE;
+	if (both & WL_DATA_DEVICE_MANAGER_DND_ACTION_ASK)
+		return WL_DATA_DEVICE_MANAGER_DND_ACTION_ASK;
+	return WL_DATA_DEVICE_MANAGER_DND_ACTION_NONE;
+}
+
+// tells the source and the newest offer which action a drop would perform
+static void
+update_action(struct data *data, struct wl_resource *offer)
+{
+	uint32_t action = choose_action(data);
+
+	if (action == data->action)
+		return;
+	data->action = action;
+	if (wl_resource_get_version(data->source) >= WL_DATA_SOURCE_ACTION_SINCE_VERSION)
+		wl_data_source_send_action(data->source, action);
+	if (offer && wl_resource_get_version(offer) >= WL_DATA_OFFER_ACTION_SINCE_VERSION)
+		wl_data_offer_send_action(offer, action);
+}
 
 static void
 offer_accept(struct wl_client *client, struct wl_resource *offer,
@@ -46,6 +85,7 @@ offer_accept(struct wl_client *client, struct wl_resource *offer,
 		return;
 	}
 
+	data->accepted = mime_type != NULL;
 	wl_data_source_send_target(data->source, mime_type);
 }
 
@@ -64,22 +104,33 @@ offer_receive(struct wl_client *client, struct wl_resource *offer,
 	close(fd);
 }
 
+// the target read what it wanted from a drop, the source may now delete moved data
 static void
 offer_finish(struct wl_client *client, struct wl_resource *offer)
 {
+	struct data *data = wl_resource_get_user_data(offer);
+
 	(void)client;
-	(void)offer;
-	/* TODO: Implement */
+	if (!data || !data->dropped)
+		return;
+	if (wl_resource_get_version(data->source) >= WL_DATA_SOURCE_DND_FINISHED_SINCE_VERSION)
+		wl_data_source_send_dnd_finished(data->source);
+	data->dropped = false;
+	if (data->finished)
+		data->finished(data->finished_context);
 }
 
 static void
 offer_set_actions(struct wl_client *client, struct wl_resource *offer, uint32_t dnd_actions, uint32_t preferred_action)
 {
+	struct data *data = wl_resource_get_user_data(offer);
+
 	(void)client;
-	(void)offer;
-	(void)dnd_actions;
-	(void)preferred_action;
-	/* TODO: Implement */
+	if (!data)
+		return;
+	data->offer_actions = dnd_actions;
+	data->preferred_action = preferred_action;
+	update_action(data, offer);
 }
 
 static const struct wl_data_offer_interface data_offer_impl = {
@@ -117,10 +168,10 @@ error0:
 static void
 source_set_actions(struct wl_client *client, struct wl_resource *resource, uint32_t dnd_actions)
 {
+	struct data *data = wl_resource_get_user_data(resource);
+
 	(void)client;
-	(void)resource;
-	(void)dnd_actions;
-	/* TODO: Implement */
+	data->source_actions = dnd_actions;
 }
 
 static const struct wl_data_source_interface data_source_impl = {
@@ -167,6 +218,14 @@ data_source_new(struct wl_client *client, uint32_t version, uint32_t id)
 	}
 	wl_array_init(&data->mime_types);
 	wl_list_init(&data->offers);
+	data->source_actions = 0;
+	data->offer_actions = 0;
+	data->preferred_action = 0;
+	data->action = WL_DATA_DEVICE_MANAGER_DND_ACTION_NONE;
+	data->accepted = false;
+	data->dropped = false;
+	data->finished = NULL;
+	data->finished_context = NULL;
 
 	data->source =
 	    wl_resource_create(client, &wl_data_source_interface, version, id);
@@ -210,4 +269,50 @@ data_send_mime_types(struct wl_resource *source, struct wl_resource *offer)
 
 	wl_array_for_each(mime_type, &data->mime_types)
 	    wl_data_offer_send_offer(offer, *mime_type);
+}
+
+// a drag offer starts with nothing accepted, and the source's actions announced to the target
+void
+data_offer_start_drag(struct wl_resource *offer)
+{
+	struct data *data = wl_resource_get_user_data(offer);
+
+	data->accepted = false;
+	data->offer_actions = 0;
+	data->preferred_action = 0;
+	data->action = WL_DATA_DEVICE_MANAGER_DND_ACTION_NONE;
+	if (wl_resource_get_version(offer) >= WL_DATA_OFFER_SOURCE_ACTIONS_SINCE_VERSION)
+		wl_data_offer_send_source_actions(offer, data->source_actions);
+}
+
+// whether a drop now would go through: a type taken and, from version 3, an action agreed
+bool
+data_source_drop_ok(struct wl_resource *source)
+{
+	struct data *data = wl_resource_get_user_data(source);
+
+	if (!data->accepted)
+		return false;
+	if (wl_resource_get_version(source) >= WL_DATA_SOURCE_ACTION_SINCE_VERSION)
+		return data->action != WL_DATA_DEVICE_MANAGER_DND_ACTION_NONE;
+	return true;
+}
+
+void
+data_source_set_dropped(struct wl_resource *source, void (*finished)(void *context), void *context)
+{
+	struct data *data = wl_resource_get_user_data(source);
+
+	data->dropped = true;
+	data->finished = finished;
+	data->finished_context = context;
+}
+
+void
+data_source_clear_finished(struct wl_resource *source)
+{
+	struct data *data = wl_resource_get_user_data(source);
+
+	data->finished = NULL;
+	data->finished_context = NULL;
 }

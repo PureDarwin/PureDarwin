@@ -418,12 +418,16 @@ rounded_rect_distance(float px, float py, float w, float h, float r)
 struct mask_cache {
 	pixman_image_t *image;
 	uint32_t w, h, radius, blur;
+	unsigned generation;
 };
+
+static unsigned mask_generation;
 
 #define MASK_CACHE_SIZE 8
 
 static pixman_image_t *
-cached_mask(struct mask_cache *caches, uint32_t w, uint32_t h, uint32_t radius, uint32_t blur, uint8_t alpha)
+cached_mask(struct mask_cache *caches, uint32_t w, uint32_t h, uint32_t radius, uint32_t blur, uint8_t alpha,
+            unsigned *generation)
 {
 	static unsigned next;
 	struct mask_cache *cache = NULL;
@@ -433,8 +437,10 @@ cached_mask(struct mask_cache *caches, uint32_t w, uint32_t h, uint32_t radius, 
 
 	// a few windows of different sizes share the cache, the oldest entry makes way
 	for (int i = 0; i < MASK_CACHE_SIZE; i++) {
-		if (caches[i].image && caches[i].w == w && caches[i].h == h && caches[i].radius == radius && caches[i].blur == blur)
+		if (caches[i].image && caches[i].w == w && caches[i].h == h && caches[i].radius == radius && caches[i].blur == blur) {
+			*generation = caches[i].generation;
 			return caches[i].image;
+		}
 	}
 	cache = &caches[next++ % MASK_CACHE_SIZE];
 	if (cache->image)
@@ -462,6 +468,7 @@ cached_mask(struct mask_cache *caches, uint32_t w, uint32_t h, uint32_t radius, 
 		}
 	}
 	cache->w = w, cache->h = h, cache->radius = radius, cache->blur = blur;
+	cache->generation = *generation = ++mask_generation;
 	return cache->image;
 }
 
@@ -482,12 +489,20 @@ wld_blend_region_rounded(struct wld_renderer *renderer, struct wld_buffer *buffe
 	pixman_region32_t clip;
 	pixman_box32_t *extents;
 
+	unsigned generation;
+
 	if (!renderer->target || !pixman_region32_not_empty(region))
 		return;
+	if (renderer->impl->blend_region_mask) {
+		mask = cached_mask(cache, buffer->width, buffer->height, radius, 0, 255, &generation);
+		if (mask)
+			renderer->impl->blend_region_mask(renderer, (struct buffer *)buffer, dst_x, dst_y, region, mask, generation);
+		return;
+	}
 	renderer->impl->flush(renderer);
 	if (!wld_map(buffer) || !wld_map(renderer->target))
 		return;
-	mask = cached_mask(cache, buffer->width, buffer->height, radius, 0, 255);
+	mask = cached_mask(cache, buffer->width, buffer->height, radius, 0, 255, &generation);
 	src = pixman_image_create_bits(format_wld_to_pixman(buffer->format), buffer->width, buffer->height,
 	                               buffer->map, buffer->pitch);
 	dst = target_image(renderer);
@@ -518,12 +533,21 @@ wld_draw_shadow(struct wld_renderer *renderer, pixman_region32_t *region, int32_
 	pixman_color_t black = { 0, 0, 0, 0xffff };
 	pixman_image_t *solid, *dst, *mask;
 
+	unsigned generation;
+
 	if (!renderer->target || !pixman_region32_not_empty(region) || w == 0 || h == 0)
 		return;
+	if (renderer->impl->fill_region_mask) {
+		mask = cached_mask(cache, w, h, radius, blur, alpha, &generation);
+		if (mask)
+			renderer->impl->fill_region_mask(renderer, 0xff000000, region, mask, generation,
+			                                 x - (int32_t)blur, y - (int32_t)blur + offset_y);
+		return;
+	}
 	renderer->impl->flush(renderer);
 	if (!wld_map(renderer->target))
 		return;
-	mask = cached_mask(cache, w, h, radius, blur, alpha);
+	mask = cached_mask(cache, w, h, radius, blur, alpha, &generation);
 	solid = pixman_image_create_solid_fill(&black);
 	dst = target_image(renderer);
 	if (mask && solid && dst) {

@@ -155,6 +155,8 @@ end_interaction(struct window_pointer_interaction *interaction,
 	}
 
 	if (interaction->original_handler) {
+		bool held = !button;
+
 		if (!button) {
 			button = pointer_get_button(swc.seat->pointer, interaction->serial);
 
@@ -167,6 +169,9 @@ end_interaction(struct window_pointer_interaction *interaction,
 		interaction->original_handler->button(interaction->original_handler,
 		                                      get_time(), button,
 		                                      WL_POINTER_BUTTON_STATE_RELEASED);
+		// ended while the button is still down, its later release must not reach this handler
+		if (held && button->handler == &interaction->handler)
+			button->handler = NULL;
 	}
 
 remove:
@@ -592,6 +597,9 @@ window_finalize(struct window *window)
 {
 	DEBUG("Finalizing window, %p\n", window);
 
+	// a window closed mid move or resize would leave its handler on the pointer's list
+	end_interaction(&window->move.interaction, NULL);
+	end_interaction(&window->resize.interaction, NULL);
 	pd_decoration_window_destroyed(window);
 	window_unmanage(window);
 	compositor_view_destroy(window->view);

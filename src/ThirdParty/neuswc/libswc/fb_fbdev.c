@@ -189,3 +189,11 @@ framebuffer_name(void)
 {
 	return "fbdev-0";
 }
+
+// no GPU resource scanout on this backend
+bool framebuffer_gpu_scanout_available(void) { return false; }
+bool framebuffer_set_scanout_resource(uint32_t resource, uint32_t width, uint32_t height) { (void)resource; (void)width; (void)height; return false; }
+bool framebuffer_present_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height) { (void)x; (void)y; (void)width; (void)height; return false; }
+int framebuffer_scanout_dmabufs(int *fds, uint32_t *width, uint32_t *height, uint32_t *pitch) { (void)fds; (void)width; (void)height; (void)pitch; return 0; }
+int framebuffer_back_index(void) { return -1; }
+bool framebuffer_flip(int index) { (void)index; return false; }
