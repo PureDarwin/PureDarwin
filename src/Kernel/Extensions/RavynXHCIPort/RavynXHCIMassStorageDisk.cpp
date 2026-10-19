@@ -106,7 +106,7 @@ RavynXHCIMassStorageDisk::scsiInquiry()
     if (!buf) return false;
     bzero(buf->getBytesNoCopy(), 36);
 
-    IOReturn ret = fParent->botTransfer(fSlotId, cdb, sizeof(cdb), 36, true, buf, 0);
+    IOReturn ret = fParent->botTransfer(fSlotId, cdb, sizeof(cdb), 36, true, buf, 0, true);
     bool ok = (ret == kIOReturnSuccess);
     if (ok) {
         const UInt8 *data = (const UInt8 *)buf->getBytesNoCopy();

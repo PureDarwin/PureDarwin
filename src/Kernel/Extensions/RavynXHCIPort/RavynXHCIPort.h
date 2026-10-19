@@ -60,13 +60,10 @@ public:
     IOReturn botTransfer(UInt32 slotId,
                          const void *cbwCB, UInt8 cbwLen,
                          UInt32 dataLen, bool dataIn,
-                         IOMemoryDescriptor *buffer, UInt64 bufOff);
+                         IOMemoryDescriptor *buffer, UInt64 bufOff,
+                         bool allowShort = false);
 
 private:
-    IOReturn botTransferLocked(UInt32 slotId,
-                               const void *cbwCB, UInt8 cbwLen,
-                               UInt32 dataLen, bool dataIn,
-                               IOMemoryDescriptor *buffer, UInt64 bufOff);
     /* One tracked USB device slot that turned out to be Mass Storage. */
     struct MSCDevice {
         bool     valid;
@@ -79,6 +76,7 @@ private:
         UInt32   blockSize;
         char     vendor[9];
         char     product[17];
+        UInt8    iface;          /* bInterfaceNumber, for the bulk-only reset */
     };
 
     /* One tracked interrupt-IN endpoint. A boot HID device often leaves an
@@ -209,7 +207,8 @@ private:
      * owned working memory required by real hardware, referenced via
      * DCBAA[0]. Unused (all NULL) if the controller doesn't need any. */
     IOBufferMemoryDescriptor * fScratchpadArrayMem;
-    IOBufferMemoryDescriptor * fScratchpadBufMem[32];
+    IOBufferMemoryDescriptor ** fScratchpadBufMem;
+    UInt32                      fScratchpadCount;
 
     /* Command ring: single segment, ring-linked to itself via a LINK TRB. */
     IOBufferMemoryDescriptor * fCmdRingMem;
@@ -241,6 +240,11 @@ private:
         UInt32        control;
         UInt32        shortResidual;
         UInt64        shortTRB;
+        // when set, only events whose trb lies in the td being waited for are kept
+        bool          matchActive;
+        UInt64        matchRingBase;
+        UInt32        matchStart;
+        UInt32        matchCount;
     };
     XferCompletion fXferDone[64][32]; /* [slotId][DCI] */
     /* Last command completion (commands are serialized under fCmdLock). */
@@ -280,6 +284,7 @@ private:
 
     MSCDevice fMSC[16];
     RavynXHCIMassStorageDisk * fDiskNubs[16];
+    // one bulk-only command at a time, and unplug takes it to retire an fMSC entry
     IOLock                   * fMSCLock;
 
     InterruptInEndpoint fIntrIn[64][16]; /* [slotId][endpoint number] */
@@ -393,6 +398,7 @@ private:
      * under fEventLock, recording each into fXferDone[][]/fCmdDone* for the
      * waiter that's looking for it. Safe to call from multiple threads. */
     void serviceEventRing();
+    bool eventInTD(UInt32 slot, UInt32 dci, UInt64 trb) const;
     UInt32 eventGeneration();
     void sleepForEvent(UInt32 generation, uint64_t until);
 
@@ -422,8 +428,17 @@ private:
     void recoverHaltedEndpoint(UInt32 slotId, UInt8 epNum, bool in);
     void resetHaltedRing(UInt32 slotId, UInt32 dci, UInt64 deq, UInt8 cycle, UInt8 *cc1, UInt8 *cc2);
     bool stopRing(UInt32 slotId, UInt32 dci, UInt64 deq, UInt8 cycle);
+    // on success *outActual is the byte count moved, on failure *outCC is the completion code (0 = timeout)
     bool bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
-                      IOBufferMemoryDescriptor *xferMem, UInt32 len, UInt32 timeoutMs);
+                      IOBufferMemoryDescriptor *xferMem, UInt32 len, UInt32 timeoutMs,
+                      UInt32 *outActual = NULL, UInt8 *outCC = NULL);
+    // stop or reset the endpoint, move its dequeue past the abandoned td, then clear the device halt
+    bool abortFailedTD(UInt32 slotId, UInt8 epNum, bool in);
+    // bulk-only mass storage reset recovery (bot 5.3.4)
+    void botResetRecovery(UInt32 mscIndex);
+    IOReturn botTransferLocked(UInt32 slotId, const void *cbwCB, UInt8 cbwLen,
+                               UInt32 dataLen, bool dataIn,
+                               IOMemoryDescriptor *buffer, UInt64 bufOff, bool allowShort);
 
 public:
     // generic bulk endpoints for the IOUSBController bus, one ring each

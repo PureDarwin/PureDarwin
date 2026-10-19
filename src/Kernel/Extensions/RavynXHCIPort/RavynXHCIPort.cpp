@@ -1026,12 +1026,13 @@ bool RavynXHCIPort::setupDCBAA()
     UInt32 maxScratchLo = (hcsp2 >> 27) & 0x1F;
     UInt32 maxScratchpadBufs = (maxScratchHi << 5) | maxScratchLo;
     XHCI_Log("HCSPARAMS2=%08x maxScratchpadBufs=%u", hcsp2, maxScratchpadBufs);
-    if (maxScratchpadBufs > 32) {
-        XHCI_Log("maxScratchpadBufs %u exceeds fixed array size, capping at 32", maxScratchpadBufs);
-        maxScratchpadBufs = 32;
-    }
 
     if (maxScratchpadBufs > 0) {
+        // every buffer the controller asks for, it uses entries past a short array as scratch
+        fScratchpadBufMem = IONew(IOBufferMemoryDescriptor *, maxScratchpadBufs);
+        if (!fScratchpadBufMem) return false;
+        bzero(fScratchpadBufMem, maxScratchpadBufs * sizeof(IOBufferMemoryDescriptor *));
+        fScratchpadCount = maxScratchpadBufs;
         fScratchpadArrayMem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
             kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut,
             maxScratchpadBufs * sizeof(UInt64), mask);
@@ -1177,6 +1178,16 @@ void RavynXHCIPort::interruptOccurred(IOInterruptEventSource *sender, int count)
     serviceEventRing();
 }
 
+// whether an event's trb pointer falls in the td registered for this endpoint
+bool RavynXHCIPort::eventInTD(UInt32 slot, UInt32 dci, UInt64 trb) const
+{
+    const XferCompletion &x = fXferDone[slot][dci];
+    if (!x.matchActive) return true;
+    if (trb < x.matchRingBase || trb >= x.matchRingBase + kRingTRBs * sizeof(XHCITRB)) return false;
+    UInt32 idx = (UInt32)((trb - x.matchRingBase) / sizeof(XHCITRB));
+    return ((idx + kRingTRBs - x.matchStart) % kRingTRBs) < x.matchCount;
+}
+
 void RavynXHCIPort::serviceEventRing()
 {
     /* Sole consumer of the event ring. Drains every currently-available
@@ -1207,6 +1218,10 @@ void RavynXHCIPort::serviceEventRing()
             if (slot < 64 && dci < 32 && fBulk[slot][dci]) {
                 recordBulkEvent(slot, dci, evParam, evStatus);
                 filed = true;   // the bulk thread sleeps on fEventWaitChannel too
+            } else if (slot < 64 && dci < 32 && !eventInTD(slot, dci, evParam)) {
+                // a late event for an abandoned td, not the one being waited for
+                XHCI_Log("dropping stale transfer event slot=%u dci=%u trb=%016llx cc=%u",
+                        slot, dci, (unsigned long long)evParam, TRB_CC(evStatus));
             } else if (slot < 64 && dci < 32) {
                 if (dci == 1 && TRB_CC(evStatus) == TRB_CC_SHORT_PACKET) {
                     fXferDone[slot][dci].shortResidual = evStatus & 0xffffff;
@@ -1769,6 +1784,11 @@ void RavynXHCIPort::freeSlotResources(UInt32 slotId)
 {
     if (slotId == 0 || slotId >= 64) return;
 
+    // a reused slot must not inherit the old device's td filters
+    IOLockLock(fEventLock);
+    bzero(fXferDone[slotId], sizeof(fXferDone[slotId]));
+    IOLockUnlock(fEventLock);
+
     for (UInt32 dci = 2; dci < 32; ++dci) {
         IOLockLock(fEventLock);
         BulkEndpoint *be = fBulk[slotId][dci];
@@ -2293,8 +2313,11 @@ IOReturn RavynXHCIPort::abortInterruptEndpoint(UInt32 slotId, UInt8 epNum, bool 
  * unrelated memory - and a kernel panic soon after). */
 #define kMaxTRBTransferBytes 0x10000U
 
+#define kMaxTDTRBs          64U
+
 bool RavynXHCIPort::bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
-                                 IOBufferMemoryDescriptor *xferMem, UInt32 len, UInt32 timeoutMs)
+                                 IOBufferMemoryDescriptor *xferMem, UInt32 len, UInt32 timeoutMs,
+                                 UInt32 *outActual, UInt8 *outCC)
 {
     SlotResources &sr = fSlots[slotId];
     volatile XHCITRB *ring = in ? sr.bulkInRing : sr.bulkOutRing;
@@ -2302,6 +2325,7 @@ bool RavynXHCIPort::bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
     UInt8 &cycle = in ? sr.bulkInCycle : sr.bulkOutCycle;
     UInt32 dci = in ? (epNum * 2 + 1) : (epNum * 2);
     UInt64 base = xferMem->getPhysicalAddress();
+    UInt64 ringBase = (in ? sr.bulkInRingMem : sr.bulkOutRingMem)->getPhysicalAddress();
 
     // the endpoint's max packet size, as the controller holds it, for the TD Size field
     void *dc = sr.deviceCtxMem->getBytesNoCopy();
@@ -2309,14 +2333,21 @@ bool RavynXHCIPort::bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
     UInt32 maxPkt = (deviceEp(dc, dci)->dword1 >> EP_CTX_MAXPKT_SHIFT) & 0xffff;
     UInt32 tdPackets = maxPkt ? (len + maxPkt - 1) / maxPkt : 0;
 
-    // one TRB per 64 KiB window the buffer touches. The TD must fit in the ring.
-    UInt64 trbs = (((base & (kMaxTRBTransferBytes - 1)) + len + kMaxTRBTransferBytes - 1) / kMaxTRBTransferBytes);
-    if (trbs > kRingTRBs - 2) {
-        XHCI_Log("bulk transfer of %u bytes needs %llu TRBs, more than the ring holds", len, trbs);
+    if (outActual) *outActual = 0;
+    if (outCC) *outCC = 0;
+
+    // one TRB per 64 KiB window the buffer touches. The TD must fit in the ring and the table below.
+    UInt64 needed = (((base & (kMaxTRBTransferBytes - 1)) + len + kMaxTRBTransferBytes - 1) / kMaxTRBTransferBytes);
+    if (needed > kMaxTDTRBs || needed > kRingTRBs - 2) {
+        XHCI_Log("bulk transfer of %u bytes needs %llu TRBs, more than a TD holds", len, needed);
         return false;
     }
 
-    UInt32 remaining = len ? len : 0;
+    // ring index, offset and length of each trb, so a short packet maps back to a byte count
+    struct { UInt32 idx, off, len; } trbs[kMaxTDTRBs];
+    UInt32 ntrb = 0;
+    UInt32 start = enqueue;
+    UInt32 remaining = len;
     UInt32 offset = 0;
     dmaFlush(xferMem->getBytesNoCopy(), len);
     do {
@@ -2332,52 +2363,80 @@ bool RavynXHCIPort::bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
             UInt32 left = tdPackets - (offset + chunk) / maxPkt;
             tdSize = left > 31 ? 31 : left;
         }
+        trbs[ntrb].idx = enqueue;
+        trbs[ntrb].off = offset;
+        trbs[ntrb].len = chunk;
+        ntrb++;
+        // isp on every in trb so a short read reports where it stopped
         pushTRB(ring, enqueue, cycle, kRingTRBs,
                addr, chunk | TRB_TD_SIZE(tdSize),
-               TRB_SET_TYPE(TRB_TYPE_NORMAL) | (isLast ? TRB_IOC : TRB_CH));
+               TRB_SET_TYPE(TRB_TYPE_NORMAL) | (isLast ? TRB_IOC : TRB_CH) | (in ? TRB_ISP : 0));
         offset += chunk;
         remaining -= chunk;
     } while (remaining > 0);
+
+    // accept only events from this td, then start it
+    IOLockLock(fEventLock);
+    XferCompletion &x = fXferDone[slotId][dci];
+    x.pending = false;
+    x.matchActive = true;
+    x.matchRingBase = ringBase;
+    x.matchStart = start;
+    x.matchCount = (enqueue + kRingTRBs - start) % kRingTRBs;
+    IOLockUnlock(fEventLock);
     ringDoorbell(slotId, dci);
 
     UInt8 cc = 0;
-    bool done = waitTransferEvent(slotId, dci, &cc, timeoutMs);
-    dmaFlush(xferMem->getBytesNoCopy(), len);
+    UInt32 residual = 0;
+    UInt64 evTRB = 0;
+    bool done = waitTransferEvent(slotId, dci, &cc, timeoutMs, &residual, &evTRB);
     if (!done) {
-        /* Dump the endpoint context so we can tell "endpoint Halted after a
-         * prior transfer" (state 2) from "Running but nothing completed"
-         * (state 1) from "Stopped" (state 3), plus what TR dequeue pointer
-         * the controller thinks it's at vs the physical TRB we just pushed. */
-        void *dc = sr.deviceCtxMem->getBytesNoCopy();
-        UInt32 epd0 = deviceEp(dc, dci)->dword0;
-        UInt64 pushedPhys = ring == sr.bulkInRing
-            ? sr.bulkInRingMem->getPhysicalAddress()
-            : sr.bulkOutRingMem->getPhysicalAddress();
+        dmaFlush(deviceEp(dc, dci), sizeof(XHCIEndpointContext));
         XHCI_Log("bulk transfer timed out slot=%u ep=%u dci=%u in=%d len=%u "
-                "epState=%u epType=%u ctrlrDeq=%016llx ringBase=%016llx enq=%u USBSTS=%08x",
+                "epState=%u ctrlrDeq=%016llx ringBase=%016llx enq=%u USBSTS=%08x",
                 slotId, epNum, dci, in, len,
-                (unsigned)(epd0 & 0x7),
-                (unsigned)((deviceEp(dc, dci)->dword1 >> EP_CTX_TYPE_SHIFT) & 0x7),
+                (unsigned)(deviceEp(dc, dci)->dword0 & 0x7),
                 (unsigned long long)deviceEp(dc, dci)->trDequeuePtr,
-                (unsigned long long)pushedPhys, enqueue, opRead32(XHCI_USBSTS));
+                (unsigned long long)ringBase, enqueue, opRead32(XHCI_USBSTS));
         UInt32 sts = opRead32(XHCI_USBSTS);
         if (sts & XHCI_USBSTS_HCH) {
             // a halted controller does no dma, so the caller may free the buffer
             XHCI_Log("controller halted%s%s, USBSTS=%08x", (sts & XHCI_USBSTS_HCE) ? ", host controller error" : "",
                      (sts & XHCI_USBSTS_HSE) ? ", host system error" : "", sts);
-        } else if (!stopRing(slotId, dci, pushedPhys + (UInt64)enqueue * sizeof(XHCITRB), cycle)) {
+            return false;
+        }
+        // a halted endpoint fails the stop, abortFailedTD resets it instead
+        if (!stopRing(slotId, dci, ringBase + (UInt64)enqueue * sizeof(XHCITRB), cycle) &&
+            !abortFailedTD(slotId, epNum, in)) {
             // the controller may still write it. leak the buffer rather than let it be reused
             xferMem->retain();
             XHCI_Log("slot %u dci %u did not stop, keeping its %u-byte buffer", slotId, dci, len);
+            return false;
         }
-        return false;
+        // the td can still complete while the endpoint is being stopped
+        // the stop itself reports the td as stopped, which is still a failure
+        done = waitTransferEvent(slotId, dci, &cc, 1, &residual, &evTRB);
+        if (!done || (cc != TRB_CC_SUCCESS && cc != TRB_CC_SHORT_PACKET)) return false;
+        XHCI_Log("bulk transfer slot=%u ep=%u completed during abort cc=%u", slotId, epNum, cc);
     }
+    if (outCC) *outCC = cc;
+    dmaFlush(xferMem->getBytesNoCopy(), len);
     if (cc != TRB_CC_SUCCESS && cc != TRB_CC_SHORT_PACKET) {
         XHCI_Log("bulk transfer failed slot=%u ep=%u in=%d len=%u cc=%u USBSTS=%08x", slotId, epNum, in, len,
                 cc, opRead32(XHCI_USBSTS));
-        if (cc == TRB_CC_STALL) recoverHaltedEndpoint(slotId, epNum, in);
+        // any halting code (stall, transaction, babble, buffer) leaves the endpoint halted
+        abortFailedTD(slotId, epNum, in);
         return false;
     }
+
+    UInt32 actual = len;
+    UInt32 evIdx = (UInt32)((evTRB - ringBase) / sizeof(XHCITRB));
+    for (UInt32 i = 0; i < ntrb; i++) {
+        if (trbs[i].idx != evIdx) continue;
+        actual = trbs[i].off + (residual < trbs[i].len ? trbs[i].len - residual : 0);
+        break;
+    }
+    if (outActual) *outActual = actual;
     return true;
 }
 
@@ -2391,6 +2450,7 @@ void RavynXHCIPort::resetHaltedRing(UInt32 slotId, UInt32 dci, UInt64 deq, UInt8
 }
 
 // take a running endpoint's TDs back: stop it, then move its dequeue pointer past them
+// the caller collects any event the stop raced with
 bool RavynXHCIPort::stopRing(UInt32 slotId, UInt32 dci, UInt64 deq, UInt8 cycle)
 {
     UInt32 slotOut = 0;
@@ -2405,13 +2465,10 @@ bool RavynXHCIPort::stopRing(UInt32 slotId, UInt32 dci, UInt64 deq, UInt8 cycle)
                    &cc, &slotOut, 1000) || cc != TRB_CC_SUCCESS)
         return false;
     serviceEventRing();
-    IOLockLock(fEventLock);
-    fXferDone[slotId][dci].pending = false;
-    IOLockUnlock(fEventLock);
     return true;
 }
 
-void RavynXHCIPort::recoverHaltedEndpoint(UInt32 slotId, UInt8 epNum, bool in)
+bool RavynXHCIPort::abortFailedTD(UInt32 slotId, UInt8 epNum, bool in)
 {
     SlotResources &sr = fSlots[slotId];
     UInt32 dci = in ? (epNum * 2 + 1) : (epNum * 2);
@@ -2419,16 +2476,44 @@ void RavynXHCIPort::recoverHaltedEndpoint(UInt32 slotId, UInt8 epNum, bool in)
                  (UInt64)(in ? sr.bulkInEnqueue : sr.bulkOutEnqueue) * sizeof(XHCITRB);
     UInt8 cycle = in ? sr.bulkInCycle : sr.bulkOutCycle;
     UInt8 cc1 = 0, cc2 = 0;
+    UInt32 slotOut = 0;
 
-    resetHaltedRing(slotId, dci, deq, cycle, &cc1, &cc2);
-    USBSetupPacket clear;
-    bzero(&clear, sizeof(clear));
-    clear.bmRequestType = 0x02;
-    clear.bRequest = 1;     // CLEAR_FEATURE(ENDPOINT_HALT)
-    clear.wIndex = (UInt16)(epNum | (in ? 0x80 : 0));
-    bool ok = controlTransfer(slotId, clear, NULL, 0, false);
-    XHCI_Log("slot %u ep %u%s halt cleared: reset ep cc=%u, set dequeue cc=%u, clear feature %d",
-            slotId, epNum, in ? " in" : " out", cc1, cc2, ok);
+    dmaFlushContexts();
+    UInt32 state = deviceEp(sr.deviceCtxMem->getBytesNoCopy(), dci)->dword0 & 0x7;
+    bool reset = false;
+    if (state == 1 /* running */) {
+        // stop before the dequeue moves, the td may finish meanwhile
+        doCommand(0, 0, TRB_SET_TYPE(TRB_TYPE_STOP_EP) | TRB_SET_SLOT(slotId) | TRB_SET_EP(dci),
+                  &cc1, &slotOut, 500);
+        dmaFlushContexts();
+        state = deviceEp(sr.deviceCtxMem->getBytesNoCopy(), dci)->dword0 & 0x7;
+    }
+    if (state == 2 /* halted */ || state == 4 /* error */) {
+        doCommand(0, 0, TRB_SET_TYPE(TRB_TYPE_RESET_EP) | TRB_SET_SLOT(slotId) | TRB_SET_EP(dci),
+                  &cc1, &slotOut, 500);
+        reset = true;
+    }
+    doCommand(deq | cycle, 0, TRB_SET_TYPE(TRB_TYPE_SET_TR_DEQUEUE) | TRB_SET_SLOT(slotId) | TRB_SET_EP(dci),
+              &cc2, &slotOut, 500);
+
+    // reset endpoint zeroes the host sequence number, so the device toggle must be cleared too
+    bool cleared = false;
+    if (reset) {
+        USBSetupPacket clear;
+        bzero(&clear, sizeof(clear));
+        clear.bmRequestType = 0x02;
+        clear.bRequest = 1;     // CLEAR_FEATURE(ENDPOINT_HALT)
+        clear.wIndex = (UInt16)(epNum | (in ? 0x80 : 0));
+        cleared = controlTransfer(slotId, clear, NULL, 0, false);
+    }
+    XHCI_Log("slot %u ep %u%s abandoned td: state=%u %s cc=%u, set dequeue cc=%u, clear feature %d",
+            slotId, epNum, in ? " in" : " out", state, reset ? "reset" : "stop", cc1, cc2, cleared);
+    return cc2 == TRB_CC_SUCCESS;
+}
+
+void RavynXHCIPort::recoverHaltedEndpoint(UInt32 slotId, UInt8 epNum, bool in)
+{
+    abortFailedTD(slotId, epNum, in);
 }
 
 bool RavynXHCIPort::markSlotAsHub(UInt32 slotId, UInt8 numPorts, bool multiTT,
@@ -2777,6 +2862,7 @@ bool RavynXHCIPort::enumerateSlotDevice(UInt32 slotId, UInt32 rootPort0based, UI
     bool foundMSC = false;
     UInt8 bulkInEp = 0, bulkOutEp = 0;
     UInt16 bulkInMaxPkt = 0, bulkOutMaxPkt = 0;
+    UInt8 mscIface = 0;
 
     UInt32 off = 0;
     bool inMSCInterface = false;
@@ -2790,6 +2876,7 @@ bool RavynXHCIPort::enumerateSlotDevice(UInt32 slotId, UInt32 rootPort0based, UI
             inMSCInterface = (ifd->bInterfaceClass == USB_IF_CLASS_MASS_STORAGE &&
                               ifd->bInterfaceSubClass == USB_IF_SUBCLASS_SCSI &&
                               ifd->bInterfaceProtocol == USB_IF_PROTOCOL_BULK_ONLY);
+            if (inMSCInterface && !foundMSC) mscIface = ifd->bInterfaceNumber;
             if (inMSCInterface) foundMSC = true;
         } else if (type == 5 /* endpoint */ && len >= sizeof(USBEndpointDescriptor)) {
             USBEndpointDescriptor *epd = (USBEndpointDescriptor *)(cfgBuf + off);
@@ -2863,6 +2950,7 @@ bool RavynXHCIPort::enumerateSlotDevice(UInt32 slotId, UInt32 rootPort0based, UI
     m.bulkInEp = bulkInEp;
     m.bulkOutEp = bulkOutEp;
     m.bulkMaxPacket = bulkInMaxPkt;
+    m.iface = mscIface;
 
     RavynXHCIMassStorageDisk *disk = new RavynXHCIMassStorageDisk;
     if (!disk) return false;
@@ -2929,26 +3017,29 @@ bool RavynXHCIPort::tryEnumerateMassStorage(UInt32 port0based, UInt32 speed)
 IOReturn RavynXHCIPort::botTransfer(UInt32 slotId,
                                     const void *cbwCB, UInt8 cbwLen,
                                     UInt32 dataLen, bool dataIn,
-                                    IOMemoryDescriptor *buffer, UInt64 bufOff)
+                                    IOMemoryDescriptor *buffer, UInt64 bufOff,
+                                    bool allowShort)
 {
     if (!fMSCLock) return kIOReturnNoMemory;
     IOLockLock(fMSCLock);
-    IOReturn ret = botTransferLocked(slotId, cbwCB, cbwLen, dataLen, dataIn, buffer, bufOff);
+    IOReturn ret = botTransferLocked(slotId, cbwCB, cbwLen, dataLen, dataIn, buffer, bufOff, allowShort);
     IOLockUnlock(fMSCLock);
     return ret;
 }
 
 IOReturn RavynXHCIPort::botTransferLocked(UInt32 slotId,
-                                    const void *cbwCB, UInt8 cbwLen,
-                                    UInt32 dataLen, bool dataIn,
-                                    IOMemoryDescriptor *buffer, UInt64 bufOff)
+                                          const void *cbwCB, UInt8 cbwLen,
+                                          UInt32 dataLen, bool dataIn,
+                                          IOMemoryDescriptor *buffer, UInt64 bufOff,
+                                          bool allowShort)
 {
     int idx = -1;
     for (int i = 0; i < 16; i++) if (fMSC[i].valid && fMSC[i].slotId == slotId) { idx = i; break; }
     if (idx < 0) return kIOReturnNoDevice;
     MSCDevice &m = fMSC[idx];
 
-    static UInt32 tag = 1;
+    static volatile SInt32 gTag = 0;
+    UInt32 tag = (UInt32)OSIncrementAtomic(&gTag) + 1;
     UInt64 mask = fDMAMask;
 
     IOBufferMemoryDescriptor *cbwMem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
@@ -2957,45 +3048,142 @@ IOReturn RavynXHCIPort::botTransferLocked(UInt32 slotId,
     USBBOTCommandBlockWrapper *cbw = (USBBOTCommandBlockWrapper *)cbwMem->getBytesNoCopy();
     bzero(cbw, sizeof(*cbw));
     cbw->dCBWSignature = BOT_CBW_SIGNATURE;
-    cbw->dCBWTag = tag++;
+    cbw->dCBWTag = tag;
     cbw->dCBWDataTransferLength = dataLen;
     cbw->bmCBWFlags = dataIn ? 0x80 : 0x00;
     cbw->bCBWLUN = 0;
     cbw->bCBWCBLength = cbwLen;
     bcopy(cbwCB, cbw->CBWCB, cbwLen);
 
-    bool ok = bulkTransfer(slotId, m.bulkOutEp, false, cbwMem, sizeof(*cbw), 2000);
-
-    if (ok && dataLen > 0) {
-        IOBufferMemoryDescriptor *xferMem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-            kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, dataLen, mask);
-        if (!xferMem) { cbwMem->release(); return kIOReturnNoMemory; }
-        if (!dataIn && buffer) buffer->readBytes(bufOff, xferMem->getBytesNoCopy(), dataLen);
-
-        ok = bulkTransfer(slotId, dataIn ? m.bulkInEp : m.bulkOutEp, dataIn, xferMem, dataLen, 5000);
-
-        if (ok && dataIn && buffer) buffer->writeBytes(bufOff, xferMem->getBytesNoCopy(), dataLen);
-        xferMem->release();
-    }
-
-    bool statusOk = false;
-    if (ok) {
-        IOBufferMemoryDescriptor *cswMem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-            kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, sizeof(USBBOTCommandStatusWrapper), mask);
-        if (cswMem) {
-            bzero(cswMem->getBytesNoCopy(), sizeof(USBBOTCommandStatusWrapper));
-            if (bulkTransfer(slotId, m.bulkInEp, true, cswMem, sizeof(USBBOTCommandStatusWrapper), 2000)) {
-                USBBOTCommandStatusWrapper *csw = (USBBOTCommandStatusWrapper *)cswMem->getBytesNoCopy();
-                statusOk = (csw->dCSWSignature == BOT_CSW_SIGNATURE && csw->bCSWStatus == 0);
-                if (!statusOk)
-                    XHCI_Log("BOT CSW sig=%08x tag=%08x status=%u", csw->dCSWSignature, csw->dCSWTag, csw->bCSWStatus);
-            }
-            cswMem->release();
-        }
-    }
-
+    UInt8 cc = 0;
+    bool ok = bulkTransfer(slotId, m.bulkOutEp, false, cbwMem, sizeof(*cbw), 2000, NULL, &cc);
     cbwMem->release();
-    return statusOk ? kIOReturnSuccess : kIOReturnIOError;
+    if (!ok) {
+        XHCI_Log("BOT tag=%u cbw failed cc=%u", tag, cc);
+        botResetRecovery(idx);
+        return kIOReturnIOError;
+    }
+
+    IOBufferMemoryDescriptor *xferMem = NULL;
+    UInt32 moved = 0;
+    if (dataLen > 0) {
+        xferMem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+            kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, dataLen, mask);
+        if (!xferMem) {
+            // the device is waiting for a data phase that will never come
+            botResetRecovery(idx);
+            return kIOReturnNoMemory;
+        }
+        if (!dataIn && buffer) buffer->readBytes(bufOff, xferMem->getBytesNoCopy(), dataLen);
+        else bzero(xferMem->getBytesNoCopy(), dataLen);
+
+        ok = bulkTransfer(slotId, dataIn ? m.bulkInEp : m.bulkOutEp, dataIn, xferMem, dataLen, 5000, &moved, &cc);
+        if (!ok && cc != TRB_CC_STALL) {
+            XHCI_Log("BOT tag=%u data %s failed cc=%u", tag, dataIn ? "in" : "out", cc);
+            xferMem->release();
+            botResetRecovery(idx);
+            return kIOReturnIOError;
+        }
+        // a stalled data phase still ends with a csw (bot 6.7.2), the halt is already cleared
+        if (!ok) moved = 0;
+    }
+
+    // the csw, read again once if the first attempt stalls (bot 6.7.2)
+    IOReturn ret = kIOReturnIOError;
+    bool needReset = true;
+    IOBufferMemoryDescriptor *cswMem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+        kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, sizeof(USBBOTCommandStatusWrapper), mask);
+    if (cswMem) {
+        USBBOTCommandStatusWrapper *csw = (USBBOTCommandStatusWrapper *)cswMem->getBytesNoCopy();
+        UInt32 cswLen = 0;
+        bool got = false;
+        for (int attempt = 0; attempt < 2 && !got; attempt++) {
+            bzero(csw, sizeof(*csw));
+            got = bulkTransfer(slotId, m.bulkInEp, true, cswMem, sizeof(*csw), 2000, &cswLen, &cc);
+            if (!got && cc != TRB_CC_STALL) break;
+        }
+        if (!got || cswLen != sizeof(*csw) || csw->dCSWSignature != BOT_CSW_SIGNATURE || csw->dCSWTag != tag) {
+            XHCI_Log("BOT tag=%u bad csw got=%d len=%u sig=%08x tag=%08x cc=%u",
+                    tag, got, cswLen, csw->dCSWSignature, csw->dCSWTag, cc);
+        } else if (csw->bCSWStatus == 0) {
+            needReset = false;
+            UInt32 residue = csw->dCSWDataResidue;
+            if (residue <= dataLen && dataLen - residue < moved) moved = dataLen - residue;
+            if (moved == dataLen || allowShort) ret = kIOReturnSuccess;
+            else XHCI_Log("BOT tag=%u short transfer %u of %u residue=%u", tag, moved, dataLen, residue);
+        } else if (csw->bCSWStatus == 1) {
+            // command failed, the device stays in step so no reset is needed
+            needReset = false;
+            XHCI_Log("BOT tag=%u command failed residue=%u", tag, csw->dCSWDataResidue);
+        } else {
+            XHCI_Log("BOT tag=%u phase error status=%u", tag, csw->bCSWStatus);
+        }
+        cswMem->release();
+    }
+    if (needReset) botResetRecovery(idx);
+
+    if (ret == kIOReturnSuccess && dataIn && buffer && xferMem) {
+        // bytes the device never sent stay zero rather than stale memory
+        if (moved < dataLen) bzero((UInt8 *)xferMem->getBytesNoCopy() + moved, dataLen - moved);
+        buffer->writeBytes(bufOff, xferMem->getBytesNoCopy(), dataLen);
+    }
+    if (xferMem) xferMem->release();
+    return ret;
+}
+
+void RavynXHCIPort::botResetRecovery(UInt32 mscIndex)
+{
+    MSCDevice &m = fMSC[mscIndex];
+    UInt32 slotId = m.slotId;
+    SlotResources &sr = fSlots[slotId];
+    if (!sr.inputCtxMem || !sr.deviceCtxMem || !sr.bulkInRingMem || !sr.bulkOutRingMem) return;
+
+    // idle both rings first
+    abortFailedTD(slotId, m.bulkInEp, true);
+    abortFailedTD(slotId, m.bulkOutEp, false);
+
+    USBSetupPacket rst;
+    bzero(&rst, sizeof(rst));
+    rst.bmRequestType = 0x21;
+    rst.bRequest = 0xFF;    // bulk-only mass storage reset
+    rst.wIndex = m.iface;
+    bool resetOk = controlTransfer(slotId, rst, NULL, 0, false);
+
+    // dropping and re-adding both endpoints zeroes the host sequence numbers
+    UInt32 inDCI = m.bulkInEp * 2 + 1;
+    UInt32 outDCI = m.bulkOutEp * 2;
+    void *ic = sr.inputCtxMem->getBytesNoCopy();
+    void *dc = sr.deviceCtxMem->getBytesNoCopy();
+    dmaFlushContexts();
+    bzero(ic, inputCtxBytes());
+    inputCtl(ic)->dropFlags = (1U << inDCI) | (1U << outDCI);
+    inputCtl(ic)->addFlags = (1U << 0) | (1U << inDCI) | (1U << outDCI);
+    *inputSlot(ic) = *deviceSlot(dc);
+    *inputEp(ic, inDCI) = *deviceEp(dc, inDCI);
+    *inputEp(ic, outDCI) = *deviceEp(dc, outDCI);
+    inputEp(ic, inDCI)->dword0 &= ~0x7U;
+    inputEp(ic, outDCI)->dword0 &= ~0x7U;
+    inputEp(ic, inDCI)->trDequeuePtr = (sr.bulkInRingMem->getPhysicalAddress() +
+        (UInt64)sr.bulkInEnqueue * sizeof(XHCITRB)) | sr.bulkInCycle;
+    inputEp(ic, outDCI)->trDequeuePtr = (sr.bulkOutRingMem->getPhysicalAddress() +
+        (UInt64)sr.bulkOutEnqueue * sizeof(XHCITRB)) | sr.bulkOutCycle;
+    UInt8 cc = 0;
+    UInt32 slotOut = 0;
+    doCommand(sr.inputCtxMem->getPhysicalAddress(), 0,
+              TRB_SET_TYPE(TRB_TYPE_CONFIGURE_EP) | TRB_SET_SLOT(slotId), &cc, &slotOut, 1000);
+
+    // and the device side of both endpoints
+    bool clearIn = false, clearOut = false;
+    USBSetupPacket clear;
+    bzero(&clear, sizeof(clear));
+    clear.bmRequestType = 0x02;
+    clear.bRequest = 1;     // CLEAR_FEATURE(ENDPOINT_HALT)
+    clear.wIndex = (UInt16)(m.bulkInEp | 0x80);
+    clearIn = controlTransfer(slotId, clear, NULL, 0, false);
+    clear.wIndex = m.bulkOutEp;
+    clearOut = controlTransfer(slotId, clear, NULL, 0, false);
+    XHCI_Log("usbdisk%u reset recovery: reset %d, endpoints reconfigured cc=%u, clear in %d out %d",
+            mscIndex, resetOk, cc, clearIn, clearOut);
 }
 
 // generic bulk endpoints: one ring per endpoint, transfers queue and complete
@@ -3079,8 +3267,9 @@ IOReturn RavynXHCIPort::submitBulk(UInt32 slotId, UInt8 epNum, bool in, IOMemory
         return kIOReturnBadArgument;
     UInt32 dci = epNum * 2 + (in ? 1 : 0);
 
+    // 64KB aligned so the single trb below never crosses a 64KB boundary
     IOBufferMemoryDescriptor *bounce = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-        kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, len, fDMAMask);
+        kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, len, fDMAMask & ~0xFFFFULL);
     if (!bounce) return kIOReturnNoMemory;
     if (!in && buffer->readBytes(0, bounce->getBytesNoCopy(), len) != len) {
         bounce->release();
