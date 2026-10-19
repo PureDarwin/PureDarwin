@@ -4,14 +4,17 @@
 , nativeLd
 , appleSdk
 , libSystem
+, corefoundation
 , src
+, coreAudioSrc
 , targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
-# AudioToolbox.framework: the AudioQueue output API over /dev/dsp0
+# CoreAudio's HAL objects for /dev/dsp0, and AudioToolbox over it: AudioQueue, the output audio
+# units, PCM converters and format queries. AudioUnit.framework re-exports AudioToolbox
 stdenv.mkDerivation {
   pname = "puredarwin-audiotoolbox";
-  version = "0.1";
+  version = "0.2";
 
   inherit src;
   dontUnpack = true;
@@ -20,29 +23,60 @@ stdenv.mkDerivation {
     runHook preBuild
     CC=${darwinCrossToolchain}/bin/${targetTriple}-clang
     SDK=${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
-    $CC -isysroot $SDK -mmacosx-version-min=26.5 -O2 -Wall -c $src/AudioQueue.c -o AudioQueue.o
-    $CC -fuse-ld=${nativeLd}/bin/ld -nostdlib -isysroot $SDK -mmacosx-version-min=26.5 \
+
+    mkdir -p include/CoreAudio include/AudioToolbox cf-headers
+    cp ${coreAudioSrc}/*.h include/CoreAudio/
+    cp $src/AudioToolbox.h include/AudioToolbox/
+    ln -s ${corefoundation}/include cf-headers/CoreFoundation
+
+    CFLAGS="-isysroot $SDK -mmacosx-version-min=26.5 -O2 -Wall -Iinclude -Icf-headers -I${libSystem}/usr/include"
+    LDFLAGS="-fuse-ld=${nativeLd}/bin/ld -nostdlib -isysroot $SDK -mmacosx-version-min=26.5 \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
-      -Wl,-platform_version,macos,26.5,26.5 -L${libSystem}/usr/lib \
-      -dynamiclib -install_name /System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox \
-      -compatibility_version 1 -current_version 1 \
-      AudioQueue.o -lSystem -o AudioToolbox
+      -Wl,-platform_version,macos,26.5,26.5 -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L. \
+      -dynamiclib -compatibility_version 1 -current_version 1"
+    fw() { echo "-install_name /System/Library/Frameworks/$1.framework/Versions/A/$1"; }
+
+    $CC $CFLAGS -c ${coreAudioSrc}/AudioHardware.c -o AudioHardware.o
+    $CC $LDFLAGS $(fw CoreAudio) AudioHardware.o -lCoreFoundation -lSystem -o CoreAudio
+    ln -s CoreAudio libCoreAudio.dylib
+
+    for f in AudioQueue AudioConverter AudioUnit AudioFormat; do
+      $CC $CFLAGS -c $src/$f.c -o $f.o
+    done
+    $CC $LDFLAGS $(fw AudioToolbox) AudioQueue.o AudioConverter.o AudioUnit.o AudioFormat.o \
+      -lCoreAudio -lCoreFoundation -lSystem -o AudioToolbox
+
+    echo "// re-exports only" > empty.c
+    $CC $CFLAGS -c empty.c -o empty.o
+    $CC $LDFLAGS $(fw AudioUnit) empty.o -Wl,-reexport_library,AudioToolbox -lSystem -o AudioUnit
     runHook postBuild
   '';
 
   installPhase = ''
     runHook preInstall
-    F=$out/System/Library/Frameworks/AudioToolbox.framework
-    install -Dm755 AudioToolbox $F/Versions/A/AudioToolbox
-    ln -s A $F/Versions/Current
-    ln -s Versions/Current/AudioToolbox $F/AudioToolbox
+    for f in CoreAudio AudioToolbox AudioUnit; do
+      F=$out/System/Library/Frameworks/$f.framework
+      install -Dm755 $f $F/Versions/A/$f
+      mkdir -p $F/Versions/A/Headers
+      ln -s A $F/Versions/Current
+      ln -s Versions/Current/$f $F/$f
+      ln -s Versions/Current/Headers $F/Headers
+    done
+    cp include/CoreAudio/*.h $out/System/Library/Frameworks/CoreAudio.framework/Versions/A/Headers/
+    cp include/AudioToolbox/*.h $out/System/Library/Frameworks/AudioToolbox.framework/Versions/A/Headers/
+    mkdir -p $out/usr/include $out/usr/lib
+    ln -s ../../System/Library/Frameworks/CoreAudio.framework/Versions/A/Headers $out/usr/include/CoreAudio
+    ln -s ../../System/Library/Frameworks/AudioToolbox.framework/Versions/A/Headers $out/usr/include/AudioToolbox
+    for f in CoreAudio AudioToolbox; do
+      ln -s ../../System/Library/Frameworks/$f.framework/Versions/A/$f $out/usr/lib/lib$f.dylib
+    done
     runHook postInstall
   '';
 
   dontFixup = true;
 
   meta = {
-    description = "AudioToolbox AudioQueue output for PureDarwin";
+    description = "CoreAudio, AudioToolbox and AudioUnit for PureDarwin over /dev/dsp0";
     platforms = lib.platforms.unix;
   };
 }

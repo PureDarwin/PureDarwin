@@ -212,3 +212,138 @@ static void later(void (^block)(void)) {
 }
 
 @end
+
+SCStreamFrameInfo const SCStreamFrameInfoStatus = @"SCStreamUpdateFrameStatus";
+SCStreamFrameInfo const SCStreamFrameInfoDisplayTime = @"SCStreamUpdateFrameDisplayTime";
+SCStreamFrameInfo const SCStreamFrameInfoScaleFactor = @"SCStreamUpdateFrameScaleFactor";
+SCStreamFrameInfo const SCStreamFrameInfoContentScale = @"SCStreamUpdateFrameContentScale";
+SCStreamFrameInfo const SCStreamFrameInfoContentRect = @"SCStreamUpdateFrameContentRect";
+SCStreamFrameInfo const SCStreamFrameInfoBoundingRect = @"SCStreamUpdateFrameBoundingRect";
+SCStreamFrameInfo const SCStreamFrameInfoScreenRect = @"SCStreamUpdateFrameScreenRect";
+SCStreamFrameInfo const SCStreamFrameInfoDirtyRects = @"SCStreamUpdateFrameDirtyRects";
+SCStreamFrameInfo const SCStreamFrameInfoPresenterOverlayContentRect = @"SCStreamUpdateFramePresenterOverlayContentRect";
+
+@implementation SCContentSharingPickerConfiguration {
+    SCContentSharingPickerMode _allowedPickerModes;
+    NSArray *_excludedWindowIDs;
+    NSArray *_excludedBundleIDs;
+    BOOL _allowsChangingSelectedContent;
+}
+
+- (void)dealloc {
+    [_excludedWindowIDs release];
+    [_excludedBundleIDs release];
+    [super dealloc];
+}
+
+- (id)copyWithZone:(NSZone *)zone {
+    SCContentSharingPickerConfiguration *copy = [[SCContentSharingPickerConfiguration alloc] init];
+    copy->_allowedPickerModes = _allowedPickerModes;
+    copy->_excludedWindowIDs = [_excludedWindowIDs copy];
+    copy->_excludedBundleIDs = [_excludedBundleIDs copy];
+    copy->_allowsChangingSelectedContent = _allowsChangingSelectedContent;
+    return copy;
+}
+
+- (SCContentSharingPickerMode)allowedPickerModes { return _allowedPickerModes; }
+- (void)setAllowedPickerModes:(SCContentSharingPickerMode)modes { _allowedPickerModes = modes; }
+- (NSArray *)excludedWindowIDs { return _excludedWindowIDs; }
+
+- (void)setExcludedWindowIDs:(NSArray *)ids {
+    [_excludedWindowIDs autorelease];
+    _excludedWindowIDs = [ids copy];
+}
+
+- (NSArray *)excludedBundleIDs { return _excludedBundleIDs; }
+
+- (void)setExcludedBundleIDs:(NSArray *)ids {
+    [_excludedBundleIDs autorelease];
+    _excludedBundleIDs = [ids copy];
+}
+
+- (BOOL)allowsChangingSelectedContent { return _allowsChangingSelectedContent; }
+- (void)setAllowsChangingSelectedContent:(BOOL)flag { _allowsChangingSelectedContent = flag; }
+
+@end
+
+@interface NSObject (SCContentSharingPickerObserver)
+- (void)contentSharingPickerStartDidFailWithError:(NSError *)error;
+@end
+
+// the system picker has nothing to show, so presenting it fails for every observer
+@implementation SCContentSharingPicker {
+    SCContentSharingPickerConfiguration *_defaultConfiguration;
+    NSNumber *_maximumStreamCount;
+    // observers are not retained, as on macOS
+    NSMutableArray *_observers;
+    BOOL _active;
+}
+
++ (SCContentSharingPicker *)sharedPicker {
+    static SCContentSharingPicker *shared;
+    static dispatch_once_t once;
+
+    dispatch_once(&once, ^{
+        shared = [[SCContentSharingPicker alloc] init];
+        shared->_observers = [[NSMutableArray alloc] init];
+        shared->_defaultConfiguration = [[SCContentSharingPickerConfiguration alloc] init];
+    });
+    return shared;
+}
+
+- (SCContentSharingPickerConfiguration *)defaultConfiguration { return _defaultConfiguration; }
+
+- (void)setDefaultConfiguration:(SCContentSharingPickerConfiguration *)configuration {
+    [_defaultConfiguration autorelease];
+    _defaultConfiguration = [configuration copy];
+}
+
+- (NSNumber *)maximumStreamCount { return _maximumStreamCount; }
+
+- (void)setMaximumStreamCount:(NSNumber *)count {
+    [_maximumStreamCount autorelease];
+    _maximumStreamCount = [count retain];
+}
+
+- (BOOL)isActive { return _active; }
+- (void)setActive:(BOOL)flag { _active = flag; }
+
+- (void)addObserver:(id)observer {
+    @synchronized(self) {
+        [_observers addObject:[NSValue valueWithNonretainedObject:observer]];
+    }
+}
+
+- (void)removeObserver:(id)observer {
+    @synchronized(self) {
+        [_observers removeObject:[NSValue valueWithNonretainedObject:observer]];
+    }
+}
+
+- (void)setConfiguration:(SCContentSharingPickerConfiguration *)pickerConfig forStream:(SCStream *)stream {
+}
+
+- (void)present {
+    NSArray *observers;
+
+    @synchronized(self) {
+        NSMutableArray *list = [[NSMutableArray alloc] init];
+        for (NSValue *value in _observers)
+            [list addObject:[value nonretainedObjectValue]];
+        observers = list;
+    }
+    later(^{
+        NSError *error = streamError(SCStreamErrorUserDeclined, @"Screen capture is not available on this system.");
+        for (id observer in observers) {
+            if ([observer respondsToSelector:@selector(contentSharingPickerStartDidFailWithError:)])
+                [observer contentSharingPickerStartDidFailWithError:error];
+        }
+        [observers release];
+    });
+}
+
+- (void)presentPickerUsingContentStyle:(NSInteger)contentStyle { [self present]; }
+- (void)presentPickerForStream:(SCStream *)stream { [self present]; }
+- (void)presentPickerForStream:(SCStream *)stream usingContentStyle:(NSInteger)contentStyle { [self present]; }
+
+@end

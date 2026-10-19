@@ -109,3 +109,43 @@ typedef NS_ENUM(NSInteger, SCStreamErrorCode) {
 - (void)startCaptureWithCompletionHandler:(void (^)(NSError *error))completionHandler;
 - (void)stopCaptureWithCompletionHandler:(void (^)(NSError *error))completionHandler;
 @end
+
+typedef NSString *SCStreamFrameInfo;
+FOUNDATION_EXPORT SCStreamFrameInfo const SCStreamFrameInfoStatus;
+FOUNDATION_EXPORT SCStreamFrameInfo const SCStreamFrameInfoDisplayTime;
+FOUNDATION_EXPORT SCStreamFrameInfo const SCStreamFrameInfoScaleFactor;
+FOUNDATION_EXPORT SCStreamFrameInfo const SCStreamFrameInfoContentScale;
+FOUNDATION_EXPORT SCStreamFrameInfo const SCStreamFrameInfoContentRect;
+FOUNDATION_EXPORT SCStreamFrameInfo const SCStreamFrameInfoBoundingRect;
+FOUNDATION_EXPORT SCStreamFrameInfo const SCStreamFrameInfoScreenRect;
+FOUNDATION_EXPORT SCStreamFrameInfo const SCStreamFrameInfoDirtyRects;
+FOUNDATION_EXPORT SCStreamFrameInfo const SCStreamFrameInfoPresenterOverlayContentRect;
+
+typedef NS_OPTIONS(NSUInteger, SCContentSharingPickerMode) {
+    SCContentSharingPickerModeSingleWindow = 1 << 0,
+    SCContentSharingPickerModeMultipleWindows = 1 << 1,
+    SCContentSharingPickerModeSingleApplication = 1 << 2,
+    SCContentSharingPickerModeMultipleApplications = 1 << 3,
+    SCContentSharingPickerModeSingleDisplay = 1 << 4,
+};
+
+@interface SCContentSharingPickerConfiguration : NSObject <NSCopying>
+@property SCContentSharingPickerMode allowedPickerModes;
+@property (copy) NSArray *excludedWindowIDs;
+@property (copy) NSArray *excludedBundleIDs;
+@property BOOL allowsChangingSelectedContent;
+@end
+
+@interface SCContentSharingPicker : NSObject
++ (SCContentSharingPicker *)sharedPicker;
+@property (copy) SCContentSharingPickerConfiguration *defaultConfiguration;
+@property (retain) NSNumber *maximumStreamCount;
+@property (getter=isActive) BOOL active;
+- (void)addObserver:(id)observer;
+- (void)removeObserver:(id)observer;
+- (void)setConfiguration:(SCContentSharingPickerConfiguration *)pickerConfig forStream:(SCStream *)stream;
+- (void)present;
+- (void)presentPickerUsingContentStyle:(NSInteger)contentStyle;
+- (void)presentPickerForStream:(SCStream *)stream;
+- (void)presentPickerForStream:(SCStream *)stream usingContentStyle:(NSInteger)contentStyle;
+@end
