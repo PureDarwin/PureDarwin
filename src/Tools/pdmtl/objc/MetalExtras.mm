@@ -435,6 +435,7 @@ static size_t constantBytes(NSUInteger type) {
 #import <Metal/MTLRenderPipeline.h>
 #include <indium/pd-sync.hpp>
 #include <mach/mach_time.h>
+#include <IOKit/IOKitLib.h>
 #include <condition_variable>
 #include <mutex>
 #include <vector>
@@ -699,8 +700,31 @@ PD_FENCES(MTLRenderCommandEncoderInternal)
 - (uint64_t)maxTransferRate {
   return 0;
 }
+// the registry entry of the PCI display device the window server draws through, so callers can
+// match the Metal device to the IOKit GPU and to CGDirectDisplayCopyCurrentMetalDevice
 - (uint64_t)registryID {
-  return 0;
+  static uint64_t cached;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    io_iterator_t iterator = IO_OBJECT_NULL;
+    if (IOServiceGetMatchingServices(MACH_PORT_NULL, IOServiceMatching("IOPCIDevice"), &iterator) != KERN_SUCCESS)
+      return;
+    io_registry_entry_t entry;
+    while (cached == 0 && (entry = IOIteratorNext(iterator)) != IO_OBJECT_NULL) {
+      CFTypeRef classCode = IORegistryEntryCreateCFProperty(entry, CFSTR("class-code"), kCFAllocatorDefault, 0);
+      if (classCode != NULL && CFGetTypeID(classCode) == CFDataGetTypeID() && CFDataGetLength((CFDataRef)classCode) >= 4) {
+        uint32_t code = 0;
+        CFDataGetBytes((CFDataRef)classCode, CFRangeMake(0, 4), (UInt8 *)&code);
+        if ((code >> 16) == 0x03)
+          IORegistryEntryGetRegistryEntryID(entry, &cached);
+      }
+      if (classCode != NULL)
+        CFRelease(classCode);
+      IOObjectRelease(entry);
+    }
+    IOObjectRelease(iterator);
+  });
+  return cached;
 }
 - (uint32_t)peerGroupID {
   return 0;
@@ -1008,7 +1032,7 @@ typedef struct {
 } PDSizeAndAlign;
 
 static const NSUInteger pdHeapAlign = 256;
-static char pdHeapKey, pdHeapOffsetKey, pdAliasableKey;
+static char pdHeapKey, pdHeapOffsetKey, pdAliasableKey, pdSurfaceKey;
 
 static NSUInteger pdAlignUp(NSUInteger n, NSUInteger a) {
   return (n + a - 1) & ~(a - 1);
@@ -1152,6 +1176,15 @@ static NSUInteger pdAlignUp(NSUInteger n, NSUInteger a) {
 }
 @end
 
+@interface PDSurfaceHolder : NSObject {
+@public
+  void *_surface;
+  NSUInteger _plane;
+}
+- (id)surface;
+- (NSUInteger)plane;
+@end
+
 @implementation MTLTextureInternal (PDResource)
 - (void)makeAliasable {
   objc_setAssociatedObject(self, &pdAliasableKey, @YES, OBJC_ASSOCIATION_RETAIN);
@@ -1164,10 +1197,138 @@ static NSUInteger pdAlignUp(NSUInteger n, NSUInteger a) {
   return 1;
 }
 - (id)iosurface {
-  return nil;
+  return [(PDSurfaceHolder *)objc_getAssociatedObject(self, &pdSurfaceKey) surface];
 }
 - (NSUInteger)iosurfacePlane {
-  return 0;
+  return [(PDSurfaceHolder *)objc_getAssociatedObject(self, &pdSurfaceKey) plane];
+}
+@end
+
+// IOSurface-backed textures: the arena copy is refreshed when the surface seed moves and written back after a GPU write
+#include <dlfcn.h>
+
+typedef struct PDSurfaceFns {
+  void *(*retain)(void *);
+  void (*release)(void *);
+  int (*lock)(void *, uint32_t, uint32_t *);
+  int (*unlock)(void *, uint32_t, uint32_t *);
+  uint32_t (*seed)(void *);
+  size_t (*planeCount)(void *);
+  void *(*base)(void *);
+  size_t (*bpr)(void *);
+  size_t (*height)(void *);
+  void *(*planeBase)(void *, size_t);
+  size_t (*planeBpr)(void *, size_t);
+  size_t (*planeHeight)(void *, size_t);
+} PDSurfaceFns;
+
+static const PDSurfaceFns *pdSurfaceFns(void) {
+  static PDSurfaceFns f;
+  static dispatch_once_t once;
+  static BOOL ok;
+  dispatch_once(&once, ^{
+    void *h = dlopen("/System/Library/Frameworks/IOSurface.framework/IOSurface", RTLD_LAZY);
+    if (!h) h = RTLD_DEFAULT;
+    f.retain = (void *(*)(void *))dlsym(RTLD_DEFAULT, "CFRetain");
+    f.release = (void (*)(void *))dlsym(RTLD_DEFAULT, "CFRelease");
+    f.lock = (int (*)(void *, uint32_t, uint32_t *))dlsym(h, "IOSurfaceLock");
+    f.unlock = (int (*)(void *, uint32_t, uint32_t *))dlsym(h, "IOSurfaceUnlock");
+    f.seed = (uint32_t (*)(void *))dlsym(h, "IOSurfaceGetSeed");
+    f.planeCount = (size_t (*)(void *))dlsym(h, "IOSurfaceGetPlaneCount");
+    f.base = (void *(*)(void *))dlsym(h, "IOSurfaceGetBaseAddress");
+    f.bpr = (size_t (*)(void *))dlsym(h, "IOSurfaceGetBytesPerRow");
+    f.height = (size_t (*)(void *))dlsym(h, "IOSurfaceGetHeight");
+    f.planeBase = (void *(*)(void *, size_t))dlsym(h, "IOSurfaceGetBaseAddressOfPlane");
+    f.planeBpr = (size_t (*)(void *, size_t))dlsym(h, "IOSurfaceGetBytesPerRowOfPlane");
+    f.planeHeight = (size_t (*)(void *, size_t))dlsym(h, "IOSurfaceGetHeightOfPlane");
+    ok = f.retain && f.release && f.lock && f.unlock && f.seed && f.planeCount && f.base && f.bpr && f.height &&
+         f.planeBase && f.planeBpr && f.planeHeight;
+  });
+  return ok ? &f : NULL;
+}
+
+@implementation PDSurfaceHolder
+- (id)surface {
+  return (__bridge id)_surface;
+}
+- (NSUInteger)plane {
+  return _plane;
+}
+- (void)dealloc {
+  if (_surface) pdSurfaceFns()->release(_surface);
+  [super dealloc];
+}
+@end
+
+namespace {
+struct PDSurfaceState {
+  const PDSurfaceFns *f;
+  void *surface;
+  size_t plane, rows;
+  uint32_t seen = UINT32_MAX;
+  ~PDSurfaceState() { f->release(surface); }
+
+  uint8_t *rowsAt(size_t *bpr, size_t *height) {
+    if (f->planeCount(surface) == 0) {
+      *bpr = f->bpr(surface), *height = f->height(surface);
+      return (uint8_t *)f->base(surface);
+    }
+    *bpr = f->planeBpr(surface, plane), *height = f->planeHeight(surface, plane);
+    return (uint8_t *)f->planeBase(surface, plane);
+  }
+
+  // copies min(rows, heights) rows of min(row bytes) between surface and arena
+  void copy(uint8_t *tex, size_t texBpr, bool toTexture) {
+    size_t bpr, height;
+    uint8_t *src = rowsAt(&bpr, &height);
+    size_t n = std::min(rows, height), w = std::min(bpr, texBpr);
+    for (size_t y = 0; y < n; y++) {
+      if (toTexture) memcpy(tex + y * texBpr, src + y * bpr, w);
+      else memcpy(src + y * bpr, tex + y * texBpr, w);
+    }
+  }
+};
+}
+
+@implementation MTLDeviceInternal (PDSurfaces)
+- (id<MTLTexture>)newTextureWithDescriptor:(MTLTextureDescriptor *)descriptor iosurface:(struct __IOSurface *)iosurface
+                                     plane:(NSUInteger)plane {
+  const PDSurfaceFns *f = pdSurfaceFns();
+  if (!f || !iosurface) return nil;
+  size_t planes = f->planeCount(iosurface);
+  if ((planes == 0 && plane != 0) || (planes != 0 && plane >= planes)) return nil;
+  MTLTextureInternal *t = (MTLTextureInternal *)[self newTextureWithDescriptor:descriptor];
+  if (!t) return nil;
+
+  auto state = std::make_shared<PDSurfaceState>();
+  state->f = f, state->surface = f->retain(iosurface), state->plane = plane, state->rows = descriptor.height;
+  auto link = std::make_shared<IndiumPD::SurfaceLink>();
+  link->pull = [state](uint8_t *bytes, size_t bpr) {
+    uint32_t seed = state->f->seed(state->surface);
+    if (seed == state->seen) return false;
+    state->f->lock(state->surface, 1, NULL);
+    state->copy(bytes, bpr, true);
+    state->f->unlock(state->surface, 1, NULL);
+    state->seen = seed;
+    return true;
+  };
+  link->push = [state](const uint8_t *bytes, size_t bpr) {
+    state->f->lock(state->surface, 0, NULL);
+    state->copy(const_cast<uint8_t *>(bytes), bpr, false);
+    uint32_t seed = 0;
+    state->f->unlock(state->surface, 0, &seed);
+    state->seen = seed;
+  };
+  if (!IndiumPD::linkSurface(t.texture, link)) {
+    [t release];
+    return nil;
+  }
+
+  PDSurfaceHolder *holder = [PDSurfaceHolder new];
+  holder->_surface = f->retain(iosurface), holder->_plane = plane;
+  objc_setAssociatedObject(t, &pdSurfaceKey, holder, OBJC_ASSOCIATION_RETAIN);
+  [holder release];
+  return t;
 }
 @end
 

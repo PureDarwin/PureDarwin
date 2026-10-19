@@ -3,6 +3,8 @@
 #include <mach/mach_time.h>
 #include <pthread.h>
 
+extern CGDirectDisplayID CGMainDisplayID(void);
+
 // the callback runs on the link's own thread at 60 Hz, as on macOS, so an app may block its main thread
 // (MoltenVK's vkcube renders from it). Times are host time and a 60 Hz video clock
 
@@ -20,6 +22,7 @@ enum {
     volatile BOOL _running;
     // a stop then a start makes a new thread, the old one sees the generation change and leaves
     volatile unsigned _generation;
+    CGDirectDisplayID _display;
 }
 
 @end
@@ -91,7 +94,47 @@ CVReturn CVDisplayLinkCreateWithActiveCGDisplays(CVDisplayLinkRef *result) {
         return kCVReturnInvalidArgument;
 
     *result = [[CVDisplayLink alloc] init];
-    return *result != nil ? kCVReturnSuccess : kCVReturnAllocationFailed;
+    if (*result == nil)
+        return kCVReturnAllocationFailed;
+    (*result)->_display = CGMainDisplayID();
+    return kCVReturnSuccess;
+}
+
+CVReturn CVDisplayLinkCreateWithCGDisplay(CGDirectDisplayID displayID, CVDisplayLinkRef *result) {
+    if (result == NULL)
+        return kCVReturnInvalidArgument;
+    // every display runs off the one 60 Hz clock
+    if (displayID != CGMainDisplayID()) {
+        *result = nil;
+        return kCVReturnInvalidDisplay;
+    }
+    return CVDisplayLinkCreateWithActiveCGDisplays(result);
+}
+
+CGDirectDisplayID CVDisplayLinkGetCurrentCGDisplay(CVDisplayLinkRef self) {
+    return self != nil ? self->_display : 0;
+}
+
+CVReturn CVDisplayLinkSetCurrentCGDisplay(CVDisplayLinkRef self, CGDirectDisplayID displayID) {
+    if (self == nil)
+        return kCVReturnInvalidArgument;
+    if (displayID != CGMainDisplayID())
+        return kCVReturnInvalidDisplay;
+    self->_display = displayID;
+    return kCVReturnSuccess;
+}
+
+CVTime CVDisplayLinkGetNominalOutputVideoRefreshPeriod(CVDisplayLinkRef self) {
+    if (self == nil)
+        return (CVTime){ 0, 0, kCVTimeIsIndefinite };
+    return (CVTime){ pdRefreshPeriod, pdTimeScale, 0 };
+}
+
+// the link ticks on its timer at the nominal period, so that is also the measured one, in seconds
+double CVDisplayLinkGetActualOutputVideoRefreshPeriod(CVDisplayLinkRef self) {
+    if (self == nil)
+        return 0;
+    return (double)pdRefreshPeriod / (double)pdTimeScale;
 }
 
 CVReturn CVDisplayLinkSetOutputCallback(CVDisplayLinkRef self,

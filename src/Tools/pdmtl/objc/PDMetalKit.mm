@@ -28,6 +28,7 @@ struct wl_surface;
 
 @interface CAMetalDrawableInternal : MTLDrawableInternal <CAMetalDrawable>
 - (instancetype)initWithKitDrawable:(std::shared_ptr<IndiumKit::Drawable>)drawable layer:(CAMetalLayer *)layer;
+- (void)_pdUseTexture:(id<MTLTexture>)texture;
 @end
 
 @implementation CAMetalDrawableInternal {
@@ -55,6 +56,12 @@ struct wl_surface;
   return _texture;
 }
 
+// an offscreen drawable hands out the layer's own texture object, which knows its IOSurface
+- (void)_pdUseTexture:(id<MTLTexture>)texture {
+  [_texture release];
+  _texture = [texture retain];
+}
+
 - (CAMetalLayer *)layer {
   return _layer;
 }
@@ -76,16 +83,41 @@ static VkSurfaceKHR wayland_surface(void *display, void *surface) {
   return s;
 }
 
-// a drawable of a layer in no window: a plain texture, presenting it shows nothing
+// a drawable of a layer in no window: a texture over an IOSurface when it can be, presenting it makes the
+// surface the layer's contents so a CARenderer tree (a compositor's layers) shows it
 class OffscreenDrawable: public IndiumKit::Drawable {
 public:
-  OffscreenDrawable(std::shared_ptr<Indium::Texture> texture): _texture(texture) {}
+  OffscreenDrawable(std::shared_ptr<Indium::Texture> texture, CAMetalLayer *layer, id surface)
+      : _texture(texture), _layer([layer retain]), _surface([surface retain]) {}
+  ~OffscreenDrawable() { [_layer release], [_surface release]; }
   std::shared_ptr<Indium::Texture> texture() override { return _texture; }
-  void present() override {}
+  void present() override {
+    if (_surface && _layer.contents != _surface) _layer.contents = _surface;
+  }
 
 private:
   std::shared_ptr<Indium::Texture> _texture;
+  CAMetalLayer *_layer;
+  id _surface;
 };
+
+// a BGRA IOSurface the size of the drawable, nil without IOSurface.framework
+static id newOffscreenSurface(NSUInteger width, NSUInteger height) {
+  static auto create = (id (*)(NSDictionary *))dlsym(RTLD_DEFAULT, "IOSurfaceCreate");
+  if (!create) {
+    dlopen("/System/Library/Frameworks/IOSurface.framework/IOSurface", RTLD_LAZY | RTLD_GLOBAL);
+    create = (id (*)(NSDictionary *))dlsym(RTLD_DEFAULT, "IOSurfaceCreate");
+  }
+  if (!create) return nil;
+  NSDictionary *props = @{ @"IOSurfaceWidth": @(width), @"IOSurfaceHeight": @(height), @"IOSurfaceBytesPerElement": @4,
+                           @"IOSurfaceBytesPerRow": @(width * 4), @"IOSurfacePixelFormat": @((unsigned)'BGRA') };
+  return create(props);
+}
+
+@interface NSObject (PDSurfaceTextures)
+- (id<MTLTexture>)newTextureWithDescriptor:(MTLTextureDescriptor *)d iosurface:(id)surface plane:(NSUInteger)plane;
+- (id)iosurface;
+@end
 
 static char offscreenKey;
 static bool glBackend() {
@@ -142,15 +174,25 @@ static void cancelAppKitFrame(void *context,void *pixels) {
     MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:format width:(NSUInteger)size.width
                                                                                  height:(NSUInteger)size.height mipmapped:NO];
     d.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
-    d.storageMode = MTLStorageModePrivate;
-    t = (MTLTextureInternal *)[device newTextureWithDescriptor:d];
+    t = nil;
+    if (format == MTLPixelFormatBGRA8Unorm) {
+      id surface = newOffscreenSurface(d.width, d.height);
+      if (surface) t = (MTLTextureInternal *)[(id)device newTextureWithDescriptor:d iosurface:surface plane:0];
+      [surface release];
+    }
+    if (!t) {
+      d.storageMode = MTLStorageModePrivate;
+      t = (MTLTextureInternal *)[device newTextureWithDescriptor:d];
+    }
     if (!t)
       return nil;
     objc_setAssociatedObject(layer, &offscreenKey, t, OBJC_ASSOCIATION_RETAIN);
     [t release];
   }
-  return [[[CAMetalDrawableInternal alloc] initWithKitDrawable:std::make_shared<OffscreenDrawable>(t.texture) layer:layer]
-      autorelease];
+  CAMetalDrawableInternal *d = [[CAMetalDrawableInternal alloc]
+      initWithKitDrawable:std::make_shared<OffscreenDrawable>(t.texture, layer, [(id)t iosurface]) layer:layer];
+  [d _pdUseTexture:t];
+  return [d autorelease];
 }
 
 - (instancetype)initWithGLFWWindow:(void *)window layer:(CAMetalLayer *)layer {

@@ -140,6 +140,9 @@ stdenv.mkDerivation {
     # textures, samplers and depth: a textured cube on Indium's texturing shaders (Apple sample code, MIT)
     $CC $OBJC $APPKIT -c $O/samples/texcube/main.m -o texcube.o
     $CC $LINK $APPKITLIBS texcube.o MetalKit Metal -lFoundation -lCoreFoundation -lobjc -lSystem -o texcube
+    # Metal textures over IOSurfaces shared between processes, and offscreen CAMetalLayer drawables
+    $CC $OBJC $APPKIT -c $O/samples/iosurface/main.m -o metal-iosurface.o
+    $CC $LINK $APPKITLIBS metal-iosurface.o MetalKit Metal -lFoundation -lCoreFoundation -lobjc -lSystem -o metal-iosurface-test
 
     # metal-cpp: PD CF's CF_ENUM spelling trips C++'s elaborated-enum check, and its weak_import constants
     # that PD's Metal and Foundation lack are left to dynamic lookup (metal-cpp checks their addresses)
@@ -184,6 +187,7 @@ stdenv.mkDerivation {
     install -Dm644 ${indium}/test/texturing/shaders.metallib $C/Resources/default.metallib
     install -Dm644 objc/samples/triangle/default.metallib $B/Resources/default.metallib
     mkdir -p $out/usr/local/bin
+    install -Dm755 metal-iosurface-test $out/usr/local/bin/metal-iosurface-test
     cat > $out/usr/local/bin/metal-objc-triangle <<'EOF'
     #!/bin/sh
     # apple's AAPLRenderer triangle through PD's ObjC Metal, on venus, Wayland when WAYLAND_DISPLAY is set

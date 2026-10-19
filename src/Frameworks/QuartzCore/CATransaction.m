@@ -1,4 +1,5 @@
 #import <QuartzCore/CATransaction.h>
+#include <dispatch/dispatch.h>
 #import <QuartzCore/CALayerContext.h>
 #import <Foundation/NSString.h>
 #import <Foundation/NSNumber.h>
@@ -61,7 +62,9 @@ static CATransactionGroup *createImplicitTransactionGroupIfNeeded(){
    return [self valueForKey:kCATransactionAnimationTimingFunction];
 }
 
-//+(void (^)(void))completionBlock;
++(void (^)(void))completionBlock {
+   return [self valueForKey:kCATransactionCompletionBlock];
+}
 
 +valueForKey:(NSString *)key {
    CATransactionGroup *group=createImplicitTransactionGroupIfNeeded();
@@ -74,10 +77,13 @@ static CATransactionGroup *createImplicitTransactionGroupIfNeeded(){
 }
 
 +(void)setAnimationTimingFunction:(CAMediaTimingFunction *)value {
-   [self setValue:value forKey:kCATransactionAnimationDuration];
+   [self setValue:value forKey:kCATransactionAnimationTimingFunction];
 }
 
-//+(void)setCompletionBlock:(void (^)(void))value;
++(void)setCompletionBlock:(void (^)(void))value {
+   [self setValue:[[value copy] autorelease] forKey:kCATransactionCompletionBlock];
+}
+
 +(void)setDisableActions:(BOOL)value {
    [self setValue:[NSNumber numberWithBool:value] forKey:kCATransactionDisableActions];
 }
@@ -92,10 +98,25 @@ static CATransactionGroup *createImplicitTransactionGroupIfNeeded(){
    CATransactionGroup *group=[[CATransactionGroup alloc] init];
    
    [transactionStack() addObject:group];
+   [group release];
 }
 
+// nothing animates for long here, so the completion block runs once the changes are in
 +(void)commit {
+   CATransactionGroup *group=[[transactionStack() lastObject] retain];
+   void (^completion)(void)=[[group valueForKey:kCATransactionCompletionBlock] retain];
+
    [transactionStack() removeLastObject];
+   [group release];
+   // the outermost commit is when the changes go to whoever presents them
+   if([transactionStack() count]==0)
+    [NSClassFromString(@"CALayerContext") performSelector:@selector(_transactionCommitted)];
+   if(completion!=nil){
+    dispatch_async(dispatch_get_main_queue(),^{
+     completion();
+     [completion release];
+    });
+   }
 }
 
 +(void)flush {

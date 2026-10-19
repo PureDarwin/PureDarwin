@@ -3,6 +3,37 @@
 #import <QuartzCore/CALayerContext.h>
 #import <QuartzCore/CATransaction.h>
 #import <Foundation/NSDictionary.h>
+#include <stdio.h>
+#include <os/lock.h>
+#include <dlfcn.h>
+#include <string.h>
+#import <objc/runtime.h>
+#include <stdlib.h>
+
+// PD_CA_TRACE=1 logs what clients hand the layer tree, for porting apps that draw nothing
+static int caTrace(void) {
+   static int on=-1;
+
+   if(on<0)
+    on=getenv("PD_CA_TRACE")!=NULL;
+   return on;
+}
+
+// image and offset of a caller, for the trace
+static const char *caCaller(void *address) {
+   static __thread char text[256];
+   Dl_info info;
+
+   if(dladdr(address,&info)==0 || info.dli_fname==NULL)
+    return "?";
+   snprintf(text,sizeof(text),"%s+0x%lx",strrchr(info.dli_fname,'/') ? strrchr(info.dli_fname,'/')+1 : info.dli_fname,(unsigned long)((char *)address-(char *)info.dli_fbase));
+   return text;
+}
+
+CADynamicRange const CADynamicRangeAutomatic=@"automatic";
+CADynamicRange const CADynamicRangeStandard=@"standard";
+CADynamicRange const CADynamicRangeConstrainedHigh=@"constrainedHigh";
+CADynamicRange const CADynamicRangeHigh=@"high";
 
 NSString * const kCAFilterLinear=@"linear";
 NSString * const kCAFilterNearest=@"nearest";
@@ -46,16 +77,49 @@ NSString * const kCAFilterTrilinear=@"trilinear";
    return _superlayer;
 }
 
+// clients change sublayers and contents from their compositor threads while the renderer walks
+// the tree on the main thread, so swaps are locked and readers get their own reference
+static os_unfair_lock treeLock=OS_UNFAIR_LOCK_INIT;
+
+static id lockedSwap(id *slot,id value) {
+   id old;
+
+   os_unfair_lock_lock(&treeLock);
+   old=*slot;
+   *slot=value;
+   os_unfair_lock_unlock(&treeLock);
+   return old;
+}
+
+static id lockedRead(id *slot) {
+   id value;
+
+   os_unfair_lock_lock(&treeLock);
+   value=[*slot retain];
+   os_unfair_lock_unlock(&treeLock);
+   return [value autorelease];
+}
+
 -(NSArray *)sublayers {
-   return _sublayers;
+   return lockedRead(&_sublayers);
 }
 
 -(void)setSublayers:(NSArray *)sublayers {
-   sublayers=[sublayers copy];
-   [_sublayers release];
-   _sublayers=sublayers;
+   if(caTrace())
+    fprintf(stderr,"PD-CA %p setSublayers: %lu from %s\n",self,(unsigned long)[sublayers count],caCaller(__builtin_return_address(0)));
+   NSArray *old=lockedSwap(&_sublayers,[sublayers copy]);
+
+   // layers dropped here no longer point back at this one, and leave the context so their textures
+   // are deleted on its next render, as removeFromSuperlayer does
+   for(CALayer *layer in old)
+    if(layer->_superlayer==self && [_sublayers indexOfObjectIdenticalTo:layer]==NSNotFound){
+     layer->_superlayer=nil;
+     [layer _setContext:nil];
+    }
+   [old release];
    [_sublayers makeObjectsPerformSelector:@selector(_setSuperLayer:) withObject:self];
    [_sublayers makeObjectsPerformSelector:@selector(_setContext:) withObject:_context];
+   [self _setNeedsRender];
 }
 
 -(id)delegate {
@@ -71,7 +135,10 @@ NSString * const kCAFilterTrilinear=@"trilinear";
 }
 
 -(void)setAnchorPoint:(CGPoint)value {
+   if(CGPointEqualToPoint(_anchorPoint,value))
+    return;
    _anchorPoint=value;
+   [self _setNeedsRender];
 }
 
 -(CGPoint)position {
@@ -79,6 +146,8 @@ NSString * const kCAFilterTrilinear=@"trilinear";
 }
 
 -(void)setPosition:(CGPoint)value {
+   if(CGPointEqualToPoint(_position,value))
+    return;
    CAAnimation *animation=[self animationForKey:@"position"];
       
    if(animation==nil && ![CATransaction disableActions]){
@@ -89,6 +158,7 @@ NSString * const kCAFilterTrilinear=@"trilinear";
    }
    
    _position=value;
+   [self _setNeedsRender];
 }
 
 -(CGRect)bounds {
@@ -96,6 +166,10 @@ NSString * const kCAFilterTrilinear=@"trilinear";
 }
 
 -(void)setBounds:(CGRect)value {
+   if(caTrace())
+    fprintf(stderr,"PD-CA %p setBounds: %g %g %g %g\n",self,value.origin.x,value.origin.y,value.size.width,value.size.height);
+   if(CGRectEqualToRect(_bounds,value))
+    return;
    CAAnimation *animation=[self animationForKey:@"bounds"];
    
    if(animation==nil && ![CATransaction disableActions]){
@@ -106,6 +180,7 @@ NSString * const kCAFilterTrilinear=@"trilinear";
    }
    
    _bounds=value;
+   [self _setNeedsRender];
 }
 
 -(CGRect)frame {
@@ -149,6 +224,7 @@ NSString * const kCAFilterTrilinear=@"trilinear";
    }
 
    _opacity=value;
+   [self _setNeedsRender];
 }
 
 -(BOOL)opaque {
@@ -160,13 +236,14 @@ NSString * const kCAFilterTrilinear=@"trilinear";
 }
 
 -(id)contents {
-   return _contents;
+   return lockedRead(&_contents);
 }
 
 -(void)setContents:(id)value {
-   value=[value retain];
-   [_contents release];
-   _contents=value;
+   if(caTrace())
+    fprintf(stderr,"PD-CA %p setContents: %s %p from %s\n",self,value ? object_getClassName(value) : "nil",value,caCaller(__builtin_return_address(0)));
+   [lockedSwap(&_contents,[value retain]) release];
+   [self _setNeedsRender];
 }
 
 -(CATransform3D)transform {
@@ -175,6 +252,7 @@ NSString * const kCAFilterTrilinear=@"trilinear";
 
 -(void)setTransform:(CATransform3D)value {
    _transform=value;
+   [self _setNeedsRender];
 }
 
 -(CATransform3D)sublayerTransform {
@@ -183,6 +261,7 @@ NSString * const kCAFilterTrilinear=@"trilinear";
 
 -(void)setSublayerTransform:(CATransform3D)value {
    _sublayerTransform=value;
+   [self _setNeedsRender];
 }
 
 -(NSString *)minificationFilter {
@@ -213,6 +292,23 @@ NSString * const kCAFilterTrilinear=@"trilinear";
    value=[value copy];
    [_contentsGravity release];
    _contentsGravity=value;
+   [self _setNeedsRender];
+}
+
+-(BOOL)shouldRasterize {
+   return _shouldRasterize;
+}
+
+-(void)setShouldRasterize:(BOOL)value {
+   _shouldRasterize=value;
+}
+
+-(CGFloat)rasterizationScale {
+   return _rasterizationScale>0 ? _rasterizationScale : 1;
+}
+
+-(void)setRasterizationScale:(CGFloat)value {
+   _rasterizationScale=value;
 }
 
 -(CGFloat)contentsScale {
@@ -233,6 +329,181 @@ NSString * const kCAFilterTrilinear=@"trilinear";
    _magnificationFilter=value;
 }
 
+-(BOOL)isHidden {
+   return _hidden;
+}
+
+-(void)setHidden:(BOOL)value {
+   _hidden=value;
+   [self _setNeedsRender];
+}
+
+-(BOOL)masksToBounds {
+   return _masksToBounds;
+}
+
+-(void)setMasksToBounds:(BOOL)value {
+   _masksToBounds=value;
+   [self _setNeedsRender];
+}
+
+-(BOOL)isGeometryFlipped {
+   return _geometryFlipped;
+}
+
+-(void)setGeometryFlipped:(BOOL)value {
+   _geometryFlipped=value;
+   [self _setNeedsRender];
+}
+
+-(BOOL)contentsOpaque {
+   return _contentsOpaque;
+}
+
+-(void)setContentsOpaque:(BOOL)value {
+   _contentsOpaque=value;
+}
+
+-(BOOL)isDoubleSided {
+   return _doubleSided;
+}
+
+-(void)setDoubleSided:(BOOL)value {
+   _doubleSided=value;
+}
+
+-(CAEdgeAntialiasingMask)edgeAntialiasingMask {
+   return _edgeAntialiasingMask;
+}
+
+-(void)setEdgeAntialiasingMask:(CAEdgeAntialiasingMask)value {
+   _edgeAntialiasingMask=value;
+}
+
+-(CGFloat)cornerRadius {
+   return _cornerRadius;
+}
+
+-(void)setCornerRadius:(CGFloat)value {
+   _cornerRadius=value;
+   [self _setNeedsRender];
+}
+
+-(CACornerMask)maskedCorners {
+   return _maskedCorners;
+}
+
+-(void)setMaskedCorners:(CACornerMask)value {
+   _maskedCorners=value;
+   [self _setNeedsRender];
+}
+
+-(CGFloat)zPosition {
+   return _zPosition;
+}
+
+-(void)setZPosition:(CGFloat)value {
+   _zPosition=value;
+   [self _setNeedsRender];
+}
+
+-(CGFloat)borderWidth {
+   return _borderWidth;
+}
+
+-(void)setBorderWidth:(CGFloat)value {
+   _borderWidth=value;
+   [self _setNeedsRender];
+}
+
+-(CGRect)contentsRect {
+   return _contentsRect;
+}
+
+-(void)setContentsRect:(CGRect)value {
+   _contentsRect=value;
+   [self _setNeedsRender];
+}
+
+-(CGRect)contentsCenter {
+   return _contentsCenter;
+}
+
+-(void)setContentsCenter:(CGRect)value {
+   _contentsCenter=value;
+}
+
+-(CGColorRef)backgroundColor {
+   return _backgroundColor;
+}
+
+-(void)setBackgroundColor:(CGColorRef)value {
+   CGColorRetain(value);
+   CGColorRelease(_backgroundColor);
+   _backgroundColor=value;
+   [self _setNeedsRender];
+}
+
+-(CGColorRef)borderColor {
+   return _borderColor;
+}
+
+-(void)setBorderColor:(CGColorRef)value {
+   CGColorRetain(value);
+   CGColorRelease(_borderColor);
+   _borderColor=value;
+   [self _setNeedsRender];
+}
+
+-(CALayer *)mask {
+   return _mask;
+}
+
+-(void)setMask:(CALayer *)value {
+   [value retain];
+   [_mask release];
+   _mask=value;
+   [self _setNeedsRender];
+}
+
+-(CADynamicRange)preferredDynamicRange {
+   return _preferredDynamicRange;
+}
+
+-(void)setPreferredDynamicRange:(CADynamicRange)value {
+   value=[value copy];
+   [_preferredDynamicRange release];
+   _preferredDynamicRange=value;
+}
+
+-(BOOL)isOpaque {
+   return _opaque;
+}
+
+-(void)insertSublayer:(CALayer *)layer atIndex:(unsigned)index {
+   NSMutableArray *layers=[_sublayers mutableCopy];
+
+   [layer removeFromSuperlayer];
+   [layers insertObject:layer atIndex:MIN((NSUInteger)index,[layers count])];
+   [self setSublayers:layers];
+   [layers release];
+   [self _setNeedsRender];
+}
+
+-(void)insertSublayer:(CALayer *)layer below:(CALayer *)sibling {
+   NSUInteger index=[_sublayers indexOfObjectIdenticalTo:sibling];
+
+   [self insertSublayer:layer atIndex:index==NSNotFound ? 0 : (unsigned)index];
+   [self _setNeedsRender];
+}
+
+-(void)insertSublayer:(CALayer *)layer above:(CALayer *)sibling {
+   NSUInteger index=[_sublayers indexOfObjectIdenticalTo:sibling];
+
+   [self insertSublayer:layer atIndex:index==NSNotFound ? (unsigned)[_sublayers count] : (unsigned)index+1];
+   [self _setNeedsRender];
+}
+
 -init {
    _superlayer=nil;
    _sublayers=[NSArray new];
@@ -249,16 +520,33 @@ NSString * const kCAFilterTrilinear=@"trilinear";
    _magnificationFilter=kCAFilterLinear;
    _contentsScale=1.0;
    _animations=[[NSMutableDictionary alloc] init];
+   _doubleSided=YES;
+   _edgeAntialiasingMask=kCALayerLeftEdge|kCALayerRightEdge|kCALayerBottomEdge|kCALayerTopEdge;
+   _maskedCorners=kCALayerMinXMinYCorner|kCALayerMaxXMinYCorner|kCALayerMinXMaxYCorner|kCALayerMaxXMaxYCorner;
+   _contentsRect=CGRectMake(0,0,1,1);
+   _contentsCenter=CGRectMake(0,0,1,1);
+   _shadowColor=CGColorCreateGenericRGB(0,0,0,1);
+   _shadowOffset=CGSizeMake(0,-3);
+   _shadowRadius=3;
    return self;
 }
 
 -(void)dealloc {
+   for(CALayer *layer in _sublayers)
+    if(layer->_superlayer==self)
+     layer->_superlayer=nil;
    [_sublayers release];
    [_animations release];
    [_minificationFilter release];
    [_magnificationFilter release];
    [_contentsGravity release];
    [_name release];
+   [_mask release];
+   [_preferredDynamicRange release];
+   CGColorRelease(_backgroundColor);
+   CGColorRelease(_borderColor);
+   CGColorRelease(_shadowColor);
+   CGPathRelease(_shadowPath);
    [super dealloc];
 }
 
@@ -271,9 +559,12 @@ NSString * const kCAFilterTrilinear=@"trilinear";
    [layers removeObjectIdenticalTo:child];
    [self setSublayers:layers];
    [layers release];
+   [self _setNeedsRender];
 }
 
 -(void)addSublayer:(CALayer *)layer {
+   if(caTrace())
+    fprintf(stderr,"PD-CA %p addSublayer: %s %p from %s\n",self,object_getClassName(layer),layer,caCaller(__builtin_return_address(0)));
    [self setSublayers:[_sublayers arrayByAddingObject:layer]];
 }
 
@@ -287,6 +578,7 @@ NSString * const kCAFilterTrilinear=@"trilinear";
    [layers release];
    
    layer->_superlayer=nil;
+   [self _setNeedsRender];
 }
 
 -(void)display {
@@ -321,6 +613,66 @@ NSString * const kCAFilterTrilinear=@"trilinear";
    [_superlayer _removeSublayer:self];
    _superlayer=nil;
    [self _setContext:nil];
+}
+
+// a change shows on the next pass of whatever presents the context
+-(CGColorRef)shadowColor {
+   return _shadowColor;
+}
+
+-(void)setShadowColor:(CGColorRef)value {
+   CGColorRetain(value);
+   CGColorRelease(_shadowColor);
+   _shadowColor=value;
+   [self _setNeedsRender];
+}
+
+-(float)shadowOpacity {
+   return _shadowOpacity;
+}
+
+-(void)setShadowOpacity:(float)value {
+   _shadowOpacity=value;
+   [self _setNeedsRender];
+}
+
+-(CGSize)shadowOffset {
+   return _shadowOffset;
+}
+
+-(void)setShadowOffset:(CGSize)value {
+   _shadowOffset=value;
+   [self _setNeedsRender];
+}
+
+-(CGFloat)shadowRadius {
+   return _shadowRadius;
+}
+
+-(void)setShadowRadius:(CGFloat)value {
+   _shadowRadius=value;
+   [self _setNeedsRender];
+}
+
+-(CGPathRef)shadowPath {
+   return _shadowPath;
+}
+
+-(void)setShadowPath:(CGPathRef)value {
+   CGPathRetain(value);
+   CGPathRelease(_shadowPath);
+   _shadowPath=value;
+   [self _setNeedsRender];
+}
+
+// for AppKit putting a view's own drawing into its backing layer during display, which must
+// not ask for another display
+-(void)_setContentsWithoutRender:(id)value {
+   [lockedSwap(&_contents,[value retain]) release];
+}
+
+-(void)_setNeedsRender {
+   [_context _layerTreeChanged];
 }
 
 -(void)setNeedsDisplay {

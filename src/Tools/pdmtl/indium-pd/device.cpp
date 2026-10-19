@@ -333,6 +333,12 @@ namespace IndiumPD {
 		return ty;
 	}
 
+	// a surface's new contents are copied in when the surface moved on since the last use
+	void Texture::pullSurface() const {
+		if (_link && _link->pull && _link->pull(bytes(), _bpr))
+			pdmtl_dirty(_off, (uint32_t)_total);
+	}
+
 	bool Texture::describe(struct PDDrawTex *t) const {
 		int f = pdFormat(_desc.pixelFormat);
 		auto ty = storageType(_desc.textureType);
@@ -343,6 +349,7 @@ namespace IndiumPD {
 		// the CPU writes such a texture through its buffer, which tells nobody
 		if (_cpuWritten)
 			pdmtl_dirty(_off, (uint32_t)_total);
+		pullSurface();
 		t->id = 1, t->off = _off, t->w = (uint32_t)_desc.width, t->h = (uint32_t)_desc.height;
 		t->bpr = (uint32_t)_bpr, t->fmt = (uint32_t)f;
 		return true;
@@ -725,6 +732,16 @@ namespace IndiumPD {
 			return nullptr;
 		return std::make_shared<Texture>(std::dynamic_pointer_cast<Device>(b->device()), descriptor, b->offset() + (uint32_t)offset,
 		                                 b, true);
+	}
+
+	bool linkSurface(std::shared_ptr<Indium::Texture> texture, std::shared_ptr<SurfaceLink> link) {
+		auto t = std::dynamic_pointer_cast<Texture>(texture);
+
+		// a view or a drawable has no bytes of its own to mirror
+		if (!t || t->drawable() || t->levels() != 1)
+			return false;
+		t->setSurfaceLink(std::move(link));
+		return true;
 	}
 
 	size_t textureStorageSize(const Indium::TextureDescriptor &descriptor) {

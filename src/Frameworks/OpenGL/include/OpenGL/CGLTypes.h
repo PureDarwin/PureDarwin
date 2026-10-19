@@ -21,6 +21,7 @@ typedef enum _CGLPixelFormatAttribute {
 	kCGLPFAAllRenderers            =   1,
 	kCGLPFADoubleBuffer            =   5,
 	kCGLPFAStereo                  =   6,
+	kCGLPFAAuxBuffers              =   7,
 	kCGLPFAColorSize               =   8,
 	kCGLPFAAlphaSize               =  11,
 	kCGLPFADepthSize               =  12,
@@ -35,11 +36,14 @@ typedef enum _CGLPixelFormatAttribute {
 	kCGLPFASupersample             =  60,
 	kCGLPFASampleAlpha             =  61,
 	kCGLPFARendererID              =  70,
+	kCGLPFASingleRenderer          =  71,
 	kCGLPFANoRecovery              =  72,
 	kCGLPFAAccelerated             =  73,
 	kCGLPFAClosestPolicy           =  74,
 	kCGLPFABackingStore            =  76,
+	kCGLPFAWindow                  =  80,
 	kCGLPFADisplayMask             =  84,
+	kCGLPFAPBuffer                 =  90,
 	kCGLPFAAllowOfflineRenderers   =  96,
 	kCGLPFAAcceleratedCompute      =  97,
 	kCGLPFAOpenGLProfile           =  99,
@@ -89,8 +93,21 @@ enum {
 	kCGLOGLPVersion_GL4_Core = 0x4100,
 };
 
+// switches CGLEnable turns on and off, Apple's values
+typedef enum _CGLContextEnable {
+	kCGLCESwapRectangle            = 201,
+	kCGLCESwapLimit                = 203,
+	kCGLCERasterization            = 221,
+	kCGLCEStateValidation          = 301,
+	kCGLCESurfaceBackingSize       = 305,
+	kCGLCEDisplayListOptimization  = 307,
+	kCGLCEMPEngine                 = 313,
+	kCGLCECrashOnRemovedFunctions  = 316
+} CGLContextEnable;
+
 typedef enum _CGLContextParameter {
 	kCGLCPSwapInterval      = 222,
+	kCGLCPSurfaceOrder      = 235,
 	kCGLCPSurfaceOpacity    = 236,
 	kCGLCPSurfaceBackingSize   = 304,
 	kCGLCPSurfaceBackingOrigin = 305,
@@ -101,6 +118,55 @@ typedef enum _CGLContextParameter {
 	kCGLCPSurfaceHidden     = 237,
 	kCGLCPSurfaceWindowNumber = 238,
 } CGLContextParameter;
+
+// the colour, depth and buffer mode bits kCGLRPColorModes and the other mode properties report
+#define kCGLRGB444Bit        0x00000040
+#define kCGLARGB4444Bit      0x00000080
+#define kCGLRGB444A8Bit      0x00000100
+#define kCGLRGB555Bit        0x00000200
+#define kCGLARGB1555Bit      0x00000400
+#define kCGLRGB555A8Bit      0x00000800
+#define kCGLRGB565Bit        0x00001000
+#define kCGLRGB565A8Bit      0x00002000
+#define kCGLRGB888Bit        0x00004000
+#define kCGLARGB8888Bit      0x00008000
+#define kCGLRGB888A8Bit      0x00010000
+#define kCGLRGB101010Bit     0x00020000
+#define kCGLARGB2101010Bit   0x00040000
+#define kCGLRGB101010_A8Bit  0x00080000
+#define kCGLRGB121212Bit     0x00100000
+#define kCGLARGB12121212Bit  0x00200000
+#define kCGLRGB161616Bit     0x00400000
+#define kCGLRGBA16161616Bit  0x00800000
+#define kCGLRGBFloat64Bit    0x01000000
+#define kCGLRGBAFloat64Bit   0x02000000
+#define kCGLRGBFloat128Bit   0x04000000
+#define kCGLRGBAFloat128Bit  0x08000000
+#define kCGLRGBFloat256Bit   0x10000000
+#define kCGLRGBAFloat256Bit  0x20000000
+
+#define kCGL0Bit    0x00000001
+#define kCGL1Bit    0x00000002
+#define kCGL2Bit    0x00000004
+#define kCGL3Bit    0x00000008
+#define kCGL4Bit    0x00000010
+#define kCGL5Bit    0x00000020
+#define kCGL6Bit    0x00000040
+#define kCGL8Bit    0x00000080
+#define kCGL10Bit   0x00000100
+#define kCGL12Bit   0x00000200
+#define kCGL16Bit   0x00000400
+#define kCGL24Bit   0x00000800
+#define kCGL32Bit   0x00001000
+#define kCGL48Bit   0x00002000
+#define kCGL64Bit   0x00004000
+#define kCGL96Bit   0x00008000
+#define kCGL128Bit  0x00010000
+
+#define kCGLSingleBufferBit  0x00000001
+#define kCGLDoubleBufferBit  0x00000002
+#define kCGLMonoscopicBit    0x00000004
+#define kCGLStereoscopicBit  0x00000008
 
 typedef enum _CGLError {
 	kCGLNoError            = 0,

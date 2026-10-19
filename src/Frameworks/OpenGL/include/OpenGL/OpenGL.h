@@ -10,6 +10,12 @@
 
 #include <OpenGL/CGLTypes.h>
 
+// the GL scalars these prototypes use, identical to gl.h's so either may come first
+typedef unsigned int GLenum;
+typedef int GLint;
+typedef int GLsizei;
+typedef unsigned int GLuint;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -38,14 +44,32 @@ void CGLReleaseContext(CGLContextObj ctx);
 unsigned int CGLGetContextRetainCount(CGLContextObj ctx);
 CGLError CGLSetCurrentContext(CGLContextObj ctx);
 CGLContextObj CGLGetCurrentContext(void);
-CGLError CGLGetPixelFormat(CGLContextObj ctx, CGLPixelFormatObj *pix);
+CGLPixelFormatObj CGLGetPixelFormat(CGLContextObj ctx);
 CGLError CGLFlushDrawable(CGLContextObj ctx);
 CGLError CGLSetParameter(CGLContextObj ctx, CGLContextParameter parameter,
     const int *params);
 CGLError CGLGetParameter(CGLContextObj ctx, CGLContextParameter parameter,
     int *params);
 CGLError CGLSetVirtualScreen(CGLContextObj ctx, int screen);
+CGLError CGLEnable(CGLContextObj ctx, CGLContextEnable pname);
+CGLError CGLDisable(CGLContextObj ctx, CGLContextEnable pname);
+CGLError CGLIsEnabled(CGLContextObj ctx, CGLContextEnable pname, GLint *enable);
+// binds an IOSurface plane as the texture image of the context's current texture on target
+typedef struct __IOSurface *IOSurfaceRef;
+CGLError CGLTexImageIOSurface2D(CGLContextObj ctx, GLenum target, GLenum internal_format, GLsizei width,
+                                GLsizei height, GLenum format, GLenum type, IOSurfaceRef ioSurface, GLuint plane);
 CGLError CGLGetVirtualScreen(CGLContextObj ctx, int *screen);
+
+// pixel buffers fail with kCGLBadCodeModule since contexts already render offscreen
+// callers fall back to framebuffer objects
+CGLError CGLCreatePBuffer(GLsizei width, GLsizei height, GLenum target, GLenum internalFormat, GLint max_level,
+                          CGLPBufferObj *pbuffer);
+CGLError CGLDestroyPBuffer(CGLPBufferObj pbuffer);
+CGLPBufferObj CGLRetainPBuffer(CGLPBufferObj pbuffer);
+void CGLReleasePBuffer(CGLPBufferObj pbuffer);
+CGLError CGLSetPBuffer(CGLContextObj ctx, CGLPBufferObj pbuffer, GLenum face, GLint level, GLint screen);
+CGLError CGLGetPBuffer(CGLContextObj ctx, CGLPBufferObj *pbuffer, GLenum *face, GLint *level, GLint *screen);
+CGLError CGLTexImagePBuffer(CGLContextObj ctx, CGLPBufferObj pbuffer, GLenum source);
 
 /* Version and errors. */
 void CGLGetVersion(int *majorvers, int *minorvers);

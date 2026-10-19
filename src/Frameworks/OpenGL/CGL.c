@@ -7,16 +7,20 @@
 #ifdef PD_CGL_USE_EGL
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
+#define GL_GLEXT_PROTOTYPES 1
 #include <GL/gl.h>
 #else
 #include <GL/glx.h>
 #endif
 
+#include <dlfcn.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/sysctl.h>
+#include <time.h>
 
 /* Size of the backing buffer for a context. Large enough that a caller which
  * renders without ever setting a viewport still has somewhere sensible to draw,
@@ -56,7 +60,11 @@ struct _CGLContextObject {
 	int               window_number;
 	CGLPixelFormatObj pixel_format;
 	int               virtual_screen;
+	// CGLEnable switches, one bit each for the values that fit
+	unsigned long long enabled;
 	int               swap_interval;
+	// the context whose share group this one joined, itself when it shares with none
+	struct _CGLContextObject *share_root;
 };
 
 static _Thread_local CGLContextObj pd_cgl_current;
@@ -74,10 +82,92 @@ static Display        *pd_cgl_display;
 #endif
 static pthread_once_t  pd_cgl_display_once = PTHREAD_ONCE_INIT;
 
+#ifdef PD_CGL_USE_EGL
+// just enough of vulkan's ABI to list devices without its headers
+struct pd_vk_instance_info {
+	uint32_t sType;
+	const void *pNext;
+	uint32_t flags;
+	const void *pApplicationInfo;
+	uint32_t enabledLayerCount;
+	const char *const *ppEnabledLayerNames;
+	uint32_t enabledExtensionCount;
+	const char *const *ppEnabledExtensionNames;
+};
+
+// whether the vulkan loader offers a device that isn't a CPU one, the condition for zink
+static int
+pd_cgl_have_gpu_vulkan(void)
+{
+	typedef int32_t (*create_fn)(const struct pd_vk_instance_info *, const void *, void **);
+	typedef void (*destroy_fn)(void *, const void *);
+	typedef int32_t (*enum_fn)(void *, uint32_t *, void **);
+	typedef void (*props_fn)(void *, void *);
+	typedef void *(*gipa_fn)(void *, const char *);
+	struct pd_vk_instance_info info = { .sType = 1 };
+	void *lib = dlopen("libvulkan.1.dylib", RTLD_LAZY | RTLD_LOCAL);
+	void *instance = NULL, *devices[16];
+	uint32_t count = 16, i;
+	int found = 0;
+
+	if (lib == NULL)
+		return 0;
+	gipa_fn gipa = (gipa_fn)dlsym(lib, "vkGetInstanceProcAddr");
+	create_fn create = gipa != NULL ? (create_fn)gipa(NULL, "vkCreateInstance") : NULL;
+
+	if (create == NULL || create(&info, NULL, &instance) != 0 || instance == NULL) {
+		dlclose(lib);
+		return 0;
+	}
+	enum_fn enumerate = (enum_fn)gipa(instance, "vkEnumeratePhysicalDevices");
+	props_fn props = (props_fn)gipa(instance, "vkGetPhysicalDeviceProperties");
+	destroy_fn destroy = (destroy_fn)gipa(instance, "vkDestroyInstance");
+
+	if (enumerate != NULL && props != NULL && enumerate(instance, &count, devices) >= 0) {
+		for (i = 0; i < count && !found; i++) {
+			// VkPhysicalDeviceProperties: deviceType follows four uint32s, 4 is CPU
+			uint32_t p[1024] = { 0 };
+
+			props(devices[i], p);
+			found = p[4] != 4;
+		}
+	}
+	if (destroy != NULL)
+		destroy(instance, NULL);
+	dlclose(lib);
+	return found;
+}
+
+// PD_CGL_RENDERER=zink, virgl, llvmpipe or auto picks mesa's driver, auto takes zink when a GPU vulkan device exists
+static int
+pd_cgl_pick_renderer(void)
+{
+	const char *r = getenv("PD_CGL_RENDERER");
+
+	if (getenv("GALLIUM_DRIVER") != NULL || getenv("LIBGL_ALWAYS_SOFTWARE") != NULL)
+		return 0;
+	if (r != NULL && strcmp(r, "llvmpipe") == 0) {
+		setenv("GALLIUM_DRIVER", "llvmpipe", 1);
+		return 0;
+	}
+	if (r != NULL && strcmp(r, "virgl") == 0) {
+		setenv("GALLIUM_DRIVER", "virpipe", 1);
+		return 0;
+	}
+	if ((r != NULL && strcmp(r, "zink") == 0) || ((r == NULL || strcmp(r, "auto") == 0) && pd_cgl_have_gpu_vulkan())) {
+		setenv("GALLIUM_DRIVER", "zink", 1);
+		return 1;
+	}
+	return 0;
+}
+#endif
+
 static void
 pd_cgl_open_display(void)
 {
 #ifdef PD_CGL_USE_EGL
+	int zink = pd_cgl_pick_renderer();
+
 	/* Surfaceless first: it is the only platform that is guaranteed to exist
 	 * with no display server running at all. eglGetDisplay is the fallback for
 	 * an EGL that does not advertise the extension. */
@@ -86,9 +176,17 @@ pd_cgl_open_display(void)
 	if (pd_cgl_display == EGL_NO_DISPLAY) {
 		pd_cgl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
 	}
-	if (pd_cgl_display != EGL_NO_DISPLAY &&
-	    !eglInitialize(pd_cgl_display, NULL, NULL)) {
-		pd_cgl_display = EGL_NO_DISPLAY;
+	if (pd_cgl_display != EGL_NO_DISPLAY && !eglInitialize(pd_cgl_display, NULL, NULL)) {
+		// mesa doesn't fall back from a named driver, so a zink that fails gets the default list again
+		if (zink)
+			unsetenv("GALLIUM_DRIVER");
+		if (!zink || !eglInitialize(pd_cgl_display, NULL, NULL))
+			pd_cgl_display = EGL_NO_DISPLAY;
+	}
+	if (getenv("PD_CGL_TRACE") != NULL && pd_cgl_display != EGL_NO_DISPLAY) {
+		const char *driver = getenv("GALLIUM_DRIVER");
+
+		fprintf(stderr, "CGL: renderer %s\n", driver != NULL ? driver : "default");
 	}
 #else
 	pd_cgl_display = XOpenDisplay(NULL);
@@ -432,6 +530,7 @@ CGLCreateContext(CGLPixelFormatObj pix, CGLContextObj share, CGLContextObj *ctx)
 
 	c->retain_count = 1;
 	c->pixel_format = CGLRetainPixelFormat(pix);
+	c->share_root = share != NULL ? share->share_root : c;
 
 	*ctx = c;
 	return kCGLNoError;
@@ -550,17 +649,11 @@ CGLGetCurrentContext(void)
 	return pd_cgl_current;
 }
 
-CGLError
-CGLGetPixelFormat(CGLContextObj ctx, CGLPixelFormatObj *pix)
+// Apple's signature returns the format itself
+CGLPixelFormatObj
+CGLGetPixelFormat(CGLContextObj ctx)
 {
-	if (ctx == NULL) {
-		return kCGLBadContext;
-	}
-	if (pix == NULL) {
-		return kCGLBadAddress;
-	}
-	*pix = ctx->pixel_format;
-	return kCGLNoError;
+	return ctx != NULL ? ctx->pixel_format : NULL;
 }
 
 CGLError
@@ -693,6 +786,623 @@ CGLSetVirtualScreen(CGLContextObj ctx, int screen)
 		return kCGLBadValue;    /* one software renderer, screen 0 */
 	}
 	ctx->virtual_screen = screen;
+	return kCGLNoError;
+}
+
+// the switches are remembered for CGLIsEnabled, Mesa's pbuffer contexts have no behaviour to change
+static int pd_cgl_enable_bit(CGLContextEnable pname)
+{
+	switch (pname) {
+	case kCGLCESwapRectangle: return 0;
+	case kCGLCESwapLimit: return 1;
+	case kCGLCERasterization: return 2;
+	case kCGLCEStateValidation: return 3;
+	case kCGLCESurfaceBackingSize: return 4;
+	case kCGLCEDisplayListOptimization: return 5;
+	case kCGLCEMPEngine: return 6;
+	case kCGLCECrashOnRemovedFunctions: return 7;
+	default: return -1;
+	}
+}
+
+CGLError
+CGLEnable(CGLContextObj ctx, CGLContextEnable pname)
+{
+	int bit = pd_cgl_enable_bit(pname);
+
+	if (ctx == NULL)
+		return kCGLBadContext;
+	if (bit < 0)
+		return kCGLBadEnumeration;
+	ctx->enabled |= 1ULL << bit;
+	return kCGLNoError;
+}
+
+CGLError
+CGLDisable(CGLContextObj ctx, CGLContextEnable pname)
+{
+	int bit = pd_cgl_enable_bit(pname);
+
+	if (ctx == NULL)
+		return kCGLBadContext;
+	if (bit < 0)
+		return kCGLBadEnumeration;
+	ctx->enabled &= ~(1ULL << bit);
+	return kCGLNoError;
+}
+
+CGLError
+CGLIsEnabled(CGLContextObj ctx, CGLContextEnable pname, GLint *enable)
+{
+	int bit = pd_cgl_enable_bit(pname);
+
+	if (ctx == NULL)
+		return kCGLBadContext;
+	if (enable == NULL)
+		return kCGLBadAddress;
+	if (bit < 0)
+		return kCGLBadEnumeration;
+	*enable = (ctx->enabled >> bit) & 1;
+	return kCGLNoError;
+}
+
+// IOSurface is found at run time, so OpenGL keeps no link dependency on it
+static struct {
+	int (*lock)(IOSurfaceRef, uint32_t, uint32_t *);
+	int (*unlock)(IOSurfaceRef, uint32_t, uint32_t *);
+	void *(*base)(IOSurfaceRef, size_t);
+	size_t (*rowBytes)(IOSurfaceRef, size_t);
+	size_t (*planeCount)(IOSurfaceRef);
+	size_t (*elementBytes)(IOSurfaceRef, size_t);
+} pd_iosurface;
+
+static void pd_cgl_load_iosurface(void)
+{
+	void *lib = dlopen("/System/Library/Frameworks/IOSurface.framework/IOSurface", RTLD_LAZY | RTLD_GLOBAL);
+
+	if (lib == NULL)
+		return;
+	pd_iosurface.lock = dlsym(lib, "IOSurfaceLock");
+	pd_iosurface.unlock = dlsym(lib, "IOSurfaceUnlock");
+	pd_iosurface.base = dlsym(lib, "IOSurfaceGetBaseAddressOfPlane");
+	pd_iosurface.rowBytes = dlsym(lib, "IOSurfaceGetBytesPerRowOfPlane");
+	pd_iosurface.planeCount = dlsym(lib, "IOSurfaceGetPlaneCount");
+	pd_iosurface.elementBytes = dlsym(lib, "IOSurfaceGetBytesPerElementOfPlane");
+}
+
+#ifdef PD_CGL_USE_EGL
+// an IOSurface texture is a copy, so draws into it mark it and glFlush, glFinish and CGLFlushDrawable
+// write it back. callers that dlsym GL from OpenGL.framework, as Gecko does, get these wrappers.
+struct pd_cgl_surftex {
+	void         *group;
+	GLenum        target;
+	GLuint        texture;
+	IOSurfaceRef  surface;
+	GLuint        plane;
+	GLsizei       width, height;
+	GLenum        format, type;
+	size_t        row_bytes, element_bytes;
+	int           dirty;
+	// the pixel buffer a batched write-back copies through, 0 until first used
+	GLuint        pbo;
+};
+
+struct pd_cgl_fbo {
+	void   *group;
+	GLuint  fbo;
+	int     surftex;
+};
+
+static pthread_mutex_t pd_cgl_track_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct pd_cgl_surftex *pd_cgl_surftexs;
+static int pd_cgl_surftex_count, pd_cgl_surftex_cap;
+static struct pd_cgl_fbo *pd_cgl_fbos;
+static int pd_cgl_fbo_count, pd_cgl_fbo_cap;
+// PD_CGL_TRACE: write-back totals, printed every two seconds
+static struct {
+	double since, busy;
+	long flushes, tiles, bytes;
+} pd_cgl_stats;
+static const void *(*pd_cf_retain)(const void *);
+static void (*pd_cf_release)(const void *);
+
+// the real entry point behind one of the wrappers below
+#define PD_GL_REAL(name) \
+	static __typeof__(name) *pd_real_##name; \
+	if (pd_real_##name == NULL) \
+		pd_real_##name = (__typeof__(name) *)eglGetProcAddress(#name)
+
+static void *
+pd_cgl_group(void)
+{
+	return pd_cgl_current != NULL ? (void *)pd_cgl_current->share_root : NULL;
+}
+
+static int
+pd_cgl_find_surftex(void *group, GLuint texture)
+{
+	int i;
+
+	for (i = 0; i < pd_cgl_surftex_count; i++) {
+		if (pd_cgl_surftexs[i].group == group && pd_cgl_surftexs[i].texture == texture)
+			return i;
+	}
+	return -1;
+}
+
+static void
+pd_cgl_drop_surftex(int i)
+{
+	int j;
+
+	if (pd_cf_release != NULL)
+		pd_cf_release(pd_cgl_surftexs[i].surface);
+	if (pd_cgl_surftexs[i].pbo != 0)
+		glDeleteBuffers(1, &pd_cgl_surftexs[i].pbo);
+	pd_cgl_surftexs[i] = pd_cgl_surftexs[--pd_cgl_surftex_count];
+	// the moved entry keeps its framebuffers, the dropped one loses them
+	for (j = 0; j < pd_cgl_fbo_count; j++) {
+		if (pd_cgl_fbos[j].surftex == i)
+			pd_cgl_fbos[j].surftex = -1;
+		else if (pd_cgl_fbos[j].surftex == pd_cgl_surftex_count)
+			pd_cgl_fbos[j].surftex = i;
+	}
+}
+
+static void
+pd_cgl_track_surface(CGLContextObj ctx, GLenum target, IOSurfaceRef surface, GLuint plane, GLsizei width,
+    GLsizei height, GLenum format, GLenum type, size_t row_bytes, size_t element_bytes)
+{
+	GLint texture = 0;
+	int i;
+
+	if (target == GL_TEXTURE_RECTANGLE)
+		glGetIntegerv(GL_TEXTURE_BINDING_RECTANGLE, &texture);
+	else if (target == GL_TEXTURE_2D)
+		glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
+	if (texture == 0)
+		return;
+	if (pd_cf_retain == NULL) {
+		pd_cf_retain = (const void *(*)(const void *))dlsym(RTLD_DEFAULT, "CFRetain");
+		pd_cf_release = (void (*)(const void *))dlsym(RTLD_DEFAULT, "CFRelease");
+	}
+	pthread_mutex_lock(&pd_cgl_track_lock);
+	i = pd_cgl_find_surftex(ctx->share_root, (GLuint)texture);
+	GLuint pbo = i >= 0 ? pd_cgl_surftexs[i].pbo : 0;
+
+	if (i >= 0 && pd_cf_release != NULL)
+		pd_cf_release(pd_cgl_surftexs[i].surface);
+	if (i < 0) {
+		if (pd_cgl_surftex_count == pd_cgl_surftex_cap) {
+			int cap = pd_cgl_surftex_cap ? pd_cgl_surftex_cap * 2 : 32;
+			void *grown = realloc(pd_cgl_surftexs, cap * sizeof(*pd_cgl_surftexs));
+
+			if (grown == NULL) {
+				pthread_mutex_unlock(&pd_cgl_track_lock);
+				return;
+			}
+			pd_cgl_surftexs = grown;
+			pd_cgl_surftex_cap = cap;
+		}
+		i = pd_cgl_surftex_count++;
+	}
+	if (pd_cf_retain != NULL)
+		pd_cf_retain(surface);
+	pd_cgl_surftexs[i] = (struct pd_cgl_surftex){ ctx->share_root, target, (GLuint)texture, surface, plane,
+		width, height, format, type, row_bytes, element_bytes, 0, pbo };
+	if (getenv("PD_CGL_TRACE") != NULL && pd_cgl_surftex_count <= 8)
+		fprintf(stderr, "CGL: surface texture %u %dx%d target %x format %x type %x\n", (unsigned)texture, width, height,
+		    target, format, type);
+	pthread_mutex_unlock(&pd_cgl_track_lock);
+}
+
+// marks the IOSurface texture the current draw framebuffer renders into
+static void
+pd_cgl_mark_drawn(void)
+{
+	GLint fbo = 0;
+	void *group = pd_cgl_group();
+	int i;
+
+	if (pd_cgl_surftex_count == 0 || group == NULL)
+		return;
+	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fbo);
+	if (fbo == 0)
+		return;
+	pthread_mutex_lock(&pd_cgl_track_lock);
+	for (i = 0; i < pd_cgl_fbo_count; i++) {
+		if (pd_cgl_fbos[i].group == group && pd_cgl_fbos[i].fbo == (GLuint)fbo) {
+			if (pd_cgl_fbos[i].surftex >= 0)
+				pd_cgl_surftexs[pd_cgl_fbos[i].surftex].dirty = 1;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&pd_cgl_track_lock);
+}
+
+// every marked texture is copied into its own pixel buffer first, so the copies queue on the GPU together
+// and one fence covers them all, then each buffer goes into its surface. returns how many were written
+static int
+pd_cgl_write_back_batched(void *group)
+{
+	static GLsync (*fence_sync)(GLenum, GLbitfield);
+	GLint saved_texture = 0, pack_buffer = 0, row_length = 0, alignment = 4;
+	int i, count = 0;
+
+	if (fence_sync == NULL)
+		fence_sync = (GLsync (*)(GLenum, GLbitfield))eglGetProcAddress("glFenceSync");
+	for (i = 0; i < pd_cgl_surftex_count; i++) {
+		struct pd_cgl_surftex *t = &pd_cgl_surftexs[i];
+		GLenum binding = t->target == GL_TEXTURE_RECTANGLE ? GL_TEXTURE_BINDING_RECTANGLE : GL_TEXTURE_BINDING_2D;
+
+		if (!t->dirty || t->group != group)
+			continue;
+		if (count == 0) {
+			glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pack_buffer);
+			glGetIntegerv(GL_PACK_ROW_LENGTH, &row_length);
+			glGetIntegerv(GL_PACK_ALIGNMENT, &alignment);
+			glPixelStorei(GL_PACK_ALIGNMENT, 1);
+		}
+		if (t->pbo == 0) {
+			glGenBuffers(1, &t->pbo);
+			glBindBuffer(GL_PIXEL_PACK_BUFFER, t->pbo);
+			glBufferData(GL_PIXEL_PACK_BUFFER, (GLsizeiptr)(t->row_bytes * t->height), NULL, GL_STREAM_READ);
+		} else {
+			glBindBuffer(GL_PIXEL_PACK_BUFFER, t->pbo);
+		}
+		glGetIntegerv(binding, &saved_texture);
+		glBindTexture(t->target, t->texture);
+		glPixelStorei(GL_PACK_ROW_LENGTH, (GLint)(t->row_bytes / t->element_bytes));
+		glGetTexImage(t->target, 0, t->format, t->type, NULL);
+		glBindTexture(t->target, (GLuint)saved_texture);
+		t->dirty = 2;
+		count++;
+	}
+	if (count == 0)
+		return 0;
+
+	GLsync sync = fence_sync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+
+	glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, 2000000000ull);
+	glDeleteSync(sync);
+	for (i = 0; i < pd_cgl_surftex_count; i++) {
+		struct pd_cgl_surftex *t = &pd_cgl_surftexs[i];
+		size_t size = t->row_bytes * t->height;
+		void *pixels;
+
+		if (t->dirty != 2 || t->group != group)
+			continue;
+		glBindBuffer(GL_PIXEL_PACK_BUFFER, t->pbo);
+		pixels = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, (GLsizeiptr)size, GL_MAP_READ_BIT);
+		if (pixels != NULL) {
+			pd_iosurface.lock(t->surface, 0, NULL);
+			memcpy(pd_iosurface.base(t->surface, t->plane), pixels, size);
+			pd_iosurface.unlock(t->surface, 0, NULL);
+			glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+		}
+		t->dirty = 0;
+		pd_cgl_stats.tiles++;
+		pd_cgl_stats.bytes += (long)size;
+	}
+	glBindBuffer(GL_PIXEL_PACK_BUFFER, (GLuint)pack_buffer);
+	glPixelStorei(GL_PACK_ROW_LENGTH, row_length);
+	glPixelStorei(GL_PACK_ALIGNMENT, alignment);
+	return count;
+}
+
+// copies every marked texture of the current share group back to its surface
+static double
+pd_cgl_now(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
+}
+
+static void
+pd_cgl_write_back(void)
+{
+	void *group = pd_cgl_group();
+	GLint saved_texture = 0, pack_buffer = 0, row_length = 0, alignment = 4;
+	int i, saved = 0, pending = 0;
+	static int trace = -1, batch = -1;
+	double start;
+
+	if (pd_cgl_surftex_count == 0 || group == NULL)
+		return;
+	if (trace < 0)
+		trace = getenv("PD_CGL_TRACE") != NULL;
+	start = trace ? pd_cgl_now() : 0;
+	pthread_mutex_lock(&pd_cgl_track_lock);
+	if (batch < 0) {
+		const char *mode = getenv("PD_CGL_WRITEBACK");
+
+		batch = mode == NULL || strcmp(mode, "sync") != 0;
+	}
+	if (batch) {
+		pending = pd_cgl_write_back_batched(group);
+		goto done;
+	}
+	for (i = 0; i < pd_cgl_surftex_count; i++) {
+		struct pd_cgl_surftex *t = &pd_cgl_surftexs[i];
+		GLenum binding = t->target == GL_TEXTURE_RECTANGLE ? GL_TEXTURE_BINDING_RECTANGLE : GL_TEXTURE_BINDING_2D;
+
+		if (!t->dirty || t->group != group)
+			continue;
+		if (!saved) {
+			glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pack_buffer);
+			glGetIntegerv(GL_PACK_ROW_LENGTH, &row_length);
+			glGetIntegerv(GL_PACK_ALIGNMENT, &alignment);
+			glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+			glPixelStorei(GL_PACK_ALIGNMENT, 1);
+			saved = 1;
+		}
+		glGetIntegerv(binding, &saved_texture);
+		glBindTexture(t->target, t->texture);
+		glPixelStorei(GL_PACK_ROW_LENGTH, (GLint)(t->row_bytes / t->element_bytes));
+		pd_iosurface.lock(t->surface, 0, NULL);
+		glGetTexImage(t->target, 0, t->format, t->type, pd_iosurface.base(t->surface, t->plane));
+		pd_iosurface.unlock(t->surface, 0, NULL);
+		glBindTexture(t->target, (GLuint)saved_texture);
+		t->dirty = 0;
+		pd_cgl_stats.tiles++;
+		pd_cgl_stats.bytes += (long)t->row_bytes * t->height;
+	}
+	if (saved) {
+		glBindBuffer(GL_PIXEL_PACK_BUFFER, (GLuint)pack_buffer);
+		glPixelStorei(GL_PACK_ROW_LENGTH, row_length);
+		glPixelStorei(GL_PACK_ALIGNMENT, alignment);
+	}
+done:
+	(void)pending;
+	if (trace) {
+		double now = pd_cgl_now();
+
+		pd_cgl_stats.flushes++;
+		pd_cgl_stats.busy += now - start;
+		if (pd_cgl_stats.since == 0)
+			pd_cgl_stats.since = now;
+		if (now - pd_cgl_stats.since >= 2000) {
+			fprintf(stderr, "CGL: %ld flushes, %ld tiles written back (%ld KB), %.1f ms in write-back, %d surface textures, %d framebuffers\n",
+			    pd_cgl_stats.flushes, pd_cgl_stats.tiles, pd_cgl_stats.bytes / 1024, pd_cgl_stats.busy,
+			    pd_cgl_surftex_count, pd_cgl_fbo_count);
+			memset(&pd_cgl_stats, 0, sizeof(pd_cgl_stats));
+			pd_cgl_stats.since = now;
+		}
+	}
+	pthread_mutex_unlock(&pd_cgl_track_lock);
+}
+
+static void
+pd_cgl_attach(GLenum target, GLenum attachment, GLuint texture)
+{
+	GLint fbo = 0;
+	void *group = pd_cgl_group();
+	int i, surftex;
+
+	if (attachment != GL_COLOR_ATTACHMENT0 || target == GL_READ_FRAMEBUFFER || group == NULL)
+		return;
+	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fbo);
+	if (fbo == 0)
+		return;
+	pthread_mutex_lock(&pd_cgl_track_lock);
+	surftex = texture != 0 ? pd_cgl_find_surftex(group, texture) : -1;
+	for (i = 0; i < pd_cgl_fbo_count; i++) {
+		if (pd_cgl_fbos[i].group == group && pd_cgl_fbos[i].fbo == (GLuint)fbo)
+			break;
+	}
+	if (i == pd_cgl_fbo_count) {
+		if (surftex < 0) {
+			pthread_mutex_unlock(&pd_cgl_track_lock);
+			return;
+		}
+		if (pd_cgl_fbo_count == pd_cgl_fbo_cap) {
+			int cap = pd_cgl_fbo_cap ? pd_cgl_fbo_cap * 2 : 32;
+			void *grown = realloc(pd_cgl_fbos, cap * sizeof(*pd_cgl_fbos));
+
+			if (grown == NULL) {
+				pthread_mutex_unlock(&pd_cgl_track_lock);
+				return;
+			}
+			pd_cgl_fbos = grown;
+			pd_cgl_fbo_cap = cap;
+		}
+		pd_cgl_fbo_count++;
+	}
+	pd_cgl_fbos[i] = (struct pd_cgl_fbo){ group, (GLuint)fbo, surftex };
+	pthread_mutex_unlock(&pd_cgl_track_lock);
+}
+
+void
+glFramebufferTexture2D(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level)
+{
+	PD_GL_REAL(glFramebufferTexture2D);
+	pd_real_glFramebufferTexture2D(target, attachment, textarget, texture, level);
+	pd_cgl_attach(target, attachment, texture);
+}
+
+void
+glFramebufferTexture(GLenum target, GLenum attachment, GLuint texture, GLint level)
+{
+	PD_GL_REAL(glFramebufferTexture);
+	pd_real_glFramebufferTexture(target, attachment, texture, level);
+	pd_cgl_attach(target, attachment, texture);
+}
+
+void
+glDeleteTextures(GLsizei n, const GLuint *textures)
+{
+	void *group = pd_cgl_group();
+	int i, j;
+
+	PD_GL_REAL(glDeleteTextures);
+	if (pd_cgl_surftex_count != 0 && group != NULL && textures != NULL) {
+		pthread_mutex_lock(&pd_cgl_track_lock);
+		for (i = 0; i < n; i++) {
+			if ((j = pd_cgl_find_surftex(group, textures[i])) >= 0)
+				pd_cgl_drop_surftex(j);
+		}
+		pthread_mutex_unlock(&pd_cgl_track_lock);
+	}
+	pd_real_glDeleteTextures(n, textures);
+}
+
+void
+glDeleteFramebuffers(GLsizei n, const GLuint *framebuffers)
+{
+	void *group = pd_cgl_group();
+	int i, j;
+
+	PD_GL_REAL(glDeleteFramebuffers);
+	if (pd_cgl_fbo_count != 0 && group != NULL && framebuffers != NULL) {
+		pthread_mutex_lock(&pd_cgl_track_lock);
+		for (i = 0; i < n; i++) {
+			for (j = 0; j < pd_cgl_fbo_count; j++) {
+				if (pd_cgl_fbos[j].group == group && pd_cgl_fbos[j].fbo == framebuffers[i]) {
+					pd_cgl_fbos[j] = pd_cgl_fbos[--pd_cgl_fbo_count];
+					break;
+				}
+			}
+		}
+		pthread_mutex_unlock(&pd_cgl_track_lock);
+	}
+	pd_real_glDeleteFramebuffers(n, framebuffers);
+}
+
+void
+glClear(GLbitfield mask)
+{
+	PD_GL_REAL(glClear);
+	pd_real_glClear(mask);
+	pd_cgl_mark_drawn();
+}
+
+void
+glClearBufferfv(GLenum buffer, GLint drawbuffer, const GLfloat *value)
+{
+	PD_GL_REAL(glClearBufferfv);
+	pd_real_glClearBufferfv(buffer, drawbuffer, value);
+	pd_cgl_mark_drawn();
+}
+
+void
+glDrawArrays(GLenum mode, GLint first, GLsizei count)
+{
+	PD_GL_REAL(glDrawArrays);
+	pd_real_glDrawArrays(mode, first, count);
+	pd_cgl_mark_drawn();
+}
+
+void
+glDrawArraysInstanced(GLenum mode, GLint first, GLsizei count, GLsizei instances)
+{
+	PD_GL_REAL(glDrawArraysInstanced);
+	pd_real_glDrawArraysInstanced(mode, first, count, instances);
+	pd_cgl_mark_drawn();
+}
+
+void
+glDrawElements(GLenum mode, GLsizei count, GLenum type, const void *indices)
+{
+	PD_GL_REAL(glDrawElements);
+	pd_real_glDrawElements(mode, count, type, indices);
+	pd_cgl_mark_drawn();
+}
+
+void
+glDrawElementsInstanced(GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei instances)
+{
+	PD_GL_REAL(glDrawElementsInstanced);
+	pd_real_glDrawElementsInstanced(mode, count, type, indices, instances);
+	pd_cgl_mark_drawn();
+}
+
+void
+glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, const void *indices)
+{
+	PD_GL_REAL(glDrawRangeElements);
+	pd_real_glDrawRangeElements(mode, start, end, count, type, indices);
+	pd_cgl_mark_drawn();
+}
+
+void
+glBlitFramebuffer(GLint sx0, GLint sy0, GLint sx1, GLint sy1, GLint dx0, GLint dy0, GLint dx1, GLint dy1,
+    GLbitfield mask, GLenum filter)
+{
+	PD_GL_REAL(glBlitFramebuffer);
+	pd_real_glBlitFramebuffer(sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1, mask, filter);
+	pd_cgl_mark_drawn();
+}
+
+void
+glFlush(void)
+{
+	PD_GL_REAL(glFlush);
+	pd_cgl_write_back();
+	pd_real_glFlush();
+}
+
+// a fence after a frame is the other way a caller hands it on
+GLsync
+glFenceSync(GLenum condition, GLbitfield flags)
+{
+	PD_GL_REAL(glFenceSync);
+	pd_cgl_write_back();
+	return pd_real_glFenceSync(condition, flags);
+}
+
+void
+glFinish(void)
+{
+	PD_GL_REAL(glFinish);
+	pd_cgl_write_back();
+	pd_real_glFinish();
+}
+#endif
+
+// Mesa cannot sample client memory in place, so the plane is uploaded each time it is bound,
+// which matches how callers rebind a surface for every frame they composite
+CGLError
+CGLTexImageIOSurface2D(CGLContextObj ctx, GLenum target, GLenum internal_format, GLsizei width, GLsizei height,
+                       GLenum format, GLenum type, IOSurfaceRef ioSurface, GLuint plane)
+{
+	static pthread_once_t once = PTHREAD_ONCE_INIT;
+	GLint row_length = 0, alignment = 4;
+	size_t rowBytes, elementBytes;
+	void *pixels;
+
+	if (ctx == NULL)
+		return kCGLBadContext;
+	if (ioSurface == NULL || width <= 0 || height <= 0)
+		return kCGLBadValue;
+	pthread_once(&once, pd_cgl_load_iosurface);
+	if (pd_iosurface.base == NULL || pd_iosurface.rowBytes == NULL || pd_iosurface.elementBytes == NULL)
+		return kCGLBadValue;
+	if (pd_iosurface.planeCount(ioSurface) == 0 && plane != 0)
+		return kCGLBadValue;
+	if (pd_iosurface.planeCount(ioSurface) != 0 && plane >= pd_iosurface.planeCount(ioSurface))
+		return kCGLBadValue;
+	rowBytes = pd_iosurface.rowBytes(ioSurface, plane);
+	elementBytes = pd_iosurface.elementBytes(ioSurface, plane);
+	if (elementBytes == 0)
+		elementBytes = 1;
+
+	pd_iosurface.lock(ioSurface, 1, NULL);
+	pixels = pd_iosurface.base(ioSurface, plane);
+	glGetIntegerv(GL_UNPACK_ROW_LENGTH, &row_length);
+	glGetIntegerv(GL_UNPACK_ALIGNMENT, &alignment);
+	glPixelStorei(GL_UNPACK_ROW_LENGTH, (GLint)(rowBytes / elementBytes));
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+	glTexImage2D(target, 0, (GLint)internal_format, width, height, 0, format, type, pixels);
+	glPixelStorei(GL_UNPACK_ROW_LENGTH, row_length);
+	glPixelStorei(GL_UNPACK_ALIGNMENT, alignment);
+	pd_iosurface.unlock(ioSurface, 1, NULL);
+	if (glGetError() != GL_NO_ERROR)
+		return kCGLBadValue;
+#ifdef PD_CGL_USE_EGL
+	pd_cgl_track_surface(ctx, target, ioSurface, plane, width, height, format, type, rowBytes, elementBytes);
+#endif
 	return kCGLNoError;
 }
 
@@ -866,4 +1576,50 @@ CGLDescribeRenderer(CGLRendererInfoObj rend, int rend_num, CGLRendererProperty p
 		return kCGLBadProperty;
 	}
 	return kCGLNoError;
+}
+
+// no pbuffer drawables yet, every call reports the module as unavailable so callers take their framebuffer object path
+CGLError
+CGLCreatePBuffer(GLsizei width, GLsizei height, GLenum target, GLenum internalFormat, GLint max_level, CGLPBufferObj *pbuffer)
+{
+    if (pbuffer)
+        *pbuffer = NULL;
+    return kCGLBadCodeModule;
+}
+
+CGLError
+CGLDestroyPBuffer(CGLPBufferObj pbuffer)
+{
+    return pbuffer ? kCGLBadCodeModule : kCGLBadAddress;
+}
+
+CGLPBufferObj
+CGLRetainPBuffer(CGLPBufferObj pbuffer)
+{
+    return pbuffer;
+}
+
+void
+CGLReleasePBuffer(CGLPBufferObj pbuffer)
+{
+}
+
+CGLError
+CGLSetPBuffer(CGLContextObj ctx, CGLPBufferObj pbuffer, GLenum face, GLint level, GLint screen)
+{
+    return kCGLBadCodeModule;
+}
+
+CGLError
+CGLGetPBuffer(CGLContextObj ctx, CGLPBufferObj *pbuffer, GLenum *face, GLint *level, GLint *screen)
+{
+    if (pbuffer)
+        *pbuffer = NULL;
+    return kCGLNoError;
+}
+
+CGLError
+CGLTexImagePBuffer(CGLContextObj ctx, CGLPBufferObj pbuffer, GLenum source)
+{
+    return kCGLBadCodeModule;
 }

@@ -29,3 +29,11 @@ typedef struct {
     uint64_t flags;
     uint64_t reserved;
 } CVTimeStamp;
+
+typedef struct {
+    int64_t timeValue;
+    int32_t timeScale;
+    int32_t flags;
+} CVTime;
+
+enum { kCVTimeIsIndefinite = 1 << 0 };

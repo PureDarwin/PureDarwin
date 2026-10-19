@@ -18,7 +18,8 @@ CA_EXPORT NSString *const kCATransactionCompletionBlock;
 
 + (void)setAnimationDuration:(CFTimeInterval)value;
 + (void)setAnimationTimingFunction:(CAMediaTimingFunction *)value;
-//+(void)setCompletionBlock:(void (^)(void))value;
++ (void)setCompletionBlock:(void (^)(void))value;
++ (void (^)(void))completionBlock;
 + (void)setDisableActions:(BOOL)value;
 + (void)setValue:value forKey:(NSString *)key;
 

@@ -187,6 +187,9 @@ namespace IndiumPD {
 			auto &c = pass.colorAttachments;
 			for (size_t i = 0; i < c.size() && i < 4; i++) {
 				auto t = asTexture(c[i].texture);
+				// a pass that only clears a surface still changes it
+				if (t && t->surfaceLink())
+					cb->noteSurfaceWrite(t);
 				if (!t || c[i].loadAction != Indium::LoadAction::Clear)
 					continue;
 				Indium::ClearColor col = c[i].clearColor;
@@ -231,6 +234,7 @@ namespace IndiumPD {
 					size_t bpp = formatBytes(s->pixelFormat());
 					size_t w = std::min(s->width(), std::max<size_t>(d->width() >> level, 1));
 					size_t h = std::min(s->height(), std::max<size_t>(d->height() >> level, 1));
+					s->pullSurface();
 					pdmtl_sync(s->offset(), s->totalBytes());
 					pdmtl_sync(d->offset(), d->totalBytes());
 					for (size_t y = 0; y < h; y++)
@@ -470,6 +474,9 @@ namespace IndiumPD {
 				auto t = asTexture(c[i].texture);
 				if (!t || !t->describe(&d))
 					continue;
+				if (t->surfaceLink())
+					if (auto cb = _cb.lock())
+						cb->noteSurfaceWrite(t);
 				if (i == 0) {
 					r.targetOff = d.off, r.tw = d.w, r.th = d.h, r.tbpr = d.bpr, r.tfmt = d.fmt;
 					r.blend = _pipeline->blend(0);
@@ -707,6 +714,7 @@ namespace IndiumPD {
 					size_t bpp = formatBytes(f);
 					if (level >= s->levels())
 						return;
+					s->pullSurface();
 					pdmtl_sync(s->offset(), s->totalBytes());
 					pdmtl_sync(d->offset(), (uint32_t)d->length());
 					for (size_t y = 0; y < size.height; y++) {
@@ -741,7 +749,8 @@ namespace IndiumPD {
 				bool is3d = s->textureType() == Indium::TextureType::e3D;
 				if (level >= s->levels())
 					return;
-				pdmtl_sync(s->offset(), s->totalBytes());
+					s->pullSurface();
+					pdmtl_sync(s->offset(), s->totalBytes());
 				pdmtl_sync(d->offset(), (uint32_t)d->length());
 				// a 3D region's depth slices are the texture's slices, bytesPerImage apart in the buffer
 				for (size_t z = 0; z < depth; z++) {
@@ -757,7 +766,8 @@ namespace IndiumPD {
 		void copy(std::shared_ptr<Indium::Texture> src, std::shared_ptr<Indium::Texture> dst) override {
 			auto s = asTexture(src), d = asTexture(dst);
 			add([=] {
-				pdmtl_sync(s->offset(), s->totalBytes());
+					s->pullSurface();
+					pdmtl_sync(s->offset(), s->totalBytes());
 				pdmtl_sync(d->offset(), d->totalBytes());
 				memcpy(d->bytes(), s->bytes(), std::min(s->totalBytes(), d->totalBytes()));
 				pdmtl_dirty(d->offset(), d->totalBytes());
@@ -782,7 +792,8 @@ namespace IndiumPD {
 				size_t bpp = formatBytes(pf), blk = formatBlock(pf), rows = formatRows(pf, size.height), row = formatRowBytes(pf, size.width);
 				if (slevel >= s->levels() || dlevel >= d->levels())
 					return;
-				pdmtl_sync(s->offset(), s->totalBytes());
+					s->pullSurface();
+					pdmtl_sync(s->offset(), s->totalBytes());
 				pdmtl_sync(d->offset(), d->totalBytes());
 				for (size_t y = 0; y < rows; y++) {
 					memcpy(d->levelBytes(dlevel, dslice) + (dorg.y / blk + y) * d->levelBytesPerRow(dlevel) + dorg.x / blk * bpp,
@@ -862,6 +873,13 @@ namespace IndiumPD {
 		_scheduled.push_back(std::move(handler));
 	}
 
+	void CommandBuffer::noteSurfaceWrite(std::shared_ptr<Texture> texture) {
+		for (auto &t: _surfaceWrites)
+			if (t == texture)
+				return;
+		_surfaceWrites.push_back(std::move(texture));
+	}
+
 	void CommandBuffer::addCompletedHandler(Handler handler) {
 		_completed.push_back(std::move(handler));
 	}
@@ -886,6 +904,11 @@ namespace IndiumPD {
 		}
 		// the batch goes to the GPU, buffers it wrote come back for the CPU
 		pdmtl_finish();
+		// what it rendered into surfaces goes back to them, before anyone is told the work completed
+		for (auto &t: _surfaceWrites)
+			if (auto link = t->surfaceLink(); link && link->push)
+				link->push(t->bytes(), t->bytesPerRow());
+		_surfaceWrites.clear();
 		_jobs.clear();
 		_present.clear();
 		for (auto &h: _completed) {

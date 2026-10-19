@@ -10,6 +10,8 @@
 , openglFramework
 , mesa
 , glu
+, iosurface
+, coregraphics
 , src
 , appleSdk
 }:
@@ -51,6 +53,8 @@ stdenv.mkDerivation {
 
     echo "  CC CVDisplayLink.m"
     $cc $cflags -c CVDisplayLink.m -o CVDisplayLink.o
+    echo "  CC CVPixelBuffer.c"
+    $cc $cflags -c CVPixelBuffer.c -o CVPixelBuffer.o
 
     $cc \
       -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \
@@ -65,7 +69,10 @@ stdenv.mkDerivation {
       -Wl,-dylib_file,/usr/lib/libGLU.1.dylib:${glu}/usr/lib/libGLU.1.dylib \
       -Wl,-platform_version,macos,26.5,26.5 \
       -Wl,-install_name,${installName} \
-      CVDisplayLink.o \
+      -F${iosurface}/System/Library/Frameworks \
+      -F${coregraphics}/System/Library/Frameworks \
+      CVDisplayLink.o CVPixelBuffer.o \
+      -framework IOSurface -framework CoreGraphics \
       -lOpenGL -lFoundation -lCoreFoundation -lobjc -lSystem \
       -o CoreVideo
 

@@ -29,6 +29,14 @@ namespace IndiumPD {
 	std::shared_ptr<Indium::Texture> newBufferTexture(std::shared_ptr<Indium::Buffer> buffer, size_t offset,
 	                                                  const Indium::TextureDescriptor &descriptor);
 	size_t textureStorageSize(const Indium::TextureDescriptor &descriptor);
+
+	// a texture whose bytes follow memory outside the arena, an IOSurface: pull copies it in before the texture is
+	// used and says whether it did, push copies the texture out after a command buffer rendered into it
+	struct SurfaceLink {
+		std::function<bool(uint8_t *bytes, size_t bytesPerRow)> pull;
+		std::function<void(const uint8_t *bytes, size_t bytesPerRow)> push;
+	};
+	bool linkSurface(std::shared_ptr<Indium::Texture> texture, std::shared_ptr<SurfaceLink> link);
 	size_t tightRowBytes(Indium::PixelFormat format, size_t width);
 
 	// function constants: what a function declares (MSL type name) and a library function with values set

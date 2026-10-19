@@ -17,6 +17,26 @@ enum {
     kCALayerMaxYMargin = 0x20,
 };
 
+typedef NS_OPTIONS(unsigned int, CAEdgeAntialiasingMask) {
+    kCALayerLeftEdge = 1U << 0,
+    kCALayerRightEdge = 1U << 1,
+    kCALayerBottomEdge = 1U << 2,
+    kCALayerTopEdge = 1U << 3,
+};
+
+typedef NS_OPTIONS(NSUInteger, CACornerMask) {
+    kCALayerMinXMinYCorner = 1U << 0,
+    kCALayerMaxXMinYCorner = 1U << 1,
+    kCALayerMinXMaxYCorner = 1U << 2,
+    kCALayerMaxXMaxYCorner = 1U << 3,
+};
+
+typedef NSString *CADynamicRange;
+CA_EXPORT CADynamicRange const CADynamicRangeAutomatic;
+CA_EXPORT CADynamicRange const CADynamicRangeStandard;
+CA_EXPORT CADynamicRange const CADynamicRangeConstrainedHigh;
+CA_EXPORT CADynamicRange const CADynamicRangeHigh;
+
 CA_EXPORT NSString *const kCAFilterLinear;
 CA_EXPORT NSString *const kCAFilterNearest;
 CA_EXPORT NSString *const kCAFilterTrilinear;
@@ -54,8 +74,31 @@ CA_EXPORT NSString *const kCAGravityResizeAspectFill;
     NSMutableDictionary *_animations;
     NSNumber *_textureId;
     CGFloat _contentsScale;
+    BOOL _shouldRasterize;
+    CGFloat _rasterizationScale;
     NSString *_contentsGravity;
     NSString *_name;
+    BOOL _hidden;
+    BOOL _masksToBounds;
+    BOOL _geometryFlipped;
+    BOOL _contentsOpaque;
+    BOOL _doubleSided;
+    CAEdgeAntialiasingMask _edgeAntialiasingMask;
+    CGFloat _cornerRadius;
+    CACornerMask _maskedCorners;
+    CGFloat _zPosition;
+    CGFloat _borderWidth;
+    CGRect _contentsRect;
+    CGRect _contentsCenter;
+    CGColorRef _backgroundColor;
+    CGColorRef _borderColor;
+    CALayer *_mask;
+    CADynamicRange _preferredDynamicRange;
+    CGColorRef _shadowColor;
+    float _shadowOpacity;
+    CGSize _shadowOffset;
+    CGFloat _shadowRadius;
+    CGPathRef _shadowPath;
 }
 
 + layer;
@@ -70,16 +113,41 @@ CA_EXPORT NSString *const kCAGravityResizeAspectFill;
 @property float opacity;
 @property BOOL opaque;
 @property(retain) id contents;
-//@property CATransform3D transform;
+@property CATransform3D transform;
 @property CATransform3D sublayerTransform;
 
 @property(copy) NSString *minificationFilter;
 @property(copy) NSString *magnificationFilter;
 // backing pixels per point, stored only, the renderer draws at 1
 @property CGFloat contentsScale;
+// rasterizing is a caching hint, PD's renderer draws the layer tree every frame either way
+@property BOOL shouldRasterize;
+@property CGFloat rasterizationScale;
 // stored for the app: the renderer places contents at the origin
 @property(copy) NSString *contentsGravity;
 @property(copy) NSString *name;
+@property (getter=isHidden) BOOL hidden;
+@property BOOL masksToBounds;
+@property (getter=isGeometryFlipped) BOOL geometryFlipped;
+@property BOOL contentsOpaque;
+@property (getter=isDoubleSided) BOOL doubleSided;
+@property CAEdgeAntialiasingMask edgeAntialiasingMask;
+@property CGFloat cornerRadius;
+@property CACornerMask maskedCorners;
+@property CGFloat zPosition;
+@property CGFloat borderWidth;
+@property CGRect contentsRect;
+@property CGRect contentsCenter;
+@property CGColorRef backgroundColor;
+@property CGColorRef borderColor;
+@property (retain) CALayer *mask;
+@property CGColorRef shadowColor;
+@property float shadowOpacity;
+@property CGSize shadowOffset;
+@property CGFloat shadowRadius;
+@property CGPathRef shadowPath;
+@property (copy) CADynamicRange preferredDynamicRange;
+- (BOOL)isOpaque;
 
 - init;
 
@@ -101,6 +169,9 @@ CA_EXPORT NSString *const kCAGravityResizeAspectFill;
 
 - (id<CAAction>)actionForKey:(NSString *)key;
 
+- (void)insertSublayer:(CALayer *)layer atIndex:(unsigned)index;
+- (void)insertSublayer:(CALayer *)layer below:(CALayer *)sibling;
+- (void)insertSublayer:(CALayer *)layer above:(CALayer *)sibling;
 @end
 
 @interface NSObject (CALayerDelegate)

@@ -14,6 +14,7 @@
 #include <vector>
 
 #include <indium/indium.hpp>
+#include <indium/pd-sync.hpp>
 #include <indium-kit/indium-kit.hpp>
 
 extern "C" {
@@ -110,6 +111,8 @@ namespace IndiumPD {
 
 		// how a request names it, false when the executor cannot use it (multisample, 1D, buffer textures)
 		bool describe(struct PDDrawTex *t) const;
+		// copies an IOSurface's newer contents in, before the CPU or GPU reads the texture
+		void pullSurface() const;
 		// its levels and slices (bridge.h): tight rows, levels 16 bytes apart, slices 256
 		void layout(struct PDTexLayout *l) const;
 		uint8_t *bytes() const;
@@ -122,8 +125,12 @@ namespace IndiumPD {
 		uint32_t offset() const { return _off; }
 		uint32_t totalBytes() const { return (uint32_t)_total; }
 		struct pdmtl_drawable *drawable() const { return _drawable; }
+		// an IOSurface the texture mirrors, null for ordinary textures
+		std::shared_ptr<SurfaceLink> surfaceLink() const { return _link; }
+		void setSurfaceLink(std::shared_ptr<SurfaceLink> link) { _link = std::move(link); }
 
 	private:
+		std::shared_ptr<SurfaceLink> _link;
 		std::weak_ptr<Device> _device;
 		Indium::TextureDescriptor _desc;
 		uint32_t _off = 0;
@@ -285,10 +292,13 @@ namespace IndiumPD {
 		std::shared_ptr<Indium::Device> device() override { return _device.lock(); }
 
 		void add(Job job) { _jobs.push_back(std::move(job)); }
+		// a surface-backed texture this command buffer renders into, copied back to its surface once it ran
+		void noteSurfaceWrite(std::shared_ptr<Texture> texture);
 		// on the device's thread
 		void execute();
 
 	private:
+		std::vector<std::shared_ptr<Texture>> _surfaceWrites;
 		std::weak_ptr<Device> _device;
 		std::weak_ptr<CommandQueue> _queue;
 		std::vector<Job> _jobs;
