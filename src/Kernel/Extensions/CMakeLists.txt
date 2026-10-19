@@ -46,9 +46,9 @@ if(PUREDARWIN_ENABLE_IOGRAPHICS_FAMILY)
     add_subdirectory(IOGraphicsFamily)
 endif()
 add_subdirectory(IOGOPFramebuffer)
+add_subdirectory(PDVirtualFramebuffer)
 add_subdirectory(IOVirtIOFamily)
 add_subdirectory(IOVirtIOGPU)
-add_subdirectory(IOIntelFramebuffer)
 add_subdirectory(PDRadeonFramebuffer)
 add_subdirectory(PDAmdGPU)
 add_subdirectory(IOVirtIONet)
@@ -60,9 +60,34 @@ add_subdirectory(IOHIDFamily)
 add_subdirectory(PDIOSurface)
 add_subdirectory(IONetworkingFamily)
 add_subdirectory(PDE1000)
+# FreeBSD drivers on the fbsdkpi layer, x86_64 only for now
+if(PUREDARWIN_ARCH STREQUAL "x86_64")
+    add_subdirectory(PDFBSDem)
+    add_subdirectory(PDFBSDrtw89)
+    add_subdirectory(PDDRMDri)
+    # amdgpu through drm-kmod; the drm-kmod tree comes from nix, so it is optional
+    if(PD_DRMKMOD_DIR)
+        add_subdirectory(PDDRMamdgpu)
+        # only a drm-kmod tree that kept i915 can build it
+        if(EXISTS "${PD_DRMKMOD_DIR}/drivers/gpu/drm/i915")
+            add_subdirectory(PDDRMi915)
+        endif()
+        # nouveau comes from linux into its own copy of the drm-kmod tree
+        if(EXISTS "${PD_DRMKMOD_DIR}/drivers/gpu/drm/nouveau")
+            add_subdirectory(PDDRMnouveau)
+        endif()
+    endif()
+elseif(PUREDARWIN_ARM64)
+    # arm64 bring-up of the layer: platform-device drm drivers from the device tree
+    add_subdirectory(PDDRMDri)
+    if(PD_DRMKMOD_DIR)
+        add_subdirectory(PDDRMmsm)
+    endif()
+endif()
 add_subdirectory(PDRealtek8111)
 add_subdirectory(IO80211Family)
 add_subdirectory(PDRalinkUSB)
+add_subdirectory(PDQwx)
 add_subdirectory(IOAudioFamily)
 add_subdirectory(RavynHDAudio)
 add_subdirectory(corecrypto)
@@ -102,13 +127,16 @@ add_dependencies(kexts
     RavynAHCIPort.kext RavynXHCIPort.kext
     IOGOPFramebuffer.kext IOVirtIOFamily.kext IOVirtIOGPU.kext IOVirtIONet.kext
     IOVirtIOBlock.kext
-    IOIntelFramebuffer.kext PDRadeonFramebuffer.kext PDAmdGPU.kext
+    PDRadeonFramebuffer.kext PDAmdGPU.kext
     IOHIDFamily.kext IONetworkingFamily.kext PDE1000.kext PDRealtek8111.kext
-    IO80211Family.kext PDRalinkUSB.kext
+    IO80211Family.kext PDRalinkUSB.kext PDQwx.kext
     IOAudioFamily.kext RavynHDAudio.kext
     corecrypto.kext ext4.kext msdosfs.kext cd9660.kext PDAuxHello.kext apfs.kext HFSEncodings.kext hfs.kext
     AppleFileSystemDriver.kext Ext4FileSystemDriver.kext ApfsFileSystemDriver.kext
 )
+if(PUREDARWIN_ARCH STREQUAL "x86_64")
+    add_dependencies(kexts PDFBSDem.kext PDFBSDrtw89.kext PDDRMDri.kext)
+endif()
 add_dependencies(kexts PDI2CFamily.kext PDI2CHID.kext PDDesignWareI2C.kext PDUSBNCM.kext)
 if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32)
     add_dependencies(kexts PDArmPlatformExpert)

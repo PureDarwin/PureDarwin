@@ -223,7 +223,7 @@
           userlandBuild = (mkPureDarwinBuild {
             pname = "puredarwin-userland";
             src = userlandSource;
-            buildTargets = [ "sw_vers" "ps" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "pcmplay" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" "pdkext" "sh" "gpt" ]
+            buildTargets = [ "sw_vers" "ps" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "pcmplay" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" "pdkext" "drmprobe" "sh" "gpt" ]
               # shell_cmds (+ tsort/uuencode/uudecode)
               ++ [ "basename" "chown" "dirname" "echo" "false" "getopt" "hostname" "jot" "kill" "logname" "mktemp" "nice" "nohup" "passwd" "printenv" "pwd" "renice" "seq" "shlock" "sleep" "tee" "test_cmd" "true" "tsort" "uname" "yes" "uuencode" "uudecode" ]
               # text_cmds
@@ -258,7 +258,7 @@
           userlandNoxBuild = mkPureDarwinBuild {
             pname = "puredarwin-userland-nox";
             src = userlandSource;
-            buildTargets = [ "sw_vers" "ps" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "pcmplay" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" "pdkext" "sh" "gpt" ]
+            buildTargets = [ "sw_vers" "ps" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "pcmplay" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" "pdkext" "drmprobe" "sh" "gpt" ]
               ++ [ "basename" "chown" "dirname" "echo" "false" "getopt" "hostname" "jot" "kill" "logname" "mktemp" "nice" "nohup" "passwd" "printenv" "pwd" "renice" "seq" "shlock" "sleep" "tee" "test_cmd" "true" "tsort" "uname" "yes" "uuencode" "uudecode" ]
               ++ [ "banner" "cat" "colrm" "comm" "cut" "expand" "fold" "head" "lam" "look" "nl" "paste" "rev" "split" "tail" "tr" "unexpand" "uniq" "wc" ];
             enableProjects = false;
@@ -1518,6 +1518,18 @@
               zlib = xvfbZlibBuild;
               src = ./src/Frameworks/Onyx2D;
             };
+          # the CoreGraphics calls the official Firefox build imports, run at boot in image-cg-test
+          cgFfTestsBuild =
+            pkgs.callPackage ./nix/pkgs/apple/cg-ff-tests.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              coregraphics = coregraphicsBuild;
+              onyx2d = onyx2dBuild;
+              src = ./tests/cg-ff;
+            };
           coregraphicsBuild =
             pkgs.callPackage ./nix/pkgs/apple/coregraphics.nix {
               inherit darwinCrossToolchain nativeLd;
@@ -1541,6 +1553,12 @@
               foundation = foundationBuild;
               onyx2d = onyx2dBuild;
               coregraphics = coregraphicsBuild;
+              freetype = freetype2Build;
+              fontconfig = fontconfigBuild;
+              harfbuzz = harfbuzzNoxBuild;
+              fribidi = fribidiBuild;
+              icu = icuCoreBuild;
+              libcxxDylib = libcxxDylibBuild;
               src = ./src/Frameworks/CoreText;
             };
           coredataBuild =
@@ -1792,6 +1810,18 @@
               libX11 = null; libXext = null; libxcb = null; libXau = null;
               libXdmcp = null; libXxf86vm = null; xorgproto = null; xtrans = null;
             };
+          mesaAmdgpuBuild =
+            mesaNoxBuild.override {
+              withAmdgpuDrm = true;
+              libdrmAmdgpu = libdrmAmdgpuBuild;
+              libelf = libelfBuild;
+            };
+          # radeonsi with crocus and iris, the loader picks one by the drm device's pci id
+          mesaGpuBuild = mesaAmdgpuBuild.override {
+            withIntelDrm = true;
+            withNouveauDrm = true;
+            mesaClcTools = pkgs.mesa.cross_tools;
+          };
           openglFrameworkNoxBuild =
             openglFrameworkBuild.override {
               withX11 = false;
@@ -2063,6 +2093,12 @@
               puredarwinSource = ./src/Libraries/libdrm;
               src = pkgs.libdrm.src;
               inherit (pkgs) meson ninja pkg-config python3;
+            };
+          libdrmAmdgpuBuild = libdrmBuild.override { amdgpu = true; nouveau = true; };
+          libelfBuild =
+            pkgs.callPackage ./nix/pkgs/gpu/elftoolchain-libelf.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
             };
           jsoncBuild =
             pkgs.callPackage ./nix/pkgs/apps/json-c.nix {
@@ -2987,11 +3023,55 @@
               corefoundation = coreFoundationBuild;
               src = ./src/Frameworks/IOSurface;
             };
+          akffTestBuild =
+            pkgs.callPackage ./nix/pkgs/apple/akff-test.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              appkit = appkitBuild;
+              carbon = carbonBuild;
+              onyx2d = onyx2dBuild;
+              coretext = coretextBuild;
+              quartzcore = quartzcoreBuild;
+              coregraphics = coregraphicsBuild;
+              applicationservices = applicationservicesBuild;
+              coreservices = coreServicesBuild;
+              windowserver = windowserverBuild;
+              openglFramework = openglFrameworkNoxBuild;
+              mesa = mesaNoxBuild;
+              src = ./tests/appkit-ff;
+            };
+          carbonBuild =
+            pkgs.callPackage ./nix/pkgs/apple/carbon.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              coregraphics = coregraphicsBuild;
+              coreservices = coreServicesBuild;
+              src = ./src/Frameworks/Carbon;
+            };
+          # sharing, plane and GL tests for IOSurface, for test images only
+          iosurfaceTestsBuild =
+            pkgs.callPackage ./nix/pkgs/apple/iosurface-tests.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              corefoundation = coreFoundationBuild;
+              iosurface = iosurfaceBuild;
+              openglFramework = openglFrameworkNoxBuild;
+              mesa = mesaNoxBuild;
+              glu = gluNoxBuild;
+              src = ./src/Frameworks/IOSurface/tests;
+            };
           audiotoolboxBuild =
             pkgs.callPackage ./nix/pkgs/apple/audiotoolbox.nix {
               inherit darwinCrossToolchain nativeLd appleSdk;
               libSystem = libSystemBuild;
+              corefoundation = coreFoundationBuild;
               src = ./src/Frameworks/AudioToolbox;
+              coreAudioSrc = ./src/Frameworks/CoreAudio;
             };
           # apple's framework install paths (CoreFoundation re-export shim, Versions/C) for Xcode-built apps
           frameworkCompatBuild =
@@ -3030,6 +3110,7 @@
               appkit = appkitBuild;
               openglFramework = openglFrameworkNoxBuild;
               mesa = mesaNoxBuild;
+              corevideo = corevideoBuild;
               srcs = {
                 CoreMedia = ./src/Frameworks/CoreMedia;
                 UniformTypeIdentifiers = ./src/Frameworks/UniformTypeIdentifiers;
@@ -3038,7 +3119,41 @@
                 ScreenCaptureKit = ./src/Frameworks/ScreenCaptureKit;
                 GameKit = ./src/Frameworks/GameKit;
                 ModelIO = ./src/Frameworks/ModelIO;
+                VideoToolbox = ./src/Frameworks/VideoToolbox;
+                AVFoundation = ./src/Frameworks/AVFoundation;
+                MediaPlayer = ./src/Frameworks/MediaPlayer;
+                CoreMIDI = ./src/Frameworks/CoreMIDI;
+                AuthenticationServices = ./src/Frameworks/AuthenticationServices;
+                LocalAuthentication = ./src/Frameworks/LocalAuthentication;
+                CoreLocation = ./src/Frameworks/CoreLocation;
+                Vision = ./src/Frameworks/Vision;
+                ServiceManagement = ./src/Frameworks/ServiceManagement;
+                IOBluetooth = ./src/Frameworks/IOBluetooth;
+                Accessibility = ./src/Frameworks/Accessibility;
+                AddressBook = ./src/Frameworks/AddressBook;
+                HIServices = ./src/Frameworks/HIServices;
+                libcups = ./src/Libraries/libcups;
               };
+            };
+          # tests for the frameworks the official Firefox build links, run at boot in image-frameworks-test
+          frameworksFfTestsBuild =
+            pkgs.callPackage ./nix/pkgs/apple/frameworks-ff-tests.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              coreservices = coreServicesBuild;
+              iokit = iokitBuild;
+              coregraphics = coregraphicsBuild;
+              coretext = coretextBuild;
+              onyx2d = onyx2dBuild;
+              quartzcore = quartzcoreBuild;
+              corevideo = corevideoBuild;
+              iosurface = iosurfaceBuild;
+              audiotoolbox = audiotoolboxBuild;
+              appFrameworks = appFrameworksBuild;
+              src = ./tests/frameworks-ff;
             };
           # apple's Metal samples (MIT) on PD's Metal, MetalKit and AppKit storyboards
           metalAppleSamplesBuild =
@@ -3156,6 +3271,25 @@
               systemConfiguration = systemConfigurationBuild;
               iokit = iokitBuild;
               corefoundation = coreFoundationBuild;
+              libobjc = libobjcBuild;
+              foundation = foundationBuild;
+              appkit = appkitBuild;
+              carbon = carbonBuild;
+              corevideo = corevideoBuild;
+              quartzcore = quartzcoreBuild;
+              coregraphics = coregraphicsBuild;
+              coretext = coretextBuild;
+              applicationservices = applicationservicesBuild;
+              audiotoolbox = audiotoolboxBuild;
+              appFrameworks = appFrameworksBuild;
+              iosurface = iosurfaceBuild;
+              metalObjc = metalObjcPdNoxBuild;
+              openglFramework = openglFrameworkNoxBuild;
+              onyx2d = onyx2dBuild;
+              windowserver = windowserverBuild;
+              cocoa = cocoaBuild;
+              coredata = coredataBuild;
+              glu = gluNoxBuild;
               inherit (pkgs) perl;
               wineTools = wineToolsBuild;
               mingwGcc = pkgs.pkgsCross.mingwW64.buildPackages.gcc;
@@ -3866,6 +4000,8 @@
               openglFramework = openglFrameworkNoxBuild;
               mesa = mesaNoxBuild;
               glu = gluNoxBuild;
+              iosurface = iosurfaceBuild;
+              coregraphics = coregraphicsBuild;
               src = ./src/Frameworks/CoreVideo;
             };
           quartzcoreBuild =
@@ -3902,6 +4038,9 @@
             inherit foundationSource;
             inherit hostOtoolBuild;
             inherit i3statusShimBuild;
+            inherit tllistBuild;
+            inherit localeDataBuild;
+            inherit applicationservicesBuild systemFontsBuild waylandSessionBuild;
             inherit icuCoreBuild;
             inherit iokitBuild;
             inherit iokitCFStaticBuild;
@@ -4104,6 +4243,32 @@
             swayArm64Build
             libdrmArm64Build
             libdrmPdpvrArm64Build
+            libdrmDriArm64Build
+            mesaMsmArm64Build
+            neuwldMsmArm64Build
+            neuswcMsmArm64Build
+            argonMsmArm64Bundle
+            footArm64Build
+            iosurfaceArm64Build
+            gluMsmArm64Build
+            onyx2dArm64Build
+            coregraphicsArm64Build
+            coretextArm64Build
+            corevideoMsmArm64Build
+            quartzcoreMsmArm64Build
+            windowserverArm64Build
+            appkitMsmArm64Build
+            coredataArm64Build
+            cocoaMsmArm64Build
+            carbonArm64Build
+            pddecorMsmArm64Build
+            dockMsmArm64Build
+            menubarMsmArm64Build
+            terminalMsmArm64Build
+            finderMsmArm64Build
+            calculatorMsmArm64Build
+            argonDesktopMsmArm64Bundle
+            pdgltriMsmArm64Build
             mesaPvrNativeToolsBuild
             mesaPowervrArm64Build
             vulkanLoaderArm64Build
@@ -4487,6 +4652,135 @@
             installKexts = true;
             enableIOGraphicsFamily = true;
           };
+          # FreeBSD's drm-kmod (Linux 6.14 DRM and amdgpu on LinuxKPI), with the
+          # files PureDarwin leaves out removed and its small patch applied
+          drmKmodSrc = pkgs.runCommand "puredarwin-drm-kmod-src" {
+            src = pkgs.fetchFromGitHub {
+              owner = "freebsd";
+              repo = "drm-kmod";
+              rev = "c16de0f9fa84f70b9551f69fde837a7f3a73c0e9";
+              sha256 = "00rbflry435i0h54pgca5fzp0qsvbgzcxzv0c832znksr174k6pa";
+            };
+          } ''
+            cp -r $src $out
+            chmod -R u+w $out
+            cd $out
+            rm -rf drivers/gpu/drm/i915 drivers/gpu/drm/radeon
+            grep -v '^#' ${./src/Kernel/fbsdkpi/drm/drm-kmod-remove.txt} | while read -r f; do
+              rm -rf "$f"
+            done
+            patch -p1 < ${./src/Kernel/fbsdkpi/drm/drm-kmod-pd.patch}
+          '';
+          # the same drm-kmod with i915 kept, its PureDarwin patch applied and the
+          # unlicensed or GPL i915 files PD replaces left out
+          drmKmodI915Src = pkgs.runCommand "puredarwin-drm-kmod-i915-src" {
+            src = drmKmodSrc.src;
+          } ''
+            cp -r $src $out
+            chmod -R u+w $out
+            cd $out
+            rm -rf drivers/gpu/drm/radeon
+            grep -v '^#' ${./src/Kernel/fbsdkpi/drm/drm-kmod-remove.txt} | while read -r f; do
+              rm -rf "$f"
+            done
+            patch -p1 < ${./src/Kernel/fbsdkpi/drm/drm-kmod-pd.patch}
+            patch -p1 < ${./src/Kernel/fbsdkpi/drm/drm-kmod-i915-pd.patch}
+          '';
+          # nouveau from linux 6.14, the release drm-kmod's drm core follows, in a copy of the
+          # drm-kmod tree with the ch7006 and sil164 headers nouveau's nv04 tv-out includes
+          linux614Src = pkgs.fetchurl {
+            url = "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.14.tar.xz";
+            hash = "sha256-opS2g+exYbsFF7sy7H7R0up2A9+6utE1Fw7RLQDEdnA=";
+          };
+          drmKmodNouveauSrc = pkgs.runCommand "puredarwin-drm-kmod-nouveau-src" {
+            nativeBuildInputs = [ pkgs.xz ];
+          } ''
+            cp -r ${drmKmodSrc} $out
+            chmod -R u+w $out
+            tar -xJf ${linux614Src} --strip-components=1 -C $out \
+              linux-6.14/drivers/gpu/drm/nouveau \
+              linux-6.14/include/drm/i2c/ch7006.h linux-6.14/include/drm/i2c/sil164.h
+            cd $out
+            patch -p1 < ${./src/Kernel/fbsdkpi/drm/linux-nouveau-pd.patch}
+            # PD's clean-room headers take the place of three whose history could not be settled
+            cp -r ${./src/Kernel/fbsdkpi/drm/nouveau}/. drivers/gpu/drm/nouveau/
+            chmod -R u+w drivers/gpu/drm/nouveau
+          '';
+          # nvidia graphics from nv50 on, opt-in with the pdnouveau=1 boot-arg
+          drmNouveauBuild = mkPureDarwinBuild {
+            pname = "puredarwin-drm-nouveau";
+            src = kextsSource;
+            buildTargets = [ "PDDRMnouveau.kext" ];
+            enableUserspace = false;
+            installUserland = false;
+            installKernel = false;
+            installKexts = true;
+            installKextNames = [ "PDDRMnouveau.kext" ];
+            extraCmakeFlags = [ "-DPD_DRMKMOD_DIR=${drmKmodNouveauSrc}" ];
+            ninjaFlags = [ "-k" "0" ];
+          };
+          # gsp firmware for turing (tu1xx), ampere ga10x (ga107 is the rtx 2050) and ada ad10x, only
+          # the 535.113.01 release linux 6.14's nouveau asks for. fermi needs none.
+          nouveauFirmware = pkgs.runCommand "puredarwin-nouveau-firmware" { } ''
+            fw=$out/Library/Firmware/nvidia
+            mkdir -p $fw
+            src=${pkgs.linux-firmware}/lib/firmware/nvidia
+            for chip in tu102 tu104 tu106 tu10x tu116 tu117 ga102 ga103 ga104 ga106 ga107 \
+              ad102 ad103 ad104 ad106 ad107; do
+              [ -e "$src/$chip" ] || continue
+              cp -a "$src/$chip" "$fw/"
+            done
+            chmod -R u+w $fw
+            find $fw -name '*-570.*' -delete
+            find $fw -name '*.zst' -exec ${pkgs.zstd}/bin/zstd -dq --rm {} \;
+            find $fw -name '*.xz' -exec ${pkgs.xz}/bin/xz -dq {} \;
+            cp ${pkgs.linux-firmware.src}/LICENCE.nvidia $fw/LICENCE.nvidia 2>/dev/null || \
+              cp ${pkgs.linux-firmware.src}/LICENSES/LICENCE.nvidia $fw/LICENCE.nvidia
+          '';
+          # i915 for gen7, gen9 and gen12+ intel graphics, attaches unless pdi915=0
+          drmI915Build = mkPureDarwinBuild {
+            pname = "puredarwin-drm-i915";
+            src = kextsSource;
+            buildTargets = [ "PDDRMi915.kext" ];
+            enableUserspace = false;
+            installUserland = false;
+            installKernel = false;
+            installKexts = true;
+            installKextNames = [ "PDDRMi915.kext" ];
+            extraCmakeFlags = [ "-DPD_DRMKMOD_DIR=${drmKmodI915Src}" ];
+            ninjaFlags = [ "-k" "0" ];
+          };
+          # the amdgpu kext, built apart from the boot kexts and loaded from the
+          # auxiliary kernel collection
+          drmAmdgpuBuild = mkPureDarwinBuild {
+            pname = "puredarwin-drm-amdgpu";
+            src = kextsSource;
+            buildTargets = [ "PDDRMamdgpu.kext" ];
+            enableUserspace = false;
+            installUserland = false;
+            installKernel = false;
+            installKexts = true;
+            installKextNames = [ "PDDRMamdgpu.kext" ];
+            extraCmakeFlags = [ "-DPD_DRMKMOD_DIR=${drmKmodSrc}" ];
+            # report every compile error of a bring-up build at once
+            ninjaFlags = [ "-k" "0" ];
+          };
+          # the adreno drm driver for arm64, the fbsdkpi layer's first arm64 user
+          drmMsmArm64Build = mkPureDarwinBuild {
+            pname = "puredarwin-drm-msm-arm64";
+            src = kextsSource;
+            buildTargets = [ "PDDRMmsm.kext" "PDDRMDri.kext" ];
+            enableUserspace = false;
+            installUserland = false;
+            installKernel = false;
+            installKexts = true;
+            installKextNames = [ "PDDRMmsm.kext" "PDDRMDri.kext" ];
+            enableIOGraphicsFamily = true;
+            puredarwinArch = "arm64";
+            inherit arm64CrossToolchain;
+            extraCmakeFlags = [ "-DPD_DRMKMOD_DIR=${drmKmodSrc}" ];
+            ninjaFlags = [ "-k" "0" ];
+          };
           iographicsBuild = mkPureDarwinBuild {
             pname = "puredarwin-iographics";
             src = kextsSource;
@@ -4510,6 +4804,7 @@
           };
           # Image contents (see nix/image-contents.nix).
           imageContents = import ./nix/image-contents.nix {
+            inherit kcGpuBuild gpuDefaultPackages;
             inherit
               appkitBuild windowserverBuild applicationservicesBuild terminalBuild menubarBuild dockBuild finderBuild systemInformationBuild calculatorBuild installerBuild pddecorBuild localeDataBuild settingsBuild waylandSessionBuild
               nixPortPackages
@@ -4519,14 +4814,14 @@
               libX11SharedBuild libxcbSharedBuild libXauSharedBuild libXdmcpSharedBuild
               libXextSharedBuild libXrenderSharedBuild libXfixesSharedBuild libXiSharedBuild
               libXcursorSharedBuild libXrandrSharedBuild libXxf86vmSharedBuild nettleSharedBuild gnutlsSharedBuild glibNetworkingBuild llvmCrossBuild vulkanLoaderBuild libxshmfenceSharedBuild vulkanToolsBuild vulkanLoaderNoxBuild vulkanToolsNoxBuild mesaVenusWaylandBuild venusTestsNoxBuild libdrmVirtgpuBuild glfwPdBuild metalPdNoxBuild metalObjcPdNoxBuild metalAppleSamplesNoxBuild spirvCrossPdBuild
-              fbdoomBuild fbdoomExternalSrc fileBuild flexBuild fontconfigBuild foundationBuild frameworkCompatBuild swiftRuntimeBuild cocoaBuild appFrameworksBuild mpsNoxBuild audiotoolboxBuild iosurfaceBuild
+              fbdoomBuild fbdoomExternalSrc fileBuild flexBuild fontconfigBuild foundationBuild frameworkCompatBuild swiftRuntimeBuild cocoaBuild appFrameworksBuild cgFfTestsBuild frameworksFfTestsBuild mpsNoxBuild audiotoolboxBuild carbonBuild iosurfaceBuild iosurfaceTestsBuild
               freetype2Build fribidiBuild garconBuild gdkPixbufBuild gitBuild glibBuild gnum4Build
               gnumakeBuild gtk3Build gtkLayerShellBuild gtk3NoxBuild gtkLayerShellNoxBuild onyx2dBuild coregraphicsBuild coretextBuild quartzcoreBuild corevideoBuild coredataBuild cgScreenDemoBuild systemFontsBuild cairoNoxBuild dbusNoxBuild pdEpollShimBuild tllistBuild fcftBuild footBuild userlandNoxBuild pangoNoxBuild netsurfNoxBuild libepoxyNoxBuild fastfetchNoxBuild harfbuzzNoxBuild atspi2CoreNoxBuild cairoGobjectNoxBuild xkbcommonNoxBuild mesaNoxBuild openglFrameworkNoxBuild mesaDemosNoxBuild librsvgNoxBuild harfbuzzBuild i3Build i3statusShimBuild iceauthBuild
               cursorThemeBuild iconThemesBuild icuCoreBuild imageExtraPackagesArm64 imageExtraPackagesArm64Nox imageExtraPackagesArm64Sg2002 splitBaseSystemArm64Sg2002 iographicsBuild iokitBuild asmjitTestArm64Build
               iomediacheckBuild ioregBuild isDarwin jsoncBuild kc-tools kernelArm64Build kernelArm64VirtBuild
               kernelArm64VirtDebugBuild kernelArm64VirtAmpBuild kernelArm64T8010Build kernelArm64T8010DebugBuild kernelArm64Bcm2837Build kernelArm64Bcm2837DebugBuild kernelArm64Sun50iBuild kernelArm64Sun50iDebugBuild kernelArm64Sc8280xpBuild kernelArm64Sc8280xpDebugBuild kernelArm64Virt4kDebugBuild kernelArm32Bcm2835Build kernelArm32Bcm2835DebugBuild kernelArm32Bcm2835DevBuild
               kextsArm32Bcm2835Build compilerRtArmv6Build
-              kernelBuild kernelDebugBuild kernelSource kextsArm64Build kextsBuild
+              kernelBuild kernelDebugBuild kernelSource kextsArm64Build drmMsmArm64Build kextsBuild
               launchctlBuild launchdBuild lib libSystemBuild libdrmBuild libXftBuild libapfsrwBuild libcssBuild waylandBuild waylandProtocolsBuild neuwldBuild neuswcBuild wlrootsBuild swayBuild wlrootsNoxBuild swayNoxBuild
               pdsurfaceBuild libgbmBuild libcurlDylibBuild libcxxDylibBuild libcxxTestBuild libcxxabiDylibBuild libdisplayInfoBuild
               libdomBuild libepoxyBuild libevBuild libffiBuild libhubbubBuild libiconvArm64Build
@@ -4748,6 +5043,7 @@
             wlroots-arm64 = wlrootsArm64Build;
             sway-arm64 = swayArm64Build;
             libdrm-arm64 = libdrmArm64Build;
+            libdrm-dri-arm64 = libdrmDriArm64Build;
             libdrm-pdpvr-arm64 = libdrmPdpvrArm64Build;
             radeon-gl-tests = radeonGlTestsBuild;
             radeon-tests = radeonTestsBuild;
@@ -4758,15 +5054,41 @@
             glfw-pd = glfwPdBuild;
             metal-pd = metalPdBuild;
             metal-objc = metalObjcPdBuild;
+            # the Wayland images' Metal.framework, so it can be built and injected on its own
+            metal-objc-nox = metalObjcPdNoxBuild;
             mps = mpsBuild;
             metal-apple-samples = metalAppleSamplesBuild;
             framework-compat = frameworkCompatBuild;
             cocoa = cocoaBuild;
             app-frameworks = appFrameworksBuild;
+            frameworks-ff-tests = frameworksFfTestsBuild;
+            cg-ff-tests = cgFfTestsBuild;
             audiotoolbox = audiotoolboxBuild;
+            carbon = carbonBuild;
+            akff-test = akffTestBuild;
             iosurface = iosurfaceBuild;
+            iosurface-tests = iosurfaceTestsBuild;
             mesa-pvr-native-tools = mesaPvrNativeToolsBuild;
             mesa-powervr-arm64 = mesaPowervrArm64Build;
+            mesa-msm-arm64 = mesaMsmArm64Build;
+            neuswc-msm-arm64 = neuswcMsmArm64Build;
+            argon-msm-arm64 = argonMsmArm64Bundle;
+            foot-arm64 = footArm64Build;
+            onyx2d-arm64 = onyx2dArm64Build;
+            coregraphics-arm64 = coregraphicsArm64Build;
+            coretext-arm64 = coretextArm64Build;
+            quartzcore-msm-arm64 = quartzcoreMsmArm64Build;
+            windowserver-arm64 = windowserverArm64Build;
+            appkit-msm-arm64 = appkitMsmArm64Build;
+            cocoa-msm-arm64 = cocoaMsmArm64Build;
+            terminal-msm-arm64 = terminalMsmArm64Build;
+            dock-msm-arm64 = dockMsmArm64Build;
+            menubar-msm-arm64 = menubarMsmArm64Build;
+            pddecor-msm-arm64 = pddecorMsmArm64Build;
+            finder-msm-arm64 = finderMsmArm64Build;
+            calculator-msm-arm64 = calculatorMsmArm64Build;
+            argon-desktop-msm-arm64 = argonDesktopMsmArm64Bundle;
+            pdgltri-msm-arm64 = pdgltriMsmArm64Build;
             vulkan-loader-arm64 = vulkanLoaderArm64Build;
             pdvktri-arm64 = pdvktriArm64Build;
             pdvkspin-arm64 = pdvkspinArm64Build;
@@ -4965,10 +5287,373 @@
               echo "PureDarwin Nix kernel shell: cmake/nix-toolchain.cmake and cached native ld/migcom/unifdef are active."
             '';
           });
+          # the minimal image with amdgpu in the auxiliary KC and its firmware
+          # next to the kext, for the iGPU passthrough VMs
+          drmAmdgpuKexts = pkgs.symlinkJoin {
+            name = "puredarwin-kexts-amdgpu";
+            paths = [ kextsBuild drmAmdgpuBuild ];
+          };
+          kcAmdgpuBuild = pkgs.callPackage ./nix/pkgs/toolchain/kc.nix {
+            kernel = kernelBuild;
+            inherit kernelSource;
+            kexts = drmAmdgpuKexts;
+            kcTools = kc-tools.packages.${system}.default;
+            auxKexts = [ "PDDRMamdgpu.kext" ];
+            excludeKexts = [ "PDAmdGPU.kext" ];
+          };
+          amdgpuAuxFiles = pkgs.runCommand "puredarwin-amdgpu-aux" { } ''
+            mkdir -p $out/Library/KernelCollections
+            cp ${kcAmdgpuBuild}/aux.kc $out/Library/KernelCollections/AuxiliaryKernelExtensions.kc
+          '';
+          # amdgpu firmware from linux-firmware, per gpu family (the file prefixes
+          # of its gc, psp, sdma, dcn and vcn ip versions), into
+          # /Library/Firmware/amdgpu where the kext loads it by name. AMD's licence
+          # allows redistribution, LICENSE.amdgpu goes along.
+          amdgpuFirmwareFamilies = {
+            granite-ridge = [ "gc_10_3_6" "psp_13_0_5" "sdma_5_2_6" "dcn_3_1_5" "vcn_3_1_2" ];
+            mendocino = [ "gc_10_3_7" "psp_13_0_8" "sdma_5_2_7" "dcn_3_1_6" "vcn_3_1_2" ];
+            # navi 2x and renoir predate ip discovery, their firmware files carry the codename
+            navi21 = [ "sienna_cichlid" ];
+            navi22 = [ "navy_flounder" ];
+            navi23 = [ "dimgrey_cavefish" ];
+            navi24 = [ "beige_goby" ];
+            renoir = [ "renoir" "green_sardine" ];
+            # rembrandt (radeon 680m and 660m) also predates ip discovery in its firmware names
+            rembrandt = [ "yellow_carp" ];
+          };
+          # families: a list of amdgpuFirmwareFamilies names, or "all"
+          mkAmdgpuFirmware = families: let
+            prefixes = if families == "all" then [ "" ]
+              else lib.unique (lib.concatMap (f: amdgpuFirmwareFamilies.${f}) families);
+            tag = if families == "all" then "all" else lib.concatStringsSep "-" families;
+          in pkgs.runCommand "puredarwin-amdgpu-firmware-${tag}" { } ''
+            fw=$out/Library/Firmware/amdgpu
+            mkdir -p $fw
+            for p in ${lib.escapeShellArgs prefixes}; do
+              for src in ${pkgs.linux-firmware}/lib/firmware/amdgpu/"$p"*; do
+                [ -e "$src" ] || continue
+                name=$(basename "$src")
+                case "$src" in
+                  *.zst) ${pkgs.zstd}/bin/zstd -dqf "$src" -o "$fw/''${name%.zst}" ;;
+                  *.xz) ${pkgs.xz}/bin/xz -dc "$src" > "$fw/''${name%.xz}" ;;
+                  *) cp -L "$src" "$fw/" ;;
+                esac
+              done
+            done
+            cp ${pkgs.linux-firmware.src}/LICENSES/LICENSE.amdgpu $fw/LICENSE.amdgpu
+          '';
+          # the images built on image-wayland-minimal bring their own aux KC instead of the default one
+          dropGpuDefaults = builtins.filter (p: !(builtins.elem p gpuDefaultPackages));
+          imageAmdgpuBuild = linuxPackages.image-wayland-minimal.override (old: {
+            kc = kcAmdgpuBuild;
+            # the default carries only the two APUs PD is tested on, see image-amdgpu-allfw
+            # userland brings pdkext, which loads the aux KC (the wayland base leaves it out)
+            extraPackages = dropGpuDefaults old.extraPackages ++ [ userlandBuild amdgpuAuxFiles
+              (mkAmdgpuFirmware [ "granite-ridge" "mendocino" "navi21" "navi22" "navi23" "navi24" "renoir" "rembrandt" ]) ];
+            imageFileName = "puredarwin-amdgpu.img";
+            # the aux KC is not SIP protected on ext4, allow unrestricted fs and untrusted kexts
+            bootArgs = old.bootArgs + " csr-active-config=0x3";
+          });
+          # i915 in the auxiliary KC, the GOP framebuffer in the boot KC drives the display
+          # when it doesn't attach
+          drmI915Kexts = pkgs.symlinkJoin {
+            name = "puredarwin-kexts-i915";
+            paths = [ kextsBuild drmI915Build ];
+          };
+          kcI915Build = pkgs.callPackage ./nix/pkgs/toolchain/kc.nix {
+            kernel = kernelBuild;
+            inherit kernelSource;
+            kexts = drmI915Kexts;
+            kcTools = kc-tools.packages.${system}.default;
+            auxKexts = [ "PDDRMi915.kext" ];
+          };
+          i915AuxFiles = pkgs.runCommand "puredarwin-i915-aux" { } ''
+            mkdir -p $out/Library/KernelCollections
+            cp ${kcI915Build}/aux.kc $out/Library/KernelCollections/AuxiliaryKernelExtensions.kc
+          '';
+          # the display firmware (DMC) for gemini lake, tiger lake and rocket lake, i915 asks
+          # for i915/<name> and the kext reads /Library/Firmware/i915/<name>
+          i915Firmware = pkgs.runCommand "puredarwin-i915-firmware" { } ''
+            fw=$out/Library/Firmware/i915
+            mkdir -p $fw
+            # DMC for gen9 to MTL (cfl and cml load kbl's), GuC and HuC for gen12 and MTL, MTL's GSC
+            for src in ${pkgs.linux-firmware}/lib/firmware/i915/{skl,kbl,bxt,glk,tgl,rkl,adls,adlp,mtl}_dmc* \
+                ${pkgs.linux-firmware}/lib/firmware/i915/{tgl,adlp,mtl}_{guc,huc}* \
+                ${pkgs.linux-firmware}/lib/firmware/i915/mtl_gsc*; do
+              [ -e "$src" ] || continue
+              name=$(basename "$src")
+              case "$src" in
+                *.zst) ${pkgs.zstd}/bin/zstd -dqf "$src" -o "$fw/''${name%.zst}" ;;
+                *.xz) ${pkgs.xz}/bin/xz -dc "$src" > "$fw/''${name%.xz}" ;;
+                *) cp -L "$src" "$fw/" ;;
+              esac
+            done
+            cp ${pkgs.linux-firmware.src}/LICENSES/LICENCE.i915 $fw/LICENCE.i915 2>/dev/null || \
+              cp ${pkgs.linux-firmware.src}/LICENSES/LICENSE.i915 $fw/LICENSE.i915
+          '';
+          # pd-gfxinfo: which driver owns the display, /dev/dri, and neuswc's path lines
+          gfxInfoTool = pkgs.runCommand "puredarwin-gfxinfo" { } ''
+            mkdir -p $out/usr/bin $out/etc
+            cat > $out/usr/bin/pd-gfxinfo <<'EOF'
+            #!/bin/sh
+            echo "== framebuffers and gpu drivers"
+            ioreg -l -w0 | grep -E '"IOClass" = "(PDDRMi915|PDDRMamdgpu|PDDRMFramebuffer[A-Za-z0-9]*|IOGOPFramebuffer)"' | sort | uniq -c
+            echo "== /dev/dri"
+            ls -l /dev/dri 2>&1
+            echo "== neuswc"
+            grep -E '^neuswc:|^IOFramebuffer:' /var/log/neuswc.log 2>/dev/null || echo "no /var/log/neuswc.log"
+            echo "== kernel"
+            dmesg | grep -E 'PDDRMi915|PDDRMFramebuffer|IGD stolen|i915' | tail -20
+            EOF
+            chmod +x $out/usr/bin/pd-gfxinfo
+          '';
+          # verbose boot on the screen, i915 opted in, no serial console (the boxes have none),
+          # with the combined aux KC so pdnouveau=1 also brings up an optimus laptop's nvidia gpu
+          imageI915Build =linuxPackages.image-wayland-minimal.override (old: {
+            kc = kcGpuBuild;
+            extraPackages = dropGpuDefaults old.extraPackages ++ [ userlandBuild gpuAuxFiles i915Firmware gfxInfoTool
+              i915GlFiles i915GlNeuswcEnv pdgltriBuild pdmmaploopBuild libdrmAmdgpuBuild libelfBuild ];
+            imageFileName = "puredarwin-i915.img";
+            bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 gopconsole=1 -noprogress csr-active-config=0x3 fbsdkpi_debug=1 drm_debug=0x4 i915_enable_dc=0 i915_disable_power_well=0 i915_enable_fbc=0";
+          });
+          # the same with the BIOS loader in the MBR, for qemu's legacy IGD passthrough
+          # (i440fx and SeaBIOS give the guest real stolen memory)
+          imageI915LegacyBuild = imageI915Build.override (old: {
+            legacyBoot = xnu-loader.packages.${system}.legacy-boot.override { stage2Lba = 34; };
+            imageFileName = "puredarwin-i915-legacy.img";
+            bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=0 -noprogress csr-active-config=0x3 fbsdkpi_debug=1 drm_debug=0x4 i915_enable_dc=0 i915_disable_power_well=0 i915_enable_fbc=0";
+          });
+          # neuswc composites with gles on crocus into the presenter's flip pair, argon_gfx=cpu
+          # in the boot-args picks the cpu path for comparison, argon_trace=1 logs each present
+          i915GlNeuswcEnv = pkgs.writeTextDir "etc/neuswc.env" ''
+            args=$(sysctl -n kern.bootargs 2>/dev/null | tr ' ' '\n')
+            gfx=$(echo "$args" | sed -n 's/^argon_gfx=//p')
+            trace=$(echo "$args" | grep -qx argon_trace=1 && echo ARGON_GFX_TRACE=1 MESA_DEBUG=1)
+            NEUSWC_ENV="DYLD_LIBRARY_PATH=/usr/lib/pd-i915-mesa ARGON_GFX=''${gfx:-gles} ARGON_GFX_STATS=1 $trace SWC_WAIT_HW_FB=30"
+            # the serial console in test vms, else where pd-gfxinfo reads it
+            NEUSWC_LOG=/var/log/neuswc.log
+            echo "$args" | grep -q '^serial=' && NEUSWC_LOG=/dev/console
+          '';
+          # crocus and iris gl libraries apart in pd-i915-mesa, pdgltri runs on them once at boot
+          i915GlFiles = pkgs.runCommand "puredarwin-i915-gl-files" { } ''
+            mkdir -p $out/usr/lib/pd-i915-mesa $out/usr/sbin $out/System/Library/LaunchDaemons
+            cp -P ${mesaGpuBuild}/usr/lib/lib{EGL,GLESv2,GL,gallium}*.dylib $out/usr/lib/pd-i915-mesa/
+            cat > $out/usr/sbin/pd-i915-gltest <<'EOF2'
+            #!/bin/zsh
+            sleep 20
+            echo "gltest: gles triangle on intel"
+            DYLD_LIBRARY_PATH=/usr/lib/pd-i915-mesa /usr/sbin/pdgltri 2>&1 | sed 's/^/gltest: /'
+            echo "gltest: done"
+            EOF2
+            chmod 755 $out/usr/sbin/pd-i915-gltest
+            cat > $out/System/Library/LaunchDaemons/org.puredarwin.i915gltest.plist <<EOF
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+            	<key>Label</key><string>org.puredarwin.i915gltest</string>
+            	<key>ProgramArguments</key><array><string>/usr/sbin/pd-i915-gltest</string></array>
+            	<key>RunAtLoad</key><true/>
+            	<key>LaunchOnlyOnce</key><true/>
+            	<key>StandardOutPath</key><string>/dev/console</string>
+            	<key>StandardErrorPath</key><string>/dev/console</string>
+            </dict>
+            </plist>
+            EOF
+          '';
+          # amdgpu, i915 and nouveau together: one aux KC (the kernel loads one per boot) with all
+          # the drm kexts, PDDRMDri in the boot KC gives them one /dev/dri
+          drmGpuKexts = pkgs.symlinkJoin {
+            name = "puredarwin-kexts-gpu";
+            paths = [ kextsBuild drmAmdgpuBuild drmI915Build drmNouveauBuild ];
+          };
+          kcGpuBuild = pkgs.callPackage ./nix/pkgs/toolchain/kc.nix {
+            kernel = kernelBuild;
+            inherit kernelSource;
+            kexts = drmGpuKexts;
+            kcTools = kc-tools.packages.${system}.default;
+            auxKexts = [ "PDDRMamdgpu.kext" "PDDRMi915.kext" "PDDRMnouveau.kext" ];
+            excludeKexts = [ "PDAmdGPU.kext" ];
+          };
+          # what every desktop image carries for the drm drivers: the combined aux KC and firmware
+          gpuDefaultPackages = [ gpuAuxFiles (mkAmdgpuFirmware [ "granite-ridge" "mendocino" "navi21" "navi22" "navi23" "navi24" "renoir" "rembrandt" ]) i915Firmware ];
+          gpuAuxFiles = pkgs.runCommand "puredarwin-gpu-aux" { } ''
+            mkdir -p $out/Library/KernelCollections
+            cp ${kcGpuBuild}/aux.kc $out/Library/KernelCollections/AuxiliaryKernelExtensions.kc
+          '';
+          # CPU compositing: with the radeonsi libraries on DYLD_LIBRARY_PATH neuswc dies at
+          # launch on a machine without the amdgpu gpu, apps still find them in pd-amdgpu-mesa
+          gpuNeuswcEnv = pkgs.writeTextDir "etc/neuswc.env" ''
+            NEUSWC_ENV="ARGON_GFX=cpu ARGON_GFX_STATS=1 SWC_WAIT_HW_FB=30"
+            NEUSWC_LOG=/var/log/neuswc.log
+          '';
+          imageGpuBuild = linuxPackages.image-wayland-minimal.override (old: {
+            kc = kcGpuBuild;
+            extraPackages = dropGpuDefaults old.extraPackages ++ [ userlandBuild gpuAuxFiles
+              (mkAmdgpuFirmware [ "granite-ridge" "mendocino" "navi21" "navi22" "navi23" "navi24" "renoir" "rembrandt" ]) i915Firmware gfxInfoTool
+              radvFiles libdrmAmdgpuBuild vulkanLoaderNoxBuild vulkanToolsNoxBuild gpuNeuswcEnv ];
+            imageFileName = "puredarwin-gpu.img";
+            bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 gopconsole=1 -noprogress csr-active-config=0x3 fbsdkpi_debug=1";
+          });
+          # the combined gpu image with the BIOS loader in the MBR
+          imageGpuLegacyBuild = imageGpuBuild.override {
+            legacyBoot = xnu-loader.packages.${system}.legacy-boot.override { stage2Lba = 34; };
+            imageFileName = "puredarwin-gpu-legacy.img";
+          };
+          # every amdgpu firmware file linux-firmware has
+          imageAmdgpuAllFwBuild = imageAmdgpuBuild.override (old: {
+            extraPackages = old.extraPackages ++ [ (mkAmdgpuFirmware "all") ];
+            imageFileName = "puredarwin-amdgpu-allfw.img";
+            rootMB = old.rootMB + 200;
+          });
+          # the desktop through PDDRMFramebuffer, with the kernel and driver logs on serial
+          # drmprobe exercises /dev/dri once at boot, its lines go to the console
+          drmprobeLaunchd = pkgs.runCommand "puredarwin-drmprobe-launchd" { } ''
+            mkdir -p $out/System/Library/LaunchDaemons
+            cat > $out/System/Library/LaunchDaemons/org.puredarwin.drmprobe.plist <<EOF
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+            	<key>Label</key><string>org.puredarwin.drmprobe</string>
+            	<key>ProgramArguments</key><array><string>/usr/sbin/drmprobe</string></array>
+            	<key>RunAtLoad</key><true/>
+            	<key>LaunchOnlyOnce</key><true/>
+            	<key>StandardOutPath</key><string>/dev/console</string>
+            	<key>StandardErrorPath</key><string>/dev/console</string>
+            </dict>
+            </plist>
+            EOF
+          '';
+          imageAmdgpuDebugBuild = imageAmdgpuBuild.override (old: {
+            extraPackages = old.extraPackages ++ [ drmprobeLaunchd ];
+            bootArgs = old.bootArgs + " -v fbsdkpi_debug=1";
+            imageFileName = "puredarwin-amdgpu-debug.img";
+          });
+          # radv on /dev/dri: only the vulkan driver and its icd are taken from the
+          # amdgpu mesa, so the desktop keeps its own gl libraries
+          radvFiles = pkgs.runCommand "puredarwin-radv-files" { } ''
+            mkdir -p $out/usr/lib/pd-amdgpu-mesa $out/usr/share/vulkan/icd.d
+            cp ${mesaAmdgpuBuild}/usr/lib/libvulkan_radeon.dylib $out/usr/lib/
+            cp ${mesaAmdgpuBuild}/usr/share/vulkan/icd.d/radeon_icd.x86_64.json $out/usr/share/vulkan/icd.d/
+            # radeonsi's gl libraries sit apart, a test picks them with DYLD_LIBRARY_PATH
+            cp -P ${mesaAmdgpuBuild}/usr/lib/lib{EGL,GLESv2,GL,gallium}*.dylib $out/usr/lib/pd-amdgpu-mesa/
+          '';
+          amdcsBuild =
+            pkgs.callPackage ./nix/pkgs/gpu/amdcs.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libdrmAmdgpu = libdrmAmdgpuBuild;
+            };
+          # temporary: the cdev mmap pager loop test
+          pdmmaploopBuild =
+            pkgs.callPackage ./nix/pkgs/gpu/pdmmaploop.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+            };
+          pdgltriBuild =
+            pkgs.callPackage ./nix/pkgs/gpu/pdgltri.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              mesa = mesaAmdgpuBuild;
+            };
+          # drmprobe, then vulkaninfo on radv, once at boot, to the console
+          gpuTestLaunchd = pkgs.runCommand "puredarwin-gpu-test-launchd" { } ''
+            mkdir -p $out/System/Library/LaunchDaemons $out/usr/sbin
+            cat > $out/usr/sbin/pd-gpu-test <<'EOF2'
+            #!/bin/zsh
+            /usr/sbin/drmprobe
+            echo "gputest: vulkaninfo on radv"
+            VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json \
+              /usr/bin/vulkaninfo --summary 2>&1 | sed 's/^/vulkaninfo: /'
+            echo "gputest: sdma submission"
+            /usr/sbin/amdcs 2>&1
+            echo "gputest: gles triangle on radeonsi"
+            DYLD_LIBRARY_PATH=/usr/lib/pd-amdgpu-mesa /usr/sbin/pdgltri 2>&1
+            echo "gputest: done"
+            EOF2
+            chmod 755 $out/usr/sbin/pd-gpu-test
+            cat > $out/System/Library/LaunchDaemons/org.puredarwin.gputest.plist <<EOF
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+            	<key>Label</key><string>org.puredarwin.gputest</string>
+            	<key>ProgramArguments</key><array><string>/usr/sbin/pd-gpu-test</string></array>
+            	<key>RunAtLoad</key><true/>
+            	<key>LaunchOnlyOnce</key><true/>
+            	<key>StandardOutPath</key><string>/dev/console</string>
+            	<key>StandardErrorPath</key><string>/dev/console</string>
+            </dict>
+            </plist>
+            EOF
+          '';
+          imageAmdgpuMesaBuild = imageAmdgpuBuild.override (old: {
+            extraPackages = old.extraPackages ++ [ gpuTestLaunchd radvFiles libdrmAmdgpuBuild pdgltriBuild amdcsBuild libelfBuild
+              vulkanLoaderNoxBuild vulkanToolsNoxBuild ];
+            bootArgs = old.bootArgs + " -v fbsdkpi_debug=1";
+            imageFileName = "puredarwin-amdgpu-mesa.img";
+          });
+          # neuswc composites with GL on radeonsi (gles) or with pixman (cpu), stats every 5 s on the console
+          neuswcEnv = gfx: pkgs.writeTextDir "etc/neuswc.env" ''
+            NEUSWC_ENV="DYLD_LIBRARY_PATH=/usr/lib/pd-amdgpu-mesa ARGON_GFX=${gfx} ARGON_GFX_STATS=1 SWC_WAIT_HW_FB=30"
+            NEUSWC_LOG=/dev/console
+          '';
+          # bare metal too: no boot-time gpu tests, and neuswc composites on the cpu when amdgpu does not come up
+          imageAmdgpuArgonBuild = gfx: imageAmdgpuBuild.override (old: {
+            extraPackages = old.extraPackages ++ [ radvFiles libdrmAmdgpuBuild libelfBuild vulkanLoaderNoxBuild
+              (neuswcEnv gfx) ];
+            imageFileName = "puredarwin-amdgpu-argon-${gfx}.img";
+          });
+          # mode tests: start at 1280x720, and start at the preferred mode then switch to 1280x720
+          imageAmdgpu720Build = imageAmdgpuDebugBuild.override (old: {
+            bootArgs = old.bootArgs + " pdfb_mode=12800720";
+            imageFileName = "puredarwin-amdgpu-720.img";
+          });
+          imageAmdgpuSwitchBuild = imageAmdgpuDebugBuild.override (old: {
+            bootArgs = old.bootArgs + " pdfb_switch=12800720";
+            imageFileName = "puredarwin-amdgpu-switch.img";
+          });
+          # the same with drm_testpattern=1: colour bars on every lit display
+          imageAmdgpuTestBuild = imageAmdgpuBuild.override (old: {
+            # -v and fbsdkpi_debug keep the kernel and driver logs on serial for the bring-up scripts
+            bootArgs = old.bootArgs + " -v fbsdkpi_debug=1 drm_testpattern=1";
+            imageFileName = "puredarwin-amdgpu-test.img";
+          });
         in {
           packages = {
             apple-sdk = appleSdk;
             cg-screen-demo = cgScreenDemoBuild;
+            drm-kmod-src = drmKmodSrc;
+            drm-amdgpu = drmAmdgpuBuild;
+            drm-msm-arm64 = drmMsmArm64Build;
+            libdrm-amdgpu = libdrmAmdgpuBuild;
+            libelf = libelfBuild;
+            mesa-amdgpu = mesaAmdgpuBuild;
+            mesa-gpu = mesaGpuBuild;
+            image-amdgpu = imageAmdgpuBuild;
+            image-amdgpu-test = imageAmdgpuTestBuild;
+            image-amdgpu-debug = imageAmdgpuDebugBuild;
+            image-amdgpu-mesa = imageAmdgpuMesaBuild;
+            image-amdgpu-argon-gles = imageAmdgpuArgonBuild "gles";
+            image-amdgpu-argon-cpu = imageAmdgpuArgonBuild "cpu";
+            image-amdgpu-720 = imageAmdgpu720Build;
+            image-amdgpu-switch = imageAmdgpuSwitchBuild;
+            image-amdgpu-allfw = imageAmdgpuAllFwBuild;
+            drm-kmod-i915-src = drmKmodI915Src;
+            drm-i915 = drmI915Build;
+            drm-kmod-nouveau-src = drmKmodNouveauSrc;
+            drm-nouveau = drmNouveauBuild;
+            nouveau-firmware = nouveauFirmware;
+            kc-i915 = kcI915Build;
+            i915-firmware = i915Firmware;
+            image-i915 = imageI915Build;
+            image-i915-legacy = imageI915LegacyBuild;
+            kc-gpu = kcGpuBuild;
+            image-gpu = imageGpuBuild;
+            image-gpu-legacy = imageGpuLegacyBuild;
+            amdgpu-firmware-default = mkAmdgpuFirmware [ "granite-ridge" "mendocino" "navi21" "navi22" "navi23" "navi24" "renoir" "rembrandt" ];
+            amdgpu-firmware-all = mkAmdgpuFirmware "all";
           } // commonPackages // arm64Packages // probePackages // linuxPackages
             // lib.filterAttrs (_: lib.isDerivation) nixPortPackages;
           apps = lib.optionalAttrs (!isDarwin) (linuxApps // {

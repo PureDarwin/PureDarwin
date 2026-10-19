@@ -32,9 +32,13 @@
 , swiftRuntimeBuild
 , cocoaBuild
 , appFrameworksBuild
+, frameworksFfTestsBuild
+, cgFfTestsBuild
 , mpsNoxBuild
 , audiotoolboxBuild
+, carbonBuild
 , iosurfaceBuild
+, iosurfaceTestsBuild ? null
 , freetype2Build
 , fribidiBuild
 , garconBuild
@@ -145,6 +149,7 @@
 , kernelDebugBuild
 , kernelSource
 , kextsArm64Build
+, drmMsmArm64Build ? null
 , kextsBuild
 , launchctlBuild
 , launchdBuild
@@ -323,6 +328,10 @@
 , zshArm64Build
 , zshBuild
 , bashBuild
+# the drm drivers (amdgpu, i915) in the aux KC by default with their firmware, the GOP
+# framebuffer stays the fallback when none attaches
+, kcGpuBuild
+, gpuDefaultPackages
 }:
 
 let
@@ -617,6 +626,7 @@ let
     cocoa = cocoaBuild;
     app-frameworks = appFrameworksBuild;
     audiotoolbox = audiotoolboxBuild;
+    carbon = carbonBuild;
     iosurface = iosurfaceBuild;
     iokit = iokitBuild;
     coreServices = coreServicesBuild;
@@ -921,6 +931,20 @@ let
         kcTools = kc-tools.packages.${system}.default;
         kcBase = "fffffff006000000";
       };
+      # the sun50i collection plus the drm layer and the adreno driver, for the msm8916 stick
+      kcArm64Msm8916Build = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
+        kernel = kernelArm64Sun50iBuild;
+        inherit kernelSource;
+        kexts = kextsArm64Build;
+        kcTools = kc-tools.packages.${system}.default;
+        kcBase = "fffffff006000000";
+        extraKexts = [
+          "${drmMsmArm64Build}/System/Library/Extensions/PDDRMDri.kext"
+          "${drmMsmArm64Build}/System/Library/Extensions/PDDRMmsm.kext"
+          # no display: neuswc draws into ram, pdfbd streams it out over usb
+          "${kextsArm64Build}/System/Library/Extensions/PDVirtualFramebuffer.kext"
+        ];
+      };
       kcArm64Sun50iDebugBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
         kernel = kernelArm64Sun50iDebugBuild;
         inherit kernelSource;
@@ -1208,8 +1232,8 @@ let
         "xeyes" "xclock" "xcalc" "xmessage" "xterm" "dmenu"
         "i3" "i3status" "startup-notification"
         "iceauth" "xrdb" "xrandr" "xinit"
-        # dillo is FLTK/X11; wine's driver set here is the X11 one
-        "dillo" "wine"
+        # dillo is FLTK/X11. Wine stays, its default driver is winemac.drv, AppKit windows in Argon
+        "dillo"
         # X client libraries (both the static and -shared flavours)
         "libX11" "libxcb" "libxcb-util" "libxcb-keysyms" "libxcb-wm"
         "libxcb-render-util" "libxcb-image" "libxcb-cursor" "xcb-util-xrm"
@@ -1230,6 +1254,7 @@ let
         (removeAttrs imageExtraPackageSet waylandOnlyDroppedPackages)
         // {
           wlroots = wlrootsNoxBuild;
+          iosurface-tests = iosurfaceTestsBuild;
           sway = swayNoxBuild;
           gtk3 = gtk3NoxBuild;
           gtk-layer-shell = gtkLayerShellNoxBuild;
@@ -1258,7 +1283,7 @@ let
           localeDataBuild foundationBuild freetype2Build fontconfigBuild libpngBuild libjpegBuild xvfbZlibBuild
           xvfbFontsBuild pdsurfaceBuild onyx2dBuild coregraphicsBuild coretextBuild
           waylandBuild xkbcommonNoxBuild xkeyboardConfigBuild neuswcBuild
-          quartzcoreBuild corevideoBuild applicationservicesBuild windowserverBuild appkitBuild coredataBuild cocoaBuild appFrameworksBuild mpsNoxBuild
+          quartzcoreBuild corevideoBuild applicationservicesBuild windowserverBuild appkitBuild coredataBuild cocoaBuild appFrameworksBuild carbonBuild mpsNoxBuild
           openglFrameworkNoxBuild mesaNoxBuild gluNoxBuild llvmCrossBuild pdVirglShimBuild
           terminalBuild menubarBuild pddecorBuild dockBuild finderBuild systemInformationBuild calculatorBuild settingsBuild waylandSessionBuild psOnlyBuild diagToolsBuild
           # Inter and the other system faces the window chrome and menu bar are drawn in
@@ -1273,15 +1298,48 @@ let
       imageWaylandBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemWayland;
         # the same desktop session as image-wayland-minimal, over the full userland
-        extraPackages = lib.unique (lib.attrValues waylandOnlyExtraPackageSet ++ waylandDesktopPackages);
-        kc = kcBuild;
+        extraPackages = lib.unique (lib.attrValues waylandOnlyExtraPackageSet ++ waylandDesktopPackages
+          ++ gpuDefaultPackages);
+        kc = kcGpuBuild;
         xnuLoader = xnuLoaderDefault;
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-wayland.img";
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1 ahci_debug=1";
       };
+      # wifi firmware the drivers load from /Library/Firmware/<driver>, kept out
+      # of the kernel collection and the kext bundles
+      rtw89FirmwareBuild = pkgs.runCommand "puredarwin-rtw89-firmware" { } ''
+        fw=$out/Library/Firmware/rtw89
+        mkdir -p $fw
+        cp ${../src/Kernel/Extensions/PDFBSDrtw89/firmware/rtw89}/*.bin $fw/
+        cp ${../src/Kernel/Extensions/PDFBSDrtw89/firmware/LICENCE.rtlwifi_firmware.txt} $fw/LICENCE.rtlwifi_firmware.txt
+      '';
+      # WCN6855 firmware for PDQwx from linux-firmware, under the names qwx(4) asks for
+      qwxFirmwareBuild = pkgs.runCommand "puredarwin-qwx-firmware" { } ''
+        fw=$out/Library/Firmware/qwx
+        mkdir -p $fw
+        dir=${pkgs.linux-firmware}/lib/firmware/ath11k/WCN6855
+        for rev in hw2.0 hw2.1; do
+          for f in amss m3 board-2 regdb; do
+            src=$dir/$rev/$f.bin
+            dst=$fw/qwx-wcn6855-$rev-$f
+            # hw2.1 mostly shares hw2.0's files, a link keeps one copy in the image
+            if [ $rev = hw2.1 ] && [ "$(readlink -f "$src")" = "$(readlink -f "$dir/hw2.0/$f.bin")" ]; then
+              ln -s qwx-wcn6855-hw2.0-$f "$dst"
+            elif [ -e "$src.zst" ]; then ${pkgs.zstd}/bin/zstd -dqf "$src.zst" -o "$dst"
+            elif [ -e "$src.xz" ]; then ${pkgs.xz}/bin/xz -dc "$src.xz" > "$dst"
+            elif [ -e "$src" ]; then cp -L "$src" "$dst"
+            fi
+          done
+        done
+        cp -L $dir/hw2.0/Notice.txt $fw/Notice.WCN6855.txt
+        cp ${pkgs.linux-firmware.src}/LICENSES/LICENSE.QualcommAtheros_ath10k $fw/ 2>/dev/null || \
+          cp ${pkgs.linux-firmware.src}/LICENSE.QualcommAtheros_ath10k $fw/
+      '';
       strippedExtraPackages = lib.filter lib.isDerivation (
         [
+          rtw89FirmwareBuild
+          qwxFirmwareBuild
           localeDataBuild
           coreFoundationBuild
           icuCoreBuild
@@ -1303,6 +1361,7 @@ let
           # /usr/lib/swift, which framework-compat's Foundation re-exports from
           swiftRuntimeBuild
           audiotoolboxBuild
+          carbonBuild
           iosurfaceBuild
           securityBuild
           symptomReporterBuild
@@ -1331,11 +1390,30 @@ let
         rootMB = 260;
         bootArgs = minimalBootArgs;
       };
+      # image-minimal with CoreGraphics and what it loads, for the CoreGraphics test run at boot
+      imageCgTestBuild = imageMinimalBuild.override {
+        extraPackages = lib.unique (strippedExtraPackages ++ [
+          freetype2Build fontconfigBuild libpngBuild libjpegBuild xvfbZlibBuild onyx2dBuild pdsurfaceBuild
+          coregraphicsBuild cgFfTestsBuild
+        ]);
+        imageFileName = "puredarwin-cg-test.img";
+        rootMB = 512;
+      };
       # image-minimal with the installer's disk tools and ssh, for testing them against a second disk
       imageToolsTestBuild = imageMinimalBuild.override {
         extraPackages = strippedExtraPackages ++ [ e2fsprogsBuild msdosCmdsBuild pdblessBuild opensshBuild ];
         imageFileName = "puredarwin-tools-test.img";
         rootMB = 512;
+      };
+      # image-tools-test with the media, audio and app frameworks and what they load, for the framework tests
+      imageFrameworksTestBuild = imageMinimalBuild.override {
+        extraPackages = lib.unique (strippedExtraPackages ++ [
+          opensshBuild freetype2Build fontconfigBuild libpngBuild libjpegBuild xvfbZlibBuild onyx2dBuild pdsurfaceBuild
+          coregraphicsBuild coretextBuild quartzcoreBuild corevideoBuild applicationservicesBuild openglFrameworkNoxBuild
+          mesaNoxBuild gluNoxBuild llvmCrossBuild pdVirglShimBuild waylandBuild appFrameworksBuild frameworksFfTestsBuild
+        ]);
+        imageFileName = "puredarwin-frameworks-test.img";
+        rootMB = 2048;
       };
       # The minimal system on an APFS root. Same contents as image-minimal, so
       # a boot failure here is the APFS path rather than anything in userland.
@@ -1473,10 +1551,16 @@ let
       '';
       # the Wayland counterpart of a minimal X11 session: neuswc with pdwm, and the
       # AppKit Terminal started by org.puredarwin.wayland-session.
+      # the stripped base has zsh but no /bin/sh, which the session script and launchd jobs run under
+      binShBuild = pkgs.runCommand "puredarwin-bin-sh" { } ''
+        mkdir -p $out/bin
+        ln -s zsh $out/bin/sh
+      '';
       imageWaylandMinimalBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemStripped;
-        extraPackages = lib.unique (strippedExtraPackages ++ waylandDesktopPackages);
-        kc = kcBuild;
+        extraPackages = lib.unique (strippedExtraPackages ++ waylandDesktopPackages ++ [ binShBuild ]
+          ++ gpuDefaultPackages);
+        kc = kcGpuBuild;
         xnuLoader = xnuLoaderDefault;
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-wayland-minimal.img";
@@ -2226,6 +2310,7 @@ EOF
       kc-arm64-t8010 = kcArm64T8010ReleaseBuild;
       kc-arm64-virt4k-debug = kcArm64Virt4kDebugBuild;
       kc-arm64-sun50i = kcArm64Sun50iReleaseBuild;
+      kc-arm64-msm8916 = kcArm64Msm8916Build;
       kc-arm64-sun50i-debug = kcArm64Sun50iDebugBuild;
       kc-arm64-sc8280xp = kcArm64Sc8280xpReleaseBuild;
       kc-arm64-sc8280xp-debug = kcArm64Sc8280xpDebugBuild;
@@ -2289,6 +2374,8 @@ EOF
       image-minimal = imageMinimalBuild;
       e2fsprogs = e2fsprogsBuild;
       image-tools-test = imageToolsTestBuild;
+      image-frameworks-test = imageFrameworksTestBuild;
+      image-cg-test = imageCgTestBuild;
       msdos-cmds = msdosCmdsBuild;
       pdbless = pdblessBuild;
       image-apfs-minimal = imageApfsMinimalBuild;
