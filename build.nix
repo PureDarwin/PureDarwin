@@ -35,6 +35,7 @@
 , pname ? "puredarwin-nix-toolchain"
 , version ? "0.1"
 , buildTargets ? [ "launchd" ]
+, ninjaFlags ? [ ]
 , enableProjects ? true
 , enableKernel ? true
 , enableLibraries ? true
@@ -259,7 +260,7 @@ EOF
   '' + ''
     export PATH="$PWD/.nix-stubs:$PWD/build-nix/tools/mig:$PWD/build-nix/tools/cctools/misc:$PWD/build-nix/tools/dtrace_ctf/tools:$PATH"
 
-    ninja -C build-nix ${lib.escapeShellArgs buildTargets}
+    ninja -C build-nix ${lib.escapeShellArgs ninjaFlags} ${lib.escapeShellArgs buildTargets}
     runHook postBuild
   '';
 
@@ -383,6 +384,16 @@ EOF
       # libpthread's header is <pthread/pthread.h>, but every consumer writes
       # #include <pthread.h>; Darwin ships it at both paths.
       cp -L src/Libraries/libSystem/pthread/include/pthread/pthread.h $out/pd-guest-headers/pthread.h
+      # CoreFoundation's public headers include <Block.h>, <dispatch/dispatch.h> and, through
+      # libkern/OSTypes.h, <MacTypes.h>. os/object.h is libdispatch's, the libc tree carries
+      # the kernel copy at that path
+      cp -L src/Libraries/libSystem/libdispatch/src/BlocksRuntime/Block.h $out/pd-guest-headers/
+      cp -L src/Libraries/libSystem/libc/include/MacTypes.h $out/pd-guest-headers/
+      mkdir -p $out/pd-guest-headers/dispatch $out/pd-guest-headers/os
+      cp -L src/Libraries/libSystem/libdispatch/dispatch/*.h $out/pd-guest-headers/dispatch/
+      for h in object clock workgroup workgroup_base workgroup_interval workgroup_object workgroup_parallel; do
+        cp -L src/Libraries/libSystem/libdispatch/os/$h.h $out/pd-guest-headers/os/
+      done
       chmod -R u+w $out/pd-guest-headers
       rm -f $out/pd-guest-headers/sys_pthread_types.modulemap
       chmod -R u+w $out/pd-guest-headers

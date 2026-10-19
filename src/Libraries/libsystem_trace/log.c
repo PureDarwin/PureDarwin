@@ -66,12 +66,36 @@ typedef struct {
     uint8_t descriptor;
     uint8_t payload_size;
 } _os_log_arg_header;
+#include <limits.h>
 #include "init.h"
 
 
 struct os_log_s _os_log_default;
 struct os_log_s _os_log_disabled;
 struct os_log_s _os_log_null;
+
+// libdispatch's OS_object, linked into the same libSystem
+extern char _os_log_object_class[] __asm__("_OBJC_CLASS_$_OS_object");
+
+// an OS_object with the global refcount, so objc_retain, os_retain and their releases do nothing
+static void
+_os_log_make_immortal(struct os_log_s *log)
+{
+    struct { void *isa; int volatile ref_cnt; int volatile xref_cnt; } *header = (void *)log->pad;
+
+    header->isa = _os_log_object_class;
+    header->ref_cnt = INT_MAX;
+    header->xref_cnt = INT_MAX;
+}
+
+__attribute__((constructor))
+static void
+_os_log_init_statics(void)
+{
+    _os_log_make_immortal(&_os_log_default);
+    _os_log_make_immortal(&_os_log_disabled);
+    _os_log_make_immortal(&_os_log_null);
+}
 
 __BEGIN_DECLS
 
@@ -92,14 +116,9 @@ os_log_create(const char* subsystem, const char* category)
 
     log->sink_type = OS_LOG_SINK_TYPE_FD;
     log->sink_dest = STDOUT_FILENO;
+    _os_log_make_immortal(log);
 
-    /*
-     * No os_retain() here: it lowers to objc_retain(), but this object is
-     * plain calloc'd memory with a zeroed CFRuntimeBase - objc_retain would
-     * mask a NULL isa and fault reading the class. The log objects are cached
-     * in statics by their callers and never released, so the caller owns the
-     * single reference.
-     */
+    // immortal, so callers that cache it in a static and ARC callers that retain it both work
     return log;
 }
 

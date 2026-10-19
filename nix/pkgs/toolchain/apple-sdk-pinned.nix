@@ -489,7 +489,11 @@ EOF
                processor_set task thread_act vm_map mach_eventlink; do
         defs="${root}/src/Kernel/xnu/osfmk/mach/$d.defs"
         [ -e "$defs" ] || continue
-        bash ${root}/tools/mig/mig.sh -novouchers \
+        # mach_port.defs and task.defs only use the public names for libsyscall's interface, which is how
+        # Apple generates the installed header, otherwise every routine gets the _kernelrpc_ prefix
+        extra=""
+        case "$d" in mach_port|task) extra="-DLIBSYSCALL_INTERFACE" ;; esac
+        bash ${root}/tools/mig/mig.sh -novouchers $extra \
           -I"$sdk/usr/include" -isysroot "$sdk" \
           -user /dev/null -server /dev/null \
           -header "$sdk/usr/include/mach/$d.h" "$defs" || exit 1
@@ -555,31 +559,6 @@ extern "C" {
 extern kern_return_t thread_policy_set(mach_port_t thread,
     thread_policy_flavor_t flavor, thread_policy_t policy_info,
     mach_msg_type_number_t policy_infoCnt);
-#ifdef __cplusplus
-}
-#endif
-EOF
-    # MIG emits only the _kernelrpc_* declarations in mach_port.h. The
-    # userspace wrappers are implemented by libsystem_kernel and are also
-    # consumed directly by C++ projects such as LLVM.
-    cat >> "$sdk/usr/include/mach/mach_port.h" <<'EOF'
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-extern kern_return_t mach_port_type(ipc_space_t, mach_port_name_t, mach_port_type_t *);
-extern kern_return_t mach_port_allocate(ipc_space_t, mach_port_right_t, mach_port_name_t *);
-extern kern_return_t mach_port_deallocate(ipc_space_t, mach_port_name_t);
-extern kern_return_t mach_port_mod_refs(ipc_space_t, mach_port_name_t, mach_port_right_t, mach_port_delta_t);
-extern kern_return_t mach_port_insert_right(ipc_space_t, mach_port_name_t, mach_port_t, mach_msg_type_name_t);
-/* mach_port_poly_t out-param expands to (mach_port_t *, mach_msg_type_name_t *). */
-extern kern_return_t mach_port_extract_right(ipc_space_t, mach_port_name_t, mach_msg_type_name_t, mach_port_t *, mach_msg_type_name_t *);
-extern kern_return_t mach_port_get_attributes(ipc_space_read_t, mach_port_name_t, mach_port_flavor_t, mach_port_info_t, mach_msg_type_number_t *);
-extern kern_return_t mach_port_insert_member(ipc_space_t, mach_port_name_t, mach_port_name_t);
-extern kern_return_t mach_port_extract_member(ipc_space_t, mach_port_name_t, mach_port_name_t);
-extern kern_return_t mach_port_space_info(ipc_space_read_t, ipc_info_space_t *, ipc_info_name_array_t *, mach_msg_type_number_t *, ipc_info_tree_name_array_t *, mach_msg_type_number_t *);
-extern kern_return_t mach_port_construct(ipc_space_t, mach_port_options_ptr_t, mach_port_context_t, mach_port_name_t *);
-extern kern_return_t mach_port_destruct(ipc_space_t, mach_port_name_t, mach_port_delta_t, mach_port_context_t);
 #ifdef __cplusplus
 }
 #endif

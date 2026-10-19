@@ -407,6 +407,10 @@ _mach_port_type
 _mach_vm_allocate
 _mach_vm_deallocate
 _mach_vm_map
+_mach_make_memory_entry
+_mach_make_memory_entry_64
+_mach_ports_lookup
+_mach_ports_register
 _mach_vm_protect
 _mach_vm_read
 _mach_vm_write
@@ -478,6 +482,7 @@ _posix_spawn
 _posix_spawnattr_init
 _posix_spawnattr_destroy
 _posix_spawnattr_setflags
+_responsibility_spawnattrs_setdisclaim
 _posix_spawnattr_setbinpref_np
 _posix_spawnattr_setsigmask
 _posix_spawnattr_setsigdefault
@@ -949,6 +954,12 @@ _dns_configuration_free
 _dns_configuration_notify_key
 __dns_configuration_ack
 _res_init
+_res_9_ninit
+_res_9_ndestroy
+_res_9_nclose
+_res_9_nquery
+_res_9_nsearch
+_res_9_nquerydomain
 _res_9_ns_format_ttl
 _res_9_ns_get16
 _res_9_ns_get32
@@ -2422,3 +2433,15 @@ _ctanhf
 _ctanhl
 _ctanl
 _wcsncasecmp_l
+_bootstrap_register
+_fegetround
+_getiopolicy_np
+_kevent64
+_mach_make_memory_entry_64
+_mach_vm_region_recurse
+_OSAtomicAdd32Barrier
+_OSAtomicCompareAndSwapIntBarrier
+_posix_spawn_file_actions_addchdir_np
+_pthread_override_qos_class_start_np
+_pthread_override_qos_class_end_np
+_thread_policy_get

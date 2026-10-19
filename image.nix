@@ -304,6 +304,11 @@ LOADERS
     for compat in libc libm libpthread libdl libinfo; do
       ln -sf libSystem.B.dylib "$staging/usr/lib/$compat.dylib"
     done
+    # libresolv and libbsm are built into libSystem, clients linked against the separate
+    # macOS dylibs find their symbols through these names
+    for compat in libresolv.9 libresolv libbsm.0 libbsm; do
+      ln -sf libSystem.B.dylib "$staging/usr/lib/$compat.dylib"
+    done
 
     # System C headers for in-guest compilers (tcc): staged by the libsystem
     # build under pd-guest-headers/ (see build.nix) so cross-built ports never

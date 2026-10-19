@@ -36,6 +36,7 @@
 #include <limits.h>     /* for OPEN_MAX, PATH_MAX */
 #include <string.h>
 #include <strings.h>
+#include <stdbool.h>
 #include <mach/port.h>
 #include <mach/mach_param.h> /* for TASK_PORT_REGISTER_MAX */
 #include <mach/exception_types.h>
@@ -2745,4 +2746,16 @@ out:
 	}
 	errno = saveerrno;
 	return ret;
+}
+
+// PureDarwin keeps no responsible-process attribution, so disclaiming
+// responsibility for a child changes nothing and always succeeds
+int responsibility_spawnattrs_setdisclaim(posix_spawnattr_t *attrs, bool disclaim);
+int
+responsibility_spawnattrs_setdisclaim(posix_spawnattr_t *attrs, bool disclaim)
+{
+	(void)disclaim;
+	if (attrs == NULL || *attrs == NULL)
+		return EINVAL;
+	return 0;
 }

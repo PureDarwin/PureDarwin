@@ -73,8 +73,8 @@ xpc_connection_create(const char *name, dispatch_queue_t targetq)
 	conn->xc_recv_queue = dispatch_queue_create(qname, NULL);
 	free(qname);
 
-	/* Create target queue */
-	conn->xc_target_queue = targetq ? targetq : dispatch_get_main_queue();
+	// no queue means a default-priority global queue as on macOS, the main queue deadlocks sync callers on the main thread
+	conn->xc_target_queue = targetq ? targetq : dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
 
 	/* Receive queue is initially suspended */
 	dispatch_suspend(conn->xc_recv_queue);
@@ -164,7 +164,7 @@ xpc_connection_set_target_queue(xpc_connection_t xconn,
 
 	debugf("connection=%p", xconn);
 	conn = xconn;
-	conn->xc_target_queue = targetq;
+	conn->xc_target_queue = targetq ? targetq : dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
 }
 
 void

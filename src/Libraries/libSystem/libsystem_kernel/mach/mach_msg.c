@@ -64,6 +64,129 @@
 extern int proc_importance_assertion_begin_with_msg(mach_msg_header_t * msg, mach_msg_trailer_t * trailer, uint64_t * assertion_handlep);
 extern int proc_importance_assertion_complete(uint64_t assertion_handle);
 
+#if defined(__LP64__)
+#define LIBMACH_OPTIONS (MACH_SEND_INTERRUPT|MACH_RCV_INTERRUPT)
+#define LIBMACH_OPTIONS64 (MACH64_SEND_INTERRUPT|MACH64_RCV_INTERRUPT)
+
+static inline mach_msg_option64_t
+mach_msg_options_after_interruption(mach_msg_option64_t option64)
+{
+	if ((option64 & MACH64_SEND_MSG) && (option64 & MACH64_RCV_MSG))
+		option64 &= ~MACH64_RCV_SYNC_WAIT;
+	option64 &= ~(LIBMACH_OPTIONS64 | MACH64_SEND_MSG);
+	return option64;
+}
+
+// the kernel refuses the legacy mach_msg trap for hardened runtime tasks,
+// so every message goes through mach_msg2 as on macOS 13 and later
+mach_msg_return_t
+mach_msg2_internal(
+	void *data,
+	mach_msg_option64_t option64,
+	uint64_t msgh_bits_and_send_size,
+	uint64_t msgh_remote_and_local_port,
+	uint64_t msgh_voucher_and_id,
+	uint64_t desc_count_and_rcv_name,
+	uint64_t rcv_size_and_priority,
+	uint64_t timeout)
+{
+	mach_msg_return_t mr;
+
+	mr = mach_msg2_trap(data, option64 & ~LIBMACH_OPTIONS64,
+	    msgh_bits_and_send_size, msgh_remote_and_local_port,
+	    msgh_voucher_and_id, desc_count_and_rcv_name,
+	    rcv_size_and_priority, timeout);
+	if (mr == MACH_MSG_SUCCESS)
+		return MACH_MSG_SUCCESS;
+
+	if ((option64 & MACH64_SEND_INTERRUPT) == 0) {
+		while (mr == MACH_SEND_INTERRUPTED) {
+			mr = mach_msg2_trap(data, option64 & ~LIBMACH_OPTIONS64,
+			    msgh_bits_and_send_size, msgh_remote_and_local_port,
+			    msgh_voucher_and_id, desc_count_and_rcv_name,
+			    rcv_size_and_priority, timeout);
+		}
+	}
+
+	if ((option64 & MACH64_RCV_INTERRUPT) == 0) {
+		while (mr == MACH_RCV_INTERRUPTED) {
+			mr = mach_msg2_trap(data,
+			    mach_msg_options_after_interruption(option64),
+			    msgh_bits_and_send_size & 0xffffffffull,
+			    msgh_remote_and_local_port, msgh_voucher_and_id,
+			    desc_count_and_rcv_name, rcv_size_and_priority, timeout);
+		}
+	}
+
+	return mr;
+}
+
+mach_msg_return_t
+mach_msg(
+    mach_msg_header_t *msg,
+    mach_msg_option_t option,
+    mach_msg_size_t send_size,
+    mach_msg_size_t rcv_size,
+    mach_port_t rcv_name,
+    mach_msg_timeout_t timeout,
+    mach_port_t notify)
+{
+	return mach_msg_overwrite(msg, option, send_size, rcv_size, rcv_name,
+	           timeout, notify, NULL, 0);
+}
+
+mach_msg_return_t
+mach_msg_overwrite(
+    mach_msg_header_t *msg,
+    mach_msg_option_t option,
+    mach_msg_size_t send_size,
+    mach_msg_size_t rcv_limit,
+    mach_port_t rcv_name,
+    mach_msg_timeout_t timeout,
+    mach_port_t notify,
+    mach_msg_header_t *rcv_msg,
+    __unused mach_msg_size_t rcv_scatter_size)
+{
+	mach_msg_option64_t option64 = (mach_msg_option64_t)option;
+	mach_msg_priority_t priority = 0;
+	mach_msg_vector_t vecs[2];
+	uint8_t aux[LIBSYSCALL_MSGV_AUX_MAX_SIZE];
+
+	// a separate receive buffer needs the vector form
+	if ((option64 & MACH64_RCV_MSG) && rcv_msg != NULL) {
+		option64 |= MACH64_MSG_VECTOR;
+		vecs[MACH_MSGV_IDX_MSG] = (mach_msg_vector_t){
+			.msgv_data = (mach_vm_address_t)msg,
+			.msgv_rcv_addr = (mach_vm_address_t)rcv_msg,
+			.msgv_send_size = send_size,
+			.msgv_rcv_size = rcv_limit,
+		};
+		vecs[MACH_MSGV_IDX_AUX] = (mach_msg_vector_t){
+			.msgv_data = (mach_vm_address_t)aux,
+			.msgv_rcv_addr = 0,
+			.msgv_send_size = 0,
+			.msgv_rcv_size = sizeof(aux),
+		};
+	}
+
+	if (option64 & MACH64_SEND_MSG)
+		priority = (mach_msg_priority_t)notify;
+
+	if ((option64 & MACH64_RCV_MSG) && !(option64 & MACH64_SEND_MSG) &&
+	    (option64 & MACH64_RCV_SYNC_WAIT))
+		msg->msgh_remote_port = notify;
+
+	// MIG kobject calls and queue messages share this path, so no CFI kind is claimed
+	option64 |= MACH64_SEND_ANY;
+
+	if (option64 & MACH64_MSG_VECTOR)
+		return mach_msg2(vecs, option64, *msg, 2, 2, rcv_name, timeout, priority);
+	return mach_msg2(msg, option64, *msg, send_size, rcv_limit, rcv_name,
+	           timeout, priority);
+}
+
+#else
+
 #define MACH_MSG_TRAP(msg, opt, ssize, rsize, rname, to, not) \
 	 mach_msg_trap((msg), (opt), (ssize), (rsize), (rname), (to), (not))
 
@@ -199,6 +322,7 @@ mach_msg_overwrite(
 	return mr;
 }
 
+#endif
 
 mach_msg_return_t
 mach_msg_send(mach_msg_header_t *msg)

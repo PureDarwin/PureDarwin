@@ -1397,3 +1397,24 @@ backtrace_symbols_fd(void *const *buffer, int size, int fd)
             (void)write(fd, line, (size_t)n);
     }
 }
+
+// openlibm only has fegetround as an inline in its fenv header, so callers that bind it
+// by name get it here: the rounding-mode bits of the x87 control word or of FPCR
+int fegetround(void);
+int
+fegetround(void)
+{
+#if defined(__x86_64__) || defined(__i386__)
+    unsigned short control;
+
+    __asm__ volatile("fnstcw %0" : "=m"(control));
+    return control & 0x0c00;
+#elif defined(__aarch64__)
+    unsigned long fpcr;
+
+    __asm__ volatile("mrs %0, fpcr" : "=r"(fpcr));
+    return (int)(fpcr & 0x00c00000);
+#else
+    return 0;
+#endif
+}

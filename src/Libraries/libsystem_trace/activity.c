@@ -45,7 +45,8 @@ _os_activity_create(void *dso, const char *description,
     (void)description;
     (void)activity;
     (void)flags;
-    return (os_activity_t)&_os_activity_none;
+    // callers os_release the result or ARC releases it, NULL is the one value both accept
+    return NULL;
 }
 
 void
