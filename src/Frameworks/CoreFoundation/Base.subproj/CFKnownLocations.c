@@ -39,7 +39,8 @@ CFURLRef _Nullable _CFKnownLocationCreatePreferencesURLForUser(CFKnownLocationUs
             // passthrough to:
         case _kCFKnownLocationUserByName: {
             CFURLRef home = CFCopyHomeDirectoryURLForUser(username);
-            location = CFURLCreateWithFileSystemPathRelativeToBase(kCFAllocatorSystemDefault, CFSTR("/Library/Preferences"), kCFURLPOSIXPathStyle, true, home);
+            // relative, an absolute path would drop home and land in /Library/Preferences
+            location = CFURLCreateWithFileSystemPathRelativeToBase(kCFAllocatorSystemDefault, CFSTR("Library/Preferences"), kCFURLPOSIXPathStyle, true, home);
             CFRelease(home);
             
             break;
