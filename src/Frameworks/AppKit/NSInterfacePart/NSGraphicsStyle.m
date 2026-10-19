@@ -399,20 +399,26 @@ static BOOL drawingDark(void) {
    return [[NSAppearance currentDrawingAppearance] _isDark];
 }
 
-// a modern push button: rounded, white with a hairline and a soft drop, the default one in the accent colour
+// a capsule push button, a translucent fill under a hairline, the default one in the accent colour
 static void drawModernButton(NSRect rect,NSColor *fill,BOOL outlined) {
-   NSRect body=NSInsetRect(rect,0.5,1);
-   NSBezierPath *shape=[NSBezierPath bezierPathWithRoundedRect:body xRadius:6 yRadius:6];
+   NSRect body=NSInsetRect(rect,0.5,0.5);
+   CGFloat radius=body.size.height/2;
+   NSBezierPath *shape=[NSBezierPath bezierPathWithRoundedRect:body xRadius:radius yRadius:radius];
 
-   [[NSColor colorWithCalibratedWhite:0 alpha:0.10] setFill];
-   [[NSBezierPath bezierPathWithRoundedRect:NSOffsetRect(body,0,[[NSView focusView] isFlipped]?0.75:-0.75) xRadius:6 yRadius:6] fill];
    [fill setFill];
    [shape fill];
    if(outlined){
-    [[NSColor colorWithCalibratedWhite:drawingDark() ? 1 : 0 alpha:drawingDark() ? 0.10 : 0.16] setStroke];
+    [[NSColor colorWithCalibratedWhite:drawingDark() ? 1 : 0 alpha:drawingDark() ? 0.12 : 0.18] setStroke];
     [shape setLineWidth:0.75];
     [shape stroke];
    }
+}
+
+// the fill lightens the window in light mode and is a soft white veil in dark mode
+static NSColor *buttonFill(CGFloat light,CGFloat dark) {
+   if(drawingDark())
+    return [NSColor colorWithCalibratedWhite:1 alpha:dark];
+   return [NSColor colorWithCalibratedWhite:light alpha:0.9];
 }
 
 -(void)drawPushButtonNormalInRect:(NSRect)rect defaulted:(BOOL)defaulted {
@@ -423,7 +429,7 @@ static void drawModernButton(NSRect rect,NSColor *fill,BOOL outlined) {
    if(defaulted)
     drawModernButton(rect,[NSColor controlAccentColor],NO);
    else
-    drawModernButton(rect,drawingDark() ? [NSColor colorWithCalibratedWhite:0.40 alpha:1] : [NSColor whiteColor],YES);
+    drawModernButton(rect,buttonFill(1,0.14),YES);
 }
 
 -(void)drawPushButtonPressedInRect:(NSRect)rect {
@@ -431,7 +437,7 @@ static void drawModernButton(NSRect rect,NSColor *fill,BOOL outlined) {
                                               inRect:rect])
     return;
 
-   drawModernButton(rect,[NSColor colorWithCalibratedWhite:drawingDark() ? 0.50 : 0.86 alpha:1],YES);
+   drawModernButton(rect,buttonFill(0.84,0.24),YES);
 }
 
 -(void)drawPushButtonHighlightedInRect:(NSRect)rect {
@@ -439,16 +445,73 @@ static void drawModernButton(NSRect rect,NSColor *fill,BOOL outlined) {
                                               inRect:rect])
     return;
 
-   drawModernButton(rect,[NSColor colorWithCalibratedWhite:drawingDark() ? 0.46 : 0.9 alpha:1],YES);
+   drawModernButton(rect,buttonFill(0.9,0.20),YES);
 }
 
 -(NSSize)sizeOfButtonImage:(NSImage *)image enabled:(BOOL)enabled mixed:(BOOL)mixed {
    return [image size];
 }
 
+// checkbox and radio glyphs, an accent fill with a white mark when on, a hairline when off
+static BOOL drawToggleGlyph(NSImage *image,NSRect rect,BOOL enabled,BOOL mixed) {
+   NSString *name=[image name];
+   BOOL radio=[name isEqualToString:@"NSRadioButton"] || [name isEqualToString:@"NSHighlightedRadioButton"];
+   BOOL check=[name isEqualToString:@"NSSwitch"] || [name isEqualToString:@"NSHighlightedSwitch"];
+   BOOL on=[name hasPrefix:@"NSHighlighted"] || mixed;
+   CGContextRef ctx=[[NSGraphicsContext currentContext] graphicsPort];
+   NSRect box=NSInsetRect(rect,0.5,0.5);
+   NSBezierPath *shape;
+
+   if(!radio && !check)
+    return NO;
+
+   shape=radio ? [NSBezierPath bezierPathWithOvalInRect:box] : [NSBezierPath bezierPathWithRoundedRect:box xRadius:3.5 yRadius:3.5];
+   CGContextSaveGState(ctx);
+   if(!enabled)
+    CGContextSetAlpha(ctx,0.45);
+   if(on){
+    [[NSColor controlAccentColor] setFill];
+    [shape fill];
+   }
+   else {
+    [(drawingDark() ? [NSColor colorWithCalibratedWhite:1 alpha:0.10] : [NSColor whiteColor]) setFill];
+    [shape fill];
+    [[NSColor colorWithCalibratedWhite:drawingDark() ? 1 : 0 alpha:drawingDark() ? 0.30 : 0.28] setStroke];
+    [shape setLineWidth:0.75];
+    [shape stroke];
+   }
+   if(on){
+    NSBezierPath *mark=[NSBezierPath bezierPath];
+
+    [[NSColor whiteColor] set];
+    if(radio)
+     [[NSBezierPath bezierPathWithOvalInRect:NSInsetRect(box,4.25,4.25)] fill];
+    else {
+     // the context is unflipped here, so y grows upwards
+     if(mixed){
+      [mark moveToPoint:NSMakePoint(NSMinX(box)+3.5,NSMidY(box))];
+      [mark lineToPoint:NSMakePoint(NSMaxX(box)-3.5,NSMidY(box))];
+     }
+     else {
+      [mark moveToPoint:NSMakePoint(NSMinX(box)+3.2,NSMinY(box)+6.8)];
+      [mark lineToPoint:NSMakePoint(NSMinX(box)+5.6,NSMinY(box)+4.2)];
+      [mark lineToPoint:NSMakePoint(NSMaxX(box)-3,NSMaxY(box)-3.4)];
+     }
+     [mark setLineWidth:1.8];
+     [mark setLineCapStyle:NSRoundLineCapStyle];
+     [mark setLineJoinStyle:NSRoundLineJoinStyle];
+     [mark stroke];
+    }
+   }
+   CGContextRestoreGState(ctx);
+   return YES;
+}
+
 -(void)drawButtonImage:(NSImage *)image inRect:(NSRect)rect enabled:(BOOL)enabled mixed:(BOOL)mixed {
    float fraction=enabled?1.0:0.5;
-   
+
+   if(drawToggleGlyph(image,rect,enabled,mixed))
+    return;
    [image drawInRect:rect fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:fraction];
 }
 
@@ -862,20 +925,21 @@ static void drawModernButton(NSRect rect,NSColor *fill,BOOL outlined) {
 @implementation NSGraphicsStyle (NSTextField)
 
 -(void)drawTextFieldBorderInRect:(NSRect)rect bezeledNotLine:(BOOL)bezeledNotLine {
-   [self drawTextFieldBezelInRect:rect background:[NSColor whiteColor] focused:NO capsule:NO];
+   [self drawTextFieldBezelInRect:rect background:nil focused:NO capsule:NO];
 }
 
 // a rounded field with a hairline edge, focus adds the accent ring macOS draws around the active field
+// without a background of its own the field is white, or a faint veil in dark mode
 -(void)drawTextFieldBezelInRect:(NSRect)rect background:(NSColor *)background focused:(BOOL)focused capsule:(BOOL)capsule {
    NSRect body=NSInsetRect(rect,1.5,1.5);
-   CGFloat radius=capsule?NSHeight(body)/2:5;
+   CGFloat radius=capsule?NSHeight(body)/2:6;
    NSBezierPath *shape=[NSBezierPath bezierPathWithRoundedRect:body xRadius:radius yRadius:radius];
 
-   if(background!=nil){
-    [background setFill];
-    [shape fill];
-   }
-   [[NSColor colorWithCalibratedWhite:drawingDark() ? 1 : 0 alpha:drawingDark() ? 0.14 : 0.18] setStroke];
+   if(background==nil)
+    background=drawingDark() ? [NSColor colorWithCalibratedWhite:1 alpha:0.07] : [NSColor whiteColor];
+   [background setFill];
+   [shape fill];
+   [[NSColor colorWithCalibratedWhite:drawingDark() ? 1 : 0 alpha:drawingDark() ? 0.16 : 0.18] setStroke];
    [shape setLineWidth:0.75];
    [shape stroke];
    if(focused){

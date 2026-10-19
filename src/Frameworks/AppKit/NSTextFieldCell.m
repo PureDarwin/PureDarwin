@@ -189,11 +189,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     if(font!=nil)
      [attributes setObject:font forKey:NSFontAttributeName];
 
-    if([self isEnabled]){
-     if(_textColor!=nil)
-      [attributes setObject:_textColor
-                     forKey:NSForegroundColorAttributeName];
-    }
+    if([self isEnabled])
+     [attributes setObject:_textColor?:[NSColor textColor]
+                    forKey:NSForegroundColorAttributeName];
     else {
      [attributes setObject:[NSColor disabledControlTextColor]
                      forKey:NSForegroundColorAttributeName];
@@ -284,7 +282,7 @@ static BOOL isFocused(NSView *control) {
 
    if([self isBezeled] || [self isBordered]){
     // rounded fields fill themselves, a rectangle under them would square the corners off
-    [[control graphicsStyle] drawTextFieldBezelInRect:frame background:background?:[NSColor whiteColor]
+    [[control graphicsStyle] drawTextFieldBezelInRect:frame background:background
                                               focused:isFocused(control)
                                               capsule:[self isBezeled] && [self bezelStyle]==NSTextFieldRoundedBezel];
    }

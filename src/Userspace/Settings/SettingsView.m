@@ -592,6 +592,24 @@ static NSArray *renderChoices;
     pick();
 }
 
+// a Tahoe capsule control, the same fill and hairline AppKit's push buttons use
+static void drawCapsule(NSRect b, BOOL primary)
+{
+    NSRect body = NSInsetRect(b, 0.5, 0.5);
+    NSBezierPath *shape = [NSBezierPath bezierPathWithRoundedRect:body xRadius:NSHeight(body) / 2 yRadius:NSHeight(body) / 2];
+
+    if (primary) {
+        [accent() setFill];
+        [shape fill];
+        return;
+    }
+    [(darkNow() ? [NSColor colorWithCalibratedWhite:1 alpha:0.14] : [NSColor colorWithCalibratedWhite:1 alpha:0.9]) setFill];
+    [shape fill];
+    [[NSColor colorWithCalibratedWhite:darkNow() ? 1 : 0 alpha:darkNow() ? 0.12 : 0.18] setStroke];
+    [shape setLineWidth:0.75];
+    [shape stroke];
+}
+
 // a pop-up button like macOS's, the menu opens over it with the chosen item under the pointer
 - (NSDictionary *)popupRow:(NSString *)label items:(NSArray *)items selected:(NSUInteger)selected pick:(void (^)(NSUInteger))pick
 {
@@ -608,11 +626,8 @@ static NSArray *renderChoices;
         CGFloat cx = NSMaxX(b) - 14, cy = NSMidY(b);
 
         [self drawLabel:label sub:nil in:NSMakeRect(NSMinX(r) + 12, NSMinY(r), NSMinX(b) - 24 - NSMinX(r), NSHeight(r)) code:NO];
-        [[NSColor colorWithCalibratedWhite:0 alpha:0.12] setFill];
-        [[NSBezierPath bezierPathWithRoundedRect:NSOffsetRect(b, 0, 0.5) xRadius:5 yRadius:5] fill];
-        [(darkNow() ? fixed(0x57, 0x51, 0x53) : [NSColor whiteColor]) setFill];
-        [[NSBezierPath bezierPathWithRoundedRect:b xRadius:5 yRadius:5] fill];
-        [title drawAtPoint:NSMakePoint(NSMinX(b) + 10, NSMidY(b) - 8) withAttributes:a];
+        drawCapsule(b, NO);
+        [title drawAtPoint:NSMakePoint(NSMinX(b) + 12, NSMidY(b) - 8) withAttributes:a];
         [chevron moveToPoint:NSMakePoint(cx - 3, cy - 2)];
         [chevron lineToPoint:NSMakePoint(cx, cy - 5)];
         [chevron lineToPoint:NSMakePoint(cx + 3, cy - 2)];
@@ -648,17 +663,20 @@ static NSArray *renderChoices;
 
 - (NSDictionary *)buttonRow:(NSString *)title note:(NSString *)note action:(void (^)(void))action
 {
+    return [self buttonRow:title note:note primary:NO action:action];
+}
+
+// primary rows carry the accent fill with white text, like a default button
+- (NSDictionary *)buttonRow:(NSString *)title note:(NSString *)note primary:(BOOL)primary action:(void (^)(void))action
+{
     return [self row:ROW_MIN + 4 draw:^(NSRect r) {
-        NSDictionary *a = attrs(@"Inter-Regular", 12, rgb(0x1b, 0x1b, 0x1b));
+        NSDictionary *a = attrs(@"Inter-Regular", 12, primary ? [NSColor whiteColor] : rgb(0x1b, 0x1b, 0x1b));
         NSSize s = [title sizeWithAttributes:a];
         NSRect b = NSMakeRect(NSMaxX(r) - 12 - s.width - 28, NSMidY(r) - 11, s.width + 28, 22);
 
         if (note != nil)
             [self drawLabel:note sub:nil in:NSMakeRect(NSMinX(r) + 12, NSMinY(r), NSMinX(b) - 24 - NSMinX(r), NSHeight(r)) code:NO];
-        [rgb(0xc4, 0xc4, 0xc4) setFill];
-        [[NSBezierPath bezierPathWithRoundedRect:b xRadius:6 yRadius:6] fill];
-        [rgb(0xfb, 0xfb, 0xfb) setFill];
-        [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(b, 1, 1) xRadius:5 yRadius:5] fill];
+        drawCapsule(b, primary);
         [title drawAtPoint:NSMakePoint(NSMinX(b) + 14, NSMinY(b) + floor((22 - s.height) / 2)) withAttributes:a];
         [self hit:b block:^(NSPoint p, BOOL dragging) {
             if (!dragging)
@@ -1033,7 +1051,7 @@ static NSArray *renderChoices;
             [fitted([NSString stringWithFormat:@"= %@", [line length] > 0 ? line : NSLocalizedString(@"(none)", @"")], mono, NSWidth(box) - 100)
                 drawAtPoint:NSMakePoint(NSMinX(box) + 9 + [@"boot-args " sizeWithAttributes:monoBold].width, NSMinY(box) + 7) withAttributes:mono];
         }],
-        [self buttonRow:NSLocalizedString(@"Save", @"") note:_message ?: (changed ? NSLocalizedString(@"Not saved yet.", @"") : NSLocalizedString(@"Matches the running system.", @"")) action:^{
+        [self buttonRow:NSLocalizedString(@"Save", @"") note:_message ?: (changed ? NSLocalizedString(@"Not saved yet.", @"") : NSLocalizedString(@"Matches the running system.", @"")) primary:YES action:^{
             NSString *error = PDWriteBootArgs([_bootArgs componentsJoinedByString:@" "]);
 
             [self setMessage:error ?: NSLocalizedString(@"Saved, used at the next start.", @"")];
@@ -1315,10 +1333,7 @@ static NSArray *renderChoices;
     NSRect b = button ? NSMakeRect(right - s.width - 20, mid - 11, s.width + 20, 22) : NSMakeRect(right - s.width, mid - 9, s.width, 18);
 
     if (button) {
-        [[NSColor colorWithCalibratedWhite:0 alpha:0.15] setFill];
-        [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(b, -0.5, -0.5) xRadius:6.5 yRadius:6.5] fill];
-        [(darkNow() ? fixed(0x57, 0x51, 0x53) : [NSColor whiteColor]) setFill];
-        [[NSBezierPath bezierPathWithRoundedRect:b xRadius:6 yRadius:6] fill];
+        drawCapsule(b, NO);
     }
     [title drawAtPoint:NSMakePoint(NSMinX(b) + (button ? 10 : 0), mid - s.height / 2) withAttributes:a];
     [self hit:NSInsetRect(b, -3, -4) block:^(NSPoint p, BOOL dragging) {

@@ -8,6 +8,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 #import <sys/param.h>
 #import <AppKit/NSButtonCell.h>
+#import <AppKit/NSAppearance.h>
 #import <AppKit/NSApplication.h>
 #import <AppKit/NSGraphics.h>
 #import <AppKit/NSAttributedString.h>
@@ -488,7 +489,10 @@ static const float kImageMargin = 2.;
           _highlightsBy = NSContentsCellMask;
           _showsStateBy = NSContentsCellMask;
          _imagePosition = NSImageLeft;
-         _imageDimsWhenDisabled = NO;
+         _imageDimsWhenDisabled = YES;
+          // the style draws these glyphs at 14 px, the size the layout reserves
+          [[NSImage imageNamed:@"NSSwitch"] setSize:NSMakeSize(14,14)];
+          [[NSImage imageNamed:@"NSHighlightedSwitch"] setSize:NSMakeSize(14,14)];
           [self setImage:[NSImage imageNamed:@"NSSwitch"]];
           [self setAlternateImage:[NSImage imageNamed:@"NSHighlightedSwitch"]];
           [self setAlignment:NSLeftTextAlignment];
@@ -500,7 +504,9 @@ static const float kImageMargin = 2.;
           _highlightsBy = NSContentsCellMask;
           _showsStateBy = NSContentsCellMask;
          _imagePosition = NSImageLeft;
-         _imageDimsWhenDisabled = NO;
+         _imageDimsWhenDisabled = YES;
+          [[NSImage imageNamed:@"NSRadioButton"] setSize:NSMakeSize(14,14)];
+          [[NSImage imageNamed:@"NSHighlightedRadioButton"] setSize:NSMakeSize(14,14)];
           [self setImage:[NSImage imageNamed:@"NSRadioButton"]];
           [self setAlternateImage:[NSImage imageNamed:@"NSHighlightedRadioButton"]];
           [self setAlignment:NSLeftTextAlignment];
@@ -1093,6 +1099,14 @@ static NSSize scaledImageSizeInFrameSize(NSSize imageSize,NSSize frameSize,NSIma
 
      [white addAttribute:NSForegroundColorAttributeName value:[NSColor whiteColor] range:NSMakeRange(0,[white length])];
      title=white;
+    }
+    // a translucent disabled title tints with whatever is behind the window, draw it in solid grey
+    if(![self isEnabled] && [title length]){
+     NSMutableAttributedString *grey=[[title mutableCopy] autorelease];
+     BOOL dark=[[NSAppearance currentDrawingAppearance] _isDark];
+
+     [grey addAttribute:NSForegroundColorAttributeName value:[NSColor colorWithCalibratedWhite:dark ? 0.52 : 0.62 alpha:1] range:NSMakeRange(0,[grey length])];
+     title=grey;
     }
     [self drawTitle:title withFrame:titleRect inView:controlView];
      }
