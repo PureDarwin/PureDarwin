@@ -1,0 +1,227 @@
+diff --git a/drivers/gpu/drm/nouveau/nouveau_chan.c b/drivers/gpu/drm/nouveau/nouveau_chan.c
+index cd659b9..6121dbf 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_chan.c
++++ b/drivers/gpu/drm/nouveau/nouveau_chan.c
+@@ -299,7 +299,12 @@ nouveau_channel_ctor(struct nouveau_cli *cli, bool priv, u64 runm,
+ 
+ 	/* create channel object */
+ 	args.chan.version = 0;
++#ifdef __linux__
+ 	args.chan.namelen = sizeof(args.name);
++#else
++	// TASK_COMM_LEN is 20 here, the struct pads to 8 and nvkm counts the padding as name
++	args.chan.namelen = sizeof(args) - sizeof(args.chan);
++#endif
+ 	args.chan.runlist = __ffs64(runm);
+ 	args.chan.runq = 0;
+ 	args.chan.priv = priv;
+diff --git a/drivers/gpu/drm/nouveau/nouveau_drm.c b/drivers/gpu/drm/nouveau/nouveau_drm.c
+index 5664c4c..a789ce9 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_drm.c
++++ b/drivers/gpu/drm/nouveau/nouveau_drm.c
+@@ -94,6 +94,27 @@ MODULE_PARM_DESC(debug, "debug string to pass to driver core");
+ static char *nouveau_debug;
+ module_param_named(debug, nouveau_debug, charp, 0400);
+ 
++#ifndef __linux__
++// experimental reclocking sysctl, PD's own file pd_nouveau_pstate.c
++void pd_nouveau_pstate_init(struct nouveau_drm *drm);
++void pd_nouveau_pstate_fini(struct nouveau_drm *drm);
++
++// the config and debug strings come from the nouveau_config= and nouveau_debug= boot-args
++int pdos_bootarg_str(const char *name, char *buf, int len);
++static char pd_nouveau_config[256], pd_nouveau_debug[256];
++
++static void
++pd_nouveau_options(void)
++{
++	if (nouveau_config == NULL &&
++	    pdos_bootarg_str("nouveau_config", pd_nouveau_config, sizeof(pd_nouveau_config)))
++		nouveau_config = pd_nouveau_config;
++	if (nouveau_debug == NULL &&
++	    pdos_bootarg_str("nouveau_debug", pd_nouveau_debug, sizeof(pd_nouveau_debug)))
++		nouveau_debug = pd_nouveau_debug;
++}
++#endif
++
+ MODULE_PARM_DESC(noaccel, "disable kernel/abi16 acceleration");
+ static int nouveau_noaccel = 0;
+ module_param_named(noaccel, nouveau_noaccel, int, 0400);
+@@ -586,6 +607,9 @@ nouveau_drm_device_fini(struct nouveau_drm *drm)
+ 	nouveau_svm_fini(drm);
+ 	nouveau_hwmon_fini(dev);
+ 	nouveau_debugfs_fini(drm);
++#ifndef __linux__
++	pd_nouveau_pstate_fini(drm);
++#endif
+ 
+ 	if (dev->mode_config.num_crtc)
+ 		nouveau_display_fini(dev, false, false);
+@@ -688,6 +712,9 @@ nouveau_drm_device_init(struct nouveau_drm *drm)
+ 		nouveau_drm_device_fini(drm);
+ 		return ret;
+ 	}
++#ifndef __linux__
++	pd_nouveau_pstate_init(drm);
++#endif
+ 
+ 	return 0;
+ fail_dispinit:
+@@ -841,8 +868,10 @@ static void quirk_broken_nv_runpm(struct pci_dev *pdev)
+ 
+ 	switch (bridge->device) {
+ 	case 0x1901:
++#ifdef __linux__
+ 		drm->old_pm_cap = pdev->pm_cap;
+ 		pdev->pm_cap = 0;
++#endif
+ 		NV_INFO(drm, "Disabling PCI power management to avoid bug\n");
+ 		break;
+ 	}
+@@ -859,6 +888,10 @@ static int nouveau_drm_probe(struct pci_dev *pdev,
+ 	if (vga_switcheroo_client_probe_defer(pdev))
+ 		return -EPROBE_DEFER;
+ 
++#ifndef __linux__
++	pd_nouveau_options();
++#endif
++
+ 	/* We need to check that the chipset is supported before booting
+ 	 * fbdev off the hardware, as there's no way to put it back.
+ 	 */
+@@ -927,8 +960,10 @@ nouveau_drm_remove(struct pci_dev *pdev)
+ 	struct nouveau_drm *drm = pci_get_drvdata(pdev);
+ 
+ 	/* revert our workaround */
++#ifdef __linux__
+ 	if (drm->old_pm_cap)
+ 		pdev->pm_cap = drm->old_pm_cap;
++#endif
+ 	nouveau_drm_device_remove(drm);
+ 	pci_disable_device(pdev);
+ }
+@@ -1185,10 +1220,14 @@ nouveau_drm_open(struct drm_device *dev, struct drm_file *fpriv)
+ 		return ret;
+ 	}
+ 
++#ifdef __linux__
+ 	rcu_read_lock();
+ 	snprintf(name, sizeof(name), "%s[%d]",
+ 		 current->comm, pid_nr(rcu_dereference(fpriv->pid)));
+ 	rcu_read_unlock();
++#else
++	snprintf(name, sizeof(name), "%s[%d]", current->comm, fpriv->pid);
++#endif
+ 
+ 	if (!(cli = kzalloc(sizeof(*cli), GFP_KERNEL))) {
+ 		ret = -ENOMEM;
+diff --git a/drivers/gpu/drm/nouveau/nouveau_sched.c b/drivers/gpu/drm/nouveau/nouveau_sched.c
+index 4412f27..097c4e5 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_sched.c
++++ b/drivers/gpu/drm/nouveau/nouveau_sched.c
+@@ -408,8 +408,12 @@ nouveau_sched_init(struct nouveau_sched *sched, struct nouveau_drm *drm,
+ 	int ret;
+ 
+ 	if (!wq) {
++#ifdef __linux__
+ 		wq = alloc_workqueue("nouveau_sched_wq_%d", 0, WQ_MAX_ACTIVE,
+ 				     current->pid);
++#else
++		wq = alloc_workqueue("nouveau_sched_wq", 0, WQ_MAX_ACTIVE);
++#endif
+ 		if (!wq)
+ 			return -ENOMEM;
+ 
+diff --git a/drivers/gpu/drm/nouveau/nouveau_ttm.c b/drivers/gpu/drm/nouveau/nouveau_ttm.c
+index e244927..47d9fd0 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_ttm.c
++++ b/drivers/gpu/drm/nouveau/nouveau_ttm.c
+@@ -300,7 +300,11 @@ nouveau_ttm_init(struct nouveau_drm *drm)
+ 	}
+ 
+ 	ret = ttm_device_init(&drm->ttm.bdev, &nouveau_bo_driver, drm->dev->dev,
++#ifdef __linux__
+ 				  dev->anon_inode->i_mapping,
++#else
++				  NULL,
++#endif
+ 				  dev->vma_offset_manager,
+ 				  drm_need_swiotlb(drm->client.mmu.dmabits),
+ 				  drm->client.mmu.dmabits <= 32);
+diff --git a/drivers/gpu/drm/nouveau/nvkm/subdev/i2c/bus.c b/drivers/gpu/drm/nouveau/nvkm/subdev/i2c/bus.c
+index ed50cc3..ce53e6f 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/subdev/i2c/bus.c
++++ b/drivers/gpu/drm/nouveau/nvkm/subdev/i2c/bus.c
+@@ -22,6 +22,13 @@
+  * Authors: Ben Skeggs <bskeggs@redhat.com>
+  */
+ #include "bus.h"
++
++#ifndef __linux__
++// linuxkpi's bit-banging adapter has no exported algorithm, every other bus uses nvkm's own
++#define PD_I2C_IS_BIT(bus)	((bus)->i2c.algo != &nvkm_i2c_bus_algo)
++#else
++#define PD_I2C_IS_BIT(bus)	((bus)->i2c.algo == &i2c_bit_algo)
++#endif
+ #include "pad.h"
+ 
+ #include <core/option.h>
+@@ -165,7 +172,7 @@ nvkm_i2c_bus_probe(struct nvkm_i2c_bus *bus, const char *what,
+ 	for (i = 0; info[i].dev.addr; i++) {
+ 		u8 orig_udelay = 0;
+ 
+-		if ((bus->i2c.algo == &i2c_bit_algo) && (info[i].udelay != 0)) {
++		if (PD_I2C_IS_BIT(bus) && (info[i].udelay != 0)) {
+ 			struct i2c_algo_bit_data *algo = bus->i2c.algo_data;
+ 			BUS_DBG(bus, "%dms delay instead of %dms",
+ 				     info[i].udelay, algo->udelay);
+diff --git a/drivers/gpu/drm/nouveau/nvkm/subdev/pci/pcie.c b/drivers/gpu/drm/nouveau/nvkm/subdev/pci/pcie.c
+index dd18d9d..d969db0 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/subdev/pci/pcie.c
++++ b/drivers/gpu/drm/nouveau/nvkm/subdev/pci/pcie.c
+@@ -23,6 +23,13 @@
+  */
+ #include "priv.h"
+ 
++#ifndef __linux__
++// linuxkpi's pci_bus has no speed field, the link capability gives the same answer
++#define pd_bus_max_speed(pdev)	pcie_get_speed_cap(pdev)
++#else
++#define pd_bus_max_speed(pdev)	((pdev)->bus->max_bus_speed)
++#endif
++
+ static char *nvkm_pcie_speeds[] = {
+ 	"2.5GT/s",
+ 	"5.0GT/s",
+@@ -133,7 +140,7 @@ nvkm_pcie_set_link(struct nvkm_pci *pci, enum nvkm_pcie_speed speed, u8 width)
+ 	}
+ 
+ 	cur_speed = pci->func->pcie.cur_speed(pci);
+-	max_speed = min(nvkm_pcie_speed(pci->pdev->bus->max_bus_speed),
++	max_speed = min(nvkm_pcie_speed(pd_bus_max_speed(pci->pdev)),
+ 			pci->func->pcie.max_speed(pci));
+ 
+ 	nvkm_trace(subdev, "current speed: %s\n", nvkm_pcie_speeds[cur_speed]);
+diff --git a/drivers/gpu/drm/nouveau/nvkm/subdev/therm/ic.c b/drivers/gpu/drm/nouveau/nvkm/subdev/therm/ic.c
+index abf3eda..454bdf1 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/subdev/therm/ic.c
++++ b/drivers/gpu/drm/nouveau/nvkm/subdev/therm/ic.c
+@@ -32,6 +32,7 @@ probe_monitoring_device(struct nvkm_i2c_bus *bus,
+ {
+ 	struct nvkm_therm *therm = data;
+ 	struct nvbios_therm_sensor *sensor = &therm->bios_sensor;
++#ifdef __linux__
+ 	struct i2c_client *client;
+ 
+ 	request_module("%s%s", I2C_MODULE_PREFIX, info->type);
+@@ -52,6 +53,10 @@ probe_monitoring_device(struct nvkm_i2c_bus *bus,
+ 		   info->type, info->addr, sensor->offset_constant);
+ 	therm->ic = client;
+ 	return true;
++#else
++	// no i2c sensor drivers to hand the chip to
++	return false;
++#endif
+ }
+ 
+ static struct nvkm_i2c_bus_probe
