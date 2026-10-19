@@ -6,6 +6,7 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
+#import <ctype.h>
 #import <AppKit/NSMenu.h>
 #import <AppKit/NSScreen.h>
 #import <AppKit/NSMenuView.h>
@@ -26,6 +27,15 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 @end
 
 @implementation NSMenu
+
+// the bar belongs to the MenuBar process, its height is what the main screen reserves at the top
+-(CGFloat)menuBarHeight {
+   NSScreen *screen=[NSScreen mainScreen];
+
+   if(self!=[NSApp mainMenu] || screen==nil)
+    return 0;
+   return NSMaxY([screen frame])-NSMaxY([screen visibleFrame]);
+}
 
 /* The windows currently showing a popped-up menu. A menu window has to outlive
  * the call that shows it, and only one popup is meaningful at a time, so the
@@ -168,6 +178,15 @@ static NSMutableArray *__NSMenuPopUpWindows = nil;
    [self addItem: quitItem];
    [self setValue:@"NSAppleMenu" forKey:@"name"];
    return self;
+}
+
+// stored, the menu bar process lays items out left to right
+-(NSInteger)userInterfaceLayoutDirection {
+   return _userInterfaceLayoutDirection;
+}
+
+-(void)setUserInterfaceLayoutDirection:(NSInteger)direction {
+   _userInterfaceLayoutDirection=direction;
 }
 
 -(void)dealloc {
@@ -426,35 +445,60 @@ BOOL itemIsEnabled(NSMenuItem *item) {
 }
 
 -(void)itemChanged:(NSMenuItem *)item {
+    if([NSApp respondsToSelector:@selector(_pdMenuItemChanged)])
+        [NSApp performSelector:@selector(_pdMenuItemChanged)];
+}
+
+// the key an equivalent names, lower case, with backspace and delete as one key
+static NSString *PDNormalizedKey(NSString *key) {
+    if([key length]==1){
+        unichar c=[key characterAtIndex:0];
+
+        if(c==0x08 || c==0x7f)
+            return @"\x7f";
+    }
+    return [key lowercaseString];
+}
+
+// an upper case letter as equivalent asks for shift, as on macOS
+static NSUInteger PDItemModifiers(NSMenuItem *item) {
+    NSString *key=[item keyEquivalent];
+    NSUInteger mask=[item keyEquivalentModifierMask]&(NSCommandKeyMask|NSAlternateKeyMask|NSShiftKeyMask|NSControlKeyMask);
+
+    if([key length]==1 && ![[key lowercaseString] isEqualToString:key])
+        mask|=NSShiftKeyMask;
+    return mask;
 }
 
 -(BOOL)performKeyEquivalent:(NSEvent *)event {
     int       i,count=[_itemArray count];
-    NSString *characters=[event charactersIgnoringModifiers];
-    unsigned  modifiers=[event modifierFlags];
+    NSString *characters=PDNormalizedKey([event charactersIgnoringModifiers]);
+    NSUInteger modifiers=[event modifierFlags]&(NSCommandKeyMask|NSAlternateKeyMask|NSShiftKeyMask|NSControlKeyMask);
     
     if (_autoenablesItems)
         [self update];
     
     for(i=0;i<count;i++){
         NSMenuItem *item=[_itemArray objectAtIndex:i];
-        unsigned    itemModifiers=[item keyEquivalentModifierMask]&(NSCommandKeyMask|NSAlternateKeyMask);
         NSString *key=[item keyEquivalent];
 
         /* An item without a key equivalent has no shortcut to match; a bare
            modifier event carries empty characters and would otherwise hit it.
            Submenus still have to be searched below. */
-        if([key length]!=0 &&
-           (modifiers&(NSCommandKeyMask|NSAlternateKeyMask))==itemModifiers){
-            
-            if([key isEqualToString:characters]){
-                /* This *must* accurately reflect menu validation when ignoring or processing
-                    key equivalents. Relying on update to keep isEnabled in the proper state is
-                    unfortunately too tenuous.
-                 */
-                if (itemIsEnabled(item))
-                    return [NSApp sendAction:[item action] to:[item target] from:item];
-            }
+        NSUInteger wanted=PDItemModifiers(item),held=modifiers;
+
+        // a symbol such as ? already carries the shift that types it
+        if([key length]==1 && [key characterAtIndex:0]>0x20 && [key characterAtIndex:0]<0x7f &&
+           !isalnum([key characterAtIndex:0]) && !(wanted&NSShiftKeyMask))
+            held&=~NSShiftKeyMask;
+        if([key length]!=0 && held==wanted &&
+           [PDNormalizedKey(key) isEqualToString:characters]){
+            /* This *must* accurately reflect menu validation when ignoring or processing
+                key equivalents. Relying on update to keep isEnabled in the proper state is
+                unfortunately too tenuous.
+             */
+            if (itemIsEnabled(item))
+                return [NSApp sendAction:[item action] to:[item target] from:item];
         }
         
         if([[item submenu] performKeyEquivalent:event])
@@ -516,3 +560,5 @@ BOOL itemIsEnabled(NSMenuItem *item) {
 
 
 @end
+
+NSString * const NSMenuWillSendActionNotification=@"NSMenuWillSendActionNotification";

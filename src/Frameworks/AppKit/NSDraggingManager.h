@@ -11,7 +11,13 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 @class NSWindow, NSImage, NSEvent, NSPasteboard, NSArray;
 
-@interface NSDraggingManager : NSObject
+@interface NSDraggingManager : NSObject {
+    id _localSource;
+    // a drag from another client over this app's windows
+    id _remoteInfo;
+    id _remoteDestination;
+    NSUInteger _remoteOperation;
+}
 
 + (NSDraggingManager *)draggingManager;
 
@@ -19,6 +25,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - (void)unregisterWindow:(NSWindow *)window;
 
 - (id)localDraggingSource;
+
+// WS_EVENT_DRAG_* as code, window number, x, y and modifiers, on the main thread
+- (void)_remoteDragEvent:(NSArray *)event;
 
 - (void)dragImage:(NSImage *)image at:(NSPoint)location offset:(NSSize)offset event:(NSEvent *)event pasteboard:(NSPasteboard *)pasteboard source:(id)source slideBack:(BOOL)slideBack;
 

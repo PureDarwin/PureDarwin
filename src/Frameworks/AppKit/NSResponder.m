@@ -30,6 +30,22 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return self;
 }
 
+-(void)dealloc {
+   [_userActivity release];
+   [super dealloc];
+}
+
+// handoff has nowhere to go here, the activity is only kept for the caller
+-(NSUserActivity *)userActivity {
+   return _userActivity;
+}
+
+-(void)setUserActivity:(NSUserActivity *)userActivity {
+   [userActivity retain];
+   [_userActivity release];
+   _userActivity=userActivity;
+}
+
 -(NSResponder *)nextResponder {
    return _nextResponder;
 }
@@ -81,7 +97,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
       [self doCommandBySelector:NSSelectorFromString([selectorNames objectAtIndex:j])];
      }
     }
-    else if([self respondsToSelector:@selector(insertText:)]){
+    else if([self respondsToSelector:@selector(insertText:)] || [self respondsToSelector:@selector(insertText:replacementRange:)]){
      string=[event characters];
  
      if([string length]>0){ // FIX THIS IN APPKIT shouldnt get 0 length 
@@ -102,7 +118,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
        buffer[j]=check;
       }
       string=[NSString stringWithCharacters:buffer length:length];
-      [self insertText:string];
+      // a text input client takes the replacement range form, the older one only the text
+      if([self respondsToSelector:@selector(insertText:replacementRange:)])
+       [(id)self insertText:string replacementRange:NSMakeRange(NSNotFound,0)];
+      else
+       [self insertText:string];
      }
     }
    }
@@ -212,6 +232,62 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(void)scrollWheel:(NSEvent *)event {
+   [_nextResponder performSelector:_cmd withObject:event];
+}
+
+-(void)magnifyWithEvent:(NSEvent *)event {
+   [_nextResponder performSelector:_cmd withObject:event];
+}
+
+-(void)rotateWithEvent:(NSEvent *)event {
+   [_nextResponder performSelector:_cmd withObject:event];
+}
+
+-(void)swipeWithEvent:(NSEvent *)event {
+   [_nextResponder performSelector:_cmd withObject:event];
+}
+
+-(void)beginGestureWithEvent:(NSEvent *)event {
+   [_nextResponder performSelector:_cmd withObject:event];
+}
+
+-(void)endGestureWithEvent:(NSEvent *)event {
+   [_nextResponder performSelector:_cmd withObject:event];
+}
+
+-(void)smartMagnifyWithEvent:(NSEvent *)event {
+   [_nextResponder performSelector:_cmd withObject:event];
+}
+
+-(void)pressureChangeWithEvent:(NSEvent *)event {
+   [_nextResponder performSelector:_cmd withObject:event];
+}
+
+-(void)tabletPoint:(NSEvent *)event {
+   [_nextResponder performSelector:_cmd withObject:event];
+}
+
+-(void)tabletProximity:(NSEvent *)event {
+   [_nextResponder performSelector:_cmd withObject:event];
+}
+
+-(void)quickLookWithEvent:(NSEvent *)event {
+   [_nextResponder performSelector:_cmd withObject:event];
+}
+
+-(void)touchesBeganWithEvent:(NSEvent *)event {
+   [_nextResponder performSelector:_cmd withObject:event];
+}
+
+-(void)touchesMovedWithEvent:(NSEvent *)event {
+   [_nextResponder performSelector:_cmd withObject:event];
+}
+
+-(void)touchesEndedWithEvent:(NSEvent *)event {
+   [_nextResponder performSelector:_cmd withObject:event];
+}
+
+-(void)touchesCancelledWithEvent:(NSEvent *)event {
    [_nextResponder performSelector:_cmd withObject:event];
 }
 

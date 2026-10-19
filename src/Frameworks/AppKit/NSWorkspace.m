@@ -649,3 +649,6 @@ static NSImage *pdGenericIcon(BOOL isDirectory) {
 
 @end
 
+NSString * const NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification=@"NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification";
+// PD has one space, so this is never posted
+NSString * const NSWorkspaceActiveSpaceDidChangeNotification=@"NSWorkspaceActiveSpaceDidChangeNotification";

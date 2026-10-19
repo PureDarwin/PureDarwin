@@ -1,4 +1,5 @@
 #import <Foundation/NSString.h>
+#import <Foundation/NSDictionary.h>
 #import <AppKit/AppKitExport.h>
 
 NSString * const NSAccessibilityChildrenAttribute=@"NSAccessibilityChildrenAttribute";
@@ -321,6 +322,19 @@ void NSAccessibilityPostNotification (
    id element,
    NSString *notification
 ) {
+}
+
+NSString * const NSAccessibilityAnnouncementKey=@"NSAccessibilityAnnouncementKey";
+NSString * const NSAccessibilityAnnouncementRequestedNotification=@"NSAccessibilityAnnouncementRequestedNotification";
+NSString * const NSAccessibilityLevelIndicatorRole=@"NSAccessibilityLevelIndicatorRole";
+NSString * const NSAccessibilityMarkedMisspelledTextAttribute=@"NSAccessibilityMarkedMisspelledTextAttribute";
+NSString * const NSAccessibilityPopoverRole=@"NSAccessibilityPopoverRole";
+NSString * const NSAccessibilityPriorityKey=@"NSAccessibilityPriorityKey";
+NSString * const NSAccessibilitySwitchSubrole=@"NSAccessibilitySwitchSubrole";
+NSString * const NSAccessibilityToggleSubrole=@"NSAccessibilityToggleSubrole";
+
+// there is no accessibility server to deliver to, as with NSAccessibilityPostNotification
+void NSAccessibilityPostNotificationWithUserInfo(id element, NSString *notification, NSDictionary *userInfo) {
 }
 
 

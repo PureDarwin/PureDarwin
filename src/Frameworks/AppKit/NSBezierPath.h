@@ -65,16 +65,16 @@ typedef enum {
 + (NSBezierPath *)bezierPathWithRect:(NSRect)rect;
 + (NSBezierPath *)bezierPathWithRoundedRect:(NSRect)rect xRadius:(CGFloat)xRadius yRadius:(CGFloat)yRadius;
 
-+ (float)defaultLineWidth;
-+ (float)defaultMiterLimit;
-+ (float)defaultFlatness;
++ (CGFloat)defaultLineWidth;
++ (CGFloat)defaultMiterLimit;
++ (CGFloat)defaultFlatness;
 + (NSWindingRule)defaultWindingRule;
 + (NSLineCapStyle)defaultLineCapStyle;
 + (NSLineJoinStyle)defaultLineJoinStyle;
 
-+ (void)setDefaultLineWidth:(float)width;
-+ (void)setDefaultMiterLimit:(float)limit;
-+ (void)setDefaultFlatness:(float)flatness;
++ (void)setDefaultLineWidth:(CGFloat)width;
++ (void)setDefaultMiterLimit:(CGFloat)limit;
++ (void)setDefaultFlatness:(CGFloat)flatness;
 + (void)setDefaultWindingRule:(NSWindingRule)rule;
 + (void)setDefaultLineCapStyle:(NSLineCapStyle)style;
 + (void)setDefaultLineJoinStyle:(NSLineJoinStyle)style;
@@ -85,14 +85,14 @@ typedef enum {
 + (void)drawPackedGlyphs:(const char *)packed atPoint:(NSPoint)point;
 + (void)clipRect:(NSRect)rect;
 
-- (float)lineWidth;
-- (float)miterLimit;
-- (float)flatness;
+- (CGFloat)lineWidth;
+- (CGFloat)miterLimit;
+- (CGFloat)flatness;
 - (NSWindingRule)windingRule;
 - (NSLineCapStyle)lineCapStyle;
 - (NSLineJoinStyle)lineJoinStyle;
 
-- (void)getLineDash:(float *)dashes count:(int *)count phase:(float *)phase;
+- (void)getLineDash:(CGFloat *)dashes count:(int *)count phase:(CGFloat *)phase;
 
 - (BOOL)cachesBezierPath;
 
@@ -100,13 +100,13 @@ typedef enum {
 - (NSBezierPathElement)elementAtIndex:(int)index;
 - (NSBezierPathElement)elementAtIndex:(int)index associatedPoints:(NSPoint *)points;
 
-- (void)setLineWidth:(float)width;
-- (void)setMiterLimit:(float)limit;
-- (void)setFlatness:(float)flatness;
+- (void)setLineWidth:(CGFloat)width;
+- (void)setMiterLimit:(CGFloat)limit;
+- (void)setFlatness:(CGFloat)flatness;
 - (void)setWindingRule:(NSWindingRule)rule;
 - (void)setLineCapStyle:(NSLineCapStyle)style;
 - (void)setLineJoinStyle:(NSLineJoinStyle)style;
-- (void)setLineDash:(const float *)dashes count:(int)count phase:(float)phase;
+- (void)setLineDash:(const CGFloat *)dashes count:(int)count phase:(CGFloat)phase;
 - (void)setCachesBezierPath:(BOOL)flag;
 
 - (BOOL)isEmpty;
@@ -126,10 +126,10 @@ typedef enum {
 - (void)appendBezierPathWithPoints:(NSPoint *)points count:(unsigned)count;
 - (void)appendBezierPathWithRect:(NSRect)rect;
 - (void)appendBezierPathWithOvalInRect:(NSRect)rect;
-- (void)appendBezierPathWithArcFromPoint:(NSPoint)point toPoint:(NSPoint)toPoint radius:(float)radius;
+- (void)appendBezierPathWithArcFromPoint:(NSPoint)point toPoint:(NSPoint)toPoint radius:(CGFloat)radius;
 - (void)appendBezierPathWithRoundedRect:(NSRect)rect xRadius:(CGFloat)radius yRadius:(CGFloat)yRadius;
-- (void)appendBezierPathWithArcWithCenter:(NSPoint)center radius:(float)radius startAngle:(float)startAngle endAngle:(float)endAngle;
-- (void)appendBezierPathWithArcWithCenter:(NSPoint)center radius:(float)radius startAngle:(float)startAngle endAngle:(float)endAngle clockwise:(BOOL)clockwise;
+- (void)appendBezierPathWithArcWithCenter:(NSPoint)center radius:(CGFloat)radius startAngle:(CGFloat)startAngle endAngle:(CGFloat)endAngle;
+- (void)appendBezierPathWithArcWithCenter:(NSPoint)center radius:(CGFloat)radius startAngle:(CGFloat)startAngle endAngle:(CGFloat)endAngle clockwise:(BOOL)clockwise;
 - (void)appendBezierPathWithGlyph:(NSGlyph)glyph inFont:(NSFont *)font;
 - (void)appendBezierPathWithGlyphs:(NSGlyph *)glyphs count:(unsigned)count inFont:(NSFont *)font;
 - (void)appendBezierPathWithPackedGlyphs:(const char *)packed;

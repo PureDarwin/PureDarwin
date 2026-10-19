@@ -871,7 +871,7 @@ static inline NSGlyphFragment *fragmentAtGlyphIndex(NSLayoutManager *self,unsign
     [self validateGlyphsAndLayoutForContainer:container];
 }
 
--(unsigned)glyphIndexForPoint:(NSPoint)point inTextContainer:(NSTextContainer *)container fractionOfDistanceThroughGlyph:(float *)fraction {
+-(unsigned)glyphIndexForPoint:(NSPoint)point inTextContainer:(NSTextContainer *)container fractionOfDistanceThroughGlyph:(CGFloat *)fraction {
 
 #if DEBUG_LM_LAYOUT
     NSLog(@"glyphIndexForPoint: %@ inTextContainer: %@ fractionOfDistanceThroughGlyph: %p", NSStringFromPoint(point), container, fraction);
@@ -989,7 +989,7 @@ static inline NSGlyphFragment *fragmentAtGlyphIndex(NSLayoutManager *self,unsign
    return [self glyphIndexForPoint:point inTextContainer:container fractionOfDistanceThroughGlyph:&fraction];
 }
 
--(float)fractionOfDistanceThroughGlyphForPoint:(NSPoint)point inTextContainer:(NSTextContainer *)container {
+-(CGFloat)fractionOfDistanceThroughGlyphForPoint:(NSPoint)point inTextContainer:(NSTextContainer *)container {
 
 #if DEBUG_LM_LAYOUT
     NSLog(@"fractionOfDistanceThroughGlyphForPoint: %@ inTextContainer: %@", NSStringFromPoint(point), container);
@@ -1746,7 +1746,7 @@ static inline void _appendRectToCache(NSLayoutManager *self,NSRect rect){
         [cell drawWithFrame:frame inView: textView characterIndex: index layoutManager:self];
 }
 
-- (float)_drawGlyphsForSubGlyphRange:(NSRange)range
+- (CGFloat)_drawGlyphsForSubGlyphRange:(NSRange)range
                                                  forFragment:(NSGlyphFragment*)fragment
                                                         atPoint: (NSPoint)origin
                                          subRangeXOffset: (float)xOffset
@@ -2119,7 +2119,7 @@ static inline void _appendRectToCache(NSLayoutManager *self,NSRect rect){
     return [self characterRangeForGlyphRange:result actualGlyphRange:NULL];
 }
 
--(float)defaultLineHeightForFont:(NSFont *)font {
+-(CGFloat)defaultLineHeightForFont:(NSFont *)font {
    return [font defaultLineHeightForFont];
 }
 

@@ -58,6 +58,40 @@ static NSMutableArray *_registeredClasses=nil;
    return [NSArray array];
 }
 
+// the type identifier for each file extension the image reps read
+static NSString *typeForExtension(NSString *extension) {
+   static NSDictionary *types;
+
+   if(types==nil)
+    types=[[NSDictionary alloc] initWithObjectsAndKeys:
+     @"public.png",@"png", @"public.tiff",@"tiff", @"public.tiff",@"tif",
+     @"public.jpeg",@"jpg", @"public.jpeg",@"jpeg", @"com.compuserve.gif",@"gif",
+     @"com.microsoft.bmp",@"bmp", @"com.adobe.pdf",@"pdf", @"com.adobe.encapsulated-postscript",@"eps",
+     @"com.microsoft.ico",@"ico", @"com.apple.icns",@"icns", @"public.jpeg-2000",@"jp2", nil];
+   return [types objectForKey:[extension lowercaseString]];
+}
+
+static NSArray *typesForExtensions(NSArray *extensions) {
+   NSMutableArray *result=[NSMutableArray array];
+
+   for(NSString *extension in extensions){
+    NSString *type=typeForExtension(extension);
+
+    if(type!=nil && ![result containsObject:type])
+     [result addObject:type];
+   }
+   return result;
+}
+
+// NSImageRep itself answers for every registered class, a subclass for its own formats
++(NSArray *)imageTypes {
+   return typesForExtensions(self==[NSImageRep class] ? [self imageFileTypes] : [self imageUnfilteredFileTypes]);
+}
+
++(NSArray *)imageUnfilteredTypes {
+   return typesForExtensions([self imageUnfilteredFileTypes]);
+}
+
 +(NSArray *)imagePasteboardTypes {
    NSMutableSet *result=[NSMutableSet set];
    int           i,count=[_registeredClasses count];

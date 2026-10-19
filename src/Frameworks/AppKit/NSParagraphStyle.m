@@ -176,11 +176,11 @@ static inline id mutableCopyWithZone(NSParagraphStyle *self,NSZone *zone){
    return _writingDirection;
 }
 
--(float)paragraphSpacing {
+-(CGFloat)paragraphSpacing {
    return _paragraphSpacing;
 }
 
--(float)paragraphSpacingBefore {
+-(CGFloat)paragraphSpacingBefore {
    return _paragraphSpacingBefore;
 }
 
@@ -196,15 +196,15 @@ static inline id mutableCopyWithZone(NSParagraphStyle *self,NSZone *zone){
    return _headerLevel;
 }
 
--(float)firstLineHeadIndent {
+-(CGFloat)firstLineHeadIndent {
    return _firstLineHeadIndent;
 }
 
--(float)headIndent {
+-(CGFloat)headIndent {
    return _headIndent;
 }
 
--(float)tailIndent {
+-(CGFloat)tailIndent {
    return _tailIndent;
 }
 
@@ -216,23 +216,23 @@ static inline id mutableCopyWithZone(NSParagraphStyle *self,NSZone *zone){
    return _lineBreakMode;
 }
 
--(float)minimumLineHeight {
+-(CGFloat)minimumLineHeight {
    return _minimumLineHeight;
 }
 
--(float)maximumLineHeight {
+-(CGFloat)maximumLineHeight {
    return _maximumLineHeight;
 }
 
--(float)lineHeightMultiple {
+-(CGFloat)lineHeightMultiple {
    return _lineHeightMultiple;
 }
 
--(float)lineSpacing {
+-(CGFloat)lineSpacing {
    return _lineSpacing;
 }
 
--(float)defaultTabInterval {
+-(CGFloat)defaultTabInterval {
    return _defaultTabInterval;
 }
 
@@ -240,11 +240,11 @@ static inline id mutableCopyWithZone(NSParagraphStyle *self,NSZone *zone){
    return _tabStops;
 }
 
--(float)hyphenationFactor {
+-(CGFloat)hyphenationFactor {
    return _hyphenationFactor;
 }
 
--(float)tighteningFactorForTruncation {
+-(CGFloat)tighteningFactorForTruncation {
    return _tighteningFactorForTruncation;
 }
 

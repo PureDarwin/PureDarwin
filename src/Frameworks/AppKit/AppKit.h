@@ -161,5 +161,21 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSWindow.h>
 #import <AppKit/NSWindowController.h>
 #import <AppKit/NSWorkspace.h>
+#import <AppKit/NSRunningApplication.h>
+#import <AppKit/NSWorkspaceOpenConfiguration.h>
+#import <AppKit/NSTextInputContext.h>
+#import <AppKit/NSPasteboardItem.h>
+#import <AppKit/NSDraggingItem.h>
+#import <AppKit/NSVisualEffectView.h>
+#import <AppKit/NSPopover.h>
+#import <AppKit/NSTitlebarAccessoryViewController.h>
+#import <AppKit/NSTouchBar.h>
+#import <AppKit/NSHapticFeedback.h>
+#import <AppKit/NSSharingService.h>
+#import <AppKit/NSAccessibilityCustomAction.h>
+#import <AppKit/NSModernAppKit.h>
+#import <AppKit/NSLayoutAnchor.h>
+#import <AppKit/NSGlassEffectView.h>
+#import <AppKit/NSMenuItemBadge.h>
 
 #import <ApplicationServices/ApplicationServices.h>

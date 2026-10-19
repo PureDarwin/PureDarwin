@@ -19,6 +19,16 @@ typedef enum {
     NSJPEG2000FileType,
 } NSBitmapImageFileType;
 
+// the 10.12 spellings of the file types
+enum {
+    NSBitmapImageFileTypeTIFF = NSTIFFFileType,
+    NSBitmapImageFileTypeBMP = NSBMPFileType,
+    NSBitmapImageFileTypeGIF = NSGIFFileType,
+    NSBitmapImageFileTypeJPEG = NSJPEGFileType,
+    NSBitmapImageFileTypePNG = NSPNGFileType,
+    NSBitmapImageFileTypeJPEG2000 = NSJPEG2000FileType,
+};
+
 typedef enum {
     NSTIFFCompressionNone = 1,
     NSTIFFCompressionCCITTFAX3 = 3,
@@ -55,7 +65,7 @@ APPKIT_EXPORT NSString *NSImageCompressionFactor;
 + (void)getTIFFCompressionTypes:(const NSTIFFCompression **)types count:(int *)count;
 + (NSString *)localizedNameForTIFFCompressionType:(NSTIFFCompression)type;
 + (NSData *)TIFFRepresentationOfImageRepsInArray:(NSArray *)array;
-+ (NSData *)TIFFRepresentationOfImageRepsInArray:(NSArray *)array usingCompression:(NSTIFFCompression)compression factor:(float)factor;
++ (NSData *)TIFFRepresentationOfImageRepsInArray:(NSArray *)array usingCompression:(NSTIFFCompression)compression factor:(CGFloat)factor;
 
 + (NSData *)representationOfImageRepsInArray:(NSArray *)array usingType:(NSBitmapImageFileType)type properties:(NSDictionary *)properties;
 
@@ -97,17 +107,17 @@ APPKIT_EXPORT NSString *NSImageCompressionFactor;
 - valueForProperty:(NSString *)property;
 - (void)setProperty:(NSString *)property withValue:value;
 
-- (void)colorizeByMappingGray:(float)gray toColor:(NSColor *)color blackMapping:(NSColor *)blackMapping whiteMapping:(NSColor *)whiteMapping;
+- (void)colorizeByMappingGray:(CGFloat)gray toColor:(NSColor *)color blackMapping:(NSColor *)blackMapping whiteMapping:(NSColor *)whiteMapping;
 
-- (void)getCompression:(NSTIFFCompression *)compression factor:(float *)factor;
-- (void)setCompression:(NSTIFFCompression)compression factor:(float)factor;
+- (void)getCompression:(NSTIFFCompression *)compression factor:(CGFloat *)factor;
+- (void)setCompression:(NSTIFFCompression)compression factor:(CGFloat)factor;
 
 - (BOOL)canBeCompressedUsing:(NSTIFFCompression)compression;
 
 - (NSData *)representationUsingType:(NSBitmapImageFileType)type properties:(NSDictionary *)properties;
 
 - (NSData *)TIFFRepresentation;
-- (NSData *)TIFFRepresentationUsingCompression:(NSTIFFCompression)compression factor:(float)factor;
+- (NSData *)TIFFRepresentationUsingCompression:(NSTIFFCompression)compression factor:(CGFloat)factor;
 
 - (CGImageRef)CGImage;
 

@@ -178,7 +178,7 @@ static Class _fontPanelFactory;
 	return (traits & fontTraits) == traits;
 }
 
--(NSFont *)fontWithFamily:(NSString *)familyName traits:(NSFontTraitMask)traits weight:(int)weight size:(float)size {
+-(NSFont *)fontWithFamily:(NSString *)familyName traits:(NSFontTraitMask)traits weight:(int)weight size:(CGFloat)size {
 	// Note : weight is ignored 
 	
 	NSFontFamily *family=[NSFontFamily fontFamilyWithName:familyName];
@@ -349,7 +349,7 @@ static Class _fontPanelFactory;
             break;
             
         case NSSizeDownFontAction:{
-            float ps=[font pointSize];
+            CGFloat ps=[font pointSize];
             if(ps>1) {
                 ps-=1;
             }
@@ -374,7 +374,7 @@ static Class _fontPanelFactory;
 }
 
 
--(NSFont *)convertFont:(NSFont *)font toSize:(float)size {
+-(NSFont *)convertFont:(NSFont *)font toSize:(CGFloat)size {
    if(size==[font pointSize])
     return font;
 

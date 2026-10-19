@@ -350,7 +350,7 @@ static const float kImageMargin = 2.;
    return _backgroundColor;
 }
 
--(void)getPeriodicDelay:(float *)delay interval:(float *)interval {
+-(void)getPeriodicDelay:(CGFloat *)delay interval:(CGFloat *)interval {
    *delay=_periodicDelay;
    *interval=_periodicInterval;
 }
@@ -547,7 +547,7 @@ static const float kImageMargin = 2.;
    [self setKeyEquivalentFont:font];
 }
 
--(void)setPeriodicDelay:(float)delay interval:(float)interval {
+-(void)setPeriodicDelay:(CGFloat)delay interval:(CGFloat)interval {
    _periodicDelay=delay;
    _periodicInterval=interval;
 }

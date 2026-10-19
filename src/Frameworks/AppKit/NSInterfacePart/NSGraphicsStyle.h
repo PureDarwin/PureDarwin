@@ -32,8 +32,8 @@ typedef struct _Margins {
 - (NSSize)menuItemGutterSize;
 - (NSSize)menuItemTextSize:(NSString *)title;
 - (NSSize)menuItemAttributedTextSize:(NSAttributedString *)title;
-- (float)menuBarHeight;
-- (float)menuItemGutterGap;
+- (CGFloat)menuBarHeight;
+- (CGFloat)menuItemGutterGap;
 
 - (Margins)menuItemBranchArrowMargins;
 - (Margins)menuItemGutterMargins;

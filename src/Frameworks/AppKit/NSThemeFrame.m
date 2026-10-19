@@ -31,6 +31,11 @@
 #import <AppKit/NSToolbarView.h>
 #import <AppKit/NSAttributedString.h>
 #import <Onyx2D/O2Context.h>
+#import <AppKit/NSScreen.h>
+
+@interface NSThemeFrame (TitlebarPrivate)
+-(void)_titlebarDoubleClicked;
+@end
 #include <stdint.h>
 
 // libSystem exports notify(3), the sdk ships no header for it
@@ -67,6 +72,38 @@ extern void CGNativeBorderFrameWidthsForStyle(unsigned styleMask, CGFloat *top,
 // presses go to the frame, which knows the buttons and moves the window from the rest
 -(void)mouseDown:(NSEvent *)event {
    [[self superview] mouseDown:event];
+}
+
+@end
+
+// the title bar views apps reach for, empty since the frame draws the title bar itself
+@interface NSTitlebarContainerView : NSView
+@end
+
+@interface NSTitlebarView : NSView
+@end
+
+@implementation NSTitlebarContainerView
+
+-(BOOL)isOpaque {
+   return NO;
+}
+
+// presses fall through to the frame unless an app put a control in here
+-(NSView *)hitTest:(NSPoint)point {
+   NSView *hit = [super hitTest:point];
+
+   if(hit == self || [hit isKindOfClass:[NSTitlebarView class]])
+      return nil;
+   return hit;
+}
+
+@end
+
+@implementation NSTitlebarView
+
+-(BOOL)isOpaque {
+   return NO;
 }
 
 @end
@@ -279,6 +316,37 @@ static void drawWindowControl(O2Context *context, CGRect rect,
         2 * NSWindowControlInset + 3 * NSWindowControlDiameter + 2 * NSWindowControlSpacing, [self _titleHeight]);
 }
 
+-(void)dealloc {
+    [_titlebarContainerView release];
+    [_controlsView release];
+    [super dealloc];
+}
+
+-(NSRect)_titlebarContainerFrame {
+    NSRect bounds = [self bounds];
+
+    return NSMakeRect(0, NSMaxY(bounds) - [self _titleHeight], NSWidth(bounds), [self _titleHeight]);
+}
+
+-(NSView *)titlebarContainerView {
+    if(_titlebarContainerView == nil) {
+        NSView *titlebarView;
+
+        _titlebarContainerView = [[NSTitlebarContainerView alloc] initWithFrame:[self _titlebarContainerFrame]];
+        [_titlebarContainerView setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
+        titlebarView = [[NSTitlebarView alloc] initWithFrame:[_titlebarContainerView bounds]];
+        [titlebarView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+        [_titlebarContainerView addSubview:titlebarView];
+        [titlebarView release];
+        [self addSubview:_titlebarContainerView];
+    }
+    return _titlebarContainerView;
+}
+
+-(NSView *)titlebarView {
+    return [[[self titlebarContainerView] subviews] firstObject];
+}
+
 // the overlay exists only with a full-size content view and always stays the frontmost subview
 -(void)addSubview:(NSView *)view {
     [super addSubview:view];
@@ -389,14 +457,27 @@ static void drawWindowControl(O2Context *context, CGRect rect,
             NSFontAttributeName : titleFont,
             NSForegroundColorAttributeName : titleColor
         };
-        // centred, and cut with an ellipsis where it would reach the lights, mirrored on the right
-        CGFloat room = _frame.size.width - 2 * (NSMaxX(_zoomButtonRect) + 12);
+        // centred, and cut with an ellipsis where it would reach the lights, mirrored on the right.
+        // a window too narrow for that centres the title in the space right of the lights
+        CGFloat left = NSMaxX(_zoomButtonRect) + 12;
+        CGFloat room = _frame.size.width - 2 * left;
+        CGFloat start = left;
+        if (room < [t sizeWithAttributes:attrs].width) {
+            CGFloat narrow = _frame.size.width - left - 8;
+            if (narrow > room) {
+                room = narrow;
+                start = left;
+            }
+        } else
+            start = (_frame.size.width - room) / 2;
         NSString *shown = t;
-        if (room > 0 && [shown sizeWithAttributes:attrs].width > room) {
+        if (room <= 0)
+            shown = @"";
+        else if ([shown sizeWithAttributes:attrs].width > room) {
             NSUInteger n = [t length];
             while (n > 0 && [[[t substringToIndex:n] stringByAppendingString:@"…"] sizeWithAttributes:attrs].width > room)
                 n--;
-            shown = [[t substringToIndex:n] stringByAppendingString:@"…"];
+            shown = n > 0 ? [[t substringToIndex:n] stringByAppendingString:@"…"] : @"";
         }
         NSAttributedString *title = [[NSAttributedString alloc] initWithString:shown attributes:attrs];
         NSSize size = [title size];
@@ -404,8 +485,11 @@ static void drawWindowControl(O2Context *context, CGRect rect,
         // glyphs still land 2px under the lights' centre line as measured on PD
         CGFloat mid = _frame.size.height - [self _titleHeight] / 2;
         CGFloat baseline = round(mid - [titleFont capHeight] / 2) + 2;
+        CGFloat x = floor(_frame.size.width / 2 - size.width / 2);
+        if (x < start)
+            x = floor(start + (room - size.width) / 2);
         NSRect titleRect = NSMakeRect(
-            floor(_frame.size.width / 2 - size.width / 2),
+            x,
             baseline + ceil([titleFont ascender]) - size.height,
             size.width, size.height);
         [title drawInRect:titleRect];
@@ -416,14 +500,23 @@ static void drawWindowControl(O2Context *context, CGRect rect,
    NSToolbarView *toolbarView=nil;
    NSView *contentView=nil;
 
-// tile the subviews, when/if we add titlebars and such do it here
+   NSView *windowContent=[[self window] contentView];
+   NSMutableArray *others=[NSMutableArray array];
+
+   // the content is the subview holding the window's contentView, views apps add here keep their own masks
    for(NSView *view in _subviews){
-    if(view == _controlsView)
+    if(view == _controlsView || view == _titlebarContainerView)
      continue;
     if([view isKindOfClass:[NSToolbarView class]])
      toolbarView=(NSToolbarView *)view;
-    else
+    else if(contentView==nil && windowContent!=nil && (view==windowContent || [windowContent isDescendantOf:view]))
      contentView=view;
+    else
+     [others addObject:view];
+   }
+   if(contentView==nil && windowContent==nil && [others count]>0){
+    contentView=[others lastObject];
+    [others removeLastObject];
    }
 
    NSRect toolbarFrame=(toolbarView!=nil)?[toolbarView frame]:NSZeroRect;
@@ -437,7 +530,10 @@ static void drawWindowControl(O2Context *context, CGRect rect,
 
    contentFrame.size.height-=toolbarFrame.size.height;
    [contentView setFrame:contentFrame];
+   for(NSView *view in others)
+    [view resizeWithOldSuperviewSize:oldSize];
    [_controlsView setFrame:[self _controlsOverlayFrame]];
+   [_titlebarContainerView setFrame:[self _titlebarContainerFrame]];
 }
 
 -(void)mouseDown:(NSEvent *)event {
@@ -462,10 +558,69 @@ static void drawWindowControl(O2Context *context, CGRect rect,
     else if(([[self window] styleMask] & NSResizableWindowMask) &&
             NSPointInRect(pos, _zoomButtonRect))
         [[self window] performZoom:self];
+    else if(pos.y > (NSMaxY(_frame) - top) && [event clickCount] == 2)
+        [self _titlebarDoubleClicked];
     else if(pos.y > (NSMaxY(_frame) - top)) // in titlebar?
         [[self window] requestMove:event];
     else if([[self window] isMovableByWindowBackground])
         [[self window] requestMove:event];
+}
+
+// the private frame view methods macOS has and apps such as Firefox override to draw their own title bars
+-(CGFloat)_titlebarHeight {
+    return [self _titleHeight];
+}
+
+-(NSPoint)_closeButtonOrigin {
+    return _closeButtonRect.origin;
+}
+
+-(void)_tileTitlebarAndRedisplay:(BOOL)redisplay {
+    [self _layoutControls];
+    [_controlsView setFrame:[self _controlsOverlayFrame]];
+    if(redisplay)
+        [self setNeedsDisplay:YES];
+}
+
+// AppleActionOnDoubleClick is Maximize (zoom, the default), Fill, Minimize or None
+-(NSString *)_doubleClickAction {
+    NSString *action = [[NSUserDefaults standardUserDefaults] stringForKey:@"AppleActionOnDoubleClick"];
+
+    if(action == nil && [[NSUserDefaults standardUserDefaults] objectForKey:@"AppleMiniaturizeOnDoubleClick"] != nil)
+        action = [[NSUserDefaults standardUserDefaults] boolForKey:@"AppleMiniaturizeOnDoubleClick"] ? @"Minimize" : @"Maximize";
+    return action ?: @"Maximize";
+}
+
+-(BOOL)_shouldZoomOnDoubleClick {
+    return [[self _doubleClickAction] isEqualToString:@"Maximize"];
+}
+
+-(BOOL)_shouldFillOnDoubleClick {
+    return [[self _doubleClickAction] isEqualToString:@"Fill"];
+}
+
+-(BOOL)_shouldMiniaturizeOnDoubleClick {
+    return [[self _doubleClickAction] isEqualToString:@"Minimize"];
+}
+
+// fills the screen's visible area without entering full screen
+-(void)_zoomFill:(id)sender {
+    NSWindow *window = [self window];
+    NSScreen *screen = [window screen] ?: [NSScreen mainScreen];
+
+    if(screen != nil)
+        [window setFrame:[screen visibleFrame] display:YES animate:NO];
+}
+
+-(void)_titlebarDoubleClicked {
+    NSWindow *window = [self window];
+
+    if([self _shouldFillOnDoubleClick] && ([window styleMask] & NSResizableWindowMask))
+        [self _zoomFill:self];
+    else if([self _shouldZoomOnDoubleClick] && ([window styleMask] & NSResizableWindowMask))
+        [window performZoom:self];
+    else if([self _shouldMiniaturizeOnDoubleClick] && ([window styleMask] & NSMiniaturizableWindowMask))
+        [window performMiniaturize:self];
 }
 
 @end

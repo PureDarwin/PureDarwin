@@ -1,5 +1,6 @@
 #import <AppKit/NSAppearance.h>
 #import <AppKit/NSMenuView.h>
+#import <AppKit/NSMenuItemBadge.h>
 #import <AppKit/NSInterfaceStyle.h>
 #import <AppKit/NSMenu.h>
 #import <AppKit/NSMenuItem.h>
@@ -40,6 +41,9 @@ static NSString *pdKeyEquivalentGlyphs(NSMenuItem *item)
     NSMutableString *out = [NSMutableString string];
     unichar c;
 
+    // a badge sits where the shortcut would, at the trailing edge
+    if ([item badge] != nil)
+        return [[item badge] stringValue];
     if ([key length] == 0)
         return @"";
     c = [key characterAtIndex:0];

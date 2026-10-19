@@ -153,7 +153,7 @@ typedef enum {
 - (NSView *)headerView;
 - (NSView *)cornerView;
 
-- (float)rowHeight;
+- (CGFloat)rowHeight;
 - (NSSize)intercellSpacing;
 - (NSColor *)backgroundColor;
 - (NSColor *)gridColor;
@@ -195,7 +195,7 @@ typedef enum {
 - (void)setHeaderView:(NSTableHeaderView *)headerView;
 - (void)setCornerView:(NSView *)view;
 
-- (void)setRowHeight:(float)height;
+- (void)setRowHeight:(CGFloat)height;
 - (void)setIntercellSpacing:(NSSize)size;
 - (void)setBackgroundColor:(NSColor *)color;
 - (void)setGridColor:(NSColor *)color;
@@ -283,7 +283,7 @@ typedef enum {
 @interface NSObject (NSTableView_delegate)
 - (BOOL)tableView:(NSTableView *)tableView shouldEditTableColumn:(NSTableColumn *)tableColumn row:(int)row;
 - (BOOL)selectionShouldChangeInTableView:(NSTableView *)tableView;
-- (float)tableView:(NSTableView *)tableView heightOfRow:(int)row;
+- (CGFloat)tableView:(NSTableView *)tableView heightOfRow:(int)row;
 - (BOOL)tableView:(NSTableView *)tableView shouldSelectRow:(int)row;
 - (BOOL)tableView:(NSTableView *)tableView shouldSelectTableColumn:(NSTableColumn *)tableColumn;
 - (void)tableView:(NSTableView *)tableView mouseDownInHeaderOfTableColumn:(NSTableColumn *)tableColumn;

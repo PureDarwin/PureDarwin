@@ -490,3 +490,85 @@ static NSMutableArray *_cursorStack=nil;
 }
 
 @end
+
+// cursors added after the original set, each made by name like the others and drawn from the cursor theme
+@implementation NSCursor (ModernCursors)
+
++ (NSCursor *)_sharedCursorNamed:(NSString *)name
+{
+    static NSMutableDictionary *cursors;
+    NSCursor *cursor;
+
+    if (cursors == nil)
+        cursors = [[NSMutableDictionary alloc] init];
+    if ((cursor = [cursors objectForKey:name]) == nil) {
+        cursor = [[[self alloc] initWithName:name] autorelease];
+        [cursors setObject:cursor forKey:name];
+    }
+    return cursor;
+}
+
++ (NSCursor *)IBeamCursorForVerticalLayout
+{
+    return [self _sharedCursorNamed:NSStringFromSelector(_cmd)];
+}
+
++ (NSCursor *)busyButClickableCursor
+{
+    return [self _sharedCursorNamed:NSStringFromSelector(_cmd)];
+}
+
++ (NSCursor *)columnResizeCursor
+{
+    return [self _sharedCursorNamed:NSStringFromSelector(_cmd)];
+}
+
++ (NSCursor *)rowResizeCursor
+{
+    return [self _sharedCursorNamed:NSStringFromSelector(_cmd)];
+}
+
++ (NSCursor *)zoomInCursor
+{
+    return [self _sharedCursorNamed:NSStringFromSelector(_cmd)];
+}
+
++ (NSCursor *)zoomOutCursor
+{
+    return [self _sharedCursorNamed:NSStringFromSelector(_cmd)];
+}
+
++ (NSCursor *)columnResizeCursorInDirections:(NSUInteger)directions
+{
+    return [self columnResizeCursor];
+}
+
++ (NSCursor *)rowResizeCursorInDirections:(NSUInteger)directions
+{
+    return [self rowResizeCursor];
+}
+
+// an edge resizes along one axis, a corner along both, whichever directions are allowed
++ (NSCursor *)frameResizeCursorFromPosition:(NSCursorFrameResizePosition)position inDirections:(NSCursorFrameResizeDirections)directions
+{
+    switch (position) {
+    case NSCursorFrameResizePositionTop:
+    case NSCursorFrameResizePositionBottom:
+        return [self resizeUpDownCursor];
+    case NSCursorFrameResizePositionLeft:
+    case NSCursorFrameResizePositionRight:
+        return [self resizeLeftRightCursor];
+    case NSCursorFrameResizePositionTopLeft:
+        return [self _sharedCursorNamed:@"frameResizeTopLeftCursor"];
+    case NSCursorFrameResizePositionTopRight:
+        return [self _sharedCursorNamed:@"frameResizeTopRightCursor"];
+    case NSCursorFrameResizePositionBottomLeft:
+        return [self _sharedCursorNamed:@"frameResizeBottomLeftCursor"];
+    case NSCursorFrameResizePositionBottomRight:
+        return [self _sharedCursorNamed:@"frameResizeBottomRightCursor"];
+    default:
+        return [self arrowCursor];
+    }
+}
+
+@end

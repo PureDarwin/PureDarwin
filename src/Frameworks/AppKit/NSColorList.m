@@ -213,3 +213,5 @@ static NSMutableDictionary *_namedColorLists = nil;
 
 @end
 
+NSString * const NSControlTintDidChangeNotification=@"NSControlTintDidChangeNotification";
+NSString * const NSSystemColorsDidChangeNotification=@"NSSystemColorsDidChangeNotification";

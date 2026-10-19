@@ -28,6 +28,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 + (NSArray *)imageFileTypes;
 + (NSArray *)imageUnfilteredFileTypes;
+// the same formats as type identifiers, public.png and so on
++ (NSArray *)imageTypes;
++ (NSArray *)imageUnfilteredTypes;
 + (NSArray *)imagePasteboardTypes;
 + (NSArray *)imageUnfilteredPasteboardTypes;
 

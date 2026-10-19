@@ -7,6 +7,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
 #import <AppKit/NSColor.h>
+#import <AppKit/NSColorSpace.h>
 #import <AppKit/NSDisplay.h>
 #include <string.h>
 #import <AppKit/NSColor_catalog.h>
@@ -314,6 +315,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     nil];
 }
 
++(NSArray *)alternatingContentBackgroundColors {
+   return [self controlAlternatingRowBackgroundColors];
+}
+
 +(NSColor *)textColor {
    return [NSColor colorWithCatalogName:@"System" colorName:@"textColor"];
 }
@@ -552,6 +557,8 @@ static const struct { const char *name; CGFloat r, g, b, a; } _pdSystemColors[] 
     /* Interface colours, a light-grey appearance. */
     {"controlColor",                  0.85, 0.85, 0.85, 1.0},
     {"controlBackgroundColor",        1.00, 1.00, 1.00, 1.0},
+    {"controlAlternatingRowColor",    0.96, 0.96, 0.96, 1.0},
+    {"keyboardFocusIndicatorColor",   0.04, 0.52, 1.00, 0.5},
     {"controlTextColor",              0.00, 0.00, 0.00, 1.0},
     {"disabledControlTextColor",      0.53, 0.53, 0.53, 1.0},
     {"selectedControlColor",          0.70, 0.79, 0.94, 1.0},
@@ -600,6 +607,8 @@ static const struct { const char *name; CGFloat r, g, b, a; } _pdSystemColors[] 
 static const struct { const char *name; CGFloat r, g, b, a; } _pdSystemDarkColors[] = {
     {"controlColor",                  0.25, 0.25, 0.25, 1.0},
     {"controlBackgroundColor",        0.12, 0.12, 0.12, 1.0},
+    {"controlAlternatingRowColor",    0.16, 0.16, 0.16, 1.0},
+    {"keyboardFocusIndicatorColor",   0.10, 0.60, 1.00, 0.5},
     {"controlTextColor",              1.00, 1.00, 1.00, 0.85},
     {"disabledControlTextColor",      1.00, 1.00, 1.00, 0.25},
     {"selectedControlColor",          0.25, 0.39, 0.55, 1.0},
@@ -703,6 +712,8 @@ static const struct { const char *name; CGFloat r, g, b, a; } _pdSystemDarkColor
     if([catalogName isEqualToString:@"System"]) {
         NSColor *light = [self _systemColorNamed:colorName dark:NO];
 
+        if (light == nil)
+            NSLog(@"*** no system color named %@", colorName);
         return light ? [NSColor_catalog colorWithCatalogName:catalogName colorName:colorName color:light] : nil;
     }
     NSColorList *list = [NSColorList colorListNamed:catalogName];
@@ -975,6 +986,38 @@ static void releasePatternInfo(void *info){
 
    //NSLog(@"Warning, ignoring differences between color space %@ and %@", colorSpace, [self colorSpaceName]);
    return self;
+}
+
+// the named space of the same model does the conversion, device spaces have no CG name
+static NSString *colorSpaceNameForSpace(NSColorSpace *space) {
+   BOOL device=CGColorSpaceGetName([space CGColorSpace])==NULL;
+
+   switch([space colorSpaceModel]){
+    case NSColorSpaceModelRGB: return device ? NSDeviceRGBColorSpace : NSCalibratedRGBColorSpace;
+    case NSColorSpaceModelGray: return device ? NSDeviceWhiteColorSpace : NSCalibratedWhiteColorSpace;
+    case NSColorSpaceModelCMYK: return NSDeviceCMYKColorSpace;
+    default: return nil;
+   }
+}
+
+-(NSColor *)colorUsingColorSpace:(NSColorSpace *)space {
+   NSString *name=colorSpaceNameForSpace(space);
+
+   return name==nil ? nil : [self colorUsingColorSpaceName:name device:nil];
+}
+
+-(NSColorSpace *)colorSpace {
+   NSString *name=[self colorSpaceName];
+
+   if([name isEqualToString:NSDeviceRGBColorSpace])
+    return [NSColorSpace deviceRGBColorSpace];
+   if([name isEqualToString:NSCalibratedWhiteColorSpace])
+    return [NSColorSpace genericGamma22GrayColorSpace];
+   if([name isEqualToString:NSDeviceWhiteColorSpace])
+    return [NSColorSpace deviceGrayColorSpace];
+   if([name isEqualToString:NSDeviceCMYKColorSpace])
+    return [NSColorSpace deviceCMYKColorSpace];
+   return [NSColorSpace sRGBColorSpace];
 }
 
 -(NSColor *)blendedColorWithFraction:(CGFloat)fraction ofColor:(NSColor *)color {

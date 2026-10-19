@@ -368,7 +368,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
       return [_objectValue intValue];
 }
 
--(float)floatValue {
+-(CGFloat)floatValue {
    if (_objectValue == nil) {
       // [nil someFloatMethod] doesn't return 0.f on Cocotron - tmp fix until the runtime is fixed
       return 0.f;
@@ -689,7 +689,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    [self setObjectValue:[NSNumber numberWithInt:value]];
 }
 
--(void)setFloatValue:(float)value {
+-(void)setFloatValue:(CGFloat)value {
    [self setObjectValue:[NSNumber numberWithFloat:value]];
 }
 

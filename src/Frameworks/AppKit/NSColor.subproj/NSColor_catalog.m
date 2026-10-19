@@ -267,6 +267,10 @@ NSColor *NSColorGetCatalogColor(NSString *catalogName,NSString *colorName);
    [[self _rgb] getHue:huep saturation:saturationp brightness:brightnessp alpha:alphap];
 }
 
+-(void)getCyan:(CGFloat *)cyan magenta:(CGFloat *)magenta yellow:(CGFloat *)yellow black:(CGFloat *)black alpha:(CGFloat *)alpha {
+   [[[self _resolvedColor] colorUsingColorSpaceName:NSDeviceCMYKColorSpace] getCyan:cyan magenta:magenta yellow:yellow black:black alpha:alpha];
+}
+
 -(NSColorSpace *)colorSpace {
    return [[self _resolvedColor] colorSpace];
 }

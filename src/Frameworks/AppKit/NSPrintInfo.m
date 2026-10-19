@@ -118,19 +118,19 @@ NSString * const NSPrintHeaderAndFooter=@"NSPrintHeaderAndFooter";
    return [[_attributes objectForKey:NSPrintVerticalPagination] intValue];
 }
 
--(float)topMargin {
+-(CGFloat)topMargin {
    return [[_attributes objectForKey:NSPrintTopMargin] floatValue];
 }
 
--(float)bottomMargin {
+-(CGFloat)bottomMargin {
    return [[_attributes objectForKey:NSPrintBottomMargin] floatValue];
 }
 
--(float)leftMargin {
+-(CGFloat)leftMargin {
    return [[_attributes objectForKey:NSPrintLeftMargin] floatValue];
 }
 
--(float)rightMargin {
+-(CGFloat)rightMargin {
    return [[_attributes objectForKey:NSPrintRightMargin] floatValue];
 }
 
@@ -198,19 +198,19 @@ NSString * const NSPrintHeaderAndFooter=@"NSPrintHeaderAndFooter";
    [_attributes setObject:[NSNumber numberWithInt:value] forKey:NSPrintVerticalPagination];
 }
 
--(void)setTopMargin:(float)value {
+-(void)setTopMargin:(CGFloat)value {
    [_attributes setObject:[NSNumber numberWithFloat:value] forKey:NSPrintTopMargin];
 }
 
--(void)setBottomMargin:(float)value {
+-(void)setBottomMargin:(CGFloat)value {
    [_attributes setObject:[NSNumber numberWithFloat:value] forKey:NSPrintBottomMargin];
 }
 
--(void)setLeftMargin:(float)value {
+-(void)setLeftMargin:(CGFloat)value {
    [_attributes setObject:[NSNumber numberWithFloat:value] forKey:NSPrintLeftMargin];
 }
 
--(void)setRightMargin:(float)value {
+-(void)setRightMargin:(CGFloat)value {
    [_attributes setObject:[NSNumber numberWithFloat:value] forKey:NSPrintRightMargin];
 }
 
@@ -227,3 +227,5 @@ NSString * const NSPrintHeaderAndFooter=@"NSPrintHeaderAndFooter";
 }
 
 @end
+
+NSString * const NSPrintJobSavingURL=@"NSJobSavingURL";

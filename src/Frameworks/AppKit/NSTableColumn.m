@@ -95,15 +95,15 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return _headerToolTip;
 }
 
--(float)width {
+-(CGFloat)width {
     return _width;
 }
 
--(float)minWidth {
+-(CGFloat)minWidth {
     return _minWidth;
 }
 
--(float)maxWidth {
+-(CGFloat)maxWidth {
     return _maxWidth;
 }
 
@@ -147,7 +147,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    _headerToolTip=value;
 }
 
--(void)setWidth:(float)width {
+-(void)setWidth:(CGFloat)width {
     if (width > _maxWidth)
         width = _maxWidth;
     else if (width < _minWidth)
@@ -156,11 +156,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     _width = width;
 }
 
--(void)setMinWidth:(float)width {
+-(void)setMinWidth:(CGFloat)width {
     _minWidth = width;
 }
 
--(void)setMaxWidth:(float)width {
+-(void)setMaxWidth:(CGFloat)width {
     _maxWidth = width;
 }
 

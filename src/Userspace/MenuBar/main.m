@@ -185,7 +185,12 @@ static void crashed(int sig, siginfo_t *info, void *context)
     int count = backtrace(frames, 48);
 
     ucontext_t *uc = context;
+#if defined(__x86_64__)
     void *pc = (void *)uc->uc_mcontext->__ss.__rip;
+#else
+    // arm64 names them pc and fp
+    void *pc = (void *)uc->uc_mcontext->__ss.__pc;
+#endif
     Dl_info at;
 
     fprintf(stderr, "MenuBar: signal %d at %p\n", sig, info->si_addr);
@@ -195,7 +200,11 @@ static void crashed(int sig, siginfo_t *info, void *context)
     else
         fprintf(stderr, "  pc %p\n", pc);
     // callers from the saved frame pointers
+#if defined(__x86_64__)
     void **fp = (void **)uc->uc_mcontext->__ss.__rbp;
+#else
+    void **fp = (void **)uc->uc_mcontext->__ss.__fp;
+#endif
 
     for (int i = 0; i < 16 && fp != NULL && ((uintptr_t)fp & 7) == 0; i++) {
         void *ret = fp[1];

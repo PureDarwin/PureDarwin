@@ -55,7 +55,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return _color;
 }
 
--(float)shadowBlurRadius {
+-(CGFloat)shadowBlurRadius {
    return _blurRadius;
 }
 
@@ -69,7 +69,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    _color=color;
 }
 
--(void)setShadowBlurRadius:(float)radius {
+-(void)setShadowBlurRadius:(CGFloat)radius {
    _blurRadius=radius;
 }
 

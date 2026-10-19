@@ -37,9 +37,13 @@ typedef enum {
     NSPoint pointer;
     NSRect controls;
     NSView *_controlsView;
+    NSView *_titlebarContainerView;
 }
 
 - (NSWindowBorderType)windowBorderType;
 - (void)setWindowBorderType:(NSWindowBorderType)borderType;
+
+- (NSView *)titlebarContainerView;
+- (NSView *)titlebarView;
 
 @end

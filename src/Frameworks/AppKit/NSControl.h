@@ -47,7 +47,7 @@ APPKIT_EXPORT NSString *const NSControlTextDidEndEditingNotification;
 - (NSString *)stringValue;
 - (NSAttributedString *)attributedStringValue;
 - (int)intValue;
-- (float)floatValue;
+- (CGFloat)floatValue;
 - (double)doubleValue;
 - (NSInteger)integerValue;
 
@@ -76,7 +76,7 @@ APPKIT_EXPORT NSString *const NSControlTextDidEndEditingNotification;
 - (void)setStringValue:(NSString *)value;
 - (void)setIntValue:(int)value;
 - (void)setIntegerValue:(NSInteger)value;
-- (void)setFloatValue:(float)value;
+- (void)setFloatValue:(CGFloat)value;
 - (void)setDoubleValue:(double)value;
 - (void)setIntegerValue:(NSInteger)anInteger;
 - (void)setAttributedStringValue:(NSAttributedString *)value;

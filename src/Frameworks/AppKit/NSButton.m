@@ -111,7 +111,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return [_cell showsBorderOnlyWhileMouseInside];
 }
 
--(void)getPeriodicDelay:(float *)delay interval:(float *)interval {
+-(void)getPeriodicDelay:(CGFloat *)delay interval:(CGFloat *)interval {
    NSUnimplementedMethod();
 }
 
@@ -201,7 +201,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    NSUnimplementedMethod();
 }
 
--(void)setPeriodicDelay:(float)delay interval:(float)interval {
+-(void)setPeriodicDelay:(CGFloat)delay interval:(CGFloat)interval {
    NSUnimplementedMethod();
 }
 

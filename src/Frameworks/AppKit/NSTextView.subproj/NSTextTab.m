@@ -43,7 +43,7 @@ NSString *NSTabColumnTerminatorsAttributeName = @"NSTabColumnTerminatorsAttribut
     return [self initWithType: type location: location];
 }
 
--initWithType:(NSTextTabType)type location:(float)location {
+-initWithType:(NSTextTabType)type location:(CGFloat)location {
    _type=type;
    _location=location;
    return self;
@@ -108,7 +108,7 @@ NSString *NSTabColumnTerminatorsAttributeName = @"NSTabColumnTerminatorsAttribut
    return _type;
 }
 
--(float)location {
+-(CGFloat)location {
    return _location;
 }
 

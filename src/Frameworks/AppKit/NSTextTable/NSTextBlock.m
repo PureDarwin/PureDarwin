@@ -30,7 +30,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return _verticalAlignment;
 }
 
--(float)contentWidth {
+-(CGFloat)contentWidth {
    return _contentWidth;
 }
 
@@ -38,7 +38,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return _contentWidthValueType;
 }
 
--(float)valueForDimension:(NSTextBlockDimension)dimension {
+-(CGFloat)valueForDimension:(NSTextBlockDimension)dimension {
    return _dimensionValues[dimension];
 }
 
@@ -47,7 +47,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return 0;
 }
 
--(float)widthForLayer:(NSTextBlockLayer)layer edge:(NSRectEdge)edge {
+-(CGFloat)widthForLayer:(NSTextBlockLayer)layer edge:(NSRectEdge)edge {
    return _layerWidths[layer][edge];
 }
 
@@ -76,17 +76,17 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    _verticalAlignment=alignment;
 }
 
--(void)setContentWidth:(float)width type:(NSTextBlockValueType)type {
+-(void)setContentWidth:(CGFloat)width type:(NSTextBlockValueType)type {
    _contentWidth=width;
    _contentWidthValueType=type;
 }
 
--(void)setValue:(float)value type:(NSTextBlockValueType)type forDimension:(NSTextBlockDimension)dimension {
+-(void)setValue:(CGFloat)value type:(NSTextBlockValueType)type forDimension:(NSTextBlockDimension)dimension {
    _dimensionValues[dimension]=value;
    _dimensionValueTypes[dimension]=type;
 }
 
--(void)setWidth:(float)value type:(NSTextBlockValueType)type forLayer:(NSTextBlockLayer)layer {
+-(void)setWidth:(CGFloat)value type:(NSTextBlockValueType)type forLayer:(NSTextBlockLayer)layer {
    int i;
    
    for(i=0;i<=NSMaxYEdge;i++){
@@ -95,7 +95,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    }
 }
 
--(void)setWidth:(float)value type:(NSTextBlockValueType)type forLayer:(NSTextBlockLayer)layer edge:(NSRectEdge)edge {
+-(void)setWidth:(CGFloat)value type:(NSTextBlockValueType)type forLayer:(NSTextBlockLayer)layer edge:(NSRectEdge)edge {
    _layerWidths[layer][edge]=value;
    _layerValueTypes[layer][edge]=type;
 }

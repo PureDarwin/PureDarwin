@@ -52,7 +52,7 @@ SOFTWARE. */
 - (void)_addSystemColor:(NSColor *)result forName:(NSString *)colorName;
 
 - (NSTimeInterval)textCaretBlinkInterval;
-- (float)doubleClickInterval;
+- (CGFloat)doubleClickInterval;
 
 - (void)hideCursor;
 - (void)unhideCursor;
@@ -75,7 +75,7 @@ SOFTWARE. */
 - (NSSet *)allFontFamilyNames;
 - (NSArray *)fontTypefacesForFamilyName:(NSString *)name;
 
-- (float)scrollerWidth;
+- (CGFloat)scrollerWidth;
 
 - (int)runModalPageLayoutWithPrintInfo:(NSPrintInfo *)printInfo;
 - (int)runModalPrintPanelWithPrintInfoDictionary:(NSMutableDictionary *)attributes;

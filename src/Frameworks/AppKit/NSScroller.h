@@ -8,6 +8,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 #import <AppKit/NSControl.h>
 
+APPKIT_EXPORT NSString *const NSPreferredScrollerStyleDidChangeNotification;
+
 typedef enum {
     NSScrollerNoPart = 0,
     NSScrollerIncrementLine,
@@ -55,13 +57,13 @@ typedef NSUInteger NSUsableScrollerParts;
     BOOL _isHighlighted;
 }
 
-+ (float)scrollerWidth;
++ (CGFloat)scrollerWidth;
 
-- (float)knobProportion;
+- (CGFloat)knobProportion;
 - (NSScrollArrowPosition)arrowsPosition;
 - (NSControlSize)controlSize;
 
-- (void)setFloatValue:(float)zeroToOneValue knobProportion:(float)zeroToOneKnob;
+- (void)setFloatValue:(CGFloat)zeroToOneValue knobProportion:(CGFloat)zeroToOneKnob;
 - (void)setArrowsPosition:(NSScrollArrowPosition)position;
 - (void)setControlSize:(NSControlSize)value;
 

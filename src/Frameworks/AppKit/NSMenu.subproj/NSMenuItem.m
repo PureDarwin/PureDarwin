@@ -83,7 +83,19 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return self;
 }
 
+// kept for the caller, the menu bar process draws items from their titles
+-(NSView *)view {
+   return _view;
+}
+
+-(void)setView:(NSView *)view {
+   [view retain];
+   [_view release];
+   _view=view;
+}
+
 -(void)dealloc {
+   [_view release];
     [_title release];
    [_atitle release];
    [_keyEquivalent release];
@@ -108,6 +120,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     copy->_mixedStateImage=[_mixedStateImage retain];
     copy->_offStateImage=[_offStateImage retain];
     copy->_representedObject=[_representedObject retain];
+    copy->_view=[_view retain];
     return copy;
 }
 
@@ -209,6 +222,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     title=[title copy];
     [_title release];
     _title=title;
+    [[self menu] itemChanged:self];
 }
 
 -(void)setAttributedTitle:(NSAttributedString *)title {
@@ -246,7 +260,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(void)setState:(int)state {
+    if(_state==state)
+        return;
     _state = state;
+    [[self menu] itemChanged:self];
 }
 
 -(void)setKeyEquivalent:(NSString *)keyEquivalent {
@@ -293,11 +310,17 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(void)setEnabled:(BOOL)flag {
+   if(_enabled==flag)
+    return;
    _enabled=flag;
+   [[self menu] itemChanged:self];
 }
 
 -(void)setHidden:(BOOL)flag {
+   if(_hidden==flag)
+    return;
    _hidden=flag;
+   [[self menu] itemChanged:self];
 }
 
 +(NSDictionary *)keyNames {

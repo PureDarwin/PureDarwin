@@ -42,7 +42,7 @@ NSString * const NSOutlineViewSelectionIsChangingNotification=@"NSOutlineViewSel
 -(BOOL)delegateSelectionShouldChange;
 -(void)noteSelectionIsChanging;
 -(void)noteSelectionDidChange;
--(void)noteColumnDidResizeWithOldWidth:(float)oldWidth;
+-(void)noteColumnDidResizeWithOldWidth:(CGFloat)oldWidth;
 -(id)dataSourceObjectValueForTableColumn:(NSTableColumn *)tableColumn row:(int)row;
 -(BOOL)dataSourceCanSetObjectValue;
 -(void)dataSourceSetObjectValue:(id)object forTableColumn:(NSTableColumn *)tableColumn row:(int)row;
@@ -207,7 +207,7 @@ static inline id childOfItemAtIndex(NSOutlineView *self,id item,int index){
     return isItemExpanded(self,item);
 }
 
--(float)indentationPerLevel {
+-(CGFloat)indentationPerLevel {
     return _indentationPerLevel;
 }
 
@@ -231,7 +231,7 @@ static inline id childOfItemAtIndex(NSOutlineView *self,id item,int index){
     _outlineTableColumn = [tableColumn retain];
 }
 
--(void)setIndentationPerLevel:(float)value {
+-(void)setIndentationPerLevel:(CGFloat)value {
     _indentationPerLevel = value;
 }
 
@@ -814,7 +814,7 @@ static void loadItemIntoMapTables(NSOutlineView *self,id item,unsigned *rowCount
                                                         object:self];
 }
 
--(void)noteColumnDidResizeWithOldWidth:(float)oldWidth
+-(void)noteColumnDidResizeWithOldWidth:(CGFloat)oldWidth
 {
     [[NSNotificationCenter defaultCenter] postNotificationName:NSOutlineViewColumnDidResizeNotification
             object:self

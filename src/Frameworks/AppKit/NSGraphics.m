@@ -578,3 +578,13 @@ void NSShowAnimationEffect(NSAnimationEffect effect,NSPoint center,NSSize size,i
     [NSPoofAnimation poofAtLocation:center size:size animationDelegate:delegate didEndSelector:didEndSelector contextInfo:context];
 }
 
+
+// the focus ring is a glow in the focus colour around whatever is drawn next, until the state is restored
+void NSSetFocusRingStyle(NSFocusRingPlacement placement) {
+   CGContextRef context = NSCurrentGraphicsPort();
+   NSColor *color = [[NSColor keyboardFocusIndicatorColor] colorWithAlphaComponent:0.6];
+
+   if (context == NULL)
+      return;
+   CGContextSetShadowWithColor(context, CGSizeZero, placement == NSFocusRingOnly ? 4.0 : 3.0, [color CGColor]);
+}

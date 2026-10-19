@@ -29,7 +29,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - dataSource;
 - (BOOL)usesDataSource;
 - (BOOL)isButtonBordered;
-- (float)itemHeight;
+- (CGFloat)itemHeight;
 - (BOOL)hasVerticalScroller;
 - (NSSize)intercellSpacing;
 - (BOOL)completes;
@@ -38,7 +38,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - (void)setDataSource:value;
 - (void)setUsesDataSource:(BOOL)value;
 - (void)setButtonBordered:(BOOL)value;
-- (void)setItemHeight:(float)value;
+- (void)setItemHeight:(CGFloat)value;
 - (void)setHasVerticalScroller:(BOOL)value;
 - (void)setIntercellSpacing:(NSSize)value;
 - (void)setCompletes:(BOOL)completes;

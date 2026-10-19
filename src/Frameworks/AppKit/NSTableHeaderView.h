@@ -19,7 +19,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 - (int)resizedColumn;
 - (int)draggedColumn;
-- (float)draggedDistance;
+- (CGFloat)draggedDistance;
 
 - (void)setTableView:(NSTableView *)tableView;
 

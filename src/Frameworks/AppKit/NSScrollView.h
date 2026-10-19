@@ -61,12 +61,12 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - (BOOL)hasVerticalRuler;
 - (BOOL)hasHorizontalRuler;
 - (BOOL)rulersVisible;
-- (float)verticalLineScroll;
-- (float)horizontalLineScroll;
-- (float)verticalPageScroll;
-- (float)horizontalPageScroll;
-- (float)lineScroll;
-- (float)pageScroll;
+- (CGFloat)verticalLineScroll;
+- (CGFloat)horizontalLineScroll;
+- (CGFloat)verticalPageScroll;
+- (CGFloat)horizontalPageScroll;
+- (CGFloat)lineScroll;
+- (CGFloat)pageScroll;
 - (BOOL)scrollsDynamically;
 - (BOOL)autohidesScrollers;
 
@@ -84,12 +84,12 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - (void)setHasVerticalRuler:(BOOL)flag;
 - (void)setHasHorizontalRuler:(BOOL)flag;
 - (void)setRulersVisible:(BOOL)flag;
-- (void)setVerticalLineScroll:(float)value;
-- (void)setHorizontalLineScroll:(float)value;
-- (void)setVerticalPageScroll:(float)value;
-- (void)setHorizontalPageScroll:(float)value;
-- (void)setLineScroll:(float)value;
-- (void)setPageScroll:(float)value;
+- (void)setVerticalLineScroll:(CGFloat)value;
+- (void)setHorizontalLineScroll:(CGFloat)value;
+- (void)setVerticalPageScroll:(CGFloat)value;
+- (void)setHorizontalPageScroll:(CGFloat)value;
+- (void)setLineScroll:(CGFloat)value;
+- (void)setPageScroll:(CGFloat)value;
 - (void)setScrollsDynamically:(BOOL)flag;
 - (void)setDocumentCursor:(NSCursor *)cursor;
 - (void)setAutohidesScrollers:(BOOL)value;

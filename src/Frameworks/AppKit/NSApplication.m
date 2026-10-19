@@ -7,6 +7,8 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
+#include <dispatch/dispatch.h>
+#include <unistd.h>
 #import <sys/param.h>
 #import <mach/mach.h>
 #import <servers/bootstrap.h>
@@ -56,8 +58,10 @@ extern void _dispatch_main_queue_callback_4CF(void *);
 
 #import <WindowServer/message.h>
 #import <WindowServer/rpc.h>
+#import <AppKit/NSDraggingManager.h>
 
 NSString * const NSModalPanelRunLoopMode=@"NSModalPanelRunLoopMode";
+const NSAppKitVersion NSAppKitVersionNumber=2685;
 NSString * const NSEventTrackingRunLoopMode=@"NSEventTrackingRunLoopMode";
 
 NSString * const NSApplicationWillFinishLaunchingNotification=@"NSApplicationWillFinishLaunchingNotification";
@@ -99,6 +103,7 @@ static id pdMenuServerProxy;
 static NSString *pdMenuClientName;
 static BOOL pdMenuNeedsPublish = YES;
 static NSTimeInterval pdMenuNextAttempt;
+static NSTimeInterval pdMenuNextValidate;
 static BOOL pdMenuLoggedWaitingForMenu;
 static BOOL pdMenuLoggedWaitingForServer;
 
@@ -149,7 +154,7 @@ id NSApp=nil;
 }
 
 +(void)detachDrawingThread:(SEL)selector toTarget:target withObject:object {
-   NSUnimplementedMethod();
+   [NSThread detachNewThreadSelector:selector toTarget:target withObject:object];
 }
 
 -(void)_showSplashImage {
@@ -303,6 +308,17 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
                                         [window performSelectorOnMainThread:@selector(performClose:)
                                                                  withObject:nil
                                                               waitUntilDone:NO];
+                                    break;
+                                // a drag from another client, the dragging manager plays destination on the main thread
+                                case WS_EVENT_DRAG_ENTER:
+                                case WS_EVENT_DRAG_MOTION:
+                                case WS_EVENT_DRAG_LEAVE:
+                                case WS_EVENT_DRAG_DROP:
+                                    [[NSDraggingManager draggingManager] performSelectorOnMainThread:@selector(_remoteDragEvent:)
+                                        withObject:[NSArray arrayWithObjects:[NSNumber numberWithInt:me.code],
+                                                       [NSNumber numberWithInt:me.windowID], [NSNumber numberWithDouble:me.x],
+                                                       [NSNumber numberWithDouble:me.y], [NSNumber numberWithUnsignedInt:me.mods], nil]
+                                     waitUntilDone:NO];
                                     break;
                                 case NSKeyUp:
                                 case NSKeyDown: {
@@ -670,8 +686,7 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
 }
 
 -(NSGraphicsContext *)context {
-   NSUnimplementedMethod();
-   return nil;
+   return [NSGraphicsContext currentContext];
 }
 
 -delegate {
@@ -761,8 +776,13 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
    return _isRunning;
 }
 
+// stops at the first window that answers with something other than nil
 -(NSWindow *)makeWindowsPerform:(SEL)selector inOrder:(BOOL)inOrder {
-   NSUnimplementedMethod();
+   NSArray *windows=inOrder?[self orderedWindows]:[[_windows copy] autorelease];
+
+   for(NSWindow *window in windows)
+    if([window respondsToSelector:selector] && [window performSelector:selector]!=nil)
+     return window;
    return nil;
 }
 
@@ -804,7 +824,7 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
 }
 
 -(void)preventWindowOrdering {
-   NSUnimplementedMethod();
+   // a drag source keeps its window where it is, and windows only reorder on request here
 }
 
 -(void)unregisterDelegate {
@@ -1010,6 +1030,11 @@ static BOOL pdIsMenuAgent(void)
 
         pdMenuNeedsPublish = NO;
     }
+}
+
+// an item's title, state or enabled flag changed, the menu bar gets the menu again
+-(void)_pdMenuItemChanged {
+    pdMenuNeedsPublish = YES;
 }
 
 - (oneway void)requestMenuUpdateForWindow:(NSNumber *)windowId
@@ -1310,6 +1335,8 @@ static BOOL pdIsMenuAgent(void)
    NSAutoreleasePool *pool=[NSAutoreleasePool new];
    BOOL               needsUntitled=YES;
 
+   [self _listenForOtherApplications];
+
    NS_DURING
     [[NSNotificationCenter defaultCenter] postNotificationName: NSApplicationWillFinishLaunchingNotification object:self];
    NS_HANDLER
@@ -1404,6 +1431,10 @@ static BOOL pdIsMenuAgent(void)
 -(void)_checkForTerminate {
    int  count=[_windows count];
 
+   // as on macOS an app outlives its last window unless its delegate asks otherwise
+   if(![_delegate respondsToSelector:@selector(applicationShouldTerminateAfterLastWindowClosed:)])
+    return;
+
    while(--count>=0){
     NSWindow *check=[_windows objectAtIndex:count];
 
@@ -1412,6 +1443,8 @@ static BOOL pdIsMenuAgent(void)
     }
    }
 
+   if(![_delegate applicationShouldTerminateAfterLastWindowClosed:self])
+    return;
    [self terminate:self];
 }
 
@@ -1490,8 +1523,13 @@ static BOOL pdIsMenuAgent(void)
 }
 
 // This method is used by NSWindow
+// a pool per window: displays can run many times inside one event wait
 -(void)_displayAllWindowsIfNeeded {
-   [[NSApp windows] makeObjectsPerformSelector:@selector(displayIfNeeded)];
+   for(NSWindow *window in [[[NSApp windows] copy] autorelease]){
+    @autoreleasepool {
+     [window displayIfNeeded];
+    }
+   }
 }
 
 -(NSEvent *)nextEventMatchingMask:(NSEventMask)mask untilDate:(NSDate *)untilDate inMode:(NSString *)mode dequeue:(BOOL)dequeue {
@@ -1504,6 +1542,12 @@ static BOOL pdIsMenuAgent(void)
     _dispatch_main_queue_callback_4CF(NULL);
 
    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+   // the menu bar never asks, so enabled states are revalidated here a few times a second
+   // and a change goes out with the next publish
+   if (_mainMenu != nil && now >= pdMenuNextValidate) {
+    pdMenuNextValidate = now + 0.25;
+    [_mainMenu update];
+   }
    if (pdMenuNeedsPublish && now >= pdMenuNextAttempt) {
     pdMenuNextAttempt = now + 0.5;
     [self _publishMainMenu];
@@ -1524,12 +1568,14 @@ static BOOL pdIsMenuAgent(void)
     [self _checkForAppActivation];
      [self _displayAllWindowsIfNeeded];
 
-     /* A dispatch enqueue wakes a Mach run-loop port, not our select loop.
-      * Bound the wait so newly queued main-thread work is serviced promptly. */
+     // the run loop wait ends on main-queue work and blocks from other threads,
+     // only a menu publish that is still to be retried bounds it
      NSDate *waitDate=untilDate;
-     NSDate *dispatchPollDate=[NSDate dateWithTimeIntervalSinceNow:0.01];
-     if(waitDate==nil || [waitDate compare:dispatchPollDate]==NSOrderedDescending)
-      waitDate=dispatchPollDate;
+     if(pdMenuNeedsPublish){
+      NSDate *retryDate=[NSDate dateWithTimeIntervalSinceReferenceDate:pdMenuNextAttempt];
+      if(waitDate==nil || [waitDate compare:retryDate]==NSOrderedDescending)
+       waitDate=retryDate;
+     }
 
      nextEvent=[_display nextEventMatchingMask:mask untilDate:waitDate inMode:mode dequeue:dequeue];
 
@@ -1702,7 +1748,8 @@ static BOOL pdIsMenuAgent(void)
 
 -(void)setWindowsNeedUpdate:(BOOL)value {
    _windowsNeedUpdate=value;
-   NSUnimplementedMethod();
+   if(value)
+    [self performSelector:@selector(updateWindows) withObject:nil afterDelay:0];
 }
 
 -(void)updateWindows {
@@ -1978,7 +2025,7 @@ typedef void (*endfunction_t)(id, SEL, id, NSInteger, void *);
 }
 
 -(void)cancelUserAttentionRequest:(int)requestNumber {
-   NSUnimplementedMethod();
+   // requests only bounce the Dock icon, which stops by itself
 }
 
 -(void)runPageLayout:sender {
@@ -1990,7 +2037,8 @@ typedef void (*endfunction_t)(id, SEL, id, NSInteger, void *);
 }
 
 -(void)orderFrontCharacterPalette:sender {
-   NSUnimplementedMethod();
+   // there is no character viewer
+   NSBeep();
 }
 
 -(void)hide:sender {//deactivates the application and hides all windows
@@ -2004,8 +2052,46 @@ typedef void (*endfunction_t)(id, SEL, id, NSInteger, void *);
 
 }
 
+// every app listens for this and hides unless it sent it
+// libSystem exports notify(3), the sdk ships no header for it
+extern uint32_t notify_register_dispatch(const char *name, int *out_token, dispatch_queue_t queue, void (^handler)(int token));
+extern uint32_t notify_register_check(const char *name, int *out_token);
+extern uint32_t notify_set_state(int token, uint64_t state64);
+extern uint32_t notify_get_state(int token, uint64_t *state64);
+extern uint32_t notify_post(const char *name);
+extern uint32_t notify_cancel(int token);
+#define NOTIFY_STATUS_OK 0
+
+static const char *kHideOthersNotification="org.puredarwin.appkit.hide-others";
+static const char *kUnhideAllNotification="org.puredarwin.appkit.unhide-all";
+
+-(void)_listenForOtherApplications {
+   static BOOL listening;
+   int token;
+
+   if(listening)
+    return;
+   listening=YES;
+   notify_register_dispatch(kHideOthersNotification,&token,dispatch_get_main_queue(),^(int t){
+    uint64_t sender=0;
+
+    notify_get_state(t,&sender);
+    if((pid_t)sender!=getpid())
+     [NSApp hide:nil];
+   });
+   notify_register_dispatch(kUnhideAllNotification,&token,dispatch_get_main_queue(),^(int t){
+    [NSApp unhideWithoutActivation];
+   });
+}
+
 -(void)hideOtherApplications:sender {
-   NSUnimplementedMethod();
+   int token;
+
+   if(notify_register_check(kHideOthersNotification,&token)!=NOTIFY_STATUS_OK)
+    return;
+   notify_set_state(token,(uint64_t)getpid());
+   notify_post(kHideOthersNotification);
+   notify_cancel(token);
 }
 
 -(void)unhide:sender
@@ -2023,7 +2109,8 @@ typedef void (*endfunction_t)(id, SEL, id, NSInteger, void *);
 }
 
 -(void)unhideAllApplications:sender {
-   NSUnimplementedMethod();
+   [self unhide:sender];
+   notify_post(kUnhideAllNotification);
 }
 
 -(void)unhideWithoutActivation {
@@ -2078,7 +2165,7 @@ typedef void (*endfunction_t)(id, SEL, id, NSInteger, void *);
 }
 
 -(void)replyToOpenOrPrint:(NSApplicationDelegateReply)reply {
-   NSUnimplementedMethod();
+   // nobody waits on the reply, documents arrive through the delegate only
 }
 
 -(void)arrangeInFront:sender {
@@ -2143,7 +2230,8 @@ typedef void (*endfunction_t)(id, SEL, id, NSInteger, void *);
 }
 
 -validRequestorForSendType:(NSString *)sendType returnType:(NSString *)returnType {
-   NSUnimplementedMethod();
+   if([_delegate respondsToSelector:_cmd] && _delegate!=self)
+    return [_delegate validRequestorForSendType:sendType returnType:returnType];
    return nil;
 }
 
@@ -2160,7 +2248,7 @@ standardAboutPanel] retain];
 }
 
 -(void)activateContextHelpMode:sender {
-   NSUnimplementedMethod();
+   // no context help
 }
 
 -(void)showGuessPanel:sender {

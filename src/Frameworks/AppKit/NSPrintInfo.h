@@ -10,6 +10,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <Foundation/NSGeometry.h>
 #import <AppKit/AppKitExport.h>
 
+APPKIT_EXPORT NSString *const NSPrintJobSavingURL;
+
 @class NSDictionary, NSMutableDictionary, NSPrinter;
 
 typedef int NSPrintingPaginationMode;
@@ -72,10 +74,10 @@ APPKIT_EXPORT NSString *const NSPrintHeaderAndFooter;
 - (NSPrintingPaginationMode)horizontalPagination;
 - (NSPrintingPaginationMode)verticalPagination;
 
-- (float)topMargin;
-- (float)bottomMargin;
-- (float)leftMargin;
-- (float)rightMargin;
+- (CGFloat)topMargin;
+- (CGFloat)bottomMargin;
+- (CGFloat)leftMargin;
+- (CGFloat)rightMargin;
 
 - (BOOL)isHorizontallyCentered;
 - (BOOL)isVerticallyCentered;
@@ -93,10 +95,10 @@ APPKIT_EXPORT NSString *const NSPrintHeaderAndFooter;
 - (void)setHorizontalPagination:(NSPrintingPaginationMode)value;
 - (void)setVerticalPagination:(NSPrintingPaginationMode)value;
 
-- (void)setTopMargin:(float)value;
-- (void)setBottomMargin:(float)value;
-- (void)setLeftMargin:(float)value;
-- (void)setRightMargin:(float)value;
+- (void)setTopMargin:(CGFloat)value;
+- (void)setBottomMargin:(CGFloat)value;
+- (void)setLeftMargin:(CGFloat)value;
+- (void)setRightMargin:(CGFloat)value;
 
 - (void)setHorizontallyCentered:(BOOL)value;
 - (void)setVerticallyCentered:(BOOL)value;

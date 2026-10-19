@@ -56,21 +56,21 @@ typedef enum {
 - (NSColor *)backgroundColor;
 - (NSColor *)borderColorForEdge:(NSRectEdge)edge;
 - (NSTextBlockVerticalAlignment)verticalAlignment;
-- (float)contentWidth;
+- (CGFloat)contentWidth;
 - (NSTextBlockValueType)contentWidthValueType;
-- (float)valueForDimension:(NSTextBlockDimension)dimension;
+- (CGFloat)valueForDimension:(NSTextBlockDimension)dimension;
 - (NSTextBlockValueType)valueTypeForDimension:(NSTextBlockDimension)dimension;
-- (float)widthForLayer:(NSTextBlockLayer)layer edge:(NSRectEdge)edge;
+- (CGFloat)widthForLayer:(NSTextBlockLayer)layer edge:(NSRectEdge)edge;
 - (NSTextBlockValueType)widthValueTypeForLayer:(NSTextBlockLayer)layer edge:(NSRectEdge)edge;
 
 - (void)setBackgroundColor:(NSColor *)color;
 - (void)setBorderColor:(NSColor *)color;
 - (void)setBorderColor:(NSColor *)color forEdge:(NSRectEdge)edge;
 - (void)setVerticalAlignment:(NSTextBlockVerticalAlignment)alignment;
-- (void)setContentWidth:(float)width type:(NSTextBlockValueType)type;
-- (void)setValue:(float)value type:(NSTextBlockValueType)type forDimension:(NSTextBlockDimension)dimension;
-- (void)setWidth:(float)value type:(NSTextBlockValueType)type forLayer:(NSTextBlockLayer)layer;
-- (void)setWidth:(float)value type:(NSTextBlockValueType)type forLayer:(NSTextBlockLayer)layer edge:(NSRectEdge)edge;
+- (void)setContentWidth:(CGFloat)width type:(NSTextBlockValueType)type;
+- (void)setValue:(CGFloat)value type:(NSTextBlockValueType)type forDimension:(NSTextBlockDimension)dimension;
+- (void)setWidth:(CGFloat)value type:(NSTextBlockValueType)type forLayer:(NSTextBlockLayer)layer;
+- (void)setWidth:(CGFloat)value type:(NSTextBlockValueType)type forLayer:(NSTextBlockLayer)layer edge:(NSRectEdge)edge;
 
 - (NSRect)rectForLayoutAtPoint:(NSPoint)point inRect:(NSRect)rect textContainer:(NSTextContainer *)textContainer characterRange:(NSRange)range;
 - (NSRect)boundsRectForContentRect:(NSRect)contentRect inRect:(NSRect)rect textContainer:(NSTextContainer *)textContainer characterRange:(NSRange)range;

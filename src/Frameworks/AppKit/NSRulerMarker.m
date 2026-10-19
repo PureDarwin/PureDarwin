@@ -20,7 +20,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     return [NSImage imageNamed:@"NSRulerMarkerTab"];
 }
 
-- (id)initWithRulerView:(NSRulerView *)ruler markerLocation:(float)location image:(NSImage *)image imageOrigin:(NSPoint)point
+- (id)initWithRulerView:(NSRulerView *)ruler markerLocation:(CGFloat)location image:(NSImage *)image imageOrigin:(NSPoint)point
 {
     _ruler = ruler;
     _markerLocation = location;
@@ -57,7 +57,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     return _ruler;
 }
 
-- (float)markerLocation
+- (CGFloat)markerLocation
 {
     return _markerLocation;
 }
@@ -87,7 +87,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     return _isMovable;
 }
 
-- (void)setMarkerLocation:(float)location
+- (void)setMarkerLocation:(CGFloat)location
 {
     _markerLocation = location;
 }
@@ -120,7 +120,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     _isMovable = flag;
 }
 
-- (float)thicknessRequiredInRuler
+- (CGFloat)thicknessRequiredInRuler
 {
     float thickness = 0;
     
@@ -179,7 +179,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     return _isDragging;
 }
 
-- (float)_markerLocationFromLocation:(NSPoint)point
+- (CGFloat)_markerLocationFromLocation:(NSPoint)point
 {
     NSView *trackedView = _ruler.clientView;
     if (trackedView == nil) {

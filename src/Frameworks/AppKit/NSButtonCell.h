@@ -99,7 +99,7 @@ typedef enum {
 - (BOOL)isOpaque;
 - (NSFont *)keyEquivalentFont;
 - (NSColor *)backgroundColor;
-- (void)getPeriodicDelay:(float *)delay interval:(float *)interval;
+- (void)getPeriodicDelay:(CGFloat *)delay interval:(CGFloat *)interval;
 
 - (void)setTransparent:(BOOL)flag;
 - (void)setKeyEquivalent:(NSString *)keyEquivalent;
@@ -122,7 +122,7 @@ typedef enum {
 - (void)setImageScaling:(NSImageScaling)value;
 - (void)setKeyEquivalentFont:(NSFont *)value;
 - (void)setKeyEquivalentFont:(NSString *)value size:(CGFloat)size;
-- (void)setPeriodicDelay:(float)delay interval:(float)interval;
+- (void)setPeriodicDelay:(CGFloat)delay interval:(CGFloat)interval;
 
 - (void)performClick:sender;
 

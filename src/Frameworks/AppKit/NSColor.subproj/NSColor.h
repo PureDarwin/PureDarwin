@@ -10,7 +10,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/AppKitExport.h>
 #import <ApplicationServices/ApplicationServices.h>
 
+APPKIT_EXPORT NSString *const NSControlTintDidChangeNotification;
+APPKIT_EXPORT NSString *const NSSystemColorsDidChangeNotification;
+
 @class NSImage;
+@class NSColorSpace;
 @class NSPasteboard;
 
 @class NSAppearance;
@@ -50,6 +54,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 + (NSColor *)controlLightHighlightColor;
 + (NSColor *)controlShadowColor;
 + (NSArray *)controlAlternatingRowBackgroundColors;
++ (NSArray *)alternatingContentBackgroundColors;
 
 + (NSColor *)keyboardFocusIndicatorColor;
 
@@ -140,6 +145,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - (NSColor *)shadowWithLevel:(CGFloat)level;
 
 - (NSColor *)colorUsingColorSpaceName:(NSString *)colorSpace;
+- (NSColor *)colorUsingColorSpace:(NSColorSpace *)space;
+- (NSColorSpace *)colorSpace;
 - (NSColor *)colorUsingColorSpaceName:(NSString *)colorSpace device:(NSDictionary *)device;
 
 - (NSColor *)blendedColorWithFraction:(CGFloat)fraction ofColor:(NSColor *)color;

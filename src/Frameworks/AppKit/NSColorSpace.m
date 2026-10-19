@@ -19,6 +19,66 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return result;
 }
 
+static NSColorSpace *spaceNamed(CFStringRef name) {
+   CGColorSpaceRef space=CGColorSpaceCreateWithName(name);
+   NSColorSpace   *result=[[[NSColorSpace alloc] initWithCGColorSpace:space] autorelease];
+
+   CGColorSpaceRelease(space);
+   return result;
+}
+
++(NSColorSpace *)genericRGBColorSpace {
+   return spaceNamed(kCGColorSpaceGenericRGB);
+}
+
++(NSColorSpace *)sRGBColorSpace {
+   return spaceNamed(kCGColorSpaceSRGB);
+}
+
++(NSColorSpace *)extendedSRGBColorSpace {
+   return spaceNamed(kCGColorSpaceExtendedSRGB);
+}
+
++(NSColorSpace *)displayP3ColorSpace {
+   return spaceNamed(kCGColorSpaceDisplayP3);
+}
+
++(NSColorSpace *)adobeRGB1998ColorSpace {
+   return spaceNamed(kCGColorSpaceAdobeRGB1998);
+}
+
++(NSColorSpace *)deviceGrayColorSpace {
+   CGColorSpaceRef device=CGColorSpaceCreateDeviceGray();
+   NSColorSpace   *result=[[[self alloc] initWithCGColorSpace:device] autorelease];
+
+   CGColorSpaceRelease(device);
+   return result;
+}
+
++(NSColorSpace *)genericGrayColorSpace {
+   return spaceNamed(kCGColorSpaceGenericGray);
+}
+
++(NSColorSpace *)genericGamma22GrayColorSpace {
+   return spaceNamed(kCGColorSpaceGenericGrayGamma2_2);
+}
+
++(NSColorSpace *)extendedGenericGamma22GrayColorSpace {
+   return spaceNamed(kCGColorSpaceExtendedGray);
+}
+
++(NSColorSpace *)deviceCMYKColorSpace {
+   CGColorSpaceRef device=CGColorSpaceCreateDeviceCMYK();
+   NSColorSpace   *result=[[[self alloc] initWithCGColorSpace:device] autorelease];
+
+   CGColorSpaceRelease(device);
+   return result;
+}
+
++(NSColorSpace *)genericCMYKColorSpace {
+   return spaceNamed(kCGColorSpaceGenericCMYK);
+}
+
 -initWithCGColorSpace:(CGColorSpaceRef)cgColorSpace {
    _cgColorSpace=CGColorSpaceRetain(cgColorSpace);
    return self;
@@ -31,6 +91,21 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 -(CGColorSpaceRef)CGColorSpace {
    return _cgColorSpace;
+}
+
+// the CG models share NSColorSpaceModel's numbering
+-(NSColorSpaceModel)colorSpaceModel {
+   return _cgColorSpace==NULL ? NSColorSpaceModelUnknown : (NSColorSpaceModel)CGColorSpaceGetModel(_cgColorSpace);
+}
+
+-(NSInteger)numberOfColorComponents {
+   return _cgColorSpace==NULL ? 0 : (NSInteger)CGColorSpaceGetNumberOfComponents(_cgColorSpace);
+}
+
+-(NSString *)localizedName {
+   CFStringRef name=_cgColorSpace==NULL ? NULL : CGColorSpaceGetName(_cgColorSpace);
+
+   return name!=NULL ? (NSString *)name : @"Device";
 }
 
 @end

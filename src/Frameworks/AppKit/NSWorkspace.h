@@ -9,6 +9,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <Foundation/Foundation.h>
 #import <AppKit/AppKitExport.h>
 
+APPKIT_EXPORT NSString *const NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification;
+APPKIT_EXPORT NSString *const NSWorkspaceActiveSpaceDidChangeNotification;
+
 @class NSImage, NSView;
 
 APPKIT_EXPORT NSString *const NSWorkspaceWillPowerOffNotification;

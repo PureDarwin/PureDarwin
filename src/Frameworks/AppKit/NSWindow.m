@@ -33,6 +33,7 @@
 #import <Onyx2D/O2Surface.h>
 #import <Onyx2D/O2GraphicsState.h>
 #import <AppKit/NSWindow.h>
+#import <AppKit/NSColorSpace.h>
 #import <AppKit/NSTextField.h>
 #import <objc/runtime.h>
 #include <stdio.h>
@@ -77,6 +78,7 @@ static char resizeBandKey;
 #import "O2Context_builtin_FT.h"
 
 NSString * const NSWindowDidBecomeKeyNotification=@"NSWindowDidBecomeKeyNotification";
+NSString * const NSWindowDidChangeOcclusionStateNotification=@"NSWindowDidChangeOcclusionStateNotification";
 NSString * const NSWindowDidResignKeyNotification=@"NSWindowDidResignKeyNotification";
 NSString * const NSWindowDidBecomeMainNotification=@"NSWindowDidBecomeMainNotification";
 NSString * const NSWindowDidResignMainNotification=@"NSWindowDidResignMainNotification";
@@ -196,19 +198,33 @@ const float WSWindowEdgePad = 2;
    return CGInsetRectForNativeWindowBorder(frameRect,styleMask);
 }
 
-+(float)minFrameWidthWithTitle:(NSString *)title styleMask:(unsigned)styleMask {
++(CGFloat)minFrameWidthWithTitle:(NSString *)title styleMask:(unsigned)styleMask {
    NSUnimplementedMethod();
    return 0;
 }
 
 +(NSInteger)windowNumberAtPoint:(NSPoint)point belowWindowWithWindowNumber:(NSInteger)window {
-   NSUnimplementedMethod();
+   BOOL below=(window==0);
+
+   // front to back, starting past the given window
+   for(NSWindow *candidate in [NSApp orderedWindows]){
+    if(!below){
+     below=([candidate windowNumber]==window);
+     continue;
+    }
+    if([candidate isVisible] && NSPointInRect(point,[candidate frame]))
+     return [candidate windowNumber];
+   }
    return 0;
 }
 
 +(NSArray *)windowNumbersWithOptions:(NSWindowNumberListOptions)options {
-   NSUnimplementedMethod();
-   return nil;
+   NSMutableArray *numbers=[NSMutableArray array];
+
+   for(NSWindow *window in [NSApp orderedWindows])
+    if([window isVisible])
+     [numbers addObject:[NSNumber numberWithInteger:[window windowNumber]]];
+   return numbers;
 }
 
 // windows here never merge into tabs, the setting is kept for the getter only
@@ -283,6 +299,8 @@ static BOOL _allowsAutomaticWindowTabbing=YES;
 
    _backingType=backing;
    _minSize=NSMakeSize(0,0);
+   _isMovable=YES;
+   _sharingType=NSWindowSharingReadOnly;
     // "The default maximum size of a window is {FLT_MAX, FLT_MAX}"
    _maxSize=NSMakeSize(FLT_MAX,FLT_MAX);
 
@@ -379,6 +397,8 @@ static BOOL _allowsAutomaticWindowTabbing=YES;
 }
 
 -(void)dealloc {
+   [_representedURL release];
+   [_colorSpace release];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     if(_context)
         [_context release];
@@ -517,12 +537,11 @@ static BOOL _allowsAutomaticWindowTabbing=YES;
 }
 
 -(BOOL)allowsConcurrentViewDrawing {
-   NSUnimplementedMethod();
-   return NO;
+   return _allowsConcurrentViewDrawing;
 }
 
 -(void)setAllowsConcurrentViewDrawing:(BOOL)allows {
-   NSUnimplementedMethod();
+   _allowsConcurrentViewDrawing=allows;
 }
 
 -(NSView *)contentView {
@@ -542,8 +561,7 @@ static BOOL _allowsAutomaticWindowTabbing=YES;
 }
 
 -(NSURL *)representedURL {
-   NSUnimplementedMethod();
-   return nil;
+   return _representedURL;
 }
 
 -(NSInteger)level {
@@ -626,12 +644,11 @@ static BOOL _allowsAutomaticWindowTabbing=YES;
 }
 
 -(BOOL)preventsApplicationTerminationWhenModal {
-   NSUnimplementedMethod();
-   return NO;
+   return _preventsApplicationTerminationWhenModal;
 }
 
 -(void)setPreventsApplicationTerminationWhenModal:(BOOL)prevents {
-   NSUnimplementedMethod();
+   _preventsApplicationTerminationWhenModal=prevents;
 }
 
 -(BOOL)hidesOnDeactivate {
@@ -1076,8 +1093,10 @@ static BOOL _allowsAutomaticWindowTabbing=YES;
 }
 
 -(void)setContentMinSize:(NSSize)value {
+   NSRect frame=[self frameRectForContentRect:NSMakeRect(0,0,value.width,value.height)];
+
    _contentMinSize=value;
-   NSUnimplementedMethod();
+   _minSize=frame.size;
 }
 
 -(void)setContentMaxSize:(NSSize)value {
@@ -1085,17 +1104,16 @@ static BOOL _allowsAutomaticWindowTabbing=YES;
 }
 
 -(void)setContentBorderThickness:(CGFloat)thickness forEdge:(NSRectEdge)edge {
-// FIXME: should warn, but low priority cosmetic, so we dont, still needs to be implemented
-//   NSUnimplementedMethod();
+   if(edge>=0 && edge<4)
+    _contentBorderThickness[edge]=thickness;
 }
 
 -(void)setMovable:(BOOL)movable {
-   NSUnimplementedMethod();
+   _isMovable=movable;
 }
 
 -(void)setBackingType:(NSBackingStoreType)value {
    _backingType=value;
-   NSUnimplementedMethod();
 }
 
 -(void)setDynamicDepthLimit:(BOOL)value {
@@ -1127,8 +1145,8 @@ static BOOL _allowsAutomaticWindowTabbing=YES;
 }
 
 -(void)setAutorecalculatesContentBorderThickness:(BOOL)automatic forEdge:(NSRectEdge)edge {
-// FIXME: should warn, but low priority cosmetic, so we dont, still needs to be implemented
-//   NSUnimplementedMethod();
+   if(edge>=0 && edge<4)
+    _autorecalculatesContentBorderThickness[edge]=automatic;
 }
 
 -(BOOL)_isApplicationWindow {
@@ -1355,7 +1373,7 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 }
 
 -(void)setCanBecomeVisibleWithoutLogin:(BOOL)flag {
-//   NSUnimplementedMethod();
+   _canBecomeVisibleWithoutLogin=flag;
 }
 
 /* Collection behaviour describes how a window relates to Spaces and to
@@ -1385,7 +1403,9 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 }
 
 -(void)setRepresentedURL:(NSURL *)newURL {
-   NSUnimplementedMethod();
+   newURL=[newURL copy];
+   [_representedURL release];
+   _representedURL=newURL;
 }
 
 -(void)setResizeIncrements:(NSSize)value {
@@ -1394,12 +1414,10 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 
 -(void)setShowsResizeIndicator:(BOOL)value {
    _showsResizeIndicator=value;
-   NSUnimplementedMethod();
 }
 
 -(void)setShowsToolbarButton:(BOOL)value {
-  _showsToolbarButton=value;
-   NSUnimplementedMethod();
+   _showsToolbarButton=value;
 }
 
 -(void)setContentResizeIncrements:(NSSize)value {
@@ -1407,7 +1425,7 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 }
 
 -(void)setDepthLimit:(NSWindowDepth)value {
-   NSUnimplementedMethod();
+   _depthLimit=value;
 }
 
 -(void)setDisplaysWhenScreenProfileChanges:(BOOL)value {
@@ -1445,13 +1463,11 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 }
 
 -(BOOL)autorecalculatesContentBorderThicknessForEdge:(NSRectEdge)edge {
-   NSUnimplementedMethod();
-   return NO;
+   return (edge>=0 && edge<4) ? _autorecalculatesContentBorderThickness[edge] : NO;
 }
 
 -(CGFloat)contentBorderThicknessForEdge:(NSRectEdge)edge {
-   NSUnimplementedMethod();
-   return 0.;
+   return (edge>=0 && edge<4) ? _contentBorderThickness[edge] : 0.;
 }
 
 -(NSString *)_autosaveFrameKeyWithName:(NSString *)name {
@@ -1525,7 +1541,7 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
    return 0;
 }
 
--(float)userSpaceScaleFactor {
+-(CGFloat)userSpaceScaleFactor {
    return 1.0;
 }
 
@@ -1544,7 +1560,7 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 }
 
 -(NSButton *)standardWindowButton:(NSWindowButton)value {
-   NSUnimplementedMethod();
+   // the theme frame draws its controls, there are no button objects to hand out
    return nil;
 }
 
@@ -1593,31 +1609,30 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 }
 
 -(NSScreen *)deepestScreen {
-   NSUnimplementedMethod();
-   return 0;
+   return [self screen];
 }
 
 -(NSColorSpace *)colorSpace {
-   NSUnimplementedMethod();
-   return nil;
+   return _colorSpace!=nil ? _colorSpace : [NSColorSpace sRGBColorSpace];
 }
 
 -(void)setColorSpace:(NSColorSpace *)newColorSpace {
-   NSUnimplementedMethod();
+   [newColorSpace retain];
+   [_colorSpace release];
+   _colorSpace=newColorSpace;
 }
 
 -(BOOL)isOnActiveSpace {
-   NSUnimplementedMethod();
+   // a single space
    return YES;
 }
 
 -(NSWindowSharingType)sharingType {
-   NSUnimplementedMethod();
-   return 0;
+   return _sharingType;
 }
 
 -(void)setSharingType:(NSWindowSharingType)type {
-   NSUnimplementedMethod();
+   _sharingType=type;
 }
 
 -(BOOL)isDocumentEdited {
@@ -1646,8 +1661,7 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 }
 
 -(BOOL)isMovable {
-   NSUnimplementedMethod();
-   return NO;
+   return _isMovable;
 }
 
 -(BOOL)inLiveResize {
@@ -1665,8 +1679,7 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 }
 
 -(BOOL)canBecomeVisibleWithoutLogin {
-   NSUnimplementedMethod();
-   return NO;
+   return _canBecomeVisibleWithoutLogin;
 }
 
 -(NSWindowCollectionBehavior)collectionBehavior {
@@ -2074,7 +2087,7 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 }
 
 -(void)disableScreenUpdatesUntilFlush {
-   NSUnimplementedMethod();
+   // the compositor already shows only flushed frames
 }
 
 -(void)useOptimizedDrawing:(BOOL)flag {
@@ -2374,7 +2387,7 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 }
 
 -(void)orderFrontRegardless {
-   NSUnimplementedMethod();
+   [self orderFront:nil];
 }
 
 -(NSPoint)mouseLocationOutsideOfEventStream {
@@ -2581,9 +2594,54 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
      // Nothing special to do
      break;
 
+    case NSCursorUpdate:
+     [[_backgroundView hitTest:[event locationInWindow]] cursorUpdate:event];
+     break;
+
+    // gestures and tablet events go to the view under the pointer, as clicks do
+    case NSEventTypeMagnify:
+     [[_backgroundView hitTest:[event locationInWindow]] magnifyWithEvent:event];
+     break;
+
+    case NSEventTypeSmartMagnify:
+     [[_backgroundView hitTest:[event locationInWindow]] smartMagnifyWithEvent:event];
+     break;
+
+    case NSEventTypeRotate:
+     [[_backgroundView hitTest:[event locationInWindow]] rotateWithEvent:event];
+     break;
+
+    case NSEventTypeSwipe:
+     [[_backgroundView hitTest:[event locationInWindow]] swipeWithEvent:event];
+     break;
+
+    case NSEventTypeBeginGesture:
+     [[_backgroundView hitTest:[event locationInWindow]] beginGestureWithEvent:event];
+     break;
+
+    case NSEventTypeEndGesture:
+     [[_backgroundView hitTest:[event locationInWindow]] endGestureWithEvent:event];
+     break;
+
+    case NSEventTypePressure:
+     [[_backgroundView hitTest:[event locationInWindow]] pressureChangeWithEvent:event];
+     break;
+
+    case NSEventTypeQuickLook:
+     [[_backgroundView hitTest:[event locationInWindow]] quickLookWithEvent:event];
+     break;
+
+    case NSTabletPoint:
+     [[_backgroundView hitTest:[event locationInWindow]] tabletPoint:event];
+     break;
+
+    case NSTabletProximity:
+     [[_backgroundView hitTest:[event locationInWindow]] tabletProximity:event];
+     break;
+
+    // application, system and periodic events belong to the application itself
     default:
      shouldValidateToolbarItems = NO;
-     NSUnimplementedMethod();
      break;
    }
     if (shouldValidateToolbarItems && [self toolbar]) {
@@ -2770,7 +2828,9 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
     } else if ([self respondsToSelector: @selector( windowWillUseStandardFrame:defaultFrame: )]) {
         zoomedFrame = [self windowWillUseStandardFrame: self defaultFrame: zoomedFrame];
     }
-    //  zoomedFrame = [self constrainFrameRect: zoomedFrame toScreen: screen];
+    // a zoomed titled window stays below the menu bar whatever its delegate asks for
+    if ((_styleMask & NSTitledWindowMask) && screen != nil)
+        zoomedFrame = NSIntersectionRect(zoomedFrame, [screen visibleFrame]);
 
     return zoomedFrame;
 }
@@ -2956,31 +3016,47 @@ static char restorableKey, fullScreenFrameKey;
     }
 }
 
-// default NSDraggingDestination
+// a window registered for drags passes them to its delegate, as NSWindow does on macOS
 -(NSDragOperation)draggingEntered:(id <NSDraggingInfo>)sender {
+   if([_delegate respondsToSelector:_cmd])
+    return [_delegate draggingEntered:sender];
    return NSDragOperationNone;
 }
 
 -(NSDragOperation)draggingUpdated:(id <NSDraggingInfo>)sender {
-   return [sender draggingSourceOperationMask];
+   if([_delegate respondsToSelector:_cmd])
+    return [_delegate draggingUpdated:sender];
+   if([_delegate respondsToSelector:@selector(draggingEntered:)])
+    return [_delegate draggingEntered:sender];
+   return NSDragOperationNone;
 }
 
 -(void)draggingExited:(id <NSDraggingInfo>)sender {
-   // do nothing
+   if([_delegate respondsToSelector:_cmd])
+    [_delegate draggingExited:sender];
 }
 
 -(BOOL)prepareForDragOperation:(id <NSDraggingInfo>)sender {
-   return NO;
+   if([_delegate respondsToSelector:_cmd])
+    return [_delegate prepareForDragOperation:sender];
+   return YES;
 }
 
 -(BOOL)performDragOperation:(id <NSDraggingInfo>)sender {
+   if([_delegate respondsToSelector:_cmd])
+    return [_delegate performDragOperation:sender];
    return NO;
 }
 
 -(void)concludeDragOperation:(id <NSDraggingInfo>)sender {
-   // do nothing
+   if([_delegate respondsToSelector:_cmd])
+    [_delegate concludeDragOperation:sender];
 }
 
+-(void)draggingEnded:(id <NSDraggingInfo>)sender {
+   if([_delegate respondsToSelector:_cmd])
+    [_delegate draggingEnded:sender];
+}
 
 -(NSArray *)_draggedTypes {
    return _draggedTypes;
@@ -3017,7 +3093,6 @@ static char restorableKey, fullScreenFrameKey;
 
 -(void)_attachSheetContextOrderFrontAndAnimate:(NSSheetContext *)sheetContext {
    NSWindow *sheet = [sheetContext sheet];
-   NSRect    sheetFrame;
 
    if ([sheet styleMask] != NSDocModalWindowMask)
     [sheet setStyleMask:NSDocModalWindowMask];
@@ -3028,12 +3103,11 @@ static char restorableKey, fullScreenFrameKey;
    [(NSThemeFrame *)[sheet _backgroundView] setWindowBorderType:NSWindowSheetBorderType];
 
    [self _setSheetOrigin];
-   sheetFrame = [sheet frame];
 
-   sheet->_isVisible=YES;
+   // no slide animation, the sheet just appears above its parent
    [sheet display];
-   [[sheet platformWindow] sheetOrderFrontFromFrame:NSMakeRect(sheetFrame.origin.x,NSMaxY(sheetFrame),sheetFrame.size.width,0) aboveWindow:[self platformWindow]];
-   [self makeKeyWindow];
+   [sheet orderWindow:NSWindowAbove relativeTo:[self windowNumber]];
+   [sheet makeKeyWindow];
 }
 
 - (void)_setSheetContext:(NSSheetContext *)sheetContext
@@ -3049,18 +3123,23 @@ static char restorableKey, fullScreenFrameKey;
 
 -(void)_detachSheetContextAnimateAndOrderOut {
     NSWindow *sheet = [_sheetContext sheet];
-    NSRect sheetFrame = [sheet frame];
 
-    sheet->_isVisible=NO;
-    [[sheet platformWindow] sheetOrderOutToFrame:NSMakeRect(sheetFrame.origin.x,NSMaxY(sheetFrame),sheetFrame.size.width,0)];
+    [sheet orderWindow:NSWindowOut relativeTo:0];
 
     [_sheetContext release];
     _sheetContext=nil;
+    [self makeKeyWindow];
 }
 
+// the menu bar is a separate process, so there is no in-window menu to hide
+-(void)_hideMenuViewIfNeeded {
+}
+
+-(void)_showMenuViewIfNeeded {
+}
+
+// the compositor has no attention signal yet, so requestUserAttention: shows nothing
 -(void)_flashWindow {
-    if([self _isApplicationWindow])
-        NSUnimplementedMethod();
 }
 
 #if 0 // This seems all backwards for WindowServer

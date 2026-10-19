@@ -19,7 +19,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSRaise.h>
 
 @interface NSTableView(NSTableView_private)
--(void)noteColumnDidResizeWithOldWidth:(float)oldWidth;
+-(void)noteColumnDidResizeWithOldWidth:(CGFloat)oldWidth;
 @end
 
 @implementation NSTableHeaderView
@@ -47,7 +47,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     return -1;
 }
 
--(float)draggedDistance {
+-(CGFloat)draggedDistance {
     NSUnimplementedMethod();
     return -1;
 }

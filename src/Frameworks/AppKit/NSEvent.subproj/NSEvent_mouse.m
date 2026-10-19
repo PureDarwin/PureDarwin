@@ -73,6 +73,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 //
 // Accordingly, it's unclear wether there's a difference between -trackingArea and
 // -trackingNumber at all (as of 10.6 docs). Let's assume they are the same.
+// mouse events come from a mouse or tablet pointer here, never a tablet pen, so the plain subtype
+-(short)subtype {
+   return NSEventSubtypeMouseEvent;
+}
+
 -(NSTrackingArea *)trackingArea {
    return (NSTrackingArea *)_trackingNumber;
 }

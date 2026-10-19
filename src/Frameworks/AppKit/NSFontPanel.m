@@ -125,7 +125,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return [[members objectAtIndex:row] objectAtIndex:0];
 }
 
--(float)selectedPointSize {
+-(CGFloat)selectedPointSize {
    float result=[_sizeTextField floatValue];
 
    if(result==0)

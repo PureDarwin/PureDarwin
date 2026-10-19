@@ -19,11 +19,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 - (NSSize)shadowOffset;
 - (NSColor *)shadowColor;
-- (float)shadowBlurRadius;
+- (CGFloat)shadowBlurRadius;
 
 - (void)setShadowOffset:(NSSize)offset;
 - (void)setShadowColor:(NSColor *)color;
-- (void)setShadowBlurRadius:(float)radius;
+- (void)setShadowBlurRadius:(CGFloat)radius;
 
 - (void)set;
 

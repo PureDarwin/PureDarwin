@@ -83,12 +83,12 @@ static NSMutableArray *_measurementUnits = nil;
     [self registerUnit:[NSMeasurementUnit picasMeasurementUnit]];
 }
 
-+ (NSMeasurementUnit *)measurementUnitWithName:(NSString *)name abbreviation:(NSString *)abbreviation pointsPerUnit:(float)points stepUpCycle:(NSArray *)upCycle stepDownCycle:(NSArray *)downCycle
++ (NSMeasurementUnit *)measurementUnitWithName:(NSString *)name abbreviation:(NSString *)abbreviation pointsPerUnit:(CGFloat)points stepUpCycle:(NSArray *)upCycle stepDownCycle:(NSArray *)downCycle
 {
     return [[[self alloc] initWithName:name abbreviation:abbreviation pointsPerUnit:points stepUpCycle:upCycle stepDownCycle:downCycle] autorelease];
 }
 
-- (id)initWithName:(NSString *)name abbreviation:(NSString *)abbreviation pointsPerUnit:(float)points stepUpCycle:(NSArray *)upCycle stepDownCycle:(NSArray *)downCycle;
+- (id)initWithName:(NSString *)name abbreviation:(NSString *)abbreviation pointsPerUnit:(CGFloat)points stepUpCycle:(NSArray *)upCycle stepDownCycle:(NSArray *)downCycle;
 {
     _name = [name retain];
     _abbreviation = [abbreviation retain];
@@ -119,7 +119,7 @@ static NSMutableArray *_measurementUnits = nil;
     return _abbreviation;
 }
 
-- (float)pointsPerUnit
+- (CGFloat)pointsPerUnit
 {
     return _pointsPerUnit;
 }

@@ -164,7 +164,7 @@ enum {
 - objectValue;
 - (NSString *)stringValue;
 - (int)intValue;
-- (float)floatValue;
+- (CGFloat)floatValue;
 - (double)doubleValue;
 - (NSInteger)integerValue;
 - (NSAttributedString *)attributedStringValue;
@@ -211,7 +211,7 @@ enum {
 - (void)setObjectValue:(id<NSCopying>)value;
 - (void)setStringValue:(NSString *)value;
 - (void)setIntValue:(int)value;
-- (void)setFloatValue:(float)value;
+- (void)setFloatValue:(CGFloat)value;
 - (void)setDoubleValue:(double)value;
 - (void)setIntegerValue:(NSInteger)value;
 - (void)setAttributedStringValue:(NSAttributedString *)value;

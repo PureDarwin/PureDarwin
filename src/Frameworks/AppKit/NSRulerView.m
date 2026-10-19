@@ -34,13 +34,13 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #define LABEL_TEXT_SECONDARY_OFFSET 3.0
 
 @interface NSRulerView(PrivateMethods)
-- (float)_drawingOrigin;
-- (float)_drawingScale;
+- (CGFloat)_drawingOrigin;
+- (CGFloat)_drawingScale;
 @end
 
 @implementation NSRulerView
 
-+ (void)registerUnitWithName:(NSString *)name abbreviation:(NSString *)abbreviation unitToPointsConversionFactor:(float)conversionFactor stepUpCycle:(NSArray *)stepUpCycle stepDownCycle:(NSArray *)stepDownCycle
++ (void)registerUnitWithName:(NSString *)name abbreviation:(NSString *)abbreviation unitToPointsConversionFactor:(CGFloat)conversionFactor stepUpCycle:(NSArray *)stepUpCycle stepDownCycle:(NSArray *)stepDownCycle
 {
     [NSMeasurementUnit registerUnit:[NSMeasurementUnit measurementUnitWithName:name abbreviation:abbreviation pointsPerUnit:conversionFactor stepUpCycle:stepUpCycle stepDownCycle:stepDownCycle]];
 }
@@ -133,12 +133,12 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     return _orientation;
 }
 
-- (float)ruleThickness
+- (CGFloat)ruleThickness
 {
     return _ruleThickness;
 }
 
-- (float)reservedThicknessForMarkers
+- (CGFloat)reservedThicknessForMarkers
 {
     if (_thicknessForMarkers == 0.0) {
         int i, count = [_markers count];
@@ -151,23 +151,23 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     return _thicknessForMarkers;
 }
 
-- (float)reservedThicknessForAccessoryView
+- (CGFloat)reservedThicknessForAccessoryView
 {
     return _thicknessForAccessoryView;
 }
 
-- (float)originOffset
+- (CGFloat)originOffset
 {
     return _originOffset;
 }
 
-- (float)baselineLocation
+- (CGFloat)baselineLocation
 {
     // That should be something depending of the markers thickness, etc.
     return _ruleThickness;
 }
 
-- (float)requiredThickness
+- (CGFloat)requiredThickness
 {
     float result = [self ruleThickness];
     
@@ -242,28 +242,28 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     _orientation = orientation;
 }
 
-- (void)setRuleThickness:(float)value
+- (void)setRuleThickness:(CGFloat)value
 {
     _ruleThickness = value;
     
     [[self enclosingScrollView] tile];
 }
 
-- (void)setReservedThicknessForMarkers:(float)value
+- (void)setReservedThicknessForMarkers:(CGFloat)value
 {
     _thicknessForMarkers = value;
 
     [[self enclosingScrollView] tile];
 }
 
-- (void)setReservedThicknessForAccessoryView:(float)value
+- (void)setReservedThicknessForAccessoryView:(CGFloat)value
 {
     _thicknessForAccessoryView = value;
 
     [[self enclosingScrollView] tile];
 }
 
-- (void)setOriginOffset:(float)value
+- (void)setOriginOffset:(CGFloat)value
 {
     _originOffset = value;
     
@@ -302,7 +302,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     }
 }
 
-- (void)moveRulerlineFromLocation:(float)fromLocation toLocation:(float)toLocation
+- (void)moveRulerlineFromLocation:(CGFloat)fromLocation toLocation:(CGFloat)toLocation
 {    
     NSNumber *old = [NSNumber numberWithFloat:fromLocation];
     NSNumber *new = [NSNumber numberWithFloat:toLocation];
@@ -555,7 +555,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 @implementation NSRulerView(PrivateMethods)
 // The offset to use in the ruler view for the 0 location
-- (float)_drawingOrigin
+- (CGFloat)_drawingOrigin
 {
     float origin = 0;
     NSView *trackedView = self.clientView;
@@ -573,7 +573,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 // The scale to use for drawing
-- (float)_drawingScale
+- (CGFloat)_drawingScale
 {
     float scale = 1.;
     NSView *documentView = [_scrollView documentView];

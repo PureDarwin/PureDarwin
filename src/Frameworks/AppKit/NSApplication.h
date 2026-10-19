@@ -29,6 +29,21 @@
 @class NSWindow, NSImage, NSMenu, NSPasteboard, NSDisplay, NSDockTile, DKConnection, DKMenu;
 
 APPKIT_EXPORT NSString *const NSModalPanelRunLoopMode;
+
+// the AppKit release apps compare against to pick code paths, PD's AppKit follows the macOS 26 API
+typedef double NSAppKitVersion;
+APPKIT_EXPORT const NSAppKitVersion NSAppKitVersionNumber;
+static const NSAppKitVersion NSAppKitVersionNumber10_9 = 1265;
+static const NSAppKitVersion NSAppKitVersionNumber10_10 = 1343;
+static const NSAppKitVersion NSAppKitVersionNumber10_11 = 1404;
+static const NSAppKitVersion NSAppKitVersionNumber10_12 = 1504;
+static const NSAppKitVersion NSAppKitVersionNumber10_13 = 1561;
+static const NSAppKitVersion NSAppKitVersionNumber10_14 = 1671;
+static const NSAppKitVersion NSAppKitVersionNumber10_15 = 1894;
+static const NSAppKitVersion NSAppKitVersionNumber11_0 = 2022;
+static const NSAppKitVersion NSAppKitVersionNumber12_0 = 2113;
+static const NSAppKitVersion NSAppKitVersionNumber13_0 = 2299;
+static const NSAppKitVersion NSAppKitVersionNumber14_0 = 2487;
 APPKIT_EXPORT NSString *const NSEventTrackingRunLoopMode;
 
 APPKIT_EXPORT NSString *const NSApplicationWillFinishLaunchingNotification;

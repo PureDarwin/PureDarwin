@@ -540,27 +540,27 @@ static Class _rulerViewClass = nil;
     return _rulersVisible;
 }
 
--(float)verticalLineScroll {
+-(CGFloat)verticalLineScroll {
     return _verticalLineScroll;
 }
 
--(float)horizontalLineScroll {
+-(CGFloat)horizontalLineScroll {
     return _horizontalLineScroll;
 }
 
--(float)verticalPageScroll {
+-(CGFloat)verticalPageScroll {
     return _verticalPageScroll;
 }
 
--(float)horizontalPageScroll {
+-(CGFloat)horizontalPageScroll {
     return _horizontalPageScroll;
 }
 
--(float)lineScroll {
+-(CGFloat)lineScroll {
     return [self verticalLineScroll];
 }
 
--(float)pageScroll {
+-(CGFloat)pageScroll {
     return [self verticalPageScroll];
 }
 
@@ -699,32 +699,32 @@ static Class _rulerViewClass = nil;
     }
 }
 
--(void)setVerticalLineScroll:(float)value {
+-(void)setVerticalLineScroll:(CGFloat)value {
     if (value > 0.0)
         _verticalLineScroll = value;
 }
 
--(void)setHorizontalLineScroll:(float)value {
+-(void)setHorizontalLineScroll:(CGFloat)value {
     if (value > 0.0)
         _horizontalLineScroll = value;
 }
 
--(void)setVerticalPageScroll:(float)value {
+-(void)setVerticalPageScroll:(CGFloat)value {
     if (value > 0.0)
         _verticalPageScroll = value;
 }
 
--(void)setHorizontalPageScroll:(float)value {
+-(void)setHorizontalPageScroll:(CGFloat)value {
     if (value > 0.0)
         _horizontalPageScroll = value;
 }
 
--(void)setLineScroll:(float)value {
+-(void)setLineScroll:(CGFloat)value {
     [self setHorizontalLineScroll:value];
     [self setVerticalLineScroll:value];
 }
 
--(void)setPageScroll:(float)value {
+-(void)setPageScroll:(CGFloat)value {
     [self setHorizontalPageScroll:value];
     [self setVerticalPageScroll:value];
 }

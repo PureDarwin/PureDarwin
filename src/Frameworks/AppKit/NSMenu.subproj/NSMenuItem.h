@@ -9,6 +9,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <Foundation/NSObject.h>
 #import <AppKit/NSUserInterfaceValidation.h>
 
+@class NSView;
+
 @class NSMenu, NSImage, NSAttributedString;
 
 @interface NSMenuItem : NSObject <NSCopying, NSValidatedUserInterfaceItem> {
@@ -33,6 +35,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     NSImage *_offStateImage;
     NSImage *_mixedStateImage;
     int _DBusItemID;
+    NSView *_view;
 }
 
 + (NSMenuItem *)separatorItem;
@@ -91,5 +94,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 -(NSString *)toolTip;
 -(void)setToolTip:(NSString *)toolTip;
+
+- (NSView *)view;
+- (void)setView:(NSView *)view;
 
 @end

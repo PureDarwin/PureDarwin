@@ -69,7 +69,7 @@ static void loadGlyphAndCharacterCacheForLocation(NSTypesetter_concrete *self,un
 /**
  * Calculates line fragment rectangle, line fragment used rectangle, and remaining rectangle for a line fragment.
  */
-- (void)getLineFragmentRect:(NSRectPointer)lineFragmentRect usedRect:(NSRectPointer)lineFragmentUsedRect remainingRect:(NSRectPointer)remainingRect forStartingGlyphAtIndex:(unsigned)startingGlyphIndex proposedRect:(NSRect)proposedRect lineSpacing:(float)lineSpacing paragraphSpacingBefore:(float)paragraphSpacingBefore paragraphSpacingAfter:(float)paragraphSpacingAfter
+- (void)getLineFragmentRect:(NSRectPointer)lineFragmentRect usedRect:(NSRectPointer)lineFragmentUsedRect remainingRect:(NSRectPointer)remainingRect forStartingGlyphAtIndex:(unsigned)startingGlyphIndex proposedRect:(NSRect)proposedRect lineSpacing:(CGFloat)lineSpacing paragraphSpacingBefore:(CGFloat)paragraphSpacingBefore paragraphSpacingAfter:(CGFloat)paragraphSpacingAfter
 {
 #if DEBUG_TYPESETTER
     NSLog(@"getLineFragmentRect: %p usedRect: %p remainingRect: %p forStartingGlyphAtIndex: %u proposedRect: %@ lineSpacing: %f paragraphSpacingBefore: %f paragraphSpacingAfter: %f",

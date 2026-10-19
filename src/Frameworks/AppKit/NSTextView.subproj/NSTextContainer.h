@@ -44,7 +44,7 @@ typedef enum {
 
 - (NSLayoutManager *)layoutManager;
 
-- (float)lineFragmentPadding;
+- (CGFloat)lineFragmentPadding;
 
 - (void)setContainerSize:(NSSize)size;
 
@@ -55,7 +55,7 @@ typedef enum {
 - (void)setLayoutManager:(NSLayoutManager *)layoutManager;
 - (void)replaceLayoutManager:(NSLayoutManager *)layoutManager;
 
-- (void)setLineFragmentPadding:(float)padding;
+- (void)setLineFragmentPadding:(CGFloat)padding;
 
 - (BOOL)isSimpleRectangularTextContainer;
 

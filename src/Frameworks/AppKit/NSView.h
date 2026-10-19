@@ -64,8 +64,15 @@ enum {
 typedef NSInteger NSViewLayerContentsRedrawPolicy;
 
 APPKIT_EXPORT NSString *const NSViewFrameDidChangeNotification;
+APPKIT_EXPORT NSString *const NSViewGlobalFrameDidChangeNotification;
 APPKIT_EXPORT NSString *const NSViewBoundsDidChangeNotification;
 APPKIT_EXPORT NSString *const NSViewFocusDidChangeNotification;
+
+// a view that is a layer's delegate decides whether its layer follows the window's backing scale
+@protocol NSViewLayerContentScaleDelegate <NSObject>
+@optional
+- (BOOL)layer:(CALayer *)layer shouldInheritContentsScale:(CGFloat)newScale fromWindow:(NSWindow *)window;
+@end
 
 @interface NSView : NSResponder <NSAnimatablePropertyContainer> {
     NSRect _frame;
@@ -323,6 +330,8 @@ APPKIT_EXPORT NSString *const NSViewFocusDidChangeNotification;
 - (BOOL)canDraw;
 - (BOOL)canDrawConcurrently;
 - (void)viewWillDraw;
+- (BOOL)wantsUpdateLayer;
+- (void)updateLayer;
 - (void)setCanDrawConcurrently:(BOOL)canDraw;
 - (void)lockFocus;
 - (BOOL)lockFocusIfCanDraw;
@@ -364,10 +373,10 @@ APPKIT_EXPORT NSString *const NSViewFocusDidChangeNotification;
 - (void)drawSheetBorderWithSize:(NSSize)size;
 - (void)drawPageBorderWithSize:(NSSize)size;
 
-- (float)widthAdjustLimit;
-- (float)heightAdjustLimit;
-- (void)adjustPageWidthNew:(float *)adjustedRight left:(float)left right:(float)right limit:(float)limit;
-- (void)adjustPageHeightNew:(float *)adjustedBottom top:(float)top bottom:(float)bottom limit:(float)limit;
+- (CGFloat)widthAdjustLimit;
+- (CGFloat)heightAdjustLimit;
+- (void)adjustPageWidthNew:(CGFloat *)adjustedRight left:(CGFloat)left right:(CGFloat)right limit:(CGFloat)limit;
+- (void)adjustPageHeightNew:(CGFloat *)adjustedBottom top:(CGFloat)top bottom:(CGFloat)bottom limit:(CGFloat)limit;
 
 - (BOOL)knowsPageRange:(NSRange *)range;
 - (NSPoint)locationOfPrintRect:(NSRect)rect;

@@ -98,9 +98,13 @@ stdenv.mkDerivation {
 
     echo "AppKit: $(echo $objects | wc -w) objects, $(echo $failed | wc -w) skipped"
 
+    # NSLayoutConstraint lives in Foundation, apps built for macOS bind it from AppKit too
+    printf '%s\n' '_OBJC_CLASS_$_NSLayoutConstraint' '_OBJC_METACLASS_$_NSLayoutConstraint' > reexported.txt
+
     $cc \
       -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
+      -Wl,-reexported_symbols_list,reexported.txt \
       -L${libSystem}/usr/lib \
       -L${libobjc}/usr/lib \
       -L${corefoundation}/usr/lib \

@@ -421,3 +421,6 @@ NSParagraphStyle *NSParagraphStyleAttributeInDictionary(NSDictionary *dictionary
    return style;
 }
 
+NSString * const NSMarkedClauseSegmentAttributeName=@"NSMarkedClauseSegment";
+NSString * const NSTextInputReplacementRangeAttributeName=@"NSTextInputReplacementRangeAttributeName";
+NSString * const NSVerticalGlyphFormAttributeName=@"NSVerticalGlyphForm";

@@ -19,8 +19,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - initTextCell:(NSString *)value;
 
 - (BOOL)isOpaque;
-- (float)titleWidth;
-- (float)titleWidth:(NSSize)size;
+- (CGFloat)titleWidth;
+- (CGFloat)titleWidth:(NSSize)size;
 - (NSString *)title;
 - (NSAttributedString *)attributedTitle;
 - (NSFont *)titleFont;
@@ -29,7 +29,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - (NSString *)placeholderString;
 - (NSAttributedString *)placeholderAttributedString;
 
-- (void)setTitleWidth:(float)value;
+- (void)setTitleWidth:(CGFloat)value;
 - (void)setTitle:(NSString *)value;
 - (void)setAttributedTitle:(NSAttributedString *)value;
 - (void)setTitleWithMnemonic:(NSString *)value;

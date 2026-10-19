@@ -71,6 +71,8 @@ typedef enum {
     NSFocusRingAbove
 } NSFocusRingPlacement;
 
+APPKIT_EXPORT void NSSetFocusRingStyle(NSFocusRingPlacement placement);
+
 typedef enum {
     NSFocusRingTypeDefault,
     NSFocusRingTypeNone,

@@ -110,7 +110,7 @@ static NSLock *_cacheLock=nil;
    }
 }
 
-+(unsigned long)_cacheIndexOfFontWithName:(NSString *)name size:(float)size {
++(unsigned long)_cacheIndexOfFontWithName:(NSString *)name size:(CGFloat)size {
    unsigned long i;
 
    for(i=0;i<_fontCacheSize;i++){
@@ -123,7 +123,7 @@ static NSLock *_cacheLock=nil;
    return NSNotFound;
 }
 
-+(NSFont *)cachedFontWithName:(NSString *)name size:(float)size {
++(NSFont *)cachedFontWithName:(NSString *)name size:(CGFloat)size {
 
     NSFont *font = nil;
     [_cacheLock lock];
@@ -167,19 +167,20 @@ static NSLock *_cacheLock=nil;
     [_cacheLock unlock];
 }
 
-+(float)systemFontSize {
-   return 12.0;
+// the sizes macOS uses
++(CGFloat)systemFontSize {
+   return 13.0;
 }
 
-+(float)smallSystemFontSize {
++(CGFloat)smallSystemFontSize {
+   return 11.0;
+}
+
++(CGFloat)labelFontSize {
    return 10.0;
 }
 
-+(float)labelFontSize {
-   return 12.0;
-}
-
-+(float)systemFontSizeForControlSize:(NSControlSize)size {
++(CGFloat)systemFontSizeForControlSize:(NSControlSize)size {
    switch(size){
     default:
     case NSRegularControlSize:
@@ -193,7 +194,7 @@ static NSLock *_cacheLock=nil;
    }
 }
 
-+(NSFont *)_uiFontOfType:(CTFontUIFontType)type size:(float)size fallbackName:(NSString *)fallbackName
++(NSFont *)_uiFontOfType:(CTFontUIFontType)type size:(CGFloat)size fallbackName:(NSString *)fallbackName
 {
     NSFont *result = nil;
     CTFontRef ctFont=CTFontCreateUIFontForLanguage(type,size,nil);
@@ -239,43 +240,52 @@ static NSLock *_cacheLock=nil;
     return result;
 }
 
-+(NSFont *)boldSystemFontOfSize:(float)size {
++(NSFont *)boldSystemFontOfSize:(CGFloat)size {
     NSFont *font = [self systemFontOfSize:size];
     return [[NSFontManager sharedFontManager] convertFont:font toHaveTrait:NSBoldFontMask];
 }
 
-+(NSFont *)controlContentFontOfSize:(float)size {
++(NSFont *)controlContentFontOfSize:(CGFloat)size {
     return [self _uiFontOfType:kCTFontControlContentFontType size:(size==0)?10.0:size fallbackName:@"Inter-Regular"];
 }
 
-+(NSFont *)labelFontOfSize:(float)size {
++(NSFont *)labelFontOfSize:(CGFloat)size {
     return [self _uiFontOfType:kCTFontLabelFontType size:(size==0)?10.0:size fallbackName:@"Inter-Regular"];
 }
 
 /* size==0 means "the default size" - every other +...FontOfSize: substitutes
  * one, and without it the fallback path builds a 0-point font, which measures
  * as zero-width and draws nothing. */
-+(NSFont *)menuFontOfSize:(float)size {
++(NSFont *)menuFontOfSize:(CGFloat)size {
     return [self _uiFontOfType:kCTFontMenuItemFontType size:(size==0)?14.0:size fallbackName:@"Inter-Regular"];
 }
 
-+(NSFont *)menuBarFontOfSize:(float)size {
++(NSFont *)menuBarFontOfSize:(CGFloat)size {
     return [self _uiFontOfType:kCTFontMenuTitleFontType size:(size==0)?14.0:size fallbackName:@"Inter-Regular"];
 }
 
-+(NSFont *)messageFontOfSize:(float)size {
++(NSFont *)messageFontOfSize:(CGFloat)size {
     return [self _uiFontOfType:kCTFontSystemFontType size:(size==0)?10.0:size fallbackName:@"Inter-Regular"];
 }
 
-+(NSFont *)paletteFontOfSize:(float)size {
++(NSFont *)paletteFontOfSize:(CGFloat)size {
     return [self _uiFontOfType:kCTFontPaletteFontType size:(size==0)?10.0:size fallbackName:@"Inter-Regular"];
 }
 
-+(NSFont *)systemFontOfSize:(float)size {
++(NSFont *)systemFontOfSize:(CGFloat)size {
    return [self messageFontOfSize:size];
 }
 
-+(NSFont *)titleBarFontOfSize:(float)size {
+// the UI font has a regular and a bold face here, medium and up use the bold one
++(NSFont *)systemFontOfSize:(CGFloat)size weight:(CGFloat)weight {
+   return weight>=0.23 ? [self boldSystemFontOfSize:size] : [self systemFontOfSize:size];
+}
+
++(NSFont *)monospacedSystemFontOfSize:(CGFloat)size weight:(CGFloat)weight {
+   return [self userFixedPitchFontOfSize:size];
+}
+
++(NSFont *)titleBarFontOfSize:(CGFloat)size {
     NSFont *font = [self fontWithName:@"Inter-Bold" size:(size==0)?13.0:size];
 
     // macOS draws titles bold, the window title type alone resolves to the regular face
@@ -285,20 +295,20 @@ static NSLock *_cacheLock=nil;
     return [[NSFontManager sharedFontManager] convertFont:font toHaveTrait:NSBoldFontMask];
 }
 
-+(NSFont *)toolTipsFontOfSize:(float)size {
++(NSFont *)toolTipsFontOfSize:(CGFloat)size {
     return [self _uiFontOfType:kCTFontToolTipFontType size:(size==0)?9.:size fallbackName:@"Inter-Regular"];
 }
 
 /* Through the UI-font path so the fallback chain applies: a bare
  * +fontWithName: returns nil when that one family is not installed, and
  * callers store the result straight into attribute dictionaries. */
-+(NSFont *)userFontOfSize:(float)size {
++(NSFont *)userFontOfSize:(CGFloat)size {
    return [self _uiFontOfType:kCTFontApplicationFontType size:(size==0)?10.0:size
                  fallbackName:@"Inter-Regular"];
 }
 
 // the application font is proportional, so asking for it here gave text views a non-monospace face
-+(NSFont *)userFixedPitchFontOfSize:(float)size {
++(NSFont *)userFixedPitchFontOfSize:(CGFloat)size {
    return [self _uiFontOfType:kCTFontUserFixedPitchFontType
                          size:(size==0)?12.0:size
                  fallbackName:@"DejaVu Sans Mono"];
@@ -338,7 +348,7 @@ static NSLock *_cacheLock=nil;
     NSKeyedUnarchiver *keyed=(NSKeyedUnarchiver *)coder;
        NSString *fontName = [keyed decodeObjectForKey:@"NSName"];
     NSString          *name=[[NSFont nibFontTranslator] translateFromNibFontName: fontName];
-    float              size=[keyed decodeFloatForKey:@"NSSize"];
+    CGFloat              size=[keyed decodeFloatForKey:@"NSSize"];
     // int                flags=[keyed decodeIntForKey:@"NSfFlags"]; // ?
 
     [self dealloc];
@@ -354,7 +364,7 @@ static NSLock *_cacheLock=nil;
 }
 
 
--initWithName:(NSString *)name size:(float)size {
+-initWithName:(NSString *)name size:(CGFloat)size {
    _name=[name copy];
    _pointSize=size;
    _matrix[0]=_pointSize;
@@ -390,7 +400,7 @@ static NSLock *_cacheLock=nil;
    [super dealloc];
 }
 
-+(NSFont *)fontWithName:(NSString *)name size:(float)size {
++(NSFont *)fontWithName:(NSString *)name size:(CGFloat)size {
    NSFont *result;
 
    if(name==nil)
@@ -408,11 +418,11 @@ static NSLock *_cacheLock=nil;
    return result;
 }
 
-+(NSFont *)fontWithName:(NSString *)name matrix:(const float *)matrix {
++(NSFont *)fontWithName:(NSString *)name matrix:(const CGFloat *)matrix {
    return [self fontWithName:name size:matrix[0]];
 }
 
-+(NSFont *)fontWithDescriptor:(NSFontDescriptor *)descriptor size:(float)size {
++(NSFont *)fontWithDescriptor:(NSFontDescriptor *)descriptor size:(CGFloat)size {
 
         NSDictionary* attributes = [descriptor fontAttributes];
         NSString* fontName = [attributes objectForKey: NSFontNameAttribute];
@@ -455,7 +465,7 @@ static NSLock *_cacheLock=nil;
         return nil;
 }
 
-+(NSFont *)fontWithDescriptor:(NSFontDescriptor *)descriptor size:(float)size textTransform:(NSAffineTransform *)transform {
++(NSFont *)fontWithDescriptor:(NSFontDescriptor *)descriptor size:(CGFloat)size textTransform:(NSAffineTransform *)transform {
    NSUnimplementedMethod();
    return 0;
 }
@@ -464,7 +474,7 @@ static NSLock *_cacheLock=nil;
    return [self retain];
 }
 
--(float)pointSize {
+-(CGFloat)pointSize {
    return _pointSize;
 }
 
@@ -472,7 +482,7 @@ static NSLock *_cacheLock=nil;
    return _name;
 }
 
--(const float *)matrix {
+-(const CGFloat *)matrix {
    return _matrix;
 }
 
@@ -489,8 +499,7 @@ static NSLock *_cacheLock=nil;
 }
 
 -(NSFontRenderingMode)renderingMode {
-   NSUnimplementedMethod();
-   return 0;
+   return NSFontDefaultRenderingMode;
 }
 
 -(NSCharacterSet *)coveredCharacterSet {
@@ -565,9 +574,9 @@ arrayWithArray:[_name componentsSeparatedByString:blank]];
         return descriptor;
 }
 
+// outlines are used everywhere, so the printer and screen fonts are the font itself
 -(NSFont *)printerFont {
-   NSUnimplementedMethod();
-   return nil;
+   return self;
 }
 
 -(NSFont *)screenFont {
@@ -575,8 +584,7 @@ arrayWithArray:[_name componentsSeparatedByString:blank]];
 }
 
 -(NSFont *)screenFontWithRenderingMode:(NSFontRenderingMode)mode {
-   NSUnimplementedMethod();
-   return nil;
+   return self;
 }
 
 -(NSRect)boundingRectForFont {
@@ -584,8 +592,11 @@ arrayWithArray:[_name componentsSeparatedByString:blank]];
 }
 
 -(NSRect)boundingRectForGlyph:(NSGlyph)glyph {
-   NSUnimplementedMethod();
-   return NSMakeRect(0,0,0,0);
+   CGGlyph cgGlyph=glyph;
+   CGRect  rect;
+
+   CTFontGetBoundingRectsForGlyphs((CTFontRef)_ctFont,kCTFontOrientationDefault,&cgGlyph,&rect,1);
+   return NSMakeRect(rect.origin.x,rect.origin.y,rect.size.width,rect.size.height);
 }
 
 -(NSMultibyteGlyphPacking)glyphPacking {
@@ -597,8 +608,7 @@ arrayWithArray:[_name componentsSeparatedByString:blank]];
 }
 
 -(NSGlyph)glyphWithName:(NSString *)name {
-   NSUnimplementedMethod();
-   return 0;
+   return CTFontGetGlyphWithName((CTFontRef)_ctFont,(CFStringRef)name);
 }
 
 -(BOOL)glyphIsEncoded:(NSGlyph)glyph {
@@ -679,15 +689,15 @@ arrayWithArray:[_name componentsSeparatedByString:blank]];
    return YES;
 }
 
--(float)italicAngle {
+-(CGFloat)italicAngle {
    return CTFontGetSlantAngle(_ctFont);
 }
 
--(float)xHeight {
+-(CGFloat)xHeight {
    return CTFontGetXHeight(_ctFont);
 }
 
--(float)capHeight {
+-(CGFloat)capHeight {
    return CTFontGetCapHeight(_ctFont);
 }
 
@@ -731,7 +741,14 @@ arrayWithArray:[_name componentsSeparatedByString:blank]];
 }
 
 -(void)getBoundingRects:(NSRect *)rects forGlyphs:(const NSGlyph *)glyphs count:(unsigned)count {
-   NSUnimplementedMethod();
+   CGGlyph cgGlyphs[count];
+   CGRect  cgRects[count];
+
+   for(unsigned i=0;i<count;i++)
+    cgGlyphs[i]=glyphs[i];
+   CTFontGetBoundingRectsForGlyphs((CTFontRef)_ctFont,kCTFontOrientationDefault,cgGlyphs,cgRects,count);
+   for(unsigned i=0;i<count;i++)
+    rects[i]=NSMakeRect(cgRects[i].origin.x,cgRects[i].origin.y,cgRects[i].size.width,cgRects[i].size.height);
 }
 
 -(unsigned)getGlyphs:(NSGlyph *)glyphs forCharacters:(unichar *)characters length:(unsigned)length {

@@ -19,8 +19,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - (void)setBordered:(BOOL)value;
 - (void)setBezeled:(BOOL)value;
 
-- (void)setEntryWidth:(float)value;
-- (void)setInterlineSpacing:(float)value;
+- (void)setEntryWidth:(CGFloat)value;
+- (void)setInterlineSpacing:(CGFloat)value;
 
 - (void)setTitleAlignment:(NSTextAlignment)value;
 - (void)setTitleFont:(NSFont *)value;

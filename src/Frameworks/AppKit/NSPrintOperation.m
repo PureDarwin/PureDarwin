@@ -31,6 +31,10 @@ static NSPrintOperation *_currentOperation=nil;
    return _currentOperation;
 }
 
++(void)setCurrentOperation:(NSPrintOperation *)operation {
+   _currentOperation=operation;
+}
+
 -initWithView:(NSView *)view printInfo:(NSPrintInfo *)printInfo insideRect:(NSRect)rect toData:(NSMutableData *)data type:(int)type {
    _view=[view retain];
    _printInfo=[printInfo copy];

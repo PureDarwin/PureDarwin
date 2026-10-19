@@ -9,14 +9,39 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <Foundation/NSObject.h>
 #import <ApplicationServices/ApplicationServices.h>
 
+typedef NS_ENUM(NSInteger, NSColorSpaceModel) {
+    NSColorSpaceModelUnknown = -1,
+    NSColorSpaceModelGray,
+    NSColorSpaceModelRGB,
+    NSColorSpaceModelCMYK,
+    NSColorSpaceModelLAB,
+    NSColorSpaceModelDeviceN,
+    NSColorSpaceModelIndexed,
+    NSColorSpaceModelPatterned,
+};
+
 @interface NSColorSpace : NSObject {
     CGColorSpaceRef _cgColorSpace;
 }
 
 + (NSColorSpace *)deviceRGBColorSpace;
++ (NSColorSpace *)genericRGBColorSpace;
++ (NSColorSpace *)sRGBColorSpace;
++ (NSColorSpace *)extendedSRGBColorSpace;
++ (NSColorSpace *)displayP3ColorSpace;
++ (NSColorSpace *)adobeRGB1998ColorSpace;
++ (NSColorSpace *)deviceGrayColorSpace;
++ (NSColorSpace *)genericGrayColorSpace;
++ (NSColorSpace *)genericGamma22GrayColorSpace;
++ (NSColorSpace *)extendedGenericGamma22GrayColorSpace;
++ (NSColorSpace *)deviceCMYKColorSpace;
++ (NSColorSpace *)genericCMYKColorSpace;
 
 - initWithCGColorSpace:(CGColorSpaceRef)cgColorSpace;
 
 - (CGColorSpaceRef)CGColorSpace;
+- (NSColorSpaceModel)colorSpaceModel;
+- (NSInteger)numberOfColorComponents;
+- (NSString *)localizedName;
 
 @end

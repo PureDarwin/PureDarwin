@@ -166,15 +166,15 @@ static void CGPathConverter( void* info, const CGPathElement* element )
    return result;
 }
 
-+(float)defaultLineWidth {
++(CGFloat)defaultLineWidth {
    return _defaultLineWidth;
 }
 
-+(float)defaultMiterLimit {
++(CGFloat)defaultMiterLimit {
    return _defaultMiterLimit;
 }
 
-+(float)defaultFlatness {
++(CGFloat)defaultFlatness {
    return _defaultFlatness;
 }
 
@@ -190,15 +190,15 @@ static void CGPathConverter( void* info, const CGPathElement* element )
    return _defaultLineJoinStyle;
 }
 
-+(void)setDefaultLineWidth:(float)width {
++(void)setDefaultLineWidth:(CGFloat)width {
    _defaultLineWidth=width;
 }
 
-+(void)setDefaultMiterLimit:(float)limit {
++(void)setDefaultMiterLimit:(CGFloat)limit {
    _defaultMiterLimit=limit;
 }
 
-+(void)setDefaultFlatness:(float)flatness {
++(void)setDefaultFlatness:(CGFloat)flatness {
    _defaultFlatness=flatness;
 }
 
@@ -262,21 +262,21 @@ static void CGPathConverter( void* info, const CGPathElement* element )
    CGContextClipToRect(context,rect);
 }
 
--(float)lineWidth {
+-(CGFloat)lineWidth {
    if(_lineWidthIsDefault)
     return _defaultLineWidth;
    else
     return _lineWidth;
 }
 
--(float)miterLimit {
+-(CGFloat)miterLimit {
    if(_miterLimitIsDefault)
     return _defaultMiterLimit;
    else
     return _miterLimit;
 }
 
--(float)flatness {
+-(CGFloat)flatness {
    if(_flatnessIsDefault)
     return _defaultFlatness;
    else
@@ -304,7 +304,7 @@ static void CGPathConverter( void* info, const CGPathElement* element )
     return _lineJoinStyle;
 }
 
--(void)getLineDash:(float *)dashes count:(int *)count phase:(float *)phase {
+-(void)getLineDash:(CGFloat *)dashes count:(int *)count phase:(CGFloat *)phase {
    if(dashes!=NULL){
     int i;
 
@@ -361,17 +361,17 @@ static int numberOfPointsForOperator(int op){
    return _elements[index];
 }
 
--(void)setLineWidth:(float)width {
+-(void)setLineWidth:(CGFloat)width {
    _lineWidth=width;
    _lineWidthIsDefault=NO;
 }
 
--(void)setMiterLimit:(float)limit {
+-(void)setMiterLimit:(CGFloat)limit {
    _miterLimit=limit;
    _miterLimitIsDefault=NO;
 }
 
--(void)setFlatness:(float)flatness {
+-(void)setFlatness:(CGFloat)flatness {
    _flatness=flatness;
    _flatnessIsDefault=NO;
 }
@@ -391,7 +391,7 @@ static int numberOfPointsForOperator(int op){
    _lineJoinStyleIsDefault=NO;
 }
 
--(void)setLineDash:(const float *)dashes count:(int)count phase:(float)phase {
+-(void)setLineDash:(const CGFloat *)dashes count:(int)count phase:(CGFloat)phase {
    if(_dashes!=NULL)
     NSZoneFree(NULL,_dashes);
 
@@ -755,7 +755,7 @@ static void cgArcFromApply(void *info,const CGPathElement *element) {
    CGPathRelease(path);
 }
 
--(void)appendBezierPathWithArcFromPoint:(NSPoint)point toPoint:(NSPoint)toPoint radius:(float)radius {
+-(void)appendBezierPathWithArcFromPoint:(NSPoint)point toPoint:(NSPoint)toPoint radius:(CGFloat)radius {
    if(_numberOfPoints==0){
     NSLog(@"-[%@ %s] no current point",[self class],_cmd);
     return;
@@ -783,11 +783,11 @@ static inline CGFloat degreesToRadians(CGFloat degrees){
    return degrees*M_PI/180.0;
 }
 
--(void)appendBezierPathWithArcWithCenter:(NSPoint)center radius:(float)radius startAngle:(float)startAngle endAngle:(float)endAngle {
+-(void)appendBezierPathWithArcWithCenter:(NSPoint)center radius:(CGFloat)radius startAngle:(CGFloat)startAngle endAngle:(CGFloat)endAngle {
    [self appendBezierPathWithArcWithCenter:center radius:radius startAngle:startAngle endAngle:endAngle clockwise:NO];
 }
 
--(void)appendBezierPathWithArcWithCenter:(NSPoint)center radius:(float)radius startAngle:(float)startAngle endAngle:(float)endAngle clockwise:(BOOL)clockwise {
+-(void)appendBezierPathWithArcWithCenter:(NSPoint)center radius:(CGFloat)radius startAngle:(CGFloat)startAngle endAngle:(CGFloat)endAngle clockwise:(BOOL)clockwise {
    CGMutablePathRef path=CGPathCreateMutable();
    CGPathAddArc(path,NULL,center.x,center.y,radius,degreesToRadians(startAngle),degreesToRadians(endAngle),clockwise);
    CGPathApply(path,self,cgArcApply);

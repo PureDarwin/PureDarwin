@@ -19,7 +19,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 @implementation NSScroller
 
-+(float)scrollerWidth {
++(CGFloat)scrollerWidth {
    return [[NSDisplay currentDisplay] scrollerWidth];
 }
 
@@ -112,11 +112,11 @@ static NSAppleScrollBarVariant appleScrollBarVariant(NSScroller *self){
    return sFlags.isHoriz?NO:YES;
 }
 
--(float)floatValue {
+-(CGFloat)floatValue {
    return _floatValue;
 }
 
--(float)knobProportion {
+-(CGFloat)knobProportion {
    return _knobProportion;
 }
 
@@ -127,7 +127,7 @@ static NSAppleScrollBarVariant appleScrollBarVariant(NSScroller *self){
 - (NSControlSize)controlSize {
     return _controlSize; }
 
--(void)setFloatValue:(float)zeroToOneValue knobProportion:(float)zeroToOneKnob {
+-(void)setFloatValue:(CGFloat)zeroToOneValue knobProportion:(CGFloat)zeroToOneKnob {
     if(zeroToOneValue>1)
         zeroToOneValue=1;
     if(zeroToOneValue<0)
@@ -582,3 +582,5 @@ static inline float roundFloat(float value){
 }
 
 @end
+
+NSString * const NSPreferredScrollerStyleDidChangeNotification=@"NSPreferredScrollerStyleDidChangeNotification";

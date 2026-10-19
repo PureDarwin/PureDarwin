@@ -222,7 +222,7 @@ NSString * const NSSplitViewWillResizeSubviewsNotification = @"NSSplitViewWillRe
     [self _postNoteDidResize];
 }
 
--(float)dividerThickness {
+-(CGFloat)dividerThickness {
 	if (_dividerStyle == NSSplitViewDividerStyleThick) {
 		return 10;
 	} else {
@@ -395,13 +395,13 @@ static float constrainTo(float value,float min,float max){
    }
 }
 
-- (float)minPossiblePositionOfDividerAtIndex:(int)index
+- (CGFloat)minPossiblePositionOfDividerAtIndex:(int)index
 {
     NSUnimplementedMethod();
     return 0;
 }
 
-- (float)maxPossiblePositionOfDividerAtIndex:(int)index
+- (CGFloat)maxPossiblePositionOfDividerAtIndex:(int)index
 {
     NSUnimplementedMethod();
     return 0;
@@ -410,7 +410,7 @@ static float constrainTo(float value,float min,float max){
 /** adjusts the subviews on either side of the divider while
  * honoring the constraints imposed by the delegate (if any)
  */
-- (void)setPosition:(float)position ofDividerAtIndex:(int)index
+- (void)setPosition:(CGFloat)position ofDividerAtIndex:(int)index
 {
     NSAssert(index >= 0 && index < [[self subviews] count] - 1, @"divider index out of range");
     

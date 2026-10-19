@@ -27,7 +27,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - (NSAttributedString *)attributedTitle;
 - (NSAttributedString *)attributedAlternateTitle;
 - (BOOL)showsBorderOnlyWhileMouseInside;
-- (void)getPeriodicDelay:(float *)delay interval:(float *)interval;
+- (void)getPeriodicDelay:(CGFloat *)delay interval:(CGFloat *)interval;
 
 - (void)setTransparent:(BOOL)value;
 - (void)setKeyEquivalent:(NSString *)value;
@@ -46,7 +46,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - (void)setAttributedTitle:(NSAttributedString *)value;
 - (void)setAttributedAlternateTitle:(NSAttributedString *)value;
 - (void)setShowsBorderOnlyWhileMouseInside:(BOOL)value;
-- (void)setPeriodicDelay:(float)delay interval:(float)interval;
+- (void)setPeriodicDelay:(CGFloat)delay interval:(CGFloat)interval;
 
 - (void)setButtonType:(NSButtonType)value;
 - (void)setTitleWithMnemonic:(NSString *)value;

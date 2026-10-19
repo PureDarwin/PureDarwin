@@ -271,11 +271,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return [[self matrixInColumn:column] selectedRow];
 }
 
--(float)seperatorWidth {
+-(CGFloat)seperatorWidth {
    return 2;
 }
 
--(float)titleHeight {
+-(CGFloat)titleHeight {
    return 20;
 }
 

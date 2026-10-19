@@ -59,7 +59,7 @@ NSString * const NSFontSlantTrait = @"NSFontSlantTrait";
    return [[[self allocWithZone:NULL] initWithFontAttributes:attributes] autorelease];
 }
 
-+fontDescriptorWithName:(NSString *)name size:(float)pointSize {
++fontDescriptorWithName:(NSString *)name size:(CGFloat)pointSize {
    NSDictionary *attributes=[NSDictionary dictionaryWithObjectsAndKeys:
     name,NSFontNameAttribute,
     [[NSNumber numberWithFloat:pointSize] stringValue],NSFontSizeAttribute,
@@ -76,7 +76,7 @@ NSString * const NSFontSlantTrait = @"NSFontSlantTrait";
    return [_attributes objectForKey:attributeKey];
 }
 
--(float)pointSize {
+-(CGFloat)pointSize {
    return [[_attributes objectForKey:NSFontSizeAttribute] floatValue];
 }
 
@@ -121,7 +121,7 @@ NSString * const NSFontSlantTrait = @"NSFontSlantTrait";
    return [[self class] fontDescriptorWithFontAttributes:copy];
 }
 
--(NSFontDescriptor *)fontDescriptorWithSize:(float)pointSize {
+-(NSFontDescriptor *)fontDescriptorWithSize:(CGFloat)pointSize {
    NSMutableDictionary *copy=[NSMutableDictionary dictionaryWithDictionary:_attributes];
 
    [copy setObject:[NSNumber numberWithFloat:pointSize] forKey:NSFontSizeAttribute];

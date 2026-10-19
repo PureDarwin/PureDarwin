@@ -31,7 +31,7 @@ NSString * const NSComboBoxWillPopUpNotification=@"NSComboBoxWillPopUpNotificati
    return [[self cell] isButtonBordered];
 }
 
--(float)itemHeight {
+-(CGFloat)itemHeight {
    return [[self cell] itemHeight];
 }
 
@@ -66,7 +66,7 @@ NSString * const NSComboBoxWillPopUpNotification=@"NSComboBoxWillPopUpNotificati
    [self setNeedsDisplay:YES];
 }
 
--(void)setItemHeight:(float)value {
+-(void)setItemHeight:(CGFloat)value {
    [[self cell] setItemHeight:value];
    [self setNeedsDisplay:YES];
 }

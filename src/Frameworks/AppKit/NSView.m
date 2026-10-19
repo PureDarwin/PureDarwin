@@ -8,6 +8,10 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
 #import <AppKit/NSView.h>
+#include <stdio.h>
+#include <stdlib.h>
+#import <AppKit/NSTextInputContext.h>
+#import <objc/runtime.h>
 #import <AppKit/NSLayoutConstraint.h>
 #import <objc/runtime.h>
 #import <AppKit/NSApplication.h>
@@ -28,6 +32,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSPrintInfo.h>
 #import <Foundation/NSKeyedArchiver.h>
 #import <AppKit/NSPasteboard.h>
+#import <AppKit/NSWorkspace.h>
+#import <AppKit/NSBitmapImageRep.h>
+#import <AppKit/NSClipView.h>
+#import <AppKit/NSScreen.h>
+#import <Foundation/NSProcessInfo.h>
 #import <AppKit/NSObject+BindingSupport.h>
 #import <Onyx2D/O2Context.h>
 #import <AppKit/NSRaise.h>
@@ -39,6 +48,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <QuartzCore/CAMetalLayer-Private.h>
 
 NSString * const NSViewFrameDidChangeNotification=@"NSViewFrameDidChangeNotification";
+// posted with the frame change, the window position isn't tracked separately for OpenGL surfaces
+NSString * const NSViewGlobalFrameDidChangeNotification=@"NSViewGlobalFrameDidChangeNotification";
 NSString * const NSViewBoundsDidChangeNotification=@"NSViewBoundsDidChangeNotification";
 NSString * const NSViewFocusDidChangeNotification=@"NSViewFocusDidChangeNotification";
 
@@ -50,6 +61,10 @@ NSString * const NSViewFocusDidChangeNotification=@"NSViewFocusDidChangeNotifica
 @end
 
 void _NSAppearanceDrawView(NSView *view, void (^draw)(void));
+
+@interface CALayer (PDContentsWithoutRender)
+-(void)_setContentsWithoutRender:(id)value;
+@end
 
 @implementation NSView
 
@@ -68,8 +83,7 @@ static BOOL NSViewLayersEnabled=NO;
 }
 
 +(NSFocusRingType)defaultFocusRingType {
-   NSUnimplementedMethod();
-   return 0;
+   return NSFocusRingTypeExterior;
 }
 
 -(void)encodeWithCoder:(NSCoder *)coder {
@@ -286,6 +300,10 @@ static inline void configureLayerGeometry(NSView *self){
    [CATransaction setDisableActions:YES];
 
    [layer setAnchorPoint:CGPointMake(0,0)];
+   // a backing layer is flipped where the view's flippedness differs from its superview's,
+   // since layer geometry nests the way view coordinates do
+   if([layer isKindOfClass:[NSViewBackingLayer class]])
+    [layer setGeometryFlipped:[self isFlipped]!=[self->_superview isFlipped]];
 
    if([layer superlayer]==nil)
     [layer setPosition:CGPointMake(0,0)];
@@ -336,8 +354,7 @@ static inline void buildTransformsIfNeeded(NSView *self) {
 }
 
 -(CGFloat)frameCenterRotation {
-   NSUnimplementedMethod();
-   return 0.;
+   return [self frameRotation];
 }
 
 -(NSRect)bounds {
@@ -349,17 +366,28 @@ static inline void buildTransformsIfNeeded(NSView *self) {
 }
 
 -(BOOL)isRotatedFromBase {
-   NSUnimplementedMethod();
+   for(NSView *view=self;view!=nil;view=[view superview])
+    if([view frameRotation]!=0 || [view boundsRotation]!=0)
+     return YES;
    return NO;
 }
 
 -(BOOL)isRotatedOrScaledFromBase {
-   NSUnimplementedMethod();
+   for(NSView *view=self;view!=nil;view=[view superview]){
+    NSRect frame=[view frame],bounds=[view bounds];
+
+    if([view frameRotation]!=0 || [view boundsRotation]!=0)
+     return YES;
+    if(!NSEqualSizes(frame.size,bounds.size))
+     return YES;
+   }
    return NO;
 }
 
 -(void)translateOriginToPoint:(NSPoint)point {
-   NSUnimplementedMethod();
+   NSRect bounds=[self bounds];
+
+   [self setBoundsOrigin:NSMakePoint(NSMinX(bounds)-point.x,NSMinY(bounds)-point.y)];
 }
 
 -(void)rotateByAngle:(CGFloat)angle {
@@ -375,7 +403,15 @@ static inline void buildTransformsIfNeeded(NSView *self) {
 }
 
 -(void)scaleUnitSquareToSize:(NSSize)size {
-   NSUnimplementedMethod();
+   NSRect bounds=[self bounds];
+
+   if(size.width==0 || size.height==0)
+    return;
+   bounds.origin.x/=size.width;
+   bounds.origin.y/=size.height;
+   bounds.size.width/=size.width;
+   bounds.size.height/=size.height;
+   [self setBounds:bounds];
 }
 
 -(NSWindow *)window {
@@ -400,7 +436,9 @@ static inline void buildTransformsIfNeeded(NSView *self) {
 }
 
 -(NSView *)ancestorSharedWithView:(NSView *)view {
-   NSUnimplementedMethod();
+   for(NSView *mine=self;mine!=nil;mine=[mine superview])
+    if(view==mine || [view isDescendantOf:mine])
+     return mine;
    return nil;
 }
 
@@ -415,8 +453,7 @@ static inline void buildTransformsIfNeeded(NSView *self) {
 }
 
 -(NSRect)adjustScroll:(NSRect)toRect {
-   NSUnimplementedMethod();
-   return NSZeroRect;
+   return toRect;
 }
 
 -(NSArray *)subviews {
@@ -448,12 +485,16 @@ static inline void buildTransformsIfNeeded(NSView *self) {
 }
 
 -(CGFloat)alphaValue {
-   NSUnimplementedMethod();
-   return 0.;
+   NSNumber *value=objc_getAssociatedObject(self,@selector(alphaValue));
+
+   return value?[value doubleValue]:1.0;
 }
 
 -(void)setAlphaValue:(CGFloat)alpha {
-   NSUnimplementedMethod();
+   alpha=MAX(0,MIN(1,alpha));
+   objc_setAssociatedObject(self,@selector(alphaValue),[NSNumber numberWithDouble:alpha],OBJC_ASSOCIATION_RETAIN);
+   [_layer setOpacity:alpha];
+   [self setNeedsDisplay:YES];
 }
 
 -(int)gState {
@@ -467,17 +508,26 @@ static inline void buildTransformsIfNeeded(NSView *self) {
 }
 
 -(BOOL)wantsDefaultClipping {
-   NSUnimplementedMethod();
-   return NO;
+   return YES;
 }
 
 -(NSBitmapImageRep *)bitmapImageRepForCachingDisplayInRect:(NSRect)rect {
-   NSUnimplementedMethod();
-   return nil;
+   NSRect pixels=[self convertRectToBacking:rect];
+   NSBitmapImageRep *rep=[[[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
+      pixelsWide:MAX(1,(NSInteger)ceil(NSWidth(pixels))) pixelsHigh:MAX(1,(NSInteger)ceil(NSHeight(pixels)))
+      bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace
+      bytesPerRow:0 bitsPerPixel:32] autorelease];
+
+   [rep setSize:rect.size];
+   return rep;
 }
 
 -(void)cacheDisplayInRect:(NSRect)rect toBitmapImageRep:(NSBitmapImageRep *)imageRep {
-   NSUnimplementedMethod();
+   NSGraphicsContext *context=[NSGraphicsContext graphicsContextWithBitmapImageRep:imageRep];
+
+   if(context==nil)
+    return;
+   [self displayRectIgnoringOpacity:rect inContext:context];
 }
 
 -(BOOL)isHidden {
@@ -591,7 +641,13 @@ static inline void buildTransformsIfNeeded(NSView *self) {
 }
 
 -(NSMenuItem *)enclosingMenuItem {
-   NSUnimplementedMethod();
+   // menu items here draw themselves, a custom view finds its item through its menu
+   for(NSView *view=self;view!=nil;view=[view superview]){
+    NSMenuItem *item=objc_getAssociatedObject(view,@selector(enclosingMenuItem));
+
+    if(item!=nil)
+     return item;
+   }
    return nil;
 }
 
@@ -737,6 +793,8 @@ static inline void buildTransformsIfNeeded(NSView *self) {
 // as on macOS, a frame change goes through -setFrameOrigin: and -setFrameSize:, so a
 // subclass that overrides either one sees every resize
 -(void)setFrame:(NSRect)frame {
+   if(getenv("PD_CA_TRACE"))
+    fprintf(stderr,"PD-CA view %s %p setFrame: %g %g %g %g\n",object_getClassName(self),self,frame.origin.x,frame.origin.y,frame.size.width,frame.size.height);
    if(!NSEqualPoints(frame.origin,_frame.origin))
     [self setFrameOrigin:frame.origin];
    if(!NSEqualSizes(frame.size,_frame.size))
@@ -816,9 +874,12 @@ static void updateMetalLayer(NSView *self){
 
    if(_postsNotificationOnFrameChange)
     [[NSNotificationCenter defaultCenter] postNotificationName:NSViewFrameDidChangeNotification object:self];
+    [[NSNotificationCenter defaultCenter] postNotificationName:NSViewGlobalFrameDidChangeNotification object:self];
 }
 
 -(void)setFrameSize:(NSSize)size {
+   if(getenv("PD_CA_TRACE"))
+    fprintf(stderr,"PD-CA view %s %p setFrameSize: %g %g\n",object_getClassName(self),self,size.width,size.height);
    NSRect frame=_frame;
 
    frame.size=size;
@@ -833,11 +894,13 @@ static void updateMetalLayer(NSView *self){
 }
 
 -(void)setFrameRotation:(CGFloat)angle {
-   NSUnimplementedMethod();
+   _frameRotation=angle;
+   invalidateTransform(self);
+   [self setNeedsDisplay:YES];
 }
 
 -(void)setFrameCenterRotation:(CGFloat)angle {
-   NSUnimplementedMethod();
+   [self setFrameRotation:angle];
 }
 
 -(void)setBounds:(NSRect)bounds {
@@ -869,7 +932,9 @@ static void updateMetalLayer(NSView *self){
 }
 
 -(void)setBoundsRotation:(CGFloat)angle {
-   NSUnimplementedMethod();
+   _boundsRotation=angle;
+   invalidateTransform(self);
+   [self setNeedsDisplay:YES];
 }
 
 -(void)setPostsFrameChangedNotifications:(BOOL)flag {
@@ -935,6 +1000,7 @@ static void updateMetalLayer(NSView *self){
    [self setNeedsDisplayInRect:[view frame]];
 
    [view viewDidMoveToSuperview];
+   [self didAddSubview:view];
 
    if(_wantsLayer)
     [view setWantsLayer:YES];
@@ -980,15 +1046,16 @@ static void updateMetalLayer(NSView *self){
 }
 
 -(void)sortSubviewsUsingFunction:(NSComparisonResult (*)(id, id, void *))compareFunction context:(void *)context {
-   NSUnimplementedMethod();
+   [_subviews sortUsingFunction:compareFunction context:context];
+   [self setNeedsDisplay:YES];
 }
 
 -(void)didAddSubview:(NSView *)subview {
-   NSUnimplementedMethod();
+   // for subclasses
 }
 
 -(void)willRemoveSubview:(NSView *)subview {
-   NSUnimplementedMethod();
+   // for subclasses
 }
 
 -(void)setAutoresizesSubviews:(BOOL)flag {
@@ -1022,26 +1089,23 @@ static void updateMetalLayer(NSView *self){
 }
 
 -(BOOL)acceptsFirstMouse:(NSEvent *)event {
-   NSUnimplementedMethod();
    return NO;
 }
 
 -(BOOL)acceptsTouchEvents {
-   NSUnimplementedMethod();
-   return NO;
+   return [objc_getAssociatedObject(self,@selector(acceptsTouchEvents)) boolValue];
 }
 
 -(void)setAcceptsTouchEvents:(BOOL)accepts {
-   NSUnimplementedMethod();
+   objc_setAssociatedObject(self,@selector(acceptsTouchEvents),[NSNumber numberWithBool:accepts],OBJC_ASSOCIATION_RETAIN);
 }
 
 -(BOOL)wantsRestingTouches {
-   NSUnimplementedMethod();
-   return NO;
+   return [objc_getAssociatedObject(self,@selector(wantsRestingTouches)) boolValue];
 }
 
 -(void)setWantsRestingTouches:(BOOL)wants {
-   NSUnimplementedMethod();
+   objc_setAssociatedObject(self,@selector(wantsRestingTouches),[NSNumber numberWithBool:wants],OBJC_ASSOCIATION_RETAIN);
 }
 
 -(void)setToolTip:(NSString *)string {
@@ -1209,9 +1273,19 @@ static void updateMetalLayer(NSView *self){
    [self removeTrackingArea:[_trackingAreas objectAtIndex:(NSUInteger)tag]];
 }
 
+// a text input client gets one context for its lifetime, other views have none, as on macOS
 -(NSTextInputContext *)inputContext {
-   NSUnimplementedMethod();
-   return nil;
+   static char key;
+   NSTextInputContext *context;
+
+   if(![self respondsToSelector:@selector(insertText:replacementRange:)])
+    return nil;
+   context=objc_getAssociatedObject(self,&key);
+   if(context==nil){
+    context=[[[NSTextInputContext alloc] initWithClient:(id<NSTextInputClient>)self] autorelease];
+    objc_setAssociatedObject(self,&key,context,OBJC_ASSOCIATION_RETAIN);
+   }
+   return context;
 }
 
 -(void)registerForDraggedTypes:(NSArray *)types {
@@ -1249,6 +1323,7 @@ static void updateMetalLayer(NSView *self){
    NSView *removeFrom=_superview;
    NSWindow *window=[self window];
 
+   [removeFrom willRemoveSubview:self];
    [self _deepResignFirstResponder];
    [self _setSuperview:nil];
    [self _setWindow:nil];
@@ -1274,7 +1349,6 @@ static void updateMetalLayer(NSView *self){
 }
 
 -(BOOL)shouldDelayWindowOrderingForEvent:(NSEvent *)event {
-   NSUnimplementedMethod();
    return NO;
 }
 
@@ -1364,12 +1438,10 @@ static void updateMetalLayer(NSView *self){
 }
 
 -(BOOL)preservesContentDuringLiveResize {
-   NSUnimplementedMethod();
    return NO;
 }
 
 -(NSRect)rectPreservedDuringLiveResize {
-   NSUnimplementedMethod();
    return NSZeroRect;
 }
 
@@ -1384,8 +1456,13 @@ static void updateMetalLayer(NSView *self){
 }
 
 -(BOOL)enterFullScreenMode:(NSScreen *)screen withOptions:(NSDictionary *)options {
-   NSUnimplementedMethod();
-   return NO;
+   NSWindow *window=[self window];
+
+   if(window==nil)
+    return NO;
+   if(!([window styleMask]&NSFullScreenWindowMask))
+    [window toggleFullScreen:self];
+   return YES;
 }
 
 -(BOOL)isInFullScreenMode {
@@ -1394,7 +1471,10 @@ static void updateMetalLayer(NSView *self){
 }
 
 -(void)exitFullScreenModeWithOptions:(NSDictionary *)options {
-   NSUnimplementedMethod();
+   NSWindow *window=[self window];
+
+   if([window styleMask]&NSFullScreenWindowMask)
+    [window toggleFullScreen:self];
 }
 
 -(NSClipView *)_enclosingClipView {
@@ -1472,7 +1552,7 @@ static void updateMetalLayer(NSView *self){
 }
 
 -(void)scrollClipView:(NSClipView *)clipView toPoint:(NSPoint)newOrigin {
-   NSUnimplementedMethod();
+   [clipView scrollToPoint:newOrigin];
 }
 
 -(BOOL)mouse:(NSPoint)point inRect:(NSRect)rect {
@@ -1480,7 +1560,7 @@ static void updateMetalLayer(NSView *self){
 }
 
 -(void)reflectScrolledClipView:(NSClipView *)view {
-   NSUnimplementedMethod();
+   [_superview reflectScrolledClipView:view];
 }
 
 -(void)allocateGState {
@@ -1564,11 +1644,60 @@ static CGFloat backingScale(NSView *self){
 -(void)_createLayerContextIfNeeded {
    if([_superview layer]==nil){
     _layerContext=[[CALayerContext alloc] initWithFrame:[self frame]];
+    [_layerContext setDelegate:self];
     [_layerContext setLayer:_layer];
    }
 }
 
+// only the layer tree changed, so recomposite it over what the views last drew: as with CoreAnimation
+// a sublayer or contents change does not run -drawRect: (Gecko commits ~60 frames a second)
+-(void)layerContextNeedsDisplay:(CALayerContext *)context {
+   if(![self canDraw]){
+    [self setNeedsDisplay:YES];
+    return;
+   }
+   [self _drawLayerContext];
+   [[self window] flushWindow];
+}
+
+// the layer tree renders offscreen, its pixels go into the window over what the views drew
+-(void)_drawLayerContext {
+   CGImageRef image;
+
+
+   if(_layerContext==nil || ![self canDraw])
+    return;
+   // a bare backing layer has nothing of its own to show, so skip the readback
+   if([[_layer sublayers] count]==0 && [_layer contents]==nil && [_layer backgroundColor]==NULL && [_layer borderWidth]==0)
+    return;
+   [_layerContext render];
+   if((image=[_layerContext createImage])==NULL)
+    return;
+   // a view with a layer draws into a bitmap of its own, so this goes to the window's context directly
+   NSGraphicsContext *windowContext=[[self window] graphicsContext];
+   CGContextRef port=[windowContext graphicsPort];
+   NSRect bounds=[self bounds];
+
+   if(port==NULL){
+    CGImageRelease(image);
+    return;
+   }
+   CGContextSaveGState(port);
+   CGContextResetClip(port);
+   CGContextSetCTM(port,[self transformToWindow]);
+   CGContextClipToRect(port,[self visibleRect]);
+   if([self isFlipped]){
+    CGContextTranslateCTM(port,0,NSMaxY(bounds)+NSMinY(bounds));
+    CGContextScaleCTM(port,1,-1);
+   }
+   CGContextDrawImage(port,bounds,image);
+   CGContextRestoreGState(port);
+   CGImageRelease(image);
+}
+
 -(void)_addLayerToSuperlayer {
+   if(_layer==nil)
+    return;
    [[_superview layer] addSublayer:_layer];
    [self _createLayerContextIfNeeded];
 }
@@ -1598,16 +1727,16 @@ static CGFloat backingScale(NSView *self){
    // a backing CAMetalLayer (makeBackingLayer overridden, as Metal and Vulkan views do) goes to its own
    // subsurface, which needs no CALayer renderer
    if(!NSViewLayersEnabled){
-    if(_layer==nil){
-     CALayer *layer=[self makeBackingLayer];
+    // a view that asks for a layer gets one as on macOS: apps take -layer as the root of their own tree
+    // (Firefox adds its tiles under it), so it renders like a hosted layer
+    CALayer *layer=_layer==nil ? [self makeBackingLayer] : nil;
 
-     if([layer isKindOfClass:[CAMetalLayer class]]){
-      [self setLayer:layer];
-      // the view is its backing layer's delegate, and the layer is sized like the view from the start:
-      // Vulkan reads the surface's extent before the window shows
-      [layer setDelegate:self];
-      configureLayerGeometry(self);
-     }
+    if(layer!=nil && (_wantsLayer || [layer isKindOfClass:[CAMetalLayer class]])){
+     [self setLayer:layer];
+     // the view is its backing layer's delegate, and the layer is sized like the view from the start:
+     // Vulkan reads the surface's extent before the window shows
+     [layer setDelegate:self];
+     configureLayerGeometry(self);
     }
     [_subviews makeObjectsPerformSelector:_cmd];
     return;
@@ -1624,6 +1753,8 @@ static CGFloat backingScale(NSView *self){
 }
 
 -(void)setWantsLayer:(BOOL)value {
+   if(getenv("PD_CA_TRACE"))
+    fprintf(stderr,"PD-CA view %s %p setWantsLayer: %d\n",object_getClassName(self),self,value);
    if(!value){
     if(_wantsLayer){
      _wantsLayer=NO;
@@ -1639,6 +1770,8 @@ static CGFloat backingScale(NSView *self){
 }
 
 -(void)setLayer:(CALayer *)value {
+   if(getenv("PD_CA_TRACE"))
+    fprintf(stderr,"PD-CA view %s %p setLayer: %s %p\n",object_getClassName(self),self,value ? object_getClassName(value) : "nil",value);
    // a hosted CAMetalLayer goes to its own subsurface, outside the CALayer renderer (which may be off)
    if([value isKindOfClass:[CAMetalLayer class]] || [_layer isKindOfClass:[CAMetalLayer class]]){
     if(value==_layer)
@@ -1652,9 +1785,7 @@ static CGFloat backingScale(NSView *self){
     return;
    }
 
-   if(!NSViewLayersEnabled)
-    return;
-
+   // a layer the app hosts always renders, the NSViewLayersEnabled default only governs backing layers
    if(value!=_layer){
     [_subviews makeObjectsPerformSelector:@selector(_removeLayerFromSuperlayer)];
 
@@ -1663,6 +1794,7 @@ static CGFloat backingScale(NSView *self){
     if(_layer==nil){
      if(value!=nil){
       _layer=value;
+      configureLayerGeometry(self);
       [self _addLayerToSuperlayer];
      }
     }
@@ -1704,13 +1836,11 @@ static CGFloat backingScale(NSView *self){
 
 
 -(NSArray *)backgroundFilters {
-   NSUnimplementedMethod();
-   return nil;
+   return objc_getAssociatedObject(self,@selector(backgroundFilters))?:[NSArray array];
 }
 
 -(void)setBackgroundFilters:(NSArray *)filters {
-// FIXME: implement but dont warn
-//   NSUnimplementedMethod();
+   objc_setAssociatedObject(self,@selector(backgroundFilters),filters,OBJC_ASSOCIATION_COPY);
 }
 
 -(NSArray *)contentFilters {
@@ -1868,11 +1998,13 @@ static void clearNeedsDisplay(NSView *self){
 }
 
 -(void)setKeyboardFocusRingNeedsDisplayInRect:(NSRect)rect {
-   NSUnimplementedMethod();
+   [self setNeedsDisplayInRect:NSInsetRect(rect,-4,-4)];
 }
 
 -(void)translateRectsNeedingDisplayInRect:(NSRect)rect by:(NSSize)delta {
-   NSUnimplementedMethod();
+   NSRect moved=NSOffsetRect(rect,delta.width,delta.height);
+
+   [self setNeedsDisplayInRect:NSIntersectionRect(NSUnionRect(rect,moved),[self bounds])];
 }
 
 -(BOOL)canDraw {
@@ -1880,8 +2012,15 @@ static void clearNeedsDisplay(NSView *self){
 }
 
 -(BOOL)canDrawConcurrently {
-   NSUnimplementedMethod();
+   return [objc_getAssociatedObject(self,@selector(canDrawConcurrently)) boolValue];
+}
+
+-(BOOL)wantsUpdateLayer {
    return NO;
+}
+
+-(void)updateLayer {
+   // for subclasses that set their layer's contents themselves
 }
 
 -(void)viewWillDraw {
@@ -1889,18 +2028,56 @@ static void clearNeedsDisplay(NSView *self){
 }
 
 -(void)setCanDrawConcurrently:(BOOL)canDraw {
-   NSUnimplementedMethod();
+   objc_setAssociatedObject(self,@selector(canDrawConcurrently),[NSNumber numberWithBool:canDraw],OBJC_ASSOCIATION_RETAIN);
+}
+
+// PD_VIEW_TRACE=1: which views get a backing bitmap per display, tallied every 200 displays
+static void traceBackingDisplay(NSView *view,NSRect frame){
+   static int on=-1;
+   static unsigned long count;
+   static NSCountedSet *classes;
+
+   if(on<0)
+    on=getenv("PD_VIEW_TRACE")!=NULL;
+   if(!on)
+    return;
+   if(classes==nil)
+    classes=[[NSCountedSet alloc] init];
+   [classes addObject:[NSString stringWithFormat:@"%s %gx%g layer %s superview %s",object_getClassName(view),frame.size.width,frame.size.height,
+    object_getClassName(view->_layer),object_getClassName([view superview])]];
+   if(++count%200==0){
+    for(NSString *entry in classes)
+     fprintf(stderr,"PD-VIEW %lu displays: %lu x %s\n",count,(unsigned long)[classes countForObject:entry],[entry UTF8String]);
+   }
 }
 
 static NSGraphicsContext *graphicsContextForView(NSView *view){
    if(view->_layer!=nil){
     NSRect             frame=[view frame];
+
+    traceBackingDisplay(view,frame);
     size_t             width=frame.size.width;
     size_t             height=frame.size.height;
+    static char        backingKey;
+    NSGraphicsContext *result=objc_getAssociatedObject(view,&backingKey);
+    CGContextRef       port=[result graphicsPort];
+
+    // one backing bitmap per view while its size holds, cleared for each display as on macOS,
+    // instead of a window-size allocation per display
+    if(port!=NULL && CGBitmapContextGetWidth(port)==width && CGBitmapContextGetHeight(port)==height){
+     CGContextSaveGState(port);
+     CGContextResetClip(port);
+     CGContextSetCTM(port,CGAffineTransformIdentity);
+     CGContextClearRect(port,CGRectMake(0,0,width,height));
+     CGContextRestoreGState(port);
+     return result;
+    }
+
     CGColorSpaceRef    colorSpace=CGColorSpaceCreateDeviceRGB();
     CGContextRef       context=CGBitmapContextCreate(NULL,width,height,8,0,colorSpace,kCGImageAlphaPremultipliedFirst|kCGBitmapByteOrder32Host);
-    NSGraphicsContext *result=[NSGraphicsContext graphicsContextWithGraphicsPort:context flipped:NO];
 
+    result=[NSGraphicsContext graphicsContextWithGraphicsPort:context flipped:NO];
+    objc_setAssociatedObject(view,&backingKey,result,OBJC_ASSOCIATION_RETAIN);
     CGColorSpaceRelease(colorSpace);
     CGContextRelease(context);
 
@@ -1953,10 +2130,12 @@ static NSGraphicsContext *graphicsContextForView(NSView *view){
    NSGraphicsContext *graphicsContext=[NSGraphicsContext currentContext];
    CGContextRef       context=[graphicsContext graphicsPort];
 
-   if(_layer!=nil){
+   // only a backing layer shows what the view drew, a hosted layer belongs to the app
+   if([_layer isKindOfClass:[NSViewBackingLayer class]]){
     CGImageRef image=CGBitmapContextCreateImage(context);
 
-    [_layer setContents:image];
+    [(id)_layer _setContentsWithoutRender:(id)image];
+    CGImageRelease(image);
    }
 
    CGContextRestoreGState(context);
@@ -2052,11 +2231,12 @@ static NSGraphicsContext *graphicsContextForView(NSView *view){
 }
 
 -(void)getRectsExposedDuringLiveResize:(NSRect)rects count:(NSInteger *)count {
-   NSUnimplementedMethod();
+   // nothing is preserved during a live resize, so the whole view is exposed
+   if(count!=NULL)
+    *count=1;
 }
 
 -(BOOL)shouldDrawColor {
-   NSUnimplementedMethod();
    return YES;
 }
 
@@ -2162,7 +2342,22 @@ static NSGraphicsContext *graphicsContextForView(NSView *view){
    if(NSIsEmptyRect(rect))
     return;
 
-   if ([self canDraw]) {
+   if ([self canDraw] && _layer!=nil && [self wantsUpdateLayer] && ![NSGraphicsContext inQuartzDebugMode]) {
+      // as on macOS a view that updates its layer itself gets no drawing context: no backing bitmap
+      // per display (4 MB at window size), no snapshot into the layer
+      [self updateLayer];
+
+       NSEnumerator *viewEnumerator = [self _subviewsInDisplayOrderEnumerator];
+       NSView *child = nil;
+
+       while ((child = [viewEnumerator nextObject])) {
+           NSRect check=NSIntersectionRect([self convertRect:rect toView:child],[child bounds]);
+
+           if(!NSIsEmptyRect(check))
+               [child displayRectIgnoringOpacity:check];
+       }
+   }
+   else if ([self canDraw]) {
       // This view must be locked/unlocked prior to drawing subviews otherwise gState changes may affect subviews.
       [self lockFocus];
 
@@ -2201,7 +2396,7 @@ static NSGraphicsContext *graphicsContextForView(NSView *view){
        }
    }
 
-   [_layerContext render];
+   [self _drawLayerContext];
 
     // Don't do anything to interfere with what will be drawn in non-debug mode
     if ([NSGraphicsContext inQuartzDebugMode] == NO) {
@@ -2218,7 +2413,38 @@ static NSGraphicsContext *graphicsContextForView(NSView *view){
 }
 
 -(void)displayRectIgnoringOpacity:(NSRect)rect inContext:(NSGraphicsContext *)context {
-   NSUnimplementedMethod();
+   NSGraphicsContext *saved=[NSGraphicsContext currentContext];
+
+   rect=NSIntersectionRect(rect,[self bounds]);
+   if(NSIsEmptyRect(rect) || context==nil)
+    return;
+   [NSGraphicsContext saveGraphicsState];
+   [NSGraphicsContext setCurrentContext:context];
+   CGContextRef port=[context graphicsPort];
+
+   CGContextSaveGState(port);
+   CGContextTranslateCTM(port,-NSMinX(rect),-NSMinY(rect));
+   if([self isFlipped]){
+    CGContextTranslateCTM(port,0,NSMaxY(rect)+NSMinY(rect));
+    CGContextScaleCTM(port,1,-1);
+   }
+   CGContextClipToRect(port,rect);
+   [self drawRect:rect];
+   for(NSView *child in [self subviews]){
+    NSRect check=NSIntersectionRect([self convertRect:rect toView:child],[child bounds]);
+
+    if(NSIsEmptyRect(check))
+     continue;
+    CGContextSaveGState(port);
+    NSRect frame=[child frame];
+
+    CGContextTranslateCTM(port,NSMinX(frame),NSMinY(frame));
+    [child displayRectIgnoringOpacity:check inContext:context];
+    CGContextRestoreGState(port);
+   }
+   CGContextRestoreGState(port);
+   [NSGraphicsContext restoreGraphicsState];
+   [NSGraphicsContext setCurrentContext:saved];
 }
 
 -(void)drawRect:(NSRect)rect {
@@ -2242,8 +2468,7 @@ static NSGraphicsContext *graphicsContextForView(NSView *view){
 }
 
 -(BOOL)mouseDownCanMoveWindow {
-   NSUnimplementedMethod();
-   return NO;
+   return ![self isOpaque];
 }
 
 -(void)print:sender {
@@ -2289,42 +2514,46 @@ static NSGraphicsContext *graphicsContextForView(NSView *view){
 }
 
 -(NSAttributedString *)pageHeader {
-   NSUnimplementedMethod();
-   return nil;
+   NSString *title=[self printJobTitle];
+
+   return title?[[[NSAttributedString alloc] initWithString:title] autorelease]:nil;
 }
 
 -(NSAttributedString *)pageFooter {
-   NSUnimplementedMethod();
-   return nil;
+   NSInteger page=[[NSPrintOperation currentOperation] currentPage];
+   NSString *text=[NSString stringWithFormat:@"%ld",(long)page];
+
+   return [[[NSAttributedString alloc] initWithString:text] autorelease];
 }
 
 -(NSString *)printJobTitle {
-   NSUnimplementedMethod();
-   return nil;
+   NSString *title=[[self window] title];
+
+   return [title length]?title:[[NSProcessInfo processInfo] processName];
 }
 
 -(void)drawSheetBorderWithSize:(NSSize)size {
-   NSUnimplementedMethod();
+   // no sheet border on paper
 }
 
 -(void)drawPageBorderWithSize:(NSSize)size {
-   NSUnimplementedMethod();
+   // no page border on paper
 }
 
 
--(float)widthAdjustLimit {
+-(CGFloat)widthAdjustLimit {
    return 0.5;
 }
 
--(float)heightAdjustLimit {
+-(CGFloat)heightAdjustLimit {
    return 0.5;
 }
 
--(void)adjustPageWidthNew:(float *)adjusted left:(float)left right:(float)right limit:(float)limit {
+-(void)adjustPageWidthNew:(CGFloat *)adjusted left:(CGFloat)left right:(CGFloat)right limit:(CGFloat)limit {
 // FIX, give subviews a chance
 }
 
--(void)adjustPageHeightNew:(float *)adjust top:(float)top bottom:(float)bottom limit:(float)limit {
+-(void)adjustPageHeightNew:(CGFloat *)adjust top:(CGFloat)top bottom:(CGFloat)bottom limit:(CGFloat)limit {
 // FIX, give subviews a chance
 }
 
@@ -2378,8 +2607,15 @@ static NSGraphicsContext *graphicsContextForView(NSView *view){
 }
 
 -(BOOL)dragFile:(NSString *)path fromRect:(NSRect)rect slideBack:(BOOL)slideBack event:(NSEvent *)event {
-   NSUnimplementedMethod();
-   return NO;
+   NSPasteboard *pasteboard=[NSPasteboard pasteboardWithName:NSDragPboard];
+   NSImage *image=[[NSWorkspace sharedWorkspace] iconForFile:path];
+
+   if(path==nil)
+    return NO;
+   [pasteboard declareTypes:[NSArray arrayWithObject:NSFilenamesPboardType] owner:nil];
+   [pasteboard setPropertyList:[NSArray arrayWithObject:path] forType:NSFilenamesPboardType];
+   [self dragImage:image at:rect.origin offset:NSZeroSize event:event pasteboard:pasteboard source:self slideBack:slideBack];
+   return YES;
 }
 
 -(BOOL)acceptsFirstResponder {
@@ -2429,7 +2665,9 @@ static NSGraphicsContext *graphicsContextForView(NSView *view){
 }
 
 -(BOOL)performMnemonic:(NSString *)string {
-   NSUnimplementedMethod();
+   for(NSView *child in [self subviews])
+    if([child performMnemonic:string])
+     return YES;
    return NO;
 }
 
@@ -2444,38 +2682,21 @@ static NSGraphicsContext *graphicsContextForView(NSView *view){
 }
 
 
-// default NSDraggingDestination
--(NSDragOperation)draggingEntered:(id <NSDraggingInfo>)sender {
-   return NSDragOperationNone;
-}
-
--(NSDragOperation)draggingUpdated:(id <NSDraggingInfo>)sender {
-   return [sender draggingSourceOperationMask];
-}
-
--(void)draggingExited:(id <NSDraggingInfo>)sender {
-   // do nothing
-}
-
--(BOOL)prepareForDragOperation:(id <NSDraggingInfo>)sender {
-   return NO;
-}
-
--(BOOL)performDragOperation:(id <NSDraggingInfo>)sender {
-   return NO;
-}
-
--(void)concludeDragOperation:(id <NSDraggingInfo>)sender {
-   // do nothing
-}
-
+// as on macOS NSView has no NSDraggingDestination methods, the drag loop treats a missing one as its default
 -(NSArray *)_draggedTypes {
    return _draggedTypes;
 }
 
 - (BOOL)dragPromisedFilesOfTypes:(NSArray *)types fromRect:(NSRect)rect source:(id)source slideBack:(BOOL)slideBack event:(NSEvent *)event {
-   NSUnimplementedMethod();
-   return NO;
+   NSPasteboard *pasteboard=[NSPasteboard pasteboardWithName:NSDragPboard];
+
+   if([types count]==0)
+    return NO;
+   [pasteboard declareTypes:[NSArray arrayWithObject:@"Apple files promise pasteboard type"] owner:nil];
+   [pasteboard setPropertyList:types forType:@"Apple files promise pasteboard type"];
+   [self dragImage:[[[NSImage alloc] initWithSize:rect.size] autorelease] at:rect.origin offset:NSZeroSize
+           event:event pasteboard:pasteboard source:source slideBack:slideBack];
+   return YES;
 }
 
 -(NSPoint)convertPointFromBase:(NSPoint)aPoint; {
@@ -2503,17 +2724,15 @@ static NSGraphicsContext *graphicsContextForView(NSView *view){
 }
 
 -(void)showDefinitionForAttributedString:(NSAttributedString *)string atPoint:(NSPoint)origin {
-   NSUnimplementedMethod();
+   // no dictionary service
 }
 
 +defaultAnimationForKey:(NSString *)key {
-   NSUnimplementedMethod();
    return nil;
 }
 
 -animator {
-   NSUnimplementedMethod();
-    // should return animating proxy. returning self does not animate.
+   // changes through the animator take effect at once
    return self;
 }
 

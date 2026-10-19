@@ -128,6 +128,52 @@ static inline void replaceCharactersInRangeWithAttributedString(NSTextStorage_co
    [self edited:NSTextStorageEditedAttributes range:range changeInLength:0];
 }
 
+// Foundation's versions go straight to CFAttributedString, which this storage is not,
+// so attribute edits are built on the run walk and setAttributes:range: here
+-(void)addAttributes:(NSDictionary *)attributes range:(NSRange)range {
+   NSUInteger location=range.location,limit=NSMaxRange(range);
+
+   [self beginEditing];
+   while(location<limit){
+    NSRange effective;
+    NSMutableDictionary *merged=[[self attributesAtIndex:location effectiveRange:&effective] mutableCopy];
+    NSUInteger end=MIN(NSMaxRange(effective),limit);
+
+    if(end<=location)
+     end=limit;
+
+    [merged addEntriesFromDictionary:attributes];
+    [self setAttributes:merged range:NSMakeRange(location,end-location)];
+    [merged release];
+    location=end;
+   }
+   [self endEditing];
+}
+
+-(void)addAttribute:(NSString *)name value:value range:(NSRange)range {
+   [self addAttributes:[NSDictionary dictionaryWithObject:value forKey:name] range:range];
+}
+
+-(void)removeAttribute:(NSString *)name range:(NSRange)range {
+   NSUInteger location=range.location,limit=NSMaxRange(range);
+
+   [self beginEditing];
+   while(location<limit){
+    NSRange effective;
+    NSMutableDictionary *trimmed=[[self attributesAtIndex:location effectiveRange:&effective] mutableCopy];
+    NSUInteger end=MIN(NSMaxRange(effective),limit);
+
+    if(end<=location)
+     end=limit;
+
+    [trimmed removeObjectForKey:name];
+    [self setAttributes:trimmed range:NSMakeRange(location,end-location)];
+    [trimmed release];
+    location=end;
+   }
+   [self endEditing];
+}
+
 -(void)replaceCharactersInRange:(NSRange)replaced withAttributedString:(NSAttributedString *)other {
    replaceCharactersInRangeWithAttributedString(self,replaced,other);
 }

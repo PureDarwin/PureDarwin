@@ -124,9 +124,7 @@ typedef NSInteger NSCorrectionResponse;
 - (NSString *)correctionForWordRange:(NSRange)range inString:(NSString *)string language:(NSString *)language inSpellDocumentWithTag:(NSInteger)tag;
 + (BOOL)isAutomaticSpellingCorrectionEnabled;
 
-#ifdef NS_BLOCKS
 - (void)showCorrectionIndicatorOfType:(NSCorrectionIndicatorType)type primaryString:(NSString *)primaryString alternativeStrings:(NSArray *)alternativeStrings forStringInRect:(NSRect)rect view:(NSView *)view completionHandler:(void (^)(NSString *acceptedString))completionBlock;
-#endif
 
 - (void)dismissCorrectionIndicatorForView:(NSView *)view;
 - (void)recordResponse:(NSCorrectionResponse)response toCorrection:(NSString *)correction forWord:(NSString *)word language:(NSString *)language inSpellDocumentWithTag:(NSInteger)tag;

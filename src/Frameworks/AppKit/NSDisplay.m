@@ -20,6 +20,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE. */
 
 #import <AppKit/NSDisplay.h>
+#import <AppKit/NSPanel.h>
+#import <AppKit/NSDraggingManager.h>
 #import <AppKit/NSApplication.h>
 #import <AppKit/NSScreen.h>
 #import <AppKit/NSPasteboard.h>
@@ -132,8 +134,7 @@ static void displayReconfigured(CGDirectDisplayID display, CGDisplayChangeSummar
 }
 
 -(NSDraggingManager *)draggingManager {
-   NSUnimplementedMethod();
-   return nil;
+   return [NSDraggingManager draggingManager];
 }
 
 -(NSColor *)colorWithName:(NSString *)colorName {
@@ -405,23 +406,22 @@ static NSUInteger lastModifierFlags;
    return ret;
 }
 
--(float)scrollerWidth {
+-(CGFloat)scrollerWidth {
    return 15.0;
 }
 
--(float)doubleClickInterval {
+-(CGFloat)doubleClickInterval {
    return 1.0;
 }
 
 
+// there is no print system, so both panels answer as if cancelled
 -(int)runModalPageLayoutWithPrintInfo:(NSPrintInfo *)printInfo {
-   NSUnimplementedMethod();
-	return 0;
+   return NSCancelButton;
 }
 
 -(int)runModalPrintPanelWithPrintInfoDictionary:(NSMutableDictionary *)attributes {
-   NSUnimplementedMethod();
-   return 0;
+   return NSCancelButton;
 }
 
 -(O2Context *)graphicsPortForPrintOperationWithView:(NSView *)view printInfo:(NSPrintInfo *)printInfo pageRange:(NSRange)pageRange {

@@ -31,7 +31,7 @@ typedef enum {
     NSRulerOrientation _orientation;
 }
 
-+ (void)registerUnitWithName:(NSString *)name abbreviation:(NSString *)abbreviation unitToPointsConversionFactor:(float)conversionFactor stepUpCycle:(NSArray *)stepUpCycle stepDownCycle:(NSArray *)stepDownCycle;
++ (void)registerUnitWithName:(NSString *)name abbreviation:(NSString *)abbreviation unitToPointsConversionFactor:(CGFloat)conversionFactor stepUpCycle:(NSArray *)stepUpCycle stepDownCycle:(NSArray *)stepDownCycle;
 
 - initWithScrollView:(NSScrollView *)scrollView orientation:(NSRulerOrientation)orientation;
 
@@ -41,12 +41,12 @@ typedef enum {
 - (NSArray *)markers;
 - (NSString *)measurementUnits;
 - (NSRulerOrientation)orientation;
-- (float)ruleThickness;
-- (float)reservedThicknessForMarkers;
-- (float)reservedThicknessForAccessoryView;
-- (float)originOffset;
-- (float)baselineLocation;
-- (float)requiredThickness;
+- (CGFloat)ruleThickness;
+- (CGFloat)reservedThicknessForMarkers;
+- (CGFloat)reservedThicknessForAccessoryView;
+- (CGFloat)originOffset;
+- (CGFloat)baselineLocation;
+- (CGFloat)requiredThickness;
 
 - (void)setScrollView:(NSScrollView *)scrollView;
 - (void)setClientView:(NSView *)view;
@@ -56,14 +56,14 @@ typedef enum {
 - (void)removeMarker:(NSRulerMarker *)marker;
 - (void)setMeasurementUnits:(NSString *)unitName;
 - (void)setOrientation:(NSRulerOrientation)orientation;
-- (void)setRuleThickness:(float)value;
-- (void)setReservedThicknessForMarkers:(float)value;
-- (void)setReservedThicknessForAccessoryView:(float)value;
-- (void)setOriginOffset:(float)value;
+- (void)setRuleThickness:(CGFloat)value;
+- (void)setReservedThicknessForMarkers:(CGFloat)value;
+- (void)setReservedThicknessForAccessoryView:(CGFloat)value;
+- (void)setOriginOffset:(CGFloat)value;
 
 - (BOOL)trackMarker:(NSRulerMarker *)marker withMouseEvent:(NSEvent *)event;
 
-- (void)moveRulerlineFromLocation:(float)fromLocation toLocation:(float)toLocation;
+- (void)moveRulerlineFromLocation:(CGFloat)fromLocation toLocation:(CGFloat)toLocation;
 
 - (void)invalidateHashMarks;
 
@@ -79,14 +79,14 @@ typedef enum {
 - (void)rulerView:(NSRulerView *)rulerView handleMouseDown:(NSEvent *)event;
 
 - (BOOL)rulerView:(NSRulerView *)rulerView shouldAddMarker:(NSRulerMarker *)marker;
-- (float)rulerView:(NSRulerView *)rulerView willAddMarker:(NSRulerMarker *)marker atLocation:(float)location;
+- (CGFloat)rulerView:(NSRulerView *)rulerView willAddMarker:(NSRulerMarker *)marker atLocation:(CGFloat)location;
 - (void)rulerView:(NSRulerView *)rulerView didAddMarker:(NSRulerMarker *)marker;
 
 - (BOOL)rulerView:(NSRulerView *)rulerView shouldRemoveMarker:(NSRulerMarker *)marker;
 - (void)rulerView:(NSRulerView *)rulerView didRemoveMarker:(NSRulerMarker *)marker;
 
 - (BOOL)rulerView:(NSRulerView *)rulerView shouldMoveMarker:(NSRulerMarker *)marker;
-- (float)rulerView:(NSRulerView *)rulerView willMoveMarker:(NSRulerMarker *)marker toLocation:(float)location;
+- (CGFloat)rulerView:(NSRulerView *)rulerView willMoveMarker:(NSRulerMarker *)marker toLocation:(CGFloat)location;
 - (void)rulerView:(NSRulerView *)rulerView didMoveMarker:(NSRulerMarker *)marker;
 
 @end

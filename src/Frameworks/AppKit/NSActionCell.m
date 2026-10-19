@@ -112,7 +112,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 /**
  * Retrieve the value of the receiver as a float.
  */
-- (float) floatValue
+- (CGFloat) floatValue
 {
     [self _validateEditing];
     return [super floatValue];

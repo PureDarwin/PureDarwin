@@ -55,7 +55,7 @@ APPKIT_EXPORT NSString *const NSOutlineViewSelectionIsChangingNotification;
 - (int)levelForItem:item;
 - (int)levelForRow:(int)row;
 - (BOOL)isItemExpanded:item;
-- (float)indentationPerLevel;
+- (CGFloat)indentationPerLevel;
 
 - (BOOL)autoresizesOutlineColumn;
 - (BOOL)indentationMarkerFollowsCell;
@@ -63,7 +63,7 @@ APPKIT_EXPORT NSString *const NSOutlineViewSelectionIsChangingNotification;
 
 - (void)setOutlineTableColumn:(NSTableColumn *)tableColumn;
 
-- (void)setIndentationPerLevel:(float)value;
+- (void)setIndentationPerLevel:(CGFloat)value;
 - (void)setAutoresizesOutlineColumn:(BOOL)flag;
 - (void)setIndentationMarkerFollowsCell:(BOOL)flag;
 - (void)setAutosaveExpandedItems:(BOOL)flag;
@@ -113,5 +113,5 @@ APPKIT_EXPORT NSString *const NSOutlineViewSelectionIsChangingNotification;
 @end
 
 @interface NSObject (NSOutlineView_cellSizing)
-- (float)outlineView:(NSOutlineView *)outlineView widthOfCell:cell forTableColumn:(NSTableColumn *)tableColumn byItem:item;
+- (CGFloat)outlineView:(NSOutlineView *)outlineView widthOfCell:cell forTableColumn:(NSTableColumn *)tableColumn byItem:item;
 @end

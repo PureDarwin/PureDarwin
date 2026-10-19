@@ -253,7 +253,7 @@ static double doubleOf(NibValue *v) {
     return (NSInteger)intOf([self valueForKey:key]);
 }
 
-- (float)decodeFloatForKey:(NSString *)key {
+- (CGFloat)decodeFloatForKey:(NSString *)key {
     return (float)doubleOf([self valueForKey:key]);
 }
 

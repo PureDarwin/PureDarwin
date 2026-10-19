@@ -157,3 +157,7 @@ NSColor *NSForegroundColorAttributeInDictionary(NSDictionary *dictionary);
 NSParagraphStyle *NSParagraphStyleAttributeInDictionary(NSDictionary *dictionary);
 
 #import <AppKit/NSMutableAttributedString.h>
+
+APPKIT_EXPORT NSString *const NSMarkedClauseSegmentAttributeName;
+APPKIT_EXPORT NSString *const NSTextInputReplacementRangeAttributeName;
+APPKIT_EXPORT NSString *const NSVerticalGlyphFormAttributeName;

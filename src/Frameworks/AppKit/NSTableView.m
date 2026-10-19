@@ -32,7 +32,7 @@ const float NSTableViewDefaultRowHeight=16.0f;
 -(BOOL)delegateSelectionShouldChange;
 -(void)noteSelectionIsChanging;
 -(void)noteSelectionDidChange;
--(void)noteColumnDidResizeWithOldWidth:(float)oldWidth;
+-(void)noteColumnDidResizeWithOldWidth:(CGFloat)oldWidth;
 -(BOOL)dataSourceCanSetObjectValue;
 -(void)dataSourceSetObjectValue:object forTableColumn:(NSTableColumn *)tableColumn row:(int)row;
 
@@ -201,7 +201,7 @@ const float NSTableViewDefaultRowHeight=16.0f;
     return [[_cornerView retain] autorelease];
 }
 
--(float)rowHeight {
+-(CGFloat)rowHeight {
     return _standardRowHeight;
 }
 
@@ -604,7 +604,7 @@ static float rowHeightAtIndex(NSTableView *self,int index){
     [[self enclosingScrollView] tile];
 }
 
--(void)setRowHeight:(float)height {
+-(void)setRowHeight:(CGFloat)height {
     NSInteger numberOfRows=[self numberOfRows];
     NSInteger i;
 
@@ -1383,7 +1383,7 @@ _dataSource);
 }
 
 // can't use rectOfRow because empty tableviews will explode!
--(float)_displayWidthOfColumns {
+-(CGFloat)_displayWidthOfColumns {
     int i, count = [_tableColumns count];
     float result = 0;
 
@@ -1610,7 +1610,7 @@ _dataSource);
                                                         object:self];
 }
 
--(void)noteColumnDidResizeWithOldWidth:(float)oldWidth
+-(void)noteColumnDidResizeWithOldWidth:(CGFloat)oldWidth
 {
     [[NSNotificationCenter defaultCenter] postNotificationName:NSTableViewColumnDidResizeNotification
             object:self

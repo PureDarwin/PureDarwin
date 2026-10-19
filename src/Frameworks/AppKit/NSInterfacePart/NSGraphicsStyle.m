@@ -182,12 +182,12 @@ static NSDictionary *sDimmedMenuTextShadowAttributes = nil;
 }
 
 // this is the in-window bar which we dropped
--(float)menuBarHeight
+-(CGFloat)menuBarHeight
 {
     return 0.0;
 }
 
--(float)menuItemGutterGap
+-(CGFloat)menuItemGutterGap
 {
 	return 0;
 }

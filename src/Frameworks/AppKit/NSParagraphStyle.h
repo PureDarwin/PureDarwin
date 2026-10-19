@@ -43,31 +43,31 @@ typedef enum {
 
 - (NSWritingDirection)baseWritingDirection;
 
-- (float)paragraphSpacing;
-- (float)paragraphSpacingBefore;
+- (CGFloat)paragraphSpacing;
+- (CGFloat)paragraphSpacingBefore;
 
 - (NSArray *)textBlocks;
 - (NSArray *)textLists;
 
 - (int)headerLevel;
 
-- (float)firstLineHeadIndent;
-- (float)headIndent;
-- (float)tailIndent;
+- (CGFloat)firstLineHeadIndent;
+- (CGFloat)headIndent;
+- (CGFloat)tailIndent;
 
 - (NSTextAlignment)alignment;
 - (NSLineBreakMode)lineBreakMode;
 
-- (float)minimumLineHeight;
-- (float)maximumLineHeight;
-- (float)lineHeightMultiple;
-- (float)lineSpacing;
+- (CGFloat)minimumLineHeight;
+- (CGFloat)maximumLineHeight;
+- (CGFloat)lineHeightMultiple;
+- (CGFloat)lineSpacing;
 
-- (float)defaultTabInterval;
+- (CGFloat)defaultTabInterval;
 - (NSArray *)tabStops;
 
-- (float)hyphenationFactor;
-- (float)tighteningFactorForTruncation;
+- (CGFloat)hyphenationFactor;
+- (CGFloat)tighteningFactorForTruncation;
 
 @end
 

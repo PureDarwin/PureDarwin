@@ -14,29 +14,29 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 - (void)setBaseWritingDirection:(NSWritingDirection)direction;
 
-- (void)setParagraphSpacing:(float)spacing;
-- (void)setParagraphSpacingBefore:(float)spacing;
+- (void)setParagraphSpacing:(CGFloat)spacing;
+- (void)setParagraphSpacingBefore:(CGFloat)spacing;
 
 - (void)setTextBlocks:(NSArray *)blocks;
 - (void)setTextLists:(NSArray *)lists;
 
 - (void)setHeaderLevel:(int)level;
 
-- (void)setFirstLineHeadIndent:(float)indent;
-- (void)setHeadIndent:(float)indent;
-- (void)setTailIndent:(float)indent;
+- (void)setFirstLineHeadIndent:(CGFloat)indent;
+- (void)setHeadIndent:(CGFloat)indent;
+- (void)setTailIndent:(CGFloat)indent;
 
 - (void)setAlignment:(NSTextAlignment)alignment;
 - (void)setLineBreakMode:(NSLineBreakMode)mode;
 
-- (void)setMinimumLineHeight:(float)height;
-- (void)setMaximumLineHeight:(float)height;
-- (void)setLineHeightMultiple:(float)multiple;
-- (void)setLineSpacing:(float)spacing;
+- (void)setMinimumLineHeight:(CGFloat)height;
+- (void)setMaximumLineHeight:(CGFloat)height;
+- (void)setLineHeightMultiple:(CGFloat)multiple;
+- (void)setLineSpacing:(CGFloat)spacing;
 
-- (void)setDefaultTabInterval:(float)interval;
+- (void)setDefaultTabInterval:(CGFloat)interval;
 - (void)setTabStops:(NSArray *)tabStops;
 
-- (void)setHyphenationFactor:(float)factor;
-- (void)setTighteningFactorForTruncation:(float)factor;
+- (void)setHyphenationFactor:(CGFloat)factor;
+- (void)setTighteningFactorForTruncation:(CGFloat)factor;
 @end

@@ -6,6 +6,7 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
+#include <dispatch/dispatch.h>
 #import <AppKit/NSSpellChecker.h>
 #import <AppKit/NSPanel.h>
 #import <AppKit/NSMenu.h>
@@ -405,23 +406,24 @@ static NSSpellChecker *shared=nil;
 	return 0;
 }
 
-#ifdef NS_BLOCKS
+// no correction bubble is drawn, so the indicator goes away unaccepted after the current event
 -(void)showCorrectionIndicatorOfType:(NSCorrectionIndicatorType)type primaryString:(NSString *)primaryString alternativeStrings:(NSArray *)alternativeStrings forStringInRect:(NSRect)rect view:(NSView *)view completionHandler:(void (^)(NSString *acceptedString))completionBlock {
-	NSUnimplementedMethod();
+	if(completionBlock == nil)
+		return;
+	completionBlock = [[completionBlock copy] autorelease];
+	dispatch_async(dispatch_get_main_queue(), ^{
+		completionBlock(nil);
+	});
 }
-#endif
 
 -(NSString *)correctionForWordRange:(NSRange)range inString:(NSString *)string language:(NSString *)language inSpellDocumentWithTag:(NSInteger)tag {
-	NSUnimplementedMethod();
-	return 0;
+	return nil;
 }
 
 -(void)recordResponse:(NSCorrectionResponse)response toCorrection:(NSString *)correction forWord:(NSString *)word language :(NSString *)language inSpellDocumentWithTag :(NSInteger)tag {
-	NSUnimplementedMethod();
 }
 
 -(void)dismissCorrectionIndicatorForView:(NSView *)view {
-	NSUnimplementedMethod();
 }
 
 #pragma mark -

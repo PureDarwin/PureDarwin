@@ -1,4 +1,5 @@
 #import <Foundation/NSString.h>
+#import <Foundation/NSDictionary.h>
 #import <AppKit/AppKitExport.h>
 
 APPKIT_EXPORT NSString *const NSAccessibilityChildrenAttribute;
@@ -317,6 +318,16 @@ APPKIT_EXPORT NSString *const NSAccessibilityUnitsChangedNotification;
 APPKIT_EXPORT NSString *const NSAccessibilitySelectedChildrenMovedNotification;
 
 APPKIT_EXPORT NSString *const NSAccessibilityErrorCodeExceptionInfo;
+
+APPKIT_EXPORT NSString *const NSAccessibilityAnnouncementKey;
+APPKIT_EXPORT NSString *const NSAccessibilityAnnouncementRequestedNotification;
+APPKIT_EXPORT NSString *const NSAccessibilityLevelIndicatorRole;
+APPKIT_EXPORT NSString *const NSAccessibilityMarkedMisspelledTextAttribute;
+APPKIT_EXPORT NSString *const NSAccessibilityPopoverRole;
+APPKIT_EXPORT NSString *const NSAccessibilityPriorityKey;
+APPKIT_EXPORT NSString *const NSAccessibilitySwitchSubrole;
+APPKIT_EXPORT NSString *const NSAccessibilityToggleSubrole;
+APPKIT_EXPORT void NSAccessibilityPostNotificationWithUserInfo(id element, NSString *notification, NSDictionary *userInfo);
 
 APPKIT_EXPORT void NSAccessibilityPostNotification(
     id element,

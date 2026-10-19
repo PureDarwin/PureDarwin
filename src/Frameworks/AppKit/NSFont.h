@@ -41,48 +41,50 @@ typedef enum {
 
 @interface NSFont : NSObject <NSCopying> {
     NSString *_name;
-    float _pointSize;
-    float _matrix[6];
+    CGFloat _pointSize;
+    CGFloat _matrix[6];
     NSStringEncoding _encoding;
 
     CGFontRef _cgFont;
     CTFontRef _ctFont;
 }
 
-+ (float)systemFontSize;
-+ (float)smallSystemFontSize;
-+ (float)labelFontSize;
-+ (float)systemFontSizeForControlSize:(NSControlSize)size;
++ (CGFloat)systemFontSize;
++ (CGFloat)smallSystemFontSize;
++ (CGFloat)labelFontSize;
++ (CGFloat)systemFontSizeForControlSize:(NSControlSize)size;
 
-+ (NSFont *)boldSystemFontOfSize:(float)size;
-+ (NSFont *)controlContentFontOfSize:(float)size;
++ (NSFont *)boldSystemFontOfSize:(CGFloat)size;
++ (NSFont *)controlContentFontOfSize:(CGFloat)size;
 
-+ (NSFont *)labelFontOfSize:(float)size;
-+ (NSFont *)menuFontOfSize:(float)size;
-+ (NSFont *)menuBarFontOfSize:(float)size;
++ (NSFont *)labelFontOfSize:(CGFloat)size;
++ (NSFont *)menuFontOfSize:(CGFloat)size;
++ (NSFont *)menuBarFontOfSize:(CGFloat)size;
 
-+ (NSFont *)messageFontOfSize:(float)size;
-+ (NSFont *)paletteFontOfSize:(float)size;
-+ (NSFont *)systemFontOfSize:(float)size;
-+ (NSFont *)titleBarFontOfSize:(float)size;
-+ (NSFont *)toolTipsFontOfSize:(float)size;
-+ (NSFont *)userFontOfSize:(float)size;
-+ (NSFont *)userFixedPitchFontOfSize:(float)size;
++ (NSFont *)messageFontOfSize:(CGFloat)size;
++ (NSFont *)paletteFontOfSize:(CGFloat)size;
++ (NSFont *)systemFontOfSize:(CGFloat)size;
++ (NSFont *)systemFontOfSize:(CGFloat)size weight:(CGFloat)weight;
++ (NSFont *)monospacedSystemFontOfSize:(CGFloat)size weight:(CGFloat)weight;
++ (NSFont *)titleBarFontOfSize:(CGFloat)size;
++ (NSFont *)toolTipsFontOfSize:(CGFloat)size;
++ (NSFont *)userFontOfSize:(CGFloat)size;
++ (NSFont *)userFixedPitchFontOfSize:(CGFloat)size;
 
 + (void)setUserFont:(NSFont *)value;
 + (void)setUserFixedPitchFont:(NSFont *)value;
 
-+ (NSFont *)fontWithName:(NSString *)name size:(float)size;
-+ (NSFont *)fontWithName:(NSString *)name matrix:(const float *)matrix;
-+ (NSFont *)fontWithDescriptor:(NSFontDescriptor *)descriptor size:(float)size;
-+ (NSFont *)fontWithDescriptor:(NSFontDescriptor *)descriptor size:(float)size textTransform:(NSAffineTransform *)transform;
++ (NSFont *)fontWithName:(NSString *)name size:(CGFloat)size;
++ (NSFont *)fontWithName:(NSString *)name matrix:(const CGFloat *)matrix;
++ (NSFont *)fontWithDescriptor:(NSFontDescriptor *)descriptor size:(CGFloat)size;
++ (NSFont *)fontWithDescriptor:(NSFontDescriptor *)descriptor size:(CGFloat)size textTransform:(NSAffineTransform *)transform;
 
 + (NSArray *)preferredFontNames;
 + (void)setPreferredFontNames:(NSArray *)fontNames;
 
-- (float)pointSize;
+- (CGFloat)pointSize;
 - (NSString *)fontName;
-- (const float *)matrix;
+- (const CGFloat *)matrix;
 - (NSAffineTransform *)textTransform;
 - (NSFontRenderingMode)renderingMode;
 - (NSCharacterSet *)coveredCharacterSet;
@@ -105,16 +107,16 @@ typedef enum {
 - (NSSize)advancementForGlyph:(NSGlyph)glyph;
 
 - (NSSize)maximumAdvancement;
-- (float)underlinePosition;
-- (float)underlineThickness;
+- (CGFloat)underlinePosition;
+- (CGFloat)underlineThickness;
 - (CGFloat)ascender;
 - (CGFloat)descender;
 - (CGFloat)leading;
 - (CGFloat)defaultLineHeightForFont;
 - (BOOL)isFixedPitch;
-- (float)italicAngle;
-- (float)xHeight;
-- (float)capHeight;
+- (CGFloat)italicAngle;
+- (CGFloat)xHeight;
+- (CGFloat)capHeight;
 
 - (void)setInContext:(NSGraphicsContext *)context;
 - (void)set;

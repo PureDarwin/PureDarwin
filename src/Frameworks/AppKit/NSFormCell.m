@@ -68,11 +68,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return NO;
 }
 
--(float)titleWidth {
+-(CGFloat)titleWidth {
    return _titleWidth;
 }
 
--(float)titleWidth:(NSSize)size {
+-(CGFloat)titleWidth:(NSSize)size {
 // FIX,wrong
    return _titleWidth;
 }
@@ -111,7 +111,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return nil;
 }
 
--(void)setTitleWidth:(float)value {
+-(void)setTitleWidth:(CGFloat)value {
    _titleWidth=value;
 }
 

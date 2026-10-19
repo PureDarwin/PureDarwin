@@ -26,10 +26,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 + (NSImage *)defaultMarkerImage;
 
-- initWithRulerView:(NSRulerView *)ruler markerLocation:(float)location image:(NSImage *)image imageOrigin:(NSPoint)point;
+- initWithRulerView:(NSRulerView *)ruler markerLocation:(CGFloat)location image:(NSImage *)image imageOrigin:(NSPoint)point;
 
 - (NSRulerView *)ruler;
-- (float)markerLocation;
+- (CGFloat)markerLocation;
 - (NSImage *)image;
 - (NSPoint)imageOrigin;
 
@@ -37,7 +37,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - (BOOL)isRemovable;
 - (BOOL)isMovable;
 
-- (void)setMarkerLocation:(float)location;
+- (void)setMarkerLocation:(CGFloat)location;
 - (void)setImage:(NSImage *)image;
 - (void)setImageOrigin:(NSPoint)point;
 
@@ -45,7 +45,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - (void)setRemovable:(BOOL)flag;
 - (void)setMovable:(BOOL)flag;
 
-- (float)thicknessRequiredInRuler;
+- (CGFloat)thicknessRequiredInRuler;
 - (NSRect)imageRectInRuler;
 - (void)drawRect:(NSRect)rect;
 - (BOOL)isDragging;

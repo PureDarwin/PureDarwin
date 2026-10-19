@@ -9,6 +9,13 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <Foundation/Foundation.h>
 #import <AppKit/AppKitExport.h>
 
+APPKIT_EXPORT NSString *const NSPasteboardNameFind;
+APPKIT_EXPORT NSString *const NSPasteboardTypePNG;
+APPKIT_EXPORT NSString *const NSPasteboardTypeSound;
+APPKIT_EXPORT NSString *const NSPasteboardTypeMultipleTextSelection;
+APPKIT_EXPORT NSString *const NSPasteboardTypeTextFinderOptions;
+APPKIT_EXPORT NSString *const NSHTMLPboardType;
+
 // New Pasteboard Types (added in 10.6) and interchangeable with the old pasteboard types in Cocotron
 APPKIT_EXPORT NSString *const NSPasteboardTypeString;
 APPKIT_EXPORT NSString *const NSPasteboardTypeFileURL;
@@ -51,6 +58,12 @@ APPKIT_EXPORT NSString *const NSRulerPboard;
     NSMutableArray *_types;        /* declared order */
     id _owner;                     /* provides data lazily, not retained */
     int _changeCount;
+    // the general pasteboard mirrors the compositor's selection when another client owns it
+    unsigned _systemGeneration;
+    BOOL _systemBacked;
+    NSMutableDictionary *_systemMimeTypes; // type -> MIME type to read it as
+    // a drag from another client fills this board, its bytes come from the drag offer
+    BOOL _dragBacked;
 }
 
 + (NSPasteboard *)generalPasteboard;

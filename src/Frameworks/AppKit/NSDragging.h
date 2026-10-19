@@ -12,6 +12,13 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 typedef unsigned NSDragOperation;
 
+typedef NSInteger NSSpringLoadingHighlight;
+enum {
+    NSSpringLoadingHighlightNone = 0,
+    NSSpringLoadingHighlightStandard,
+    NSSpringLoadingHighlightEmphasized,
+};
+
 enum {
     NSDragOperationNone = 0x00,
     NSDragOperationCopy = 0x01,
@@ -46,6 +53,7 @@ enum {
 - (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)sender;
 
 - (BOOL)wantsPeriodicDraggingUpdates;
+- (void)draggingEnded:(id<NSDraggingInfo>)sender;
 @end
 
 @interface NSObject (NSDragging_source)

@@ -13,7 +13,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 @implementation NSInterfacePartAttributedString
 
--initWithCharacter:(unichar)character fontName:(NSString *)fontName pointSize:(float)pointSize color:(NSColor *)color {
+-initWithCharacter:(unichar)character fontName:(NSString *)fontName pointSize:(CGFloat)pointSize color:(NSColor *)color {
    NSString     *string=[NSString stringWithCharacters:&character length:1];
    NSFont       *font=[NSFont fontWithName:fontName size:pointSize];
    NSDictionary *attributes=[NSDictionary dictionaryWithObjectsAndKeys:

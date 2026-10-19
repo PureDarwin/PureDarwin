@@ -1709,7 +1709,7 @@ NSString * const NSOldSelectedCharacterRange=@"NSOldSelectedCharacterRange";
     [self scrollPoint:rect.origin];
 }
 
--(unsigned)glyphIndexForPoint:(NSPoint)point fractionOfDistanceThroughGlyph:(float *)fraction {
+-(unsigned)glyphIndexForPoint:(NSPoint)point fractionOfDistanceThroughGlyph:(CGFloat *)fraction {
     point.x-=_textContainerInset.width;
     point.y-=_textContainerInset.height;
 
@@ -1762,6 +1762,62 @@ NSString * const NSOldSelectedCharacterRange=@"NSOldSelectedCharacterRange";
     }
 
     [self _setAndScrollToRange:range upstream:upstream];
+}
+
+- (CGFloat)_lineScrollAmount {
+    NSFont *font = [self font];
+    CGFloat height = font ? [[self layoutManager] defaultLineHeightForFont:font] : 0;
+
+    return height > 0 ? height : 16;
+}
+
+- (void)scrollLineUp:sender {
+    NSRect rect = [self visibleRect];
+
+    rect.origin.y -= [self _lineScrollAmount];
+    if (rect.origin.y < 0)
+        rect.origin.y = 0;
+    [self scrollPoint:rect.origin];
+}
+
+- (void)scrollLineDown:sender {
+    NSRect rect = [self visibleRect];
+
+    rect.origin.y += [self _lineScrollAmount];
+    [self scrollPoint:rect.origin];
+}
+
+- (void)_selectWithGranularity:(NSSelectionGranularity)granularity {
+    NSRange range = [self selectionRangeForProposedRange:[self selectedRange] granularity:granularity];
+
+    if (range.location == NSNotFound)
+        return;
+    _selectionOrigin = range.location;
+    [self _setAndScrollToRange:range];
+}
+
+- (void)selectWord:sender {
+    [self _selectWithGranularity:NSSelectByWord];
+}
+
+- (void)selectLine:sender {
+    NSRange range = [[self layoutManager] _softLineRangeForCharacterAtIndex:[self selectedRange].location];
+
+    _selectionOrigin = range.location;
+    [self _setAndScrollToRange:range];
+}
+
+- (void)selectParagraph:sender {
+    NSString *string = [_textStorage string];
+    NSRange range = [self selectedRange];
+
+    if ([string length] == 0)
+        return;
+    if (range.location >= [string length])
+        range.location = [string length] - 1;
+    range = [string paragraphRangeForRange:range];
+    _selectionOrigin = range.location;
+    [self _setAndScrollToRange:range];
 }
 
 - (void)scrollPageDown:sender {
@@ -3199,7 +3255,7 @@ NSString * const NSOldSelectedCharacterRange=@"NSOldSelectedCharacterRange";
     return YES;
 }
 
--(float)rulerView:(NSRulerView *)rulerView willMoveMarker:(NSRulerMarker *)marker toLocation:(float)location
+-(CGFloat)rulerView:(NSRulerView *)rulerView willMoveMarker:(NSRulerMarker *)marker toLocation:(CGFloat)location
 {
     if (location < rulerView.originOffset) {
         location = rulerView.originOffset;
@@ -3283,7 +3339,7 @@ NSString * const NSOldSelectedCharacterRange=@"NSOldSelectedCharacterRange";
     return YES;
 }
 
--(float)rulerView:(NSRulerView *)rulerView willAddMarker:(NSRulerMarker *)marker atLocation:(float)location
+-(CGFloat)rulerView:(NSRulerView *)rulerView willAddMarker:(NSRulerMarker *)marker atLocation:(CGFloat)location
 {
     if (location < rulerView.originOffset) {
         location = rulerView.originOffset;

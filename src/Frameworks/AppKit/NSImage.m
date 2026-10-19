@@ -8,6 +8,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 #import <sys/param.h>
 #import <AppKit/NSImage.h>
+#import <AppKit/NSApplication.h>
 #import <AppKit/NSImageRep.h>
 #import <AppKit/NSBitmapImageRep.h>
 #import <AppKit/NSCachedImageRep.h>
@@ -36,6 +37,7 @@ NSString *const NSImageNameFolder=@"NSFolder";
 NSString *const NSImageNameComputer=@"NSComputer";
 NSString *const NSImageNameUser=@"NSUser";
 NSString *const NSImageNameCaution=@"NSCaution";
+NSString *const NSImageNameApplicationIcon=@"NSApplicationIcon";
 
 @implementation NSImageCacheView
 - (id)initWithFlipped:(BOOL)flipped
@@ -126,6 +128,10 @@ NSString *const NSImageNameCaution=@"NSCaution";
      }
     }
    }
+
+   // the application icon comes from NSApplication, which loads it from the bundle or a default
+   if(image==nil && [name isEqualToString:NSImageNameApplicationIcon])
+    image=[NSApp applicationIconImage];
 
   // Cocoa AppKit always returns the same shared cached image
    return image;
@@ -429,9 +435,9 @@ NSString *const NSImageNameCaution=@"NSCaution";
    _delegate=delegate;
 }
 
+// valid once some representation can draw it
 -(BOOL)isValid {
-   NSUnimplementedMethod();
-   return 0;
+   return [[self representations] count]>0;
 }
 
 -(NSArray *)representations {
@@ -623,14 +629,14 @@ NSString *const NSImageNameCaution=@"NSCaution";
 }
 
 -(void)cancelIncrementalLoad {
-   NSUnimplementedMethod();
+   // images load in one go, nothing is pending
 }
 
 -(NSData *)TIFFRepresentation {
    return [self TIFFRepresentationUsingCompression:NSTIFFCompressionNone factor:0.0];
 }
 
--(NSData *)TIFFRepresentationUsingCompression:(NSTIFFCompression)compression factor:(float)factor {
+-(NSData *)TIFFRepresentationUsingCompression:(NSTIFFCompression)compression factor:(CGFloat)factor {
    NSMutableArray *bitmaps=[NSMutableArray array];
 
         for(NSImageRep *check in _representations){
@@ -749,7 +755,7 @@ NSString *const NSImageNameCaution=@"NSCaution";
    [self compositeToPoint:point fromRect:rect operation:operation fraction:1.0];
 }
 
--(void)compositeToPoint:(NSPoint)point fromRect:(NSRect)source operation:(NSCompositingOperation)operation fraction:(float)fraction {
+-(void)compositeToPoint:(NSPoint)point fromRect:(NSRect)source operation:(NSCompositingOperation)operation fraction:(CGFloat)fraction {
    /* Compositing is a blitting operation. We simulate it using the draw operation.
 
       Compositing does not honor all aspects of the CTM, e.g. it will keep an image upright regardless of the orientation of CTM.
@@ -776,25 +782,25 @@ NSString *const NSImageNameCaution=@"NSCaution";
    [self compositeToPoint:point operation:operation fraction:1.0];
 }
 
--(void)compositeToPoint:(NSPoint)point operation:(NSCompositingOperation)operation fraction:(float)fraction {
+-(void)compositeToPoint:(NSPoint)point operation:(NSCompositingOperation)operation fraction:(CGFloat)fraction {
    [self compositeToPoint:point fromRect:NSZeroRect operation:operation fraction:1.0];
 }
 
--(void)dissolveToPoint:(NSPoint)point fraction:(float)fraction {
-   NSUnimplementedMethod();
+-(void)dissolveToPoint:(NSPoint)point fraction:(CGFloat)fraction {
+   [self drawAtPoint:point fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:fraction];
 }
 
--(void)dissolveToPoint:(NSPoint)point fromRect:(NSRect)rect fraction:(float)fraction {
-   NSUnimplementedMethod();
+-(void)dissolveToPoint:(NSPoint)point fromRect:(NSRect)rect fraction:(CGFloat)fraction {
+   [self drawAtPoint:point fromRect:rect operation:NSCompositeSourceOver fraction:fraction];
 }
 
--(void)drawAtPoint:(NSPoint)point fromRect:(NSRect)source operation:(NSCompositingOperation)operation fraction:(float)fraction {
+-(void)drawAtPoint:(NSPoint)point fromRect:(NSRect)source operation:(NSCompositingOperation)operation fraction:(CGFloat)fraction {
    NSSize size=[self size];
 
    [self drawInRect:NSMakeRect(point.x,point.y,size.width,size.height) fromRect:source operation:operation fraction:fraction];
 }
 
--(void)drawInRect:(NSRect)rect fromRect:(NSRect)source operation:(NSCompositingOperation)operation fraction:(float)fraction {
+-(void)drawInRect:(NSRect)rect fromRect:(NSRect)source operation:(NSCompositingOperation)operation fraction:(CGFloat)fraction {
 
         // Keep a lid on any intermediate allocations while producing caches
         NSAutoreleasePool *pool=[NSAutoreleasePool new];

@@ -68,7 +68,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return _isButtonBordered;
 }
 
--(float)itemHeight {
+-(CGFloat)itemHeight {
    return _itemHeight;
 }
 
@@ -100,7 +100,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    _isButtonBordered=value;
 }
 
--(void)setItemHeight:(float)value {
+-(void)setItemHeight:(CGFloat)value {
    _itemHeight=value;
 }
 

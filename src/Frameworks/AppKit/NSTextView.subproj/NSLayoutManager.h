@@ -108,9 +108,9 @@ typedef enum {
 - (void)textContainerChangedGeometry:(NSTextContainer *)container;
 - (void)ensureLayoutForTextContainer:(NSTextContainer *)container;
 
-- (unsigned)glyphIndexForPoint:(NSPoint)point inTextContainer:(NSTextContainer *)container fractionOfDistanceThroughGlyph:(float *)fraction;
+- (unsigned)glyphIndexForPoint:(NSPoint)point inTextContainer:(NSTextContainer *)container fractionOfDistanceThroughGlyph:(CGFloat *)fraction;
 - (unsigned)glyphIndexForPoint:(NSPoint)point inTextContainer:(NSTextContainer *)container;
-- (float)fractionOfDistanceThroughGlyphForPoint:(NSPoint)point inTextContainer:(NSTextContainer *)container;
+- (CGFloat)fractionOfDistanceThroughGlyphForPoint:(NSPoint)point inTextContainer:(NSTextContainer *)container;
 
 - (NSRange)glyphRangeForTextContainer:(NSTextContainer *)container;
 - (NSRange)glyphRangeForCharacterRange:(NSRange)charRange actualCharacterRange:(NSRangePointer)actualCharRange;
@@ -140,7 +140,7 @@ typedef enum {
 - (void)drawStrikethroughForGlyphRange:(NSRange)glyphRange strikethroughType:(NSInteger)strikethroughVal baselineOffset:(CGFloat)baselineOffset lineFragmentRect:(NSRect)lineRect lineFragmentGlyphRange:(NSRange)lineGlyphRange containerOrigin:(NSPoint)containerOrigin;
 - (void)strikethroughGlyphRange:(NSRange)glyphRange strikethroughType:(NSInteger)strikethroughVal lineFragmentRect:(NSRect)lineRect lineFragmentGlyphRange:(NSRange)lineGlyphRange containerOrigin:(NSPoint)containerOrigin;
 
-- (float)defaultLineHeightForFont:(NSFont *)font;
+- (CGFloat)defaultLineHeightForFont:(NSFont *)font;
 
 - (NSDictionary *)temporaryAttributesAtCharacterIndex:(NSUInteger)charIndex effectiveRange:(NSRangePointer)effectiveCharRange;
 - (void)setTemporaryAttributes:(NSDictionary *)attrs forCharacterRange:(NSRange)charRange;

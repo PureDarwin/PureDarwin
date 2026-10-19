@@ -84,14 +84,14 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    [self setNeedsDisplay:YES];
 }
 
--(void)setEntryWidth:(float)value {
+-(void)setEntryWidth:(CGFloat)value {
    NSSize size=[self cellSize];
    
    size.width=value;
    [self setCellSize:size];
 }
 
--(void)setInterlineSpacing:(float)value {
+-(void)setInterlineSpacing:(CGFloat)value {
    [self setIntercellSpacing:NSMakeSize(0,value)];
 }
 

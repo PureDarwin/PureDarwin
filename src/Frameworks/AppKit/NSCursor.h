@@ -69,3 +69,33 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 + (void)pop;
 
 @end
+
+typedef NS_OPTIONS(NSUInteger, NSCursorFrameResizePosition) {
+    NSCursorFrameResizePositionTop = 1 << 0,
+    NSCursorFrameResizePositionLeft = 1 << 1,
+    NSCursorFrameResizePositionBottom = 1 << 2,
+    NSCursorFrameResizePositionRight = 1 << 3,
+    NSCursorFrameResizePositionTopLeft = NSCursorFrameResizePositionTop | NSCursorFrameResizePositionLeft,
+    NSCursorFrameResizePositionTopRight = NSCursorFrameResizePositionTop | NSCursorFrameResizePositionRight,
+    NSCursorFrameResizePositionBottomLeft = NSCursorFrameResizePositionBottom | NSCursorFrameResizePositionLeft,
+    NSCursorFrameResizePositionBottomRight = NSCursorFrameResizePositionBottom | NSCursorFrameResizePositionRight,
+};
+
+typedef NS_OPTIONS(NSUInteger, NSCursorFrameResizeDirections) {
+    NSCursorFrameResizeDirectionsInward = 1 << 0,
+    NSCursorFrameResizeDirectionsOutward = 1 << 1,
+    NSCursorFrameResizeDirectionsAll = NSCursorFrameResizeDirectionsInward | NSCursorFrameResizeDirectionsOutward,
+};
+
+@interface NSCursor (ModernCursors)
++ (NSCursor *)IBeamCursorForVerticalLayout;
++ (NSCursor *)busyButClickableCursor;
++ (NSCursor *)columnResizeCursor;
++ (NSCursor *)rowResizeCursor;
++ (NSCursor *)zoomInCursor;
++ (NSCursor *)zoomOutCursor;
++ (NSCursor *)columnResizeCursorInDirections:(NSUInteger)directions;
++ (NSCursor *)rowResizeCursorInDirections:(NSUInteger)directions;
++ (NSCursor *)frameResizeCursorFromPosition:(NSCursorFrameResizePosition)position inDirections:(NSCursorFrameResizeDirections)directions;
+@end
+

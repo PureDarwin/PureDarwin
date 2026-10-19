@@ -10,7 +10,7 @@
 
 // TODO: provide different images for different kinds of markers
 @implementation NSRulerMarker (NSTextExtensions)
-+ (NSRulerMarker *)leftTabMarkerWithRulerView:(NSRulerView *)ruler location:(float)location
++ (NSRulerMarker *)leftTabMarkerWithRulerView:(NSRulerView *)ruler location:(CGFloat)location
 {
     NSImage *image = [NSImage imageNamed:@"NSRulerMarkerTab"];
     NSPoint imageOrigin = NSMakePoint(0, 0);
@@ -18,7 +18,7 @@
     return marker;
 }
 
-+ (NSRulerMarker *)rightTabMarkerWithRulerView:(NSRulerView *)ruler location:(float)location
++ (NSRulerMarker *)rightTabMarkerWithRulerView:(NSRulerView *)ruler location:(CGFloat)location
 {
     NSImage *image = [NSImage imageNamed:@"NSRulerMarkerTab"];
     NSPoint imageOrigin = NSMakePoint(0, 0);
@@ -27,7 +27,7 @@
 }
 
 
-+ (NSRulerMarker *)centerTabMarkerWithRulerView:(NSRulerView *)ruler location:(float)location
++ (NSRulerMarker *)centerTabMarkerWithRulerView:(NSRulerView *)ruler location:(CGFloat)location
 {
     NSImage *image = [NSImage imageNamed:@"NSRulerMarkerTab"];
     NSPoint imageOrigin = NSMakePoint(0, 0);
@@ -35,7 +35,7 @@
     return marker;
 }
 
-+ (NSRulerMarker *)decimalTabMarkerWithRulerView:(NSRulerView *)ruler location:(float)location
++ (NSRulerMarker *)decimalTabMarkerWithRulerView:(NSRulerView *)ruler location:(CGFloat)location
 {
     NSImage *image = [NSImage imageNamed:@"NSRulerMarkerTab"];
     NSPoint imageOrigin = NSMakePoint(0, 0);
@@ -43,7 +43,7 @@
     return marker;
 }
 
-+ (NSRulerMarker *)leftMarginMarkerWithRulerView:(NSRulerView *)ruler location:(float)location
++ (NSRulerMarker *)leftMarginMarkerWithRulerView:(NSRulerView *)ruler location:(CGFloat)location
 {
     NSImage *image = [NSImage imageNamed:@"NSRulerMarkerTab"];
     NSPoint imageOrigin = NSMakePoint(0, 0);
@@ -51,7 +51,7 @@
     return marker;
 }
 
-+ (NSRulerMarker *)rightMarginMarkerWithRulerView:(NSRulerView *)ruler location:(float)location
++ (NSRulerMarker *)rightMarginMarkerWithRulerView:(NSRulerView *)ruler location:(CGFloat)location
 {
     NSImage *image = [NSImage imageNamed:@"NSRulerMarkerTab"];
     NSPoint imageOrigin = NSMakePoint(0, 0);
@@ -59,7 +59,7 @@
     return marker;
 }
 
-+ (NSRulerMarker *)firstIndentMarkerWithRulerView:(NSRulerView *)ruler location:(float)location
++ (NSRulerMarker *)firstIndentMarkerWithRulerView:(NSRulerView *)ruler location:(CGFloat)location
 {
     NSImage *image = [NSImage imageNamed:@"NSRulerMarkerTab"];
     NSPoint imageOrigin = NSMakePoint(0, 0);
@@ -67,7 +67,7 @@
     return marker;
 }
 
-+ (NSRulerMarker *)leftIndentMarkerWithRulerView:(NSRulerView *)ruler location:(float)location
++ (NSRulerMarker *)leftIndentMarkerWithRulerView:(NSRulerView *)ruler location:(CGFloat)location
 {
     NSImage *image = [NSImage imageNamed:@"NSRulerMarkerTab"];
     NSPoint imageOrigin = NSMakePoint(0, 0);
@@ -75,7 +75,7 @@
     return marker;
 }
 
-+ (NSRulerMarker *)rightIndentMarkerWithRulerView:(NSRulerView *)ruler location:(float)location
++ (NSRulerMarker *)rightIndentMarkerWithRulerView:(NSRulerView *)ruler location:(CGFloat)location
 {
     NSImage *image = [NSImage imageNamed:@"NSRulerMarkerTab"];
     NSPoint imageOrigin = NSMakePoint(0, 0);

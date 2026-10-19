@@ -164,7 +164,7 @@ static NSMutableDictionary *cellClassDictionary = nil;
    return [[self selectedCell] intValue];
 }
 
--(float)floatValue {
+-(CGFloat)floatValue {
    return [[self selectedCell] floatValue];
 }
 
@@ -279,7 +279,7 @@ static NSMutableDictionary *cellClassDictionary = nil;
     [self setNeedsDisplay:YES];
 }
 
--(void)setFloatValue:(float)value {
+-(void)setFloatValue:(CGFloat)value {
     [self abortEditing];
     [[self selectedCell] setFloatValue:value];
     [self setNeedsDisplay:YES];

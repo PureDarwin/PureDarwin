@@ -11,8 +11,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 @class NSMenu, NSUndoManager;
 
+@class NSUserActivity;
+
 @interface NSResponder : NSObject <NSCoding> {
     id _nextResponder;
+    NSUserActivity *_userActivity;
 }
 
 - (NSResponder *)nextResponder;
@@ -22,6 +25,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 - (void)setNextResponder:(NSResponder *)responder;
 - (void)setMenu:(NSMenu *)menu;
+- (NSUserActivity *)userActivity;
+- (void)setUserActivity:(NSUserActivity *)userActivity;
 
 - validRequestorForSendType:(NSString *)sendType returnType:(NSString *)returnType;
 
@@ -45,6 +50,20 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 - (void)cursorUpdate:(NSEvent *)event;
 - (void)scrollWheel:(NSEvent *)event;
+- (void)magnifyWithEvent:(NSEvent *)event;
+- (void)rotateWithEvent:(NSEvent *)event;
+- (void)swipeWithEvent:(NSEvent *)event;
+- (void)beginGestureWithEvent:(NSEvent *)event;
+- (void)endGestureWithEvent:(NSEvent *)event;
+- (void)smartMagnifyWithEvent:(NSEvent *)event;
+- (void)pressureChangeWithEvent:(NSEvent *)event;
+- (void)tabletPoint:(NSEvent *)event;
+- (void)tabletProximity:(NSEvent *)event;
+- (void)quickLookWithEvent:(NSEvent *)event;
+- (void)touchesBeganWithEvent:(NSEvent *)event;
+- (void)touchesMovedWithEvent:(NSEvent *)event;
+- (void)touchesEndedWithEvent:(NSEvent *)event;
+- (void)touchesCancelledWithEvent:(NSEvent *)event;
 
 - (void)mouseUp:(NSEvent *)event;
 - (void)mouseDown:(NSEvent *)event;

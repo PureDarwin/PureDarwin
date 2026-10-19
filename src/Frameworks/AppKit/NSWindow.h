@@ -68,7 +68,14 @@ typedef enum {
     NSWindowZoomButton,
     NSWindowToolbarButton,
     NSWindowDocumentIconButton,
+    NSWindowDocumentVersionsButton = 6,
+    NSWindowFullScreenButton = 7,
 } NSWindowButton;
+
+// whether any part of a window can be seen
+typedef NS_OPTIONS(NSUInteger, NSWindowOcclusionState) {
+    NSWindowOcclusionStateVisible = 1UL << 1,
+};
 
 enum {
     NSWindowNumberListAllApplications = 0x01,
@@ -106,7 +113,15 @@ enum {
     NSWindowCollectionBehaviorTransient = 0x08,
     NSWindowCollectionBehaviorStationary = 0x10,
     NSWindowCollectionBehaviorParticipatesInCycle = 0x20,
-    NSWindowCollectionBehaviorIgnoresCycle = 0x40
+    NSWindowCollectionBehaviorIgnoresCycle = 0x40,
+    NSWindowCollectionBehaviorFullScreenPrimary = 1 << 7,
+    NSWindowCollectionBehaviorFullScreenAuxiliary = 1 << 8,
+    NSWindowCollectionBehaviorFullScreenNone = 1 << 9,
+    NSWindowCollectionBehaviorFullScreenAllowsTiling = 1 << 11,
+    NSWindowCollectionBehaviorFullScreenDisallowsTiling = 1 << 12,
+    NSWindowCollectionBehaviorPrimary = 1 << 16,
+    NSWindowCollectionBehaviorAuxiliary = 1 << 17,
+    NSWindowCollectionBehaviorCanJoinAllApplications = 1 << 18,
 };
 typedef NSUInteger NSWindowCollectionBehavior;
 
@@ -120,6 +135,7 @@ typedef NSUInteger NSWindowSharingType;
 typedef int NSSelectionDirection;
 
 APPKIT_EXPORT NSString *const NSWindowDidBecomeKeyNotification;
+APPKIT_EXPORT NSString *const NSWindowDidChangeOcclusionStateNotification;
 APPKIT_EXPORT NSString *const NSWindowDidResignKeyNotification;
 APPKIT_EXPORT NSString *const NSWindowDidBecomeMainNotification;
 APPKIT_EXPORT NSString *const NSWindowDidResignMainNotification;
@@ -235,6 +251,16 @@ APPKIT_EXPORT NSString *const NSWindowDidEndLiveResizeNotification;
     BOOL _showsToolbarButton;
     BOOL _ignoresMouseEvents;
     BOOL _isMovableByWindowBackground;
+    BOOL _isMovable;
+    BOOL _allowsConcurrentViewDrawing;
+    BOOL _preventsApplicationTerminationWhenModal;
+    BOOL _canBecomeVisibleWithoutLogin;
+    BOOL _autorecalculatesContentBorderThickness[4];
+    CGFloat _contentBorderThickness[4];
+    NSWindowDepth _depthLimit;
+    NSWindowSharingType _sharingType;
+    NSURL *_representedURL;
+    NSColorSpace *_colorSpace;
     BOOL _titlebarAppearsTransparent;
     NSWindowTitleVisibility _titleVisibility;
     NSWindowToolbarStyle _toolbarStyle;
@@ -272,7 +298,7 @@ APPKIT_EXPORT NSString *const NSWindowDidEndLiveResizeNotification;
 
 + (NSRect)frameRectForContentRect:(NSRect)contentRect styleMask:(unsigned)styleMask;
 + (NSRect)contentRectForFrameRect:(NSRect)frameRect styleMask:(unsigned)styleMask;
-+ (float)minFrameWidthWithTitle:(NSString *)title styleMask:(unsigned)styleMask;
++ (CGFloat)minFrameWidthWithTitle:(NSString *)title styleMask:(unsigned)styleMask;
 + (NSInteger)windowNumberAtPoint:(NSPoint)point belowWindowWithWindowNumber:(NSInteger)window;
 + (NSArray *)windowNumbersWithOptions:(NSWindowNumberListOptions)options;
 + (void)removeFrameUsingName:(NSString *)name;
@@ -426,7 +452,7 @@ APPKIT_EXPORT NSString *const NSWindowDidEndLiveResizeNotification;
 - (NSString *)stringWithSavedFrame;
 
 - (int)resizeFlags;
-- (float)userSpaceScaleFactor;
+- (CGFloat)userSpaceScaleFactor;
 - (CGFloat)backingScaleFactor;
 - (NSResponder *)firstResponder;
 
@@ -450,6 +476,7 @@ APPKIT_EXPORT NSString *const NSWindowDidEndLiveResizeNotification;
 - (BOOL)isDocumentEdited;
 - (BOOL)isZoomed;
 - (BOOL)isVisible;
+- (NSWindowOcclusionState)occlusionState;
 - (BOOL)isKeyWindow;
 - (BOOL)isMainWindow;
 - (BOOL)isMiniaturized;

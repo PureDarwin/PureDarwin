@@ -67,7 +67,7 @@ NSString* NSImageCompressionFactor = @"NSImageCompressionFactor";
    return [self TIFFRepresentationOfImageRepsInArray:array usingCompression:NSTIFFCompressionNone factor:0.0];
 }
 
-+(NSData *)TIFFRepresentationOfImageRepsInArray:(NSArray *)array usingCompression:(NSTIFFCompression)compression factor:(float)factor {
++(NSData *)TIFFRepresentationOfImageRepsInArray:(NSArray *)array usingCompression:(NSTIFFCompression)compression factor:(CGFloat)factor {
    NSMutableData        *result=[NSMutableData data];
    CGImageDestinationRef dest=CGImageDestinationCreateWithData((CFMutableDataRef)result,(CFStringRef)@"public.tiff",[array count],NULL);
 
@@ -558,15 +558,15 @@ NSString* NSImageCompressionFactor = @"NSImageCompressionFactor";
    [_properties setObject:value forKey:property];
 }
 
--(void)colorizeByMappingGray:(float)gray toColor:(NSColor *)color blackMapping:(NSColor *)blackMapping whiteMapping:(NSColor *)whiteMapping {
+-(void)colorizeByMappingGray:(CGFloat)gray toColor:(NSColor *)color blackMapping:(NSColor *)blackMapping whiteMapping:(NSColor *)whiteMapping {
    NSUnimplementedMethod();
 }
 
--(void)getCompression:(NSTIFFCompression *)compression factor:(float *)factor {
+-(void)getCompression:(NSTIFFCompression *)compression factor:(CGFloat *)factor {
    NSUnimplementedMethod();
 }
 
--(void)setCompression:(NSTIFFCompression)compression factor:(float)factor {
+-(void)setCompression:(NSTIFFCompression)compression factor:(CGFloat)factor {
    NSUnimplementedMethod();
 }
 
@@ -638,7 +638,7 @@ NSString* NSImageCompressionFactor = @"NSImageCompressionFactor";
    return [self TIFFRepresentationUsingCompression:NSTIFFCompressionNone factor:0.0];
 }
 
--(NSData *)TIFFRepresentationUsingCompression:(NSTIFFCompression)compression factor:(float)factor {
+-(NSData *)TIFFRepresentationUsingCompression:(NSTIFFCompression)compression factor:(CGFloat)factor {
    return [[self class] TIFFRepresentationOfImageRepsInArray:[NSArray arrayWithObject:self]
                                             usingCompression:compression
                                                       factor:factor];

@@ -31,7 +31,7 @@ NSString * const NSDrawerDidCloseNotification = @"NSDrawerDidCloseNotification";
 
 // - modify the leading/trailing offset portions of the drawer's geometry.
 // - constrain the "expandable" portion of the drawer to the min/max content sizes.
-+ (NSRect)drawerFrameWithContentSize:(NSSize)contentSize parentWindow:(NSWindow *)parentWindow leadingOffset:(float)leadingOffset trailingOffset:(float)trailingOffset edge:(NSRectEdge)edge state:(NSDrawerState)state {
++ (NSRect)drawerFrameWithContentSize:(NSSize)contentSize parentWindow:(NSWindow *)parentWindow leadingOffset:(CGFloat)leadingOffset trailingOffset:(CGFloat)trailingOffset edge:(NSRectEdge)edge state:(NSDrawerState)state {
 	 NSRect parentFrame       = [parentWindow frame];
 	 NSRect parentContentRect = [parentWindow contentRectForFrameRect:parentFrame];
 	 NSRect drawerFrame       = [NSWindow frameRectForContentRect:NSMakeRect(0, 0, contentSize.width, contentSize.height) styleMask:NSDrawerWindowMask];
@@ -225,11 +225,11 @@ NSString * const NSDrawerDidCloseNotification = @"NSDrawerDidCloseNotification";
     return _maxContentSize;
 }
 
-- (float)leadingOffset {
+- (CGFloat)leadingOffset {
     return _leadingOffset;
 }
 
-- (float)trailingOffset {
+- (CGFloat)trailingOffset {
     return _trailingOffset;
 }
 
@@ -317,11 +317,11 @@ NSString * const NSDrawerDidCloseNotification = @"NSDrawerDidCloseNotification";
     _preferredEdge = edge;
 }
 
-- (void)setLeadingOffset:(float)offset {
+- (void)setLeadingOffset:(CGFloat)offset {
     _leadingOffset = offset;
 }
 
-- (void)setTrailingOffset:(float)offset {
+- (void)setTrailingOffset:(CGFloat)offset {
     _trailingOffset = offset;
 }
 

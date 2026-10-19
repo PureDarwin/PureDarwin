@@ -9,6 +9,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 #import <Foundation/Foundation.h>
 #import <AppKit/AppKitExport.h>
+#import <CoreGraphics/CGEvent.h>
 
 @class NSWindow, NSGraphicsContext, NSTrackingArea;
 
@@ -308,3 +309,43 @@ enum {
 @end
 
 APPKIT_EXPORT NSEventMask NSEventMaskFromType(NSEventType type);
+
+typedef NS_OPTIONS(NSUInteger, NSEventPhase) {
+    NSEventPhaseNone = 0,
+    NSEventPhaseBegan = 1 << 0,
+    NSEventPhaseStationary = 1 << 1,
+    NSEventPhaseChanged = 1 << 2,
+    NSEventPhaseEnded = 1 << 3,
+    NSEventPhaseCancelled = 1 << 4,
+    NSEventPhaseMayBegin = 1 << 5,
+};
+
+typedef NS_ENUM(short, NSEventSubtype) {
+    NSEventSubtypeWindowExposed = 0,
+    NSEventSubtypeApplicationActivated = 1,
+    NSEventSubtypeApplicationDeactivated = 2,
+    NSEventSubtypeWindowMoved = 4,
+    NSEventSubtypeScreenChanged = 8,
+    NSEventSubtypeMouseEvent = 0,
+    NSEventSubtypeTabletPoint = 1,
+    NSEventSubtypeTabletProximity = 2,
+    NSEventSubtypeTouch = 3,
+};
+
+@interface NSEvent (ModernEvents)
+@property(readonly) NSEventPhase phase;
+@property(readonly) NSEventPhase momentumPhase;
+@property(readonly) NSInteger stage;
+@property(readonly) CGFloat stageTransition;
+@property(readonly) float tangentialPressure;
+@property(readonly) NSPoint tilt;
+@property(readonly) float rotation;
+@property(readonly) CGFloat magnification;
+@property(readonly) BOOL isEnteringProximity;
+@property(readonly, getter=isDirectionInvertedFromDevice) BOOL directionInvertedFromDevice;
+@property(readonly) CGEventRef CGEvent;
++ (BOOL)isSwipeTrackingFromScrollEventsEnabled;
++ (BOOL)isMouseCoalescingEnabled;
++ (void)setMouseCoalescingEnabled:(BOOL)enabled;
++ (NSEvent *)eventWithCGEvent:(CGEventRef)cgEvent;
+@end
