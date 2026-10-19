@@ -9,20 +9,15 @@
 #import <Foundation/NSException.h>
 #import <Foundation/NSString.h>
 
-// {isa, count, objects}
-@interface NSConstantArray : NSArray {
-    NSUInteger _count;
-    const id *_objects;
-}
+// {isa, count, objects} and {isa, options, count, keys, objects}, read at those offsets: ivars
+// could slide when the runtime grows NSArray or NSDictionary for CF bridging
+typedef struct { void *isa; NSUInteger count; const id *objects; } PDConstantArrayLiteral;
+typedef struct { void *isa; NSUInteger options; NSUInteger count; const id *keys; const id *objects; } PDConstantDictionaryLiteral;
+
+@interface NSConstantArray : NSArray
 @end
 
-// {isa, options, count, keys, objects}
-@interface NSConstantDictionary : NSDictionary {
-    NSUInteger _options;
-    NSUInteger _count;
-    const id *_keys;
-    const id *_objects;
-}
+@interface NSConstantDictionary : NSDictionary
 @end
 
 extern char __NSConstantArrayClass __asm__("_OBJC_CLASS_$_NSConstantArray");
@@ -30,6 +25,9 @@ extern char __NSConstantArrayClass __asm__("_OBJC_CLASS_$_NSConstantArray");
 // what clang references for an empty @[], an NSConstantArray of no objects
 __attribute__((visibility("default")))
 struct { void *isa; NSUInteger count; const id *objects; } __NSArray0__struct = { &__NSConstantArrayClass, 0, NULL };
+
+#define _count (((PDConstantArrayLiteral *)self)->count)
+#define _objects (((PDConstantArrayLiteral *)self)->objects)
 
 @implementation NSConstantArray
 
@@ -88,6 +86,13 @@ struct { void *isa; NSUInteger count; const id *objects; } __NSArray0__struct = 
 }
 
 @end
+
+#undef _count
+#undef _objects
+#define _options (((PDConstantDictionaryLiteral *)self)->options)
+#define _count (((PDConstantDictionaryLiteral *)self)->count)
+#define _keys (((PDConstantDictionaryLiteral *)self)->keys)
+#define _objects (((PDConstantDictionaryLiteral *)self)->objects)
 
 @implementation NSConstantDictionary
 

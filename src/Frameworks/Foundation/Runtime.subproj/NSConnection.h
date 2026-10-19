@@ -13,7 +13,7 @@
 #import <Foundation/NSProxy.h>
 #import <Foundation/NSDate.h>
 
-@class NSString, NSArray, NSMutableDictionary, NSConnection, NSRunLoop, NSPort;
+@class NSString, NSArray, NSMutableDictionary, NSConnection, NSRunLoop, NSPort, NSPortNameServer;
 
 FOUNDATION_EXPORT NSString * const NSConnectionDidDieNotification;
 FOUNDATION_EXPORT NSString * const NSFailedAuthenticationException;
@@ -53,8 +53,11 @@ FOUNDATION_EXPORT NSString * const NSObjectInaccessibleException;
 
 + (NSConnection *)connectionWithRegisteredName:(NSString *)name host:(NSString *)host;
 + (id)rootProxyForConnectionWithRegisteredName:(NSString *)name host:(NSString *)host;
++ (NSConnection *)connectionWithRegisteredName:(NSString *)name host:(NSString *)host usingNameServer:(NSPortNameServer *)server;
++ (id)rootProxyForConnectionWithRegisteredName:(NSString *)name host:(NSString *)host usingNameServer:(NSPortNameServer *)server;
 
 - (BOOL)registerName:(NSString *)name;
+- (BOOL)registerName:(NSString *)name withNameServer:(NSPortNameServer *)server;
 
 - (void)setRootObject:(id)object;
 - (id)rootObject;

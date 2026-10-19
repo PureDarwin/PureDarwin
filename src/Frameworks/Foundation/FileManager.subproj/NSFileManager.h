@@ -68,6 +68,11 @@ FOUNDATION_EXPORT NSString *const NSFileSystemFreeNodes;
 
 @end
 
+typedef NS_OPTIONS(NSUInteger, NSFileManagerItemReplacementOptions) {
+    NSFileManagerItemReplacementUsingNewMetadataOnly = 1UL << 0,
+    NSFileManagerItemReplacementWithoutDeletingBackupItem = 1UL << 1,
+};
+
 @interface NSFileManager : NSObject
 
 + (NSFileManager *)defaultManager;
@@ -81,6 +86,14 @@ FOUNDATION_EXPORT NSString *const NSFileSystemFreeNodes;
 - (NSArray<NSString *> *)contentsOfDirectoryAtPath:(NSString *)path error:(NSError **)error;
 - (NSDictionary *)attributesOfItemAtPath:(NSString *)path error:(NSError **)error;
 - (NSDirectoryEnumerator *)enumeratorAtPath:(NSString *)path;
+- (NSArray<NSString *> *)subpathsOfDirectoryAtPath:(NSString *)path error:(NSError **)error;
+- (NSArray<NSString *> *)subpathsAtPath:(NSString *)path;
+- (BOOL)replaceItemAtURL:(NSURL *)originalItemURL
+           withItemAtURL:(NSURL *)newItemURL
+          backupItemName:(NSString *)backupItemName
+                 options:(NSFileManagerItemReplacementOptions)options
+        resultingItemURL:(NSURL **)resultingURL
+                   error:(NSError **)error;
 
 - (NSData *)contentsAtPath:(NSString *)path;
 - (BOOL)createFileAtPath:(NSString *)path

@@ -16,6 +16,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+extern Boolean _CFIsObjC(CFTypeID typeID, void *obj);
+
 NSStreamPropertyKey NSStreamFileCurrentOffsetKey = nil;
 
 /* NSStream's own methods are inherited by both subclasses, and CF keeps read
@@ -132,6 +134,29 @@ static CFURLRef __NSStreamCopyFileURL(NSString *path) {
     return CFReadStreamHasBytesAvailable((CFReadStreamRef)self);
 }
 
+
+// CF owns the count of objects CF made, NSObject's would let CFRelease free them under a retainer.
+// Instances of ObjC subclasses keep NSObject's count
+- (id)retain {
+    if (_CFIsObjC(CFReadStreamGetTypeID(), (void *)self))
+        return [super retain];
+    CFRetain((CFTypeRef)self);
+    return self;
+}
+
+- (oneway void)release {
+    if (_CFIsObjC(CFReadStreamGetTypeID(), (void *)self)) {
+        [super release];
+        return;
+    }
+    CFRelease((CFTypeRef)self);
+}
+
+- (NSUInteger)retainCount {
+    if (_CFIsObjC(CFReadStreamGetTypeID(), (void *)self))
+        return [super retainCount];
+    return (NSUInteger)CFGetRetainCount((CFTypeRef)self);
+}
 @end
 
 @implementation NSOutputStream
@@ -174,6 +199,29 @@ static CFURLRef __NSStreamCopyFileURL(NSString *path) {
     return CFWriteStreamCanAcceptBytes((CFWriteStreamRef)self);
 }
 
+
+// CF owns the count of objects CF made, NSObject's would let CFRelease free them under a retainer.
+// Instances of ObjC subclasses keep NSObject's count
+- (id)retain {
+    if (_CFIsObjC(CFWriteStreamGetTypeID(), (void *)self))
+        return [super retain];
+    CFRetain((CFTypeRef)self);
+    return self;
+}
+
+- (oneway void)release {
+    if (_CFIsObjC(CFWriteStreamGetTypeID(), (void *)self)) {
+        [super release];
+        return;
+    }
+    CFRelease((CFTypeRef)self);
+}
+
+- (NSUInteger)retainCount {
+    if (_CFIsObjC(CFWriteStreamGetTypeID(), (void *)self))
+        return [super retainCount];
+    return (NSUInteger)CFGetRetainCount((CFTypeRef)self);
+}
 @end
 
 #if DEPLOYMENT_RUNTIME_OBJC

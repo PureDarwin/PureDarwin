@@ -14,6 +14,10 @@
 #import <Foundation/NSPropertyListSerialization.h>
 #import <Foundation/NSString.h>
 
+@interface NSObject (NSKeyedUnarchiverDelegate)
+- (Class)unarchiver:(NSKeyedUnarchiver *)unarchiver cannotDecodeObjectOfClassName:(NSString *)name originalClasses:(NSArray *)classNames;
+@end
+
 static id unarchiveValue(NSKeyedUnarchiver *unarchiver, id record) {
     if(![record isKindOfClass:[NSDictionary class]])
         return record;
@@ -42,7 +46,14 @@ static id unarchiveValue(NSKeyedUnarchiver *unarchiver, id record) {
         return result;
     }
     if([type isEqualToString:@"object"]) {
-        Class cls = NSClassFromString([record objectForKey:@"$class"]);
+        NSString *name = [record objectForKey:@"$class"];
+        Class cls = [unarchiver classForClassName:name];
+        if(cls == Nil)
+            cls = [NSKeyedUnarchiver classForClassName:name];
+        if(cls == Nil)
+            cls = NSClassFromString(name);
+        if(cls == Nil && [unarchiver->_delegate respondsToSelector:@selector(unarchiver:cannotDecodeObjectOfClassName:originalClasses:)])
+            cls = [unarchiver->_delegate unarchiver:unarchiver cannotDecodeObjectOfClassName:name originalClasses:[NSArray arrayWithObject:name]];
         if(cls == Nil)
             return nil;
         [unarchiver->_containers addObject:[record objectForKey:@"$values"]];
@@ -53,7 +64,49 @@ static id unarchiveValue(NSKeyedUnarchiver *unarchiver, id record) {
     return nil;
 }
 
+// substitutions shared by every unarchiver, an instance's own map is consulted first
+static NSMutableDictionary *globalClasses;
+
 @implementation NSKeyedUnarchiver
+
++ (void)setClass:(Class)cls forClassName:(NSString *)name {
+    @synchronized(self) {
+        if(globalClasses == nil)
+            globalClasses = [NSMutableDictionary new];
+        if(cls == Nil)
+            [globalClasses removeObjectForKey:name];
+        else
+            [globalClasses setObject:cls forKey:name];
+    }
+}
+
++ (Class)classForClassName:(NSString *)name {
+    @synchronized(self) {
+        return name != nil ? [globalClasses objectForKey:name] : Nil;
+    }
+}
+
+- (void)setClass:(Class)cls forClassName:(NSString *)name {
+    if(_classes == nil)
+        _classes = [NSMutableDictionary new];
+    if(cls == Nil)
+        [_classes removeObjectForKey:name];
+    else
+        [_classes setObject:cls forKey:name];
+}
+
+- (Class)classForClassName:(NSString *)name {
+    return name != nil ? [_classes objectForKey:name] : Nil;
+}
+
+// not retained, like every Cocoa delegate
+- (void)setDelegate:(id)delegate {
+    _delegate = delegate;
+}
+
+- (id)delegate {
+    return _delegate;
+}
 
 + (id)unarchiveObjectWithData:(NSData *)data {
     NSKeyedUnarchiver *unarchiver = [[self alloc] initForReadingFromData:data error:NULL];
@@ -65,6 +118,11 @@ static id unarchiveValue(NSKeyedUnarchiver *unarchiver, id record) {
 + (id)unarchivedObjectOfClass:(Class)cls fromData:(NSData *)data error:(NSError **)error {
     id result = [self unarchiveObjectWithData:data];
     return [result isKindOfClass:cls] ? result : nil;
+}
+
+// the pre-secure-coding spelling, same reader
+- (id)initForReadingWithData:(NSData *)data {
+    return [self initForReadingFromData:data error:NULL];
 }
 
 - (id)initForReadingFromData:(NSData *)data error:(NSError **)error {
@@ -82,6 +140,7 @@ static id unarchiveValue(NSKeyedUnarchiver *unarchiver, id record) {
 }
 
 - (void)dealloc {
+    [_classes release];
     [_data release];
     [_containers release];
     [_root release];
@@ -123,6 +182,20 @@ static id unarchiveValue(NSKeyedUnarchiver *unarchiver, id record) {
 
 - (double)decodeDoubleForKey:(NSString *)key {
     return [[[self->_containers lastObject] objectForKey:key] doubleValue];
+}
+
+// the bytes live in the archive's container, which outlives the decode as Cocoa requires
+- (const uint8_t *)decodeBytesForKey:(NSString *)key returnedLength:(NSUInteger *)length {
+    id value = [[_containers lastObject] objectForKey:key];
+
+    if (![value isKindOfClass:[NSData class]]) {
+        if (length != NULL)
+            *length = 0;
+        return NULL;
+    }
+    if (length != NULL)
+        *length = [value length];
+    return [value bytes];
 }
 
 - (void)finishDecoding {

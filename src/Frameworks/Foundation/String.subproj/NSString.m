@@ -336,6 +336,67 @@ __attribute__((visibility("hidden"))) CFMutableStringRef __NSStringCreateCFCopy(
     return result;
 }
 
+// characters outside the allowed set become %XX of their UTF-8 bytes
+- (NSString *)stringByAddingPercentEncodingWithAllowedCharacters:(NSCharacterSet *)allowed {
+    CFIndex length = CFStringGetLength((CFStringRef)self);
+    CFMutableStringRef result = CFStringCreateMutable(kCFAllocatorDefault, 0);
+
+    for (CFIndex i = 0; i < length; i++) {
+        UniChar unit = CFStringGetCharacterAtIndex((CFStringRef)self, i);
+        UTF32Char character = unit;
+        CFIndex units = 1;
+
+        if (CFStringIsSurrogateHighCharacter(unit) && i + 1 < length) {
+            UniChar low = CFStringGetCharacterAtIndex((CFStringRef)self, i + 1);
+
+            if (CFStringIsSurrogateLowCharacter(low)) {
+                character = CFStringGetLongCharacterForSurrogatePair(unit, low);
+                units = 2;
+            }
+        }
+        if (CFCharacterSetIsLongCharacterMember((CFCharacterSetRef)allowed, character)) {
+            CFStringAppendCharacters(result, &unit, 1);
+            if (units == 2) {
+                UniChar low = CFStringGetCharacterAtIndex((CFStringRef)self, i + 1);
+                CFStringAppendCharacters(result, &low, 1);
+            }
+        } else {
+            UInt8 bytes[8];
+            CFIndex used = 0;
+
+            CFStringGetBytes((CFStringRef)self, CFRangeMake(i, units), kCFStringEncodingUTF8, 0, false,
+                             bytes, sizeof(bytes), &used);
+            for (CFIndex b = 0; b < used; b++)
+                CFStringAppendFormat(result, NULL, CFSTR("%%%02X"), bytes[b]);
+        }
+        i += units - 1;
+    }
+    return (NSString *)CFAutorelease(result);
+}
+
+static NSString *_normalized(NSString *string, CFStringNormalizationForm form) {
+    CFMutableStringRef result = CFStringCreateMutableCopy(kCFAllocatorDefault, 0, (CFStringRef)string);
+
+    CFStringNormalize(result, form);
+    return (NSString *)CFAutorelease(result);
+}
+
+- (NSString *)precomposedStringWithCanonicalMapping {
+    return _normalized(self, kCFStringNormalizationFormC);
+}
+
+- (NSString *)decomposedStringWithCanonicalMapping {
+    return _normalized(self, kCFStringNormalizationFormD);
+}
+
+- (NSString *)precomposedStringWithCompatibilityMapping {
+    return _normalized(self, kCFStringNormalizationFormKC);
+}
+
+- (NSString *)decomposedStringWithCompatibilityMapping {
+    return _normalized(self, kCFStringNormalizationFormKD);
+}
+
 - (NSString *)stringByRemovingPercentEncoding {
     CFStringRef result = CFURLCreateStringByReplacingPercentEscapes(kCFAllocatorDefault, (CFStringRef)self, CFSTR(""));
 
@@ -375,6 +436,18 @@ __attribute__((visibility("hidden"))) CFMutableStringRef __NSStringCreateCFCopy(
                                                  __NSStringCFEncoding(encoding),
                                                  false);
     return (id)result;
+}
+
+// copied, so the buffer can be freed at once
+- (instancetype)initWithBytesNoCopy:(void *)bytes
+                             length:(NSUInteger)length
+                           encoding:(NSStringEncoding)encoding
+                       freeWhenDone:(BOOL)freeBuffer {
+    id result = [self initWithBytes:bytes length:length encoding:encoding];
+
+    if (freeBuffer)
+        free(bytes);
+    return result;
 }
 
 - (instancetype)initWithData:(NSData *)data encoding:(NSStringEncoding)encoding {
@@ -730,6 +803,27 @@ static id __NSMakeMutable(id string) {
     (void)capacity;
     CFMutableStringRef result = CFStringCreateMutable(kCFAllocatorDefault, 0);
     return (id)CFAutorelease(result);
+}
+
+// NSString's factories make immutable strings, called on NSMutableString they must not
++ (instancetype)stringWithString:(NSString *)string {
+    if (string == nil) {
+        return nil;
+    }
+    return (id)CFAutorelease(CFStringCreateMutableCopy(kCFAllocatorDefault, 0, (CFStringRef)string));
+}
+
++ (instancetype)stringWithCharacters:(const unichar *)characters length:(NSUInteger)length {
+    CFMutableStringRef result = CFStringCreateMutable(kCFAllocatorDefault, 0);
+
+    CFStringAppendCharacters(result, (const UniChar *)characters, (CFIndex)length);
+    return (id)CFAutorelease(result);
+}
+
++ (instancetype)stringWithCString:(const char *)cString encoding:(NSStringEncoding)encoding {
+    NSString *string = [NSString stringWithCString:cString encoding:encoding];
+
+    return string == nil ? nil : [self stringWithString:string];
 }
 
 - (instancetype)initWithFormat:(NSString *)format, ... {

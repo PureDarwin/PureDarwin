@@ -16,10 +16,87 @@
 #import <Foundation/NSTimer.h>
 #import <Foundation/NSThread-Private.h>
 #include <CoreFoundation/CFRunLoop.h>
+#include <CoreFoundation/CFFileDescriptor.h>
+#include <objc/runtime.h>
 #include <objc/message.h>
 #include <dispatch/dispatch.h>
 #include <sys/select.h>
 #include <pthread.h>
+
+// a select input source's descriptor as a CFFileDescriptor in the CFRunLoop, kept for the source's lifetime
+@interface NSRunLoopDescriptorWatch : NSObject {
+@public
+    NSSelectInputSource *_source;
+    CFFileDescriptorRef _descriptor;
+    CFRunLoopSourceRef _runLoopSource;
+    NSSelectEventMask _happened;
+}
+- (void)armForMask:(NSSelectEventMask)mask runLoop:(CFRunLoopRef)runLoop mode:(CFStringRef)mode;
+- (NSSelectEventMask)disarmFromRunLoop:(CFRunLoopRef)runLoop mode:(CFStringRef)mode;
+@end
+
+static void descriptorCallBack(CFFileDescriptorRef descriptor, CFOptionFlags types, void *info) {
+    NSRunLoopDescriptorWatch *watch = info;
+
+    if (types & kCFFileDescriptorReadCallBack) {
+        watch->_happened |= NSSelectReadEvent;
+    }
+    if (types & kCFFileDescriptorWriteCallBack) {
+        watch->_happened |= NSSelectWriteEvent;
+    }
+}
+
+@implementation NSRunLoopDescriptorWatch
+
+- (instancetype)initWithSource:(NSSelectInputSource *)source {
+    CFFileDescriptorContext context = { 0, self, NULL, NULL, NULL };
+
+    if ((self = [super init]) == nil) {
+        return nil;
+    }
+    _source = source;
+    _descriptor = CFFileDescriptorCreate(kCFAllocatorDefault, [source fileDescriptor], false, descriptorCallBack, &context);
+    if (_descriptor == NULL) {
+        [self release];
+        return nil;
+    }
+    _runLoopSource = CFFileDescriptorCreateRunLoopSource(kCFAllocatorDefault, _descriptor, 0);
+    return self;
+}
+
+- (void)dealloc {
+    if (_runLoopSource != NULL) {
+        CFRunLoopSourceInvalidate(_runLoopSource);
+        CFRelease(_runLoopSource);
+    }
+    if (_descriptor != NULL) {
+        CFFileDescriptorInvalidate(_descriptor);
+        CFRelease(_descriptor);
+    }
+    [super dealloc];
+}
+
+- (void)armForMask:(NSSelectEventMask)mask runLoop:(CFRunLoopRef)runLoop mode:(CFStringRef)mode {
+    CFOptionFlags types = 0;
+
+    _happened = 0;
+    if (mask & NSSelectReadEvent) {
+        types |= kCFFileDescriptorReadCallBack;
+    }
+    if (mask & NSSelectWriteEvent) {
+        types |= kCFFileDescriptorWriteCallBack;
+    }
+    CFFileDescriptorEnableCallBacks(_descriptor, types);
+    CFRunLoopAddSource(runLoop, _runLoopSource, mode);
+}
+
+- (NSSelectEventMask)disarmFromRunLoop:(CFRunLoopRef)runLoop mode:(CFStringRef)mode {
+    CFRunLoopRemoveSource(runLoop, _runLoopSource, mode);
+    CFFileDescriptorDisableCallBacks(_descriptor, kCFFileDescriptorReadCallBack | kCFFileDescriptorWriteCallBack);
+    return _happened;
+}
+
+@end
 
 @interface NSRunLoopPerform : NSObject {
 @public
@@ -49,10 +126,8 @@ NSRunLoopMode const NSRunLoopCommonModes = @"kCFRunLoopCommonModes";
 NSRunLoopMode const NSEventTrackingRunLoopMode = @"NSEventTrackingRunLoopMode";
 NSRunLoopMode const NSModalPanelRunLoopMode = @"NSModalPanelRunLoopMode";
 
-/* A select()-driven run loop, the shape Cocotron's AppKit expects: sources are
- * file descriptors, and -runMode:beforeDate: blocks in select() until one is
- * ready or the date passes. Timers are not wired in yet - NSTimer schedules
- * itself on libdispatch, so it fires without the run loop's help. */
+// sources are file descriptors as Cocotron's AppKit expects, waited on as CFFileDescriptors in the
+// thread's CFRunLoop so CF sources and cross-thread wake-ups end the wait. NSTimer uses libdispatch.
 
 static pthread_key_t runLoopKey;
 static pthread_once_t runLoopOnce = PTHREAD_ONCE_INIT;
@@ -96,6 +171,9 @@ static void createRunLoopKey(void) {
     _currentMode = [NSDefaultRunLoopMode copy];
     // made by +currentRunLoop on the thread it serves
     _cfRunLoop = (struct __CFRunLoop *)CFRetain(CFRunLoopGetCurrent());
+    // AppKit's tracking and modal modes are common modes, so main-thread performs run during a drag or a modal panel
+    CFRunLoopAddCommonMode((CFRunLoopRef)_cfRunLoop, (CFStringRef)NSEventTrackingRunLoopMode);
+    CFRunLoopAddCommonMode((CFRunLoopRef)_cfRunLoop, (CFStringRef)NSModalPanelRunLoopMode);
     return self;
 }
 
@@ -199,14 +277,23 @@ static void createRunLoopKey(void) {
     return fired;
 }
 
+// one watch per source and descriptor, a new descriptor on the same source gets a new watch
+- (NSRunLoopDescriptorWatch *)_watchForSource:(NSSelectInputSource *)source {
+    static char key;
+    NSRunLoopDescriptorWatch *watch = objc_getAssociatedObject(source, &key);
+
+    if (watch == nil || CFFileDescriptorGetNativeDescriptor(watch->_descriptor) != [source fileDescriptor]) {
+        watch = [[[NSRunLoopDescriptorWatch alloc] initWithSource:source] autorelease];
+        objc_setAssociatedObject(source, &key, watch, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    return watch;
+}
+
 - (NSDate *)limitDateForMode:(NSRunLoopMode)mode {
     return [NSDate distantFuture];
 }
 
 - (BOOL)runMode:(NSRunLoopMode)mode beforeDate:(NSDate *)date {
-    NSMutableArray *sources = [self _sourcesForMode:mode];
-    NSUInteger count = [sources count];
-
     NSString *previousMode = _currentMode;
     _currentMode = [mode copy];
 
@@ -221,73 +308,48 @@ static void createRunLoopKey(void) {
         return YES;
     }
 
-    fd_set readSet, writeSet, exceptSet;
-    FD_ZERO(&readSet);
-    FD_ZERO(&writeSet);
-    FD_ZERO(&exceptSet);
-
-    int maxFd = -1;
-    for (NSUInteger i = 0; i < count; i++) {
-        id source = [sources objectAtIndex:i];
-
-        if (![source isKindOfClass:[NSSelectInputSource class]]) {
-            continue;
-        }
-        NSSelectInputSource *select = source;
-        int fd = [select fileDescriptor];
-        if (fd < 0) {
-            continue;
-        }
-        NSSelectEventMask mask = [select selectEventMask];
-        if (mask & NSSelectReadEvent)   { FD_SET(fd, &readSet); }
-        if (mask & NSSelectWriteEvent)  { FD_SET(fd, &writeSet); }
-        if (mask & NSSelectExceptEvent) { FD_SET(fd, &exceptSet); }
-        if (fd > maxFd) {
-            maxFd = fd;
-        }
-    }
-
+    // the wait is the CFRunLoop's, so blocks, sources and wake-ups from other threads end it too,
+    // the select sources take part as CFFileDescriptors that report what became ready
     NSTimeInterval remaining = (date != nil) ? [date timeIntervalSinceNow] : 0.0;
     if (remaining < 0.0) {
         remaining = 0.0;
     }
-    /* XNU rejects very large select() timeouts. Long deadlines are still
-     * honored by waiting in bounded pieces; an input source wakes us sooner. */
     if (remaining > 86400.0) {
         remaining = 86400.0;
     }
-    struct timeval timeout;
-    timeout.tv_sec = (time_t)remaining;
-    timeout.tv_usec = (suseconds_t)((remaining - (double)timeout.tv_sec) * 1000000.0);
 
-    if (maxFd >= 0) {
-        int ready = select(maxFd + 1, &readSet, &writeSet, &exceptSet, &timeout);
-
-        for (NSUInteger i = 0; ready > 0 && i < count; i++) {
-            id source = [sources objectAtIndex:i];
-
-            if (![source isKindOfClass:[NSSelectInputSource class]]) {
-                continue;
-            }
-            NSSelectInputSource *select_ = source;
-            int fd = [select_ fileDescriptor];
-            if (fd < 0) {
-                continue;
-            }
-            NSSelectEventMask happened = 0;
-            if (FD_ISSET(fd, &readSet))   { happened |= NSSelectReadEvent; }
-            if (FD_ISSET(fd, &writeSet))  { happened |= NSSelectWriteEvent; }
-            if (FD_ISSET(fd, &exceptSet)) { happened |= NSSelectExceptEvent; }
-            if (happened != 0) {
-                [select_ processImmediateEvents:happened];
-                fired = YES;
-            }
+    // read now: the pass and the performs above run code that can remove sources from this mode
+    NSArray *sources = [[[self _sourcesForMode:mode] copy] autorelease];
+    NSMutableArray *watched = [NSMutableArray array];
+    for (id source in sources) {
+        if (![source isKindOfClass:[NSSelectInputSource class]] || [source fileDescriptor] < 0) {
+            continue;
         }
+        NSRunLoopDescriptorWatch *watch = [self _watchForSource:source];
+        if (watch != nil) {
+            [watch armForMask:[source selectEventMask] runLoop:_cfRunLoop mode:(CFStringRef)mode];
+            [watched addObject:watch];
+        }
+    }
+
+    SInt32 result = CFRunLoopRunInMode((CFStringRef)mode, remaining, true);
+
+    for (NSRunLoopDescriptorWatch *watch in watched) {
+        NSSelectEventMask happened = [watch disarmFromRunLoop:_cfRunLoop mode:(CFStringRef)mode];
+
+        if (happened != 0) {
+            [watch->_source processImmediateEvents:happened];
+            fired = YES;
+        }
+    }
+    if ([self _performSelectorsForMode:mode]) {
+        fired = YES;
     }
 
     [_currentMode release];
     _currentMode = previousMode;
-    return fired;
+    // as on macOS, NO only when the mode has nothing that could end a wait
+    return fired || result != kCFRunLoopRunFinished;
 }
 
 /* Ports are scheduled through the port itself; see -[NSPort scheduleInRunLoop:]. */

@@ -444,6 +444,111 @@ static inline BOOL __NSDataIsForeign(id data) {
 	return ok;
 }
 
+static const char base64Alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+// RFC 4648 with padding, lines broken at 64 or 76 characters when asked
+static NSData *base64Encode(NSData *data, NSDataBase64EncodingOptions options) {
+    const uint8_t *in = [data bytes];
+    NSUInteger length = [data length];
+    NSUInteger lineLength = (options & NSDataBase64Encoding64CharacterLineLength) ? 64 :
+                            (options & NSDataBase64Encoding76CharacterLineLength) ? 76 : 0;
+    BOOL cr = (options & NSDataBase64EncodingEndLineWithCarriageReturn) != 0;
+    BOOL lf = (options & NSDataBase64EncodingEndLineWithLineFeed) != 0;
+    NSMutableData *out = [NSMutableData dataWithCapacity:0];
+    NSUInteger column = 0;
+
+    if (lineLength != 0 && !cr && !lf)
+        cr = lf = YES;
+    for (NSUInteger i = 0; i < length; i += 3) {
+        uint32_t group = (uint32_t)in[i] << 16;
+        NSUInteger have = length - i < 3 ? length - i : 3;
+        char quad[4];
+
+        if (have > 1)
+            group |= (uint32_t)in[i + 1] << 8;
+        if (have > 2)
+            group |= in[i + 2];
+        quad[0] = base64Alphabet[(group >> 18) & 63];
+        quad[1] = base64Alphabet[(group >> 12) & 63];
+        quad[2] = have > 1 ? base64Alphabet[(group >> 6) & 63] : '=';
+        quad[3] = have > 2 ? base64Alphabet[group & 63] : '=';
+        if (lineLength != 0 && column == lineLength) {
+            if (cr)
+                [out appendBytes:"\r" length:1];
+            if (lf)
+                [out appendBytes:"\n" length:1];
+            column = 0;
+        }
+        [out appendBytes:quad length:4];
+        column += 4;
+    }
+    return out;
+}
+
+static NSData *base64Decode(const uint8_t *in, NSUInteger length, NSDataBase64DecodingOptions options) {
+    NSMutableData *out = [NSMutableData dataWithCapacity:0];
+    uint32_t group = 0;
+    int count = 0, padding = 0;
+
+    for (NSUInteger i = 0; i < length; i++) {
+        uint8_t c = in[i];
+        int value;
+
+        if (c >= 'A' && c <= 'Z') value = c - 'A';
+        else if (c >= 'a' && c <= 'z') value = c - 'a' + 26;
+        else if (c >= '0' && c <= '9') value = c - '0' + 52;
+        else if (c == '+') value = 62;
+        else if (c == '/') value = 63;
+        else if (c == '=') { padding++; value = 0; }
+        else if (options & NSDataBase64DecodingIgnoreUnknownCharacters) continue;
+        else if (c == '\r' || c == '\n') continue;
+        else return nil;
+        if (c != '=' && padding != 0)
+            return nil;
+        group = (group << 6) | (uint32_t)value;
+        if (++count == 4) {
+            uint8_t bytes[3] = { group >> 16, (group >> 8) & 0xff, group & 0xff };
+
+            [out appendBytes:bytes length:3 - (padding > 2 ? 2 : padding)];
+            group = 0;
+            count = 0;
+        }
+    }
+    return count == 0 ? out : nil;
+}
+
+- (NSString *)base64EncodedStringWithOptions:(NSDataBase64EncodingOptions)options {
+    NSData *encoded = base64Encode(self, options);
+
+    return [[[NSString alloc] initWithData:encoded encoding:NSASCIIStringEncoding] autorelease];
+}
+
+- (NSData *)base64EncodedDataWithOptions:(NSDataBase64EncodingOptions)options {
+    return base64Encode(self, options);
+}
+
+- (instancetype)initWithBase64EncodedString:(NSString *)string options:(NSDataBase64DecodingOptions)options {
+    NSData *ascii = [string dataUsingEncoding:NSASCIIStringEncoding allowLossyConversion:NO];
+    NSData *decoded = ascii == nil ? nil : base64Decode([ascii bytes], [ascii length], options);
+
+    if (decoded == nil) {
+        [self release];
+        return nil;
+    }
+    return [self initWithData:decoded];
+}
+
+- (instancetype)initWithBase64EncodedData:(NSData *)data options:(NSDataBase64DecodingOptions)options {
+    NSData *decoded = base64Decode([data bytes], [data length], options);
+
+    if (decoded == nil) {
+        [self release];
+        return nil;
+    }
+    return [self initWithData:decoded];
+}
+
+
 @end
 
 @implementation NSMutableData
@@ -646,6 +751,23 @@ static inline BOOL __NSDataIsForeign(id data) {
 - (void *)mutableBytes
 {
 	return (void *)CFDataGetMutableBytePtr((CFMutableDataRef)self);
+}
+
+// CF owns the count, NSObject's would let CFRelease free data that ObjC code still retains
+- (id)retain
+{
+	CFRetain((CFTypeRef)self);
+	return self;
+}
+
+- (oneway void)release
+{
+	CFRelease((CFTypeRef)self);
+}
+
+- (NSUInteger)retainCount
+{
+	return (NSUInteger)CFGetRetainCount((CFTypeRef)self);
 }
 
 @end

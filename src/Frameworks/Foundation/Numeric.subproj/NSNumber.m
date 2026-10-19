@@ -458,12 +458,106 @@ static double __NSNumberAsDouble(NSNumber *number) {
     return [self doubleValue] != 0;
 }
 
+// every accessor goes through the subclass's longLongValue or doubleValue, NSNumber's own read a CFNumber
+- (long long)longLongValue {
+    return (long long)[self doubleValue];
+}
+
+- (double)doubleValue {
+    return (double)[self longLongValue];
+}
+
+- (char)charValue {
+    return (char)[self longLongValue];
+}
+
+- (unsigned char)unsignedCharValue {
+    return (unsigned char)[self longLongValue];
+}
+
+- (short)shortValue {
+    return (short)[self longLongValue];
+}
+
+- (unsigned short)unsignedShortValue {
+    return (unsigned short)[self longLongValue];
+}
+
+- (int)intValue {
+    return (int)[self longLongValue];
+}
+
+- (unsigned int)unsignedIntValue {
+    return (unsigned int)[self longLongValue];
+}
+
+- (long)longValue {
+    return (long)[self longLongValue];
+}
+
+- (unsigned long)unsignedLongValue {
+    return (unsigned long)[self unsignedLongLongValue];
+}
+
+- (unsigned long long)unsignedLongLongValue {
+    return (unsigned long long)[self longLongValue];
+}
+
+- (NSInteger)integerValue {
+    return (NSInteger)[self longLongValue];
+}
+
+- (NSUInteger)unsignedIntegerValue {
+    return (NSUInteger)[self unsignedLongLongValue];
+}
+
+- (float)floatValue {
+    return (float)[self doubleValue];
+}
+
+- (NSString *)stringValue {
+    return [NSString stringWithFormat:@"%g", [self doubleValue]];
+}
+
+- (NSString *)description {
+    return [self stringValue];
+}
+
+- (NSString *)descriptionWithLocale:(id)locale {
+    return [self stringValue];
+}
+
+// written at the width objCType names, as NSValue does
+- (void)getValue:(void *)value {
+    switch ([self objCType][0]) {
+        case 'c': *(char *)value = [self charValue]; break;
+        case 'C': *(unsigned char *)value = [self unsignedCharValue]; break;
+        case 's': *(short *)value = [self shortValue]; break;
+        case 'S': *(unsigned short *)value = [self unsignedShortValue]; break;
+        case 'i': *(int *)value = [self intValue]; break;
+        case 'I': *(unsigned int *)value = [self unsignedIntValue]; break;
+        case 'l': *(long *)value = [self longValue]; break;
+        case 'L': *(unsigned long *)value = [self unsignedLongValue]; break;
+        case 'Q': *(unsigned long long *)value = [self unsignedLongLongValue]; break;
+        case 'f': *(float *)value = [self floatValue]; break;
+        case 'd': *(double *)value = [self doubleValue]; break;
+        case 'B': *(BOOL *)value = [self boolValue]; break;
+        default: *(long long *)value = [self longLongValue]; break;
+    }
+}
+
 @end
 
-@interface NSConstantIntegerNumber : NSConstantNumberBase {
-    const char *_encoding;
-    long long _value;
-}
+// clang lays these literals out at fixed offsets after isa. ivars could slide when the runtime
+// grows NSNumber's instance size for CF bridging, so the fields are read at the literal's own offsets
+typedef struct { void *isa; const char *encoding; long long value; } PDConstantIntegerLiteral;
+typedef struct { void *isa; double value; } PDConstantDoubleLiteral;
+typedef struct { void *isa; float value; } PDConstantFloatLiteral;
+
+#define _encoding (((PDConstantIntegerLiteral *)self)->encoding)
+#define _value (((PDConstantIntegerLiteral *)self)->value)
+
+@interface NSConstantIntegerNumber : NSConstantNumberBase
 @end
 
 @implementation NSConstantIntegerNumber
@@ -485,6 +579,12 @@ static double __NSNumberAsDouble(NSNumber *number) {
     return _value;
 }
 
+- (double)doubleValue {
+    if (_encoding && (_encoding[0] == 'Q' || _encoding[0] == 'L'))
+        return (double)(unsigned long long)_value;
+    return (double)_value;
+}
+
 - (unsigned long long)unsignedLongLongValue {
     return (unsigned long long)_value;
 }
@@ -501,9 +601,11 @@ static double __NSNumberAsDouble(NSNumber *number) {
 
 @end
 
-@interface NSConstantDoubleNumber : NSConstantNumberBase {
-    double _value;
-}
+#undef _encoding
+#undef _value
+#define _value (((PDConstantDoubleLiteral *)self)->value)
+
+@interface NSConstantDoubleNumber : NSConstantNumberBase
 @end
 
 @implementation NSConstantDoubleNumber
@@ -522,9 +624,10 @@ static double __NSNumberAsDouble(NSNumber *number) {
 
 @end
 
-@interface NSConstantFloatNumber : NSConstantNumberBase {
-    float _value;
-}
+#undef _value
+#define _value (((PDConstantFloatLiteral *)self)->value)
+
+@interface NSConstantFloatNumber : NSConstantNumberBase
 @end
 
 @implementation NSConstantFloatNumber
@@ -546,6 +649,8 @@ static double __NSNumberAsDouble(NSNumber *number) {
 }
 
 @end
+
+#undef _value
 
 #if DEPLOYMENT_RUNTIME_OBJC
 __attribute__((constructor))

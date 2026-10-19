@@ -202,3 +202,19 @@ NSRect NSRectFromString(NSString *string) {
 }
 
 @end
+
+// the header keeps these inline, binaries built against macOS bind them from Foundation
+BOOL _NSExportedEqualPoints(NSPoint a, NSPoint b) __asm__("_NSEqualPoints");
+BOOL _NSExportedEqualPoints(NSPoint a, NSPoint b) { return NSEqualPoints(a, b); }
+BOOL _NSExportedEqualSizes(NSSize a, NSSize b) __asm__("_NSEqualSizes");
+BOOL _NSExportedEqualSizes(NSSize a, NSSize b) { return NSEqualSizes(a, b); }
+BOOL _NSExportedEqualRects(NSRect a, NSRect b) __asm__("_NSEqualRects");
+BOOL _NSExportedEqualRects(NSRect a, NSRect b) { return NSEqualRects(a, b); }
+BOOL _NSExportedIsEmptyRect(NSRect r) __asm__("_NSIsEmptyRect");
+BOOL _NSExportedIsEmptyRect(NSRect r) { return NSIsEmptyRect(r); }
+BOOL _NSExportedPointInRect(NSPoint p, NSRect r) __asm__("_NSPointInRect");
+BOOL _NSExportedPointInRect(NSPoint p, NSRect r) { return NSPointInRect(p, r); }
+BOOL _NSExportedContainsRect(NSRect a, NSRect b) __asm__("_NSContainsRect");
+BOOL _NSExportedContainsRect(NSRect a, NSRect b) { return NSContainsRect(a, b); }
+BOOL _NSExportedIntersectsRect(NSRect a, NSRect b) __asm__("_NSIntersectsRect");
+BOOL _NSExportedIntersectsRect(NSRect a, NSRect b) { return NSIntersectsRect(a, b); }

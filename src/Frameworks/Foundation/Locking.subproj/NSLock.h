@@ -49,8 +49,34 @@
 }
 
 - (void)wait;
+- (BOOL)waitUntilDate:(NSDate *)limit;
 - (void)signal;
 - (void)broadcast;
+- (NSString *)name;
+- (void)setName:(NSString *)name;
+
+@end
+
+// a lock that is taken and given back with an integer condition
+@interface NSConditionLock : NSObject <NSLocking> {
+    pthread_mutex_t _mutex;
+    pthread_cond_t _changed;
+    pthread_t _owner;
+    BOOL _locked;
+    NSInteger _condition;
+    NSString *_name;
+}
+
+- (instancetype)initWithCondition:(NSInteger)condition;
+- (NSInteger)condition;
+- (void)lockWhenCondition:(NSInteger)condition;
+- (BOOL)tryLock;
+- (BOOL)tryLockWhenCondition:(NSInteger)condition;
+- (void)unlockWithCondition:(NSInteger)condition;
+- (BOOL)lockBeforeDate:(NSDate *)limit;
+- (BOOL)lockWhenCondition:(NSInteger)condition beforeDate:(NSDate *)limit;
+- (NSString *)name;
+- (void)setName:(NSString *)name;
 
 @end
 

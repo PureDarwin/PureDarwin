@@ -13,6 +13,8 @@
 #import <Foundation/NSDictionary.h>
 #import <Foundation/NSNumber.h>
 #import <Foundation/NSValue.h>
+#import <Foundation/NSInvocation.h>
+#include <stdlib.h>
 #import <Foundation/NSException.h>
 #include <objc/runtime.h>
 #include <objc/message.h>
@@ -100,11 +102,79 @@ static id boxedReturnValue(id self, SEL selector) {
             return [NSNumber numberWithDouble:((double (*)(id, SEL))objc_msgSend)(self, selector)];
         case 'B':
             return [NSNumber numberWithBool:((BOOL (*)(id, SEL))objc_msgSend)(self, selector)];
+        case '{': {
+            // structs such as CGPoint and CGRect come back in an NSValue of their own type
+            NSMethodSignature *signature = [self methodSignatureForSelector:selector];
+            NSUInteger length = [signature methodReturnLength];
+            NSInvocation *invocation;
+            NSValue *value;
+            void *bytes;
+
+            if (signature == nil || length == 0 || (bytes = calloc(1, length)) == NULL)
+                return nil;
+            invocation = [NSInvocation invocationWithMethodSignature:signature];
+            [invocation setTarget:self];
+            [invocation setSelector:selector];
+            [invocation invoke];
+            [invocation getReturnValue:bytes];
+            value = [NSValue valueWithBytes:bytes objCType:[signature methodReturnType]];
+            free(bytes);
+            return value;
+        }
         default:
-            /* Structs and anything else would need the value's size and an
-             * NSValue box built from a call through libffi. */
             return nil;
     }
+}
+
+// scalar and struct setters take the unboxed value, the way the getter boxed it
+// returns NO for object setters, which take the value as it is
+static BOOL setThroughSetter(id self, SEL setter, id value, NSString *key) {
+    NSMethodSignature *signature = [self methodSignatureForSelector:setter];
+    const char *type;
+    NSUInteger size = 0, alignment = 0;
+    NSInvocation *invocation;
+    void *bytes;
+
+    if (signature == nil || [signature numberOfArguments] != 3)
+        return NO;
+    type = [signature getArgumentTypeAtIndex:2];
+    while (*type == 'r' || *type == 'n' || *type == 'N' || *type == 'o' || *type == 'O' || *type == 'R' || *type == 'V')
+        type++;
+    if (type[0] == '@' || type[0] == '#')
+        return NO;
+    if (value == nil) {
+        [self setNilValueForKey:key];
+        return YES;
+    }
+    NSGetSizeAndAlignment(type, &size, &alignment);
+    if (size == 0 || (bytes = calloc(1, size)) == NULL)
+        return NO;
+    switch (type[0]) {
+        case 'c': *(char *)bytes = [value charValue]; break;
+        case 'C': *(unsigned char *)bytes = [value unsignedCharValue]; break;
+        case 's': *(short *)bytes = [value shortValue]; break;
+        case 'S': *(unsigned short *)bytes = [value unsignedShortValue]; break;
+        case 'i': *(int *)bytes = [value intValue]; break;
+        case 'I': *(unsigned *)bytes = [value unsignedIntValue]; break;
+        case 'l': *(long *)bytes = [value longValue]; break;
+        case 'L': *(unsigned long *)bytes = [value unsignedLongValue]; break;
+        case 'q': *(long long *)bytes = [value longLongValue]; break;
+        case 'Q': *(unsigned long long *)bytes = [value unsignedLongLongValue]; break;
+        case 'f': *(float *)bytes = [value floatValue]; break;
+        case 'd': *(double *)bytes = [value doubleValue]; break;
+        case 'B': *(BOOL *)bytes = [value boolValue]; break;
+        case '{': [value getValue:bytes]; break;
+        default:
+            free(bytes);
+            return NO;
+    }
+    invocation = [NSInvocation invocationWithMethodSignature:signature];
+    [invocation setTarget:self];
+    [invocation setSelector:setter];
+    [invocation setArgument:bytes atIndex:2];
+    [invocation invoke];
+    free(bytes);
+    return YES;
 }
 
 @implementation NSObject (NSKeyValueCoding)
@@ -149,7 +219,8 @@ static id boxedReturnValue(id self, SEL selector) {
     SEL setter = sel_getUid(buffer);
 
     if ([self respondsToSelector:setter]) {
-        ((void (*)(id, SEL, id))objc_msgSend)(self, setter, value);
+        if (!setThroughSetter(self, setter, value, key))
+            ((void (*)(id, SEL, id))objc_msgSend)(self, setter, value);
         if (notifies) {
             [self didChangeValueForKey:key];
         }

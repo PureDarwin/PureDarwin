@@ -9,5 +9,11 @@
 #ifndef FoundationErrors_h
 #define FoundationErrors_h
 
+// NSCocoaErrorDomain codes for connections to services
+enum {
+    NSXPCConnectionInterrupted = 4097,
+    NSXPCConnectionInvalid = 4099,
+    NSXPCConnectionReplyInvalid = 4101,
+};
 
 #endif /* FoundationErrors_h */

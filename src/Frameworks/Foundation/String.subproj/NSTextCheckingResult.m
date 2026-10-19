@@ -41,6 +41,8 @@
 
 - (void)dealloc {
     [_replacementString release];
+    [_ranges release];
+    [_alternativeStrings release];
     [super dealloc];
 }
 
@@ -78,6 +80,26 @@
 
 - (NSString *)replacementString {
     return _replacementString;
+}
+
++ (NSTextCheckingResult *)correctionCheckingResultWithRange:(NSRange)range
+                                          replacementString:(NSString *)replacementString {
+    return [self correctionCheckingResultWithRange:range replacementString:replacementString
+                                alternativeStrings:nil];
+}
+
++ (NSTextCheckingResult *)correctionCheckingResultWithRange:(NSRange)range
+                                          replacementString:(NSString *)replacementString
+                                         alternativeStrings:(NSArray *)alternativeStrings {
+    NSTextCheckingResult *result = [self _resultWithType:NSTextCheckingTypeCorrection range:range];
+
+    result->_replacementString = [replacementString copy];
+    result->_alternativeStrings = [alternativeStrings copy];
+    return result;
+}
+
+- (NSArray *)alternativeStrings {
+    return _alternativeStrings;
 }
 
 - (id)copyWithZone:(NSZone *)zone {

@@ -12,7 +12,7 @@
 #import <Foundation/NSObject.h>
 #import <Foundation/NSObjCRuntime.h>
 
-@class NSString, NSArray, NSDictionary;
+@class NSString, NSArray, NSDictionary, NSURL, NSError;
 
 FOUNDATION_EXPORT NSString * const NSTaskDidTerminateNotification;
 
@@ -55,6 +55,11 @@ typedef NS_ENUM(NSInteger, NSTaskTerminationReason) {
 - (id)standardError;
 
 - (void)launch;
+- (BOOL)launchAndReturnError:(NSError **)error;
+- (void)setExecutableURL:(NSURL *)url;
+- (NSURL *)executableURL;
+- (void)setCurrentDirectoryURL:(NSURL *)url;
+- (NSURL *)currentDirectoryURL;
 - (void)interrupt;
 - (void)terminate;
 - (BOOL)suspend;

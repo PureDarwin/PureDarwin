@@ -14,20 +14,35 @@
 @class NSData, NSMutableArray, NSError;
 
 /* Decoding half of the property-list-backed keyed archive format. */
+@class NSMutableDictionary;
+
 @interface NSKeyedUnarchiver : NSCoder
 {
 @public
     NSData *_data;
     NSMutableArray *_containers;
     id _root;
+    NSMutableDictionary *_classes;
+    id _delegate;
 }
 
 + (id)unarchiveObjectWithData:(NSData *)data;
 + (id)unarchivedObjectOfClass:(Class)cls fromData:(NSData *)data error:(NSError **)error;
 
++ (void)setClass:(Class)cls forClassName:(NSString *)name;
++ (Class)classForClassName:(NSString *)name;
+
+- (void)setClass:(Class)cls forClassName:(NSString *)name;
+- (Class)classForClassName:(NSString *)name;
+- (void)setDelegate:(id)delegate;
+- (id)delegate;
+
+- (id)initForReadingWithData:(NSData *)data;
 - (id)initForReadingFromData:(NSData *)data error:(NSError **)error;
 
 - (void)finishDecoding;
+
+- (const uint8_t *)decodeBytesForKey:(NSString *)key returnedLength:(NSUInteger *)length;
 
 @end
 

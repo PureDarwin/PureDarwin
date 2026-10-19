@@ -6,9 +6,12 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+#include <execinfo.h>
+#import <Foundation/NSValue.h>
 #import <Foundation/NSThread-Private.h>
 #import <Foundation/NSAutoreleasePool.h>
 #import <Foundation/NSDictionary.h>
+#import <Foundation/NSArray.h>
 #import <Foundation/NSString.h>
 #import <Foundation/NSObjCRuntime.h>
 
@@ -22,6 +25,8 @@ static pthread_key_t threadKey;
 static pthread_once_t threadKeyOnce = PTHREAD_ONCE_INIT;
 static pthread_t mainPthread;
 static NSThread *mainThread;
+// set once the first NSThread is started, never cleared
+static BOOL multiThreaded;
 
 typedef struct {
     SEL selector;
@@ -155,6 +160,7 @@ static void *startThreadObject(void *context) {
         _finished = YES;
         return;
     }
+    multiThreaded = YES;
     pthread_detach(thread);
 }
 
@@ -206,7 +212,41 @@ static void *startThreadObject(void *context) {
         free(info);
         return;
     }
+    multiThreaded = YES;
     pthread_detach(thread);
+}
+
++ (BOOL)isMultiThreaded {
+    return multiThreaded;
+}
+
+// the caller's stack, without this method's own frame
++ (NSArray *)callStackReturnAddresses {
+    void *frames[128];
+    int count = backtrace(frames, 128);
+    NSMutableArray *addresses = [NSMutableArray arrayWithCapacity:count > 0 ? (NSUInteger)count : 0];
+
+    for (int i = 1; i < count; i++)
+        [addresses addObject:[NSNumber numberWithUnsignedLongLong:(unsigned long long)(uintptr_t)frames[i]]];
+    return addresses;
+}
+
++ (NSArray *)callStackSymbols {
+    void *frames[128];
+    int count = backtrace(frames, 128);
+    char **names = count > 0 ? backtrace_symbols(frames, count) : NULL;
+    NSMutableArray *symbols = [NSMutableArray arrayWithCapacity:count > 0 ? (NSUInteger)count : 0];
+
+    if (names == NULL)
+        return symbols;
+    for (int i = 1; i < count; i++) {
+        NSString *symbol = [NSString stringWithUTF8String:names[i]];
+
+        if (symbol != nil)
+            [symbols addObject:symbol];
+    }
+    free(names);
+    return symbols;
 }
 
 - (BOOL)isMainThread {

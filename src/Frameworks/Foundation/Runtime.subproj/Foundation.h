@@ -102,6 +102,16 @@
 #import <Foundation/NSDistributedNotificationCenter.h>
 #import <Foundation/NSRegularExpression.h>
 #import <Foundation/NSJSONSerialization.h>
+#import <Foundation/NSPortNameServer.h>
+#import <Foundation/NSURLQueryItem.h>
+#import <Foundation/NSURLRequest.h>
+#import <Foundation/NSURLSession.h>
+#import <Foundation/NSProgress.h>
+#import <Foundation/NSUserActivity.h>
+#import <Foundation/NSUserNotification.h>
+#import <Foundation/NSAppleEventDescriptor.h>
+#import <Foundation/NSAppleEventManager.h>
+#import <Foundation/NSXPCConnection.h>
 
 #endif /* ! __FOUNDATION_FOUNDATION__ */
 #import <Foundation/NSUUID.h>

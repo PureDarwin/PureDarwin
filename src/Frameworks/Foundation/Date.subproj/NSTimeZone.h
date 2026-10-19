@@ -42,4 +42,6 @@
 
 @end
 
+FOUNDATION_EXPORT NSString *const NSSystemTimeZoneDidChangeNotification;
+
 #endif /* NSTimeZone_h */

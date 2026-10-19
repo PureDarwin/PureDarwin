@@ -105,6 +105,18 @@ let
     "Runtime.subproj/NSAssertionHandler"
     "Runtime.subproj/NSOperation"
     "RunLoop.subproj/NSPortMessage"
+    "RunLoop.subproj/NSPortNameServer"
+    "URL.subproj/NSURLQueryItem"
+    "URL.subproj/NSURLRequest"
+    "URL.subproj/NSURLFileTypeMappings"
+    "URL.subproj/NSURLSession"
+    "Runtime.subproj/NSProgress"
+    "Runtime.subproj/NSUserActivity"
+    "Runtime.subproj/NSUserNotification"
+    "Runtime.subproj/NSAppleEventDescriptor"
+    "Runtime.subproj/NSAppleEventManager"
+    "Runtime.subproj/NSLayoutConstraint"
+    "XPC.subproj/NSXPCConnection"
   ];
 in
 stdenv.mkDerivation {

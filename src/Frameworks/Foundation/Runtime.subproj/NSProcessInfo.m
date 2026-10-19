@@ -17,6 +17,9 @@
 #include <unistd.h>
 #include <string.h>
 
+NSNotificationName const NSProcessInfoThermalStateDidChangeNotification = @"NSProcessInfoThermalStateDidChangeNotification";
+NSNotificationName const NSProcessInfoPowerStateDidChangeNotification = @"NSProcessInfoPowerStateDidChangeNotification";
+
 @implementation NSProcessInfo
 
 + (NSProcessInfo *)processInfo {
@@ -192,6 +195,50 @@ static NSDictionary *systemVersionPlist(void) {
         return 1;
     }
     return (NSUInteger)count;
+}
+
+// no thermal or battery sensors are read here, the machine always reports nominal and mains power
+- (NSProcessInfoThermalState)thermalState {
+    return NSProcessInfoThermalStateNominal;
+}
+
+- (BOOL)isLowPowerModeEnabled {
+    return NO;
+}
+
+// PD has no idle sleep or sudden termination to hold off, so an activity is only a token that keeps its reason
+- (id<NSObject>)beginActivityWithOptions:(NSActivityOptions)options reason:(NSString *)reason {
+    return [[[NSString alloc] initWithFormat:@"<NSActivity 0x%llx %@>", (unsigned long long)options, reason] autorelease];
+}
+
+- (void)endActivity:(id<NSObject>)activity {
+}
+
+- (void)performActivityWithOptions:(NSActivityOptions)options reason:(NSString *)reason usingBlock:(void (^)(void))block {
+    id<NSObject> activity = [[self beginActivityWithOptions:options reason:reason] retain];
+
+    block();
+    [self endActivity:activity];
+    [activity release];
+}
+
+- (void)disableSuddenTermination {
+}
+
+- (void)enableSuddenTermination {
+}
+
+- (void)disableAutomaticTermination:(NSString *)reason {
+}
+
+- (void)enableAutomaticTermination:(NSString *)reason {
+}
+
+- (BOOL)automaticTerminationSupportEnabled {
+    return NO;
+}
+
+- (void)setAutomaticTerminationSupportEnabled:(BOOL)enabled {
 }
 
 - (unsigned long long)physicalMemory {

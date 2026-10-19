@@ -15,6 +15,8 @@
 #import <Foundation/NSException.h>
 #import <Foundation/NSNotification.h>
 #import <Foundation/NSProcessInfo.h>
+#import <Foundation/NSURL.h>
+#import <Foundation/NSError.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -133,6 +135,22 @@ static void _freeStringVector(char **vector) {
 
 - (NSString *)launchPath {
     return _launchPath;
+}
+
+- (void)setExecutableURL:(NSURL *)url {
+    [self setLaunchPath:[url path]];
+}
+
+- (NSURL *)executableURL {
+    return _launchPath != nil ? [NSURL fileURLWithPath:_launchPath] : nil;
+}
+
+- (void)setCurrentDirectoryURL:(NSURL *)url {
+    [self setCurrentDirectoryPath:[url path]];
+}
+
+- (NSURL *)currentDirectoryURL {
+    return _currentDirectoryPath != nil ? [NSURL fileURLWithPath:_currentDirectoryPath isDirectory:YES] : nil;
 }
 
 - (void)setArguments:(NSArray *)arguments {
@@ -256,6 +274,23 @@ static void _freeStringVector(char **vector) {
     if ([_standardInput isKindOfClass:[NSPipe class]]) {
         [[_standardInput fileHandleForReading] closeFile];
     }
+}
+
+// -launch raises, this reports the same failures through the error
+- (BOOL)launchAndReturnError:(NSError **)error {
+    if (_launchPath == nil || access([_launchPath fileSystemRepresentation], X_OK) != 0) {
+        if (error != NULL)
+            *error = [NSError errorWithDomain:@"NSPOSIXErrorDomain" code:_launchPath == nil ? ENOENT : errno userInfo:nil];
+        return NO;
+    }
+    @try {
+        [self launch];
+    } @catch (NSException *exception) {
+        if (error != NULL)
+            *error = [NSError errorWithDomain:@"NSPOSIXErrorDomain" code:EINVAL userInfo:nil];
+        return NO;
+    }
+    return YES;
 }
 
 /* Reaps the child if it has exited. Returns YES once the exit status is known. */

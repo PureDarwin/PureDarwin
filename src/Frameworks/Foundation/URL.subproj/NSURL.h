@@ -12,6 +12,8 @@
 #import <Foundation/NSObject.h>
 #import <Foundation/NSString.h>
 
+@class NSArray, NSNumber;
+
 @interface NSURL : NSObject
 
 + (nullable instancetype)URLWithString:(NSString *)string;
@@ -36,6 +38,21 @@
 
 
 - (NSNumber *)port;
+- (nullable NSString *)scheme;
+- (nullable NSString *)host;
+- (nullable NSString *)user;
+- (nullable NSString *)password;
+- (nullable NSString *)query;
+- (nullable NSString *)fragment;
+- (nullable NSString *)resourceSpecifier;
+- (NSString *)relativeString;
+- (nullable NSURL *)baseURL;
++ (nullable instancetype)URLWithString:(NSString *)string relativeToURL:(nullable NSURL *)base;
+- (nullable instancetype)initWithString:(NSString *)string relativeToURL:(nullable NSURL *)base;
+- (instancetype)initFileURLWithPath:(NSString *)path;
+- (instancetype)initFileURLWithPath:(NSString *)path isDirectory:(BOOL)isDirectory;
+- (BOOL)hasDirectoryPath;
+- (nullable NSArray *)pathComponents;
 
 @end
 

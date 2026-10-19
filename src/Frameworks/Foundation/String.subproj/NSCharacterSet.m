@@ -10,6 +10,8 @@
 #include <CoreFoundation/CFCharacterSet.h>
 #include <CoreFoundation/ForFoundationOnly.h>
 
+extern Boolean _CFIsObjC(CFTypeID typeID, void *obj);
+
 extern Boolean _CFCharacterSetIsLongCharacterMember(CFCharacterSetRef set,
                                                      UTF32Char character);
 
@@ -74,6 +76,41 @@ static NSCharacterSet *_predefined(CFCharacterSetPredefinedSet which) {
     return _predefined(kCFCharacterSetWhitespace);
 }
 
+// RFC 3986 component sets, ASCII letters and digits plus each component's allowed punctuation
+static NSCharacterSet *_urlComponentSet(CFStringRef punctuation) {
+    CFMutableStringRef characters = CFStringCreateMutable(kCFAllocatorDefault, 0);
+
+    CFStringAppend(characters, CFSTR("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"));
+    CFStringAppend(characters, punctuation);
+    CFCharacterSetRef set = CFCharacterSetCreateWithCharactersInString(kCFAllocatorDefault, characters);
+    CFRelease(characters);
+    return (NSCharacterSet *)CFAutorelease(set);
+}
+
++ (NSCharacterSet *)URLFragmentAllowedCharacterSet {
+    return _urlComponentSet(CFSTR("!$&'()*+,-./:;=?@_~"));
+}
+
++ (NSCharacterSet *)URLHostAllowedCharacterSet {
+    return _urlComponentSet(CFSTR("!$&'()*+,-.:;=[]_~"));
+}
+
++ (NSCharacterSet *)URLPasswordAllowedCharacterSet {
+    return _urlComponentSet(CFSTR("!$&'()*+,-.;=_~"));
+}
+
++ (NSCharacterSet *)URLPathAllowedCharacterSet {
+    return _urlComponentSet(CFSTR("!$&'()*+,-./:=@_~"));
+}
+
++ (NSCharacterSet *)URLQueryAllowedCharacterSet {
+    return _urlComponentSet(CFSTR("!$&'()*+,-./:;=?@_~"));
+}
+
++ (NSCharacterSet *)URLUserAllowedCharacterSet {
+    return _urlComponentSet(CFSTR("!$&'()*+,-.;=_~"));
+}
+
 + (NSCharacterSet *)characterSetWithCharactersInString:(NSString *)string {
     return (NSCharacterSet *)CFCharacterSetCreateWithCharactersInString(
         kCFAllocatorDefault, (CFStringRef)string);
@@ -126,6 +163,29 @@ static NSCharacterSet *_predefined(CFCharacterSetPredefinedSet which) {
     CFCharacterSetInvert((CFMutableCharacterSetRef)self);
 }
 
+
+// CF owns the count of objects CF made, NSObject's would let CFRelease free them under a retainer.
+// Instances of ObjC subclasses keep NSObject's count
+- (id)retain {
+    if (_CFIsObjC(CFCharacterSetGetTypeID(), (void *)self))
+        return [super retain];
+    CFRetain((CFTypeRef)self);
+    return self;
+}
+
+- (oneway void)release {
+    if (_CFIsObjC(CFCharacterSetGetTypeID(), (void *)self)) {
+        [super release];
+        return;
+    }
+    CFRelease((CFTypeRef)self);
+}
+
+- (NSUInteger)retainCount {
+    if (_CFIsObjC(CFCharacterSetGetTypeID(), (void *)self))
+        return [super retainCount];
+    return (NSUInteger)CFGetRetainCount((CFTypeRef)self);
+}
 @end
 
 #if DEPLOYMENT_RUNTIME_OBJC

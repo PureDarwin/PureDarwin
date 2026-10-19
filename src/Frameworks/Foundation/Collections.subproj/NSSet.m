@@ -12,6 +12,7 @@
 #import <Foundation/NSEnumerator.h>
 #include <CoreFoundation/CFSet.h>
 #include <CoreFoundation/ForFoundationOnly.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <objc/runtime.h>
 #import <Foundation/NSException.h>
@@ -154,6 +155,26 @@ static void __NSSetAbstract(id self, SEL _cmd) {
                                &ns_set_callbacks);
     free(values);
     return (id)CFAutorelease(set);
+}
+
+static CFMutableSetRef _setFromArguments(id firstObject, va_list arguments) {
+    CFMutableSetRef set = CFSetCreateMutable(kCFAllocatorDefault, 0, &ns_set_callbacks);
+
+    for (id object = firstObject; object != nil; object = va_arg(arguments, id))
+        CFSetAddValue(set, object);
+    return set;
+}
+
++ (instancetype)setWithObjects:(id)firstObject, ... {
+    va_list arguments;
+
+    va_start(arguments, firstObject);
+    CFMutableSetRef values = _setFromArguments(firstObject, arguments);
+    va_end(arguments);
+
+    CFSetRef result = CFSetCreateCopy(kCFAllocatorDefault, values);
+    CFRelease(values);
+    return (id)CFAutorelease(result);
 }
 
 + (instancetype)setWithObjects:(const id [])objects count:(NSUInteger)count {
@@ -412,6 +433,29 @@ static void __NSSetAbstract(id self, SEL _cmd) {
     return result;
 }
 
+
+// CF owns the count of objects CF made, NSObject's would let CFRelease free them under a retainer.
+// Instances of ObjC subclasses keep NSObject's count
+- (id)retain {
+    if (_CFIsObjC(CFSetGetTypeID(), (void *)self))
+        return [super retain];
+    CFRetain((CFTypeRef)self);
+    return self;
+}
+
+- (oneway void)release {
+    if (_CFIsObjC(CFSetGetTypeID(), (void *)self)) {
+        [super release];
+        return;
+    }
+    CFRelease((CFTypeRef)self);
+}
+
+- (NSUInteger)retainCount {
+    if (_CFIsObjC(CFSetGetTypeID(), (void *)self))
+        return [super retainCount];
+    return (NSUInteger)CFGetRetainCount((CFTypeRef)self);
+}
 @end
 
 @implementation NSMutableSet
@@ -447,9 +491,18 @@ static void __NSSetAbstract(id self, SEL _cmd) {
     return set;
 }
 
++ (instancetype)setWithObjects:(id)firstObject, ... {
+    va_list arguments;
+
+    va_start(arguments, firstObject);
+    CFMutableSetRef set = _setFromArguments(firstObject, arguments);
+    va_end(arguments);
+    return (id)CFAutorelease(set);
+}
+
+// capacity 0: a CF capacity is a hard ceiling, a later -addObject: would halt
 + (instancetype)setWithObjects:(const id [])objects count:(NSUInteger)count {
-    CFMutableSetRef set = CFSetCreateMutable(kCFAllocatorDefault,
-                                             (CFIndex)count,
+    CFMutableSetRef set = CFSetCreateMutable(kCFAllocatorDefault, 0,
                                              &ns_set_callbacks);
     for (NSUInteger index = 0; index < count; index++) {
         if (objects[index]) {
@@ -492,9 +545,9 @@ static void __NSSetAbstract(id self, SEL _cmd) {
     return (id)set;
 }
 
+// capacity 0: a CF capacity is a hard ceiling, a later -addObject: would halt
 - (instancetype)initWithObjects:(const id *)objects count:(NSUInteger)count {
-    CFMutableSetRef set = CFSetCreateMutable(kCFAllocatorDefault,
-                                             (CFIndex)count,
+    CFMutableSetRef set = CFSetCreateMutable(kCFAllocatorDefault, 0,
                                              &ns_set_callbacks);
     for (NSUInteger index = 0; index < count; index++) {
         if (objects[index]) {

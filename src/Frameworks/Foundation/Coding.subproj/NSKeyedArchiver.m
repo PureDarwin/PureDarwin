@@ -128,6 +128,16 @@ static id archiveValue(NSKeyedArchiver *archiver, id object) {
     [[_containers lastObject] setObject:[NSNumber numberWithDouble:value] forKey:key];
 }
 
+// raw bytes are kept as NSData, so they round-trip through the property list
+- (void)encodeBytes:(const uint8_t *)bytes length:(NSUInteger)length forKey:(NSString *)key {
+    [[_containers lastObject] setObject:[NSData dataWithBytes:bytes length:length] forKey:key];
+}
+
+// without object sharing every reference is encoded, which is what conditional means for the root graph
+- (void)encodeConditionalObject:(id)object forKey:(NSString *)key {
+    [self encodeObject:object forKey:key];
+}
+
 - (void)finishEncoding {
     if(_data != nil)
         [_data setData:[self encodedData]];

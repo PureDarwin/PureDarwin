@@ -112,9 +112,12 @@ void NSSetUncaughtExceptionHandler(NSUncaughtExceptionHandler *handler) {
     }
 
     for (int i = 0; i < _returnAddressCount; i++) {
-        [symbols addObject:(NSString *)CFStringCreateWithCString(kCFAllocatorDefault,
-                                                                 names[i],
-                                                                 kCFStringEncodingUTF8)];
+        CFStringRef symbol = CFStringCreateWithCString(kCFAllocatorDefault, names[i], kCFStringEncodingUTF8);
+
+        if (symbol != NULL) {
+            [symbols addObject:(NSString *)symbol];
+            CFRelease(symbol);
+        }
     }
     free(names);
     return symbols;

@@ -32,6 +32,9 @@
 + (NSThread *)currentThread;
 + (NSThread *)mainThread;
 + (BOOL)isMainThread;
++ (BOOL)isMultiThreaded;
++ (NSArray *)callStackReturnAddresses;
++ (NSArray *)callStackSymbols;
 + (void)detachNewThreadSelector:(SEL)selector
                        toTarget:(id)target
                      withObject:(nullable id)object;

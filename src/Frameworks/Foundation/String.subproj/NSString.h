@@ -74,6 +74,12 @@ typedef NS_OPTIONS(NSUInteger, NSStringCompareOptions) {
 - (instancetype)initWithFormat:(NSString *)format arguments:(va_list)arguments;
 - (instancetype)initWithCharactersNoCopy:(unichar *)characters length:(NSUInteger)length freeWhenDone:(BOOL)freeBuffer;
 - (NSString *)stringByRemovingPercentEncoding;
+- (NSString *)stringByAddingPercentEncodingWithAllowedCharacters:(NSCharacterSet *)allowedCharacters;
+- (NSString *)precomposedStringWithCanonicalMapping;
+- (NSString *)decomposedStringWithCanonicalMapping;
+- (NSString *)precomposedStringWithCompatibilityMapping;
+- (NSString *)decomposedStringWithCompatibilityMapping;
+- (instancetype)initWithBytesNoCopy:(void *)bytes length:(NSUInteger)length encoding:(NSStringEncoding)encoding freeWhenDone:(BOOL)freeBuffer;
 - (NSString *)stringByReplacingPercentEscapesUsingEncoding:(NSStringEncoding)encoding;
 - (instancetype)initWithFormat:(NSString *)format locale:(id)locale, ...;
 - (instancetype)initWithFormat:(NSString *)format locale:(id)locale arguments:(va_list)arguments;

@@ -14,6 +14,8 @@
 #include <CoreFoundation/CFDate.h>
 #include <CoreFoundation/ForFoundationOnly.h>
 
+extern Boolean _CFIsObjC(CFTypeID typeID, void *obj);
+
 /* NSDate and CFDate share the same epoch - 2001-01-01 00:00:00 GMT - so the
  * reference-date interval passes through untouched. Only the 1970 accessors
  * need the offset. */
@@ -23,6 +25,32 @@
  * Without this -copy raised "unrecognized selector". */
 - (id)copyWithZone:(NSZone *)zone {
     return [self retain];
+}
+
+// the instance +alloc made is not a CFDate, so these hand back a real one. Subclasses keep theirs
+- (instancetype)initWithTimeIntervalSinceReferenceDate:(NSTimeInterval)seconds {
+    if (_CFIsObjC(CFDateGetTypeID(), (void *)self))
+        return [super init];
+    return (id)CFDateCreate(kCFAllocatorDefault, (CFAbsoluteTime)seconds);
+}
+
+// subclasses such as NSCalendarDate call this from their own initializers
+- (instancetype)init {
+    if (_CFIsObjC(CFDateGetTypeID(), (void *)self))
+        return [super init];
+    return (id)CFDateCreate(kCFAllocatorDefault, CFAbsoluteTimeGetCurrent());
+}
+
+- (instancetype)initWithTimeIntervalSinceNow:(NSTimeInterval)seconds {
+    return [self initWithTimeIntervalSinceReferenceDate:CFAbsoluteTimeGetCurrent() + seconds];
+}
+
+- (instancetype)initWithTimeIntervalSince1970:(NSTimeInterval)seconds {
+    return [self initWithTimeIntervalSinceReferenceDate:seconds - kCFAbsoluteTimeIntervalSince1970];
+}
+
+- (instancetype)initWithTimeInterval:(NSTimeInterval)seconds sinceDate:(NSDate *)date {
+    return [self initWithTimeIntervalSinceReferenceDate:[date timeIntervalSinceReferenceDate] + seconds];
 }
 
 + (instancetype)date {
@@ -136,6 +164,29 @@
     return [NSString stringWithUTF8String:text];
 }
 
+
+// CF owns the count of objects CF made, NSObject's would let CFRelease free them under a retainer.
+// Instances of ObjC subclasses keep NSObject's count
+- (id)retain {
+    if (_CFIsObjC(CFDateGetTypeID(), (void *)self))
+        return [super retain];
+    CFRetain((CFTypeRef)self);
+    return self;
+}
+
+- (oneway void)release {
+    if (_CFIsObjC(CFDateGetTypeID(), (void *)self)) {
+        [super release];
+        return;
+    }
+    CFRelease((CFTypeRef)self);
+}
+
+- (NSUInteger)retainCount {
+    if (_CFIsObjC(CFDateGetTypeID(), (void *)self))
+        return [super retainCount];
+    return (NSUInteger)CFGetRetainCount((CFTypeRef)self);
+}
 @end
 
 #if DEPLOYMENT_RUNTIME_OBJC

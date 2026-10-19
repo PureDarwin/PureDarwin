@@ -36,6 +36,7 @@ static CFStringRef _applicationIDForDomain(NSString *domainName) {
 @implementation NSUserDefaults {
     NSMutableDictionary *_registered;
     NSMutableDictionary *_volatile;
+    CFStringRef _applicationID;
 }
 
 + (NSUserDefaults *)standardUserDefaults {
@@ -56,13 +57,22 @@ static CFStringRef _applicationIDForDomain(NSString *domainName) {
         // Retained: this object outlives the pool these are created in.
         _registered = [[NSMutableDictionary alloc] initWithCapacity:0];
         _volatile = [[NSMutableDictionary alloc] initWithCapacity:0];
+        _applicationID = kCFPreferencesCurrentApplication;
     }
+    return self;
+}
+
+// a suite is its own CFPreferences application id, nil means the current application
+- (instancetype)initWithSuiteName:(NSString *)suiteName {
+    self = [self init];
+    if (self != nil && suiteName != nil)
+        _applicationID = (CFStringRef)[suiteName copy];
     return self;
 }
 
 - (id)objectForKey:(NSString *)key {
     CFPropertyListRef value = CFPreferencesCopyAppValue((CFStringRef)key,
-                                                        kCFPreferencesCurrentApplication);
+                                                        _applicationID);
     if (value != NULL) {
         // CFPreferencesCopyAppValue returns +1; -objectForKey: must not.
         return [(id)value autorelease];
@@ -72,11 +82,11 @@ static CFStringRef _applicationIDForDomain(NSString *domainName) {
 
 - (void)setObject:(id)value forKey:(NSString *)key {
     CFPreferencesSetAppValue((CFStringRef)key, (__bridge CFPropertyListRef)value,
-                             kCFPreferencesCurrentApplication);
+                             _applicationID);
 }
 
 - (void)removeObjectForKey:(NSString *)key {
-    CFPreferencesSetAppValue((CFStringRef)key, NULL, kCFPreferencesCurrentApplication);
+    CFPreferencesSetAppValue((CFStringRef)key, NULL, _applicationID);
 }
 
 - (NSString *)stringForKey:(NSString *)key {
@@ -140,7 +150,7 @@ static CFStringRef _applicationIDForDomain(NSString *domainName) {
 }
 
 - (BOOL)synchronize {
-    return CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication) ? YES : NO;
+    return CFPreferencesAppSynchronize(_applicationID) ? YES : NO;
 }
 
 - (NSDictionary *)persistentDomainForName:(NSString *)domainName {
@@ -243,7 +253,7 @@ static CFStringRef _applicationIDForDomain(NSString *domainName) {
     [result addEntriesFromDictionary:_registered];
 
     NSDictionary *app = [self persistentDomainForName:
-        (NSString *)kCFPreferencesCurrentApplication];
+        (NSString *)_applicationID];
     if (app != nil) {
         [result addEntriesFromDictionary:app];
     }

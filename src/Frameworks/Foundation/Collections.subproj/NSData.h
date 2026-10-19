@@ -21,6 +21,17 @@ typedef NS_OPTIONS(NSUInteger, NSDataReadingOptions) {
     NSDataReadingMappedAlways = 1 << 3
 };
 
+typedef NS_OPTIONS(NSUInteger, NSDataBase64EncodingOptions) {
+    NSDataBase64Encoding64CharacterLineLength = 1UL << 0,
+    NSDataBase64Encoding76CharacterLineLength = 1UL << 1,
+    NSDataBase64EncodingEndLineWithCarriageReturn = 1UL << 4,
+    NSDataBase64EncodingEndLineWithLineFeed = 1UL << 5,
+};
+
+typedef NS_OPTIONS(NSUInteger, NSDataBase64DecodingOptions) {
+    NSDataBase64DecodingIgnoreUnknownCharacters = 1UL << 0,
+};
+
 typedef NS_OPTIONS(NSUInteger, NSDataWritingOptions) {
     NSDataWritingAtomic = 1 << 0,
     NSDataWritingWithoutOverwriting = 1 << 1
@@ -74,6 +85,11 @@ typedef NS_OPTIONS(NSUInteger, NSDataWritingOptions) {
 - (void)getBytes:(void *)buffer range:(NSRange)range;
 - (NSData *)subdataWithRange:(NSRange)range;
 - (BOOL)isEqualToData:(NSData *)other;
+
+- (NSString *)base64EncodedStringWithOptions:(NSDataBase64EncodingOptions)options;
+- (NSData *)base64EncodedDataWithOptions:(NSDataBase64EncodingOptions)options;
+- (nullable instancetype)initWithBase64EncodedString:(NSString *)string options:(NSDataBase64DecodingOptions)options;
+- (nullable instancetype)initWithBase64EncodedData:(NSData *)data options:(NSDataBase64DecodingOptions)options;
 
 @end
 

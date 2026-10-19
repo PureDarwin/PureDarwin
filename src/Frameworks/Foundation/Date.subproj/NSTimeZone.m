@@ -13,6 +13,8 @@
 #import <Foundation/NSArray.h>
 #include <CoreFoundation/CFTimeZone.h>
 
+NSString *const NSSystemTimeZoneDidChangeNotification = @"NSSystemTimeZoneDidChangeNotification";
+
 @implementation NSTimeZone
 
 static NSTimeZone *_wrap(CFTimeZoneRef zone) {

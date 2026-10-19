@@ -79,6 +79,7 @@ static NSMutableDictionary *_clientConnections = nil;
 @interface NSConnection (Private)
 - (NSData *)_handleRequestWithIdentifier:(SInt32)identifier data:(NSData *)data;
 - (NSData *)_sendRequestWithIdentifier:(SInt32)identifier data:(NSData *)data;
+- (void)_sendOnewayRequestWithIdentifier:(SInt32)identifier data:(NSData *)data;
 @end
 
 /* ---- argument boxing ---------------------------------------------------- */
@@ -496,8 +497,8 @@ static CFDataRef _connectionCallback(CFMessagePortRef local, SInt32 identifier,
 
     /* A oneway void method does not wait for the far side to answer. */
     if ([signature isOneway] && [signature methodReturnLength] == 0) {
-        [_connection _sendRequestWithIdentifier:kNSConnectionInvocationRequest
-                                           data:request];
+        [_connection _sendOnewayRequestWithIdentifier:kNSConnectionInvocationRequest
+                                                 data:request];
         return;
     }
 
@@ -607,6 +608,27 @@ static CFDataRef _connectionCallback(CFMessagePortRef local, SInt32 identifier,
     NSConnection *connection = [self connectionWithRegisteredName:name host:host];
 
     return (connection != nil) ? [connection rootProxy] : nil;
+}
+
+// names live in the CFMessagePort registry on this machine whichever name server is asked,
+// so a name on another host can't be found
+static BOOL isThisHost(NSString *host) {
+    return host == nil || [host length] == 0 || [host isEqualToString:@"*"] || [host caseInsensitiveCompare:@"localhost"] == NSOrderedSame ||
+           [host caseInsensitiveCompare:[[NSProcessInfo processInfo] hostName]] == NSOrderedSame;
+}
+
++ (NSConnection *)connectionWithRegisteredName:(NSString *)name host:(NSString *)host usingNameServer:(NSPortNameServer *)server {
+    return isThisHost(host) ? [self connectionWithRegisteredName:name host:nil] : nil;
+}
+
++ (id)rootProxyForConnectionWithRegisteredName:(NSString *)name host:(NSString *)host usingNameServer:(NSPortNameServer *)server {
+    NSConnection *connection = [self connectionWithRegisteredName:name host:host usingNameServer:server];
+
+    return (connection != nil) ? [connection rootProxy] : nil;
+}
+
+- (BOOL)registerName:(NSString *)name withNameServer:(NSPortNameServer *)server {
+    return [self registerName:name];
 }
 
 - (BOOL)registerName:(NSString *)name {
@@ -791,6 +813,16 @@ static CFDataRef _connectionCallback(CFMessagePortRef local, SInt32 identifier,
         return nil;
     }
     return (reply != NULL) ? [(NSData *)reply autorelease] : nil;
+}
+
+// no reply mode, so CFMessagePortSendRequest returns once the message is sent
+// waiting here could deadlock two apps that call each other oneway, as an app and the menu bar do
+- (void)_sendOnewayRequestWithIdentifier:(SInt32)identifier data:(NSData *)data {
+    if (_remotePort == NULL) {
+        return;
+    }
+    CFMessagePortSendRequest((CFMessagePortRef)_remotePort, identifier, (CFDataRef)data,
+                             _requestTimeout, 0, NULL, NULL);
 }
 
 - (NSData *)_handleRequestWithIdentifier:(SInt32)identifier data:(NSData *)data {

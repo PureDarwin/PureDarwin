@@ -13,6 +13,8 @@
 #include <CoreFoundation/ForFoundationOnly.h>
 #include <objc/runtime.h>
 
+extern Boolean _CFIsObjC(CFTypeID typeID, void *obj);
+
 @implementation NSURL
 
 /* Immutable and with no mutable counterpart, so a copy is the object itself.
@@ -22,13 +24,13 @@
 }
 
 + (nullable instancetype)URLWithString:(NSString *)string {
-    return [[self alloc] initWithString:string];
+    return [[[self alloc] initWithString:string] autorelease];
 }
 
 + (instancetype)fileURLWithPath:(NSString *)path {
-    return (id)CFURLCreateWithFileSystemPath(kCFAllocatorDefault,
-                                             (CFStringRef)path,
-                                             kCFURLPOSIXPathStyle, false);
+    return [(id)CFURLCreateWithFileSystemPath(kCFAllocatorDefault,
+                                              (CFStringRef)path,
+                                              kCFURLPOSIXPathStyle, false) autorelease];
 }
 
 - (nullable instancetype)initWithString:(NSString *)string {
@@ -40,7 +42,7 @@
 }
 
 - (nullable NSString *)path {
-    return (NSString *)CFURLCopyFileSystemPath((CFURLRef)self, kCFURLPOSIXPathStyle);
+    return [(NSString *)CFURLCopyFileSystemPath((CFURLRef)self, kCFURLPOSIXPathStyle) autorelease];
 }
 
 - (BOOL)isFileURL {
@@ -122,6 +124,95 @@
     return path ? [[(id)path autorelease] fileSystemRepresentation] : NULL;
 }
 
+- (nullable NSString *)scheme {
+    return [(NSString *)CFURLCopyScheme((CFURLRef)self) autorelease];
+}
+
+- (nullable NSString *)host {
+    return [(NSString *)CFURLCopyHostName((CFURLRef)self) autorelease];
+}
+
+- (nullable NSString *)user {
+    return [(NSString *)CFURLCopyUserName((CFURLRef)self) autorelease];
+}
+
+- (nullable NSString *)password {
+    return [(NSString *)CFURLCopyPassword((CFURLRef)self) autorelease];
+}
+
+- (nullable NSString *)query {
+    return [(NSString *)CFURLCopyQueryString((CFURLRef)self, NULL) autorelease];
+}
+
+- (nullable NSString *)fragment {
+    return [(NSString *)CFURLCopyFragment((CFURLRef)self, NULL) autorelease];
+}
+
+- (nullable NSString *)resourceSpecifier {
+    return [(NSString *)CFURLCopyResourceSpecifier((CFURLRef)self) autorelease];
+}
+
+- (NSString *)relativeString {
+    return (NSString *)CFURLGetString((CFURLRef)self);
+}
+
+- (nullable NSURL *)baseURL {
+    return (NSURL *)CFURLGetBaseURL((CFURLRef)self);
+}
+
++ (nullable instancetype)URLWithString:(NSString *)string relativeToURL:(NSURL *)base {
+    return [[[self alloc] initWithString:string relativeToURL:base] autorelease];
+}
+
+- (nullable instancetype)initWithString:(NSString *)string relativeToURL:(NSURL *)base {
+    return (id)CFURLCreateWithString(kCFAllocatorDefault, (CFStringRef)string, (CFURLRef)base);
+}
+
+- (instancetype)initFileURLWithPath:(NSString *)path {
+    return (id)CFURLCreateWithFileSystemPath(kCFAllocatorDefault, (CFStringRef)path, kCFURLPOSIXPathStyle, [path hasSuffix:@"/"]);
+}
+
+- (instancetype)initFileURLWithPath:(NSString *)path isDirectory:(BOOL)isDirectory {
+    return (id)CFURLCreateWithFileSystemPath(kCFAllocatorDefault, (CFStringRef)path, kCFURLPOSIXPathStyle, isDirectory);
+}
+
+- (BOOL)hasDirectoryPath {
+    return CFURLHasDirectoryPath((CFURLRef)self);
+}
+
+- (nullable NSArray *)pathComponents {
+    NSString *path = [self path];
+    NSMutableArray *components = [NSMutableArray array];
+
+    if (path == nil)
+        return nil;
+    if ([path hasPrefix:@"/"])
+        [components addObject:@"/"];
+    for (NSString *part in [path componentsSeparatedByString:@"/"]) {
+        if ([part length])
+            [components addObject:part];
+    }
+    return components;
+}
+
+- (BOOL)isEqual:(id)other {
+    if (other == self)
+        return YES;
+    if (![other isKindOfClass:[NSURL class]] || _CFIsObjC(CFURLGetTypeID(), (void *)self) || _CFIsObjC(CFURLGetTypeID(), (void *)other))
+        return [super isEqual:other];
+    return CFEqual((CFTypeRef)self, (CFTypeRef)other);
+}
+
+- (NSUInteger)hash {
+    if (_CFIsObjC(CFURLGetTypeID(), (void *)self))
+        return [super hash];
+    return (NSUInteger)CFHash((CFTypeRef)self);
+}
+
+- (NSString *)description {
+    return [self absoluteString];
+}
+
 /* nil when the URL carries no explicit port, matching Foundation. */
 - (NSNumber *)port {
     SInt32 port = CFURLGetPortNumber((CFURLRef)self);
@@ -129,6 +220,29 @@
     return (port < 0) ? nil : [NSNumber numberWithInt:(int)port];
 }
 
+
+// CF owns the count of objects CF made, NSObject's would let CFRelease free them under a retainer.
+// Instances of ObjC subclasses keep NSObject's count
+- (id)retain {
+    if (_CFIsObjC(CFURLGetTypeID(), (void *)self))
+        return [super retain];
+    CFRetain((CFTypeRef)self);
+    return self;
+}
+
+- (oneway void)release {
+    if (_CFIsObjC(CFURLGetTypeID(), (void *)self)) {
+        [super release];
+        return;
+    }
+    CFRelease((CFTypeRef)self);
+}
+
+- (NSUInteger)retainCount {
+    if (_CFIsObjC(CFURLGetTypeID(), (void *)self))
+        return [super retainCount];
+    return (NSUInteger)CFGetRetainCount((CFTypeRef)self);
+}
 @end
 
 #if DEPLOYMENT_RUNTIME_OBJC

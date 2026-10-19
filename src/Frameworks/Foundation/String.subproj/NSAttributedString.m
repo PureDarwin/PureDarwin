@@ -9,6 +9,9 @@
 #import <Foundation/NSAttributedString.h>
 #import <Foundation/NSDictionary.h>
 #import <Foundation/NSException.h>
+#import <Foundation/NSArray.h>
+#import <Foundation/NSNull.h>
+#import <Foundation/NSValue.h>
 #include <CoreFoundation/CFAttributedString.h>
 #include <CoreFoundation/ForFoundationOnly.h>
 
@@ -224,6 +227,59 @@ longestEffectiveRange:(NSRangePointer)range
 
 - (void)endEditing {
     CFAttributedStringEndEditing((CFMutableAttributedStringRef)self);
+}
+
+// collects the runs first so the block may mutate the receiver, reverse walks them backwards
+- (void)enumerateAttributesInRange:(NSRange)range
+                           options:(NSAttributedStringEnumerationOptions)options
+                        usingBlock:(void (^)(NSDictionary *attributes, NSRange range, BOOL *stop))block {
+    NSMutableArray *runs = [NSMutableArray array];
+    NSMutableArray *values = [NSMutableArray array];
+    NSUInteger location = range.location, end = NSMaxRange(range);
+    BOOL stop = NO;
+
+    while (location < end) {
+        NSRange effective;
+        NSDictionary *attributes = [self attributesAtIndex:location longestEffectiveRange:&effective inRange:NSMakeRange(location, end - location)];
+
+        if (effective.length == 0)
+            effective = NSMakeRange(location, 1);
+        [runs addObject:[NSValue valueWithRange:effective]];
+        [values addObject:attributes != nil ? attributes : [NSDictionary dictionary]];
+        location = NSMaxRange(effective);
+    }
+    for (NSUInteger n = 0; n < [runs count] && !stop; n++) {
+        NSUInteger k = (options & NSAttributedStringEnumerationReverse) ? [runs count] - 1 - n : n;
+
+        block([values objectAtIndex:k], [[runs objectAtIndex:k] rangeValue], &stop);
+    }
+}
+
+- (void)enumerateAttribute:(NSString *)name
+                   inRange:(NSRange)range
+                   options:(NSAttributedStringEnumerationOptions)options
+                usingBlock:(void (^)(id value, NSRange range, BOOL *stop))block {
+    NSMutableArray *runs = [NSMutableArray array];
+    NSMutableArray *values = [NSMutableArray array];
+    NSUInteger location = range.location, end = NSMaxRange(range);
+    BOOL stop = NO;
+
+    while (location < end) {
+        NSRange effective;
+        id value = [self attribute:name atIndex:location longestEffectiveRange:&effective inRange:NSMakeRange(location, end - location)];
+
+        if (effective.length == 0)
+            effective = NSMakeRange(location, 1);
+        [runs addObject:[NSValue valueWithRange:effective]];
+        [values addObject:value != nil ? value : [NSNull null]];
+        location = NSMaxRange(effective);
+    }
+    for (NSUInteger n = 0; n < [runs count] && !stop; n++) {
+        NSUInteger k = (options & NSAttributedStringEnumerationReverse) ? [runs count] - 1 - n : n;
+        id value = [values objectAtIndex:k];
+
+        block(value == [NSNull null] ? nil : value, [[runs objectAtIndex:k] rangeValue], &stop);
+    }
 }
 
 @end

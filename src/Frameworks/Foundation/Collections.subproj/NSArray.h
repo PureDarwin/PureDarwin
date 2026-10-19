@@ -77,6 +77,13 @@ typedef NS_OPTIONS(NSUInteger, NSBinarySearchingOptions) {
 - (NSUInteger)indexOfObjectPassingTest:(BOOL (^)(ObjectType object, NSUInteger index, BOOL *stop))predicate;
 - (NSUInteger)indexOfObjectWithOptions:(NSEnumerationOptions)options
                            passingTest:(BOOL (^)(ObjectType object, NSUInteger index, BOOL *stop))predicate;
+- (NSIndexSet *)indexesOfObjectsPassingTest:(BOOL (^)(ObjectType object, NSUInteger index, BOOL *stop))predicate;
+- (NSIndexSet *)indexesOfObjectsWithOptions:(NSEnumerationOptions)options
+                                passingTest:(BOOL (^)(ObjectType object, NSUInteger index, BOOL *stop))predicate;
+- (NSUInteger)indexOfObjectAtIndexes:(NSIndexSet *)indexes options:(NSEnumerationOptions)options
+                         passingTest:(BOOL (^)(ObjectType object, NSUInteger index, BOOL *stop))predicate;
+- (NSIndexSet *)indexesOfObjectsAtIndexes:(NSIndexSet *)indexes options:(NSEnumerationOptions)options
+                              passingTest:(BOOL (^)(ObjectType object, NSUInteger index, BOOL *stop))predicate;
 - (NSArray<ObjectType> *)sortedArrayUsingDescriptors:(NSArray *)descriptors;
 - (void)makeObjectsPerformSelector:(SEL)selector;
 - (void)makeObjectsPerformSelector:(SEL)selector withObject:(id)object;
@@ -100,6 +107,9 @@ typedef NS_OPTIONS(NSUInteger, NSBinarySearchingOptions) {
 - (void)replaceObjectAtIndex:(NSUInteger)index withObject:(ObjectType)object;
 - (void)setObject:(ObjectType)object atIndexedSubscript:(NSUInteger)index;
 - (void)removeAllObjects;
+- (void)removeObjectsAtIndexes:(NSIndexSet *)indexes;
+- (void)insertObjects:(NSArray<ObjectType> *)objects atIndexes:(NSIndexSet *)indexes;
+- (void)replaceObjectsAtIndexes:(NSIndexSet *)indexes withObjects:(NSArray<ObjectType> *)objects;
 - (void)sortUsingSelector:(SEL)selector;
 - (void)sortUsingComparator:(NSComparator)comparator;
 - (void)sortUsingDescriptors:(NSArray *)descriptors;

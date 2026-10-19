@@ -26,6 +26,7 @@ FOUNDATION_EXPORT NSString * const NSRegistrationDomain;
 @interface NSUserDefaults : NSObject
 
 + (NSUserDefaults *)standardUserDefaults;
+- (instancetype)initWithSuiteName:(NSString *)suiteName;
 + (void)resetStandardUserDefaults;
 
 - (id)objectForKey:(NSString *)key;

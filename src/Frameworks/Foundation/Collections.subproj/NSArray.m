@@ -598,6 +598,34 @@ static void __NSArrayAbstract(id self, SEL _cmd) {
     CFArraySetValueAtIndex((CFMutableArrayRef)self, (CFIndex)index2, first);
 }
 
+// the index set forms, highest index first so the lower ones stay where they are
+- (void)removeObjectsAtIndexes:(NSIndexSet *)indexes {
+    NSUInteger index = [indexes lastIndex];
+
+    while (index != NSNotFound) {
+        [self removeObjectAtIndex:index];
+        index = [indexes indexLessThanIndex:index];
+    }
+}
+
+- (void)insertObjects:(NSArray *)objects atIndexes:(NSIndexSet *)indexes {
+    NSUInteger index = [indexes firstIndex];
+
+    for (NSUInteger i = 0; i < [objects count] && index != NSNotFound; i++) {
+        [self insertObject:[objects objectAtIndex:i] atIndex:index];
+        index = [indexes indexGreaterThanIndex:index];
+    }
+}
+
+- (void)replaceObjectsAtIndexes:(NSIndexSet *)indexes withObjects:(NSArray *)objects {
+    NSUInteger index = [indexes firstIndex];
+
+    for (NSUInteger i = 0; i < [objects count] && index != NSNotFound; i++) {
+        [self replaceObjectAtIndex:index withObject:[objects objectAtIndex:i]];
+        index = [indexes indexGreaterThanIndex:index];
+    }
+}
+
 - (void)addObjectsFromArray:(NSArray *)array {
     // Appending nothing is a no-op; CF would dereference the nil.
     if (array == nil) {
@@ -813,6 +841,51 @@ static CFComparisonResult ns_array_compare_block(const void *left,
 
 - (NSUInteger)indexOfObjectPassingTest:(BOOL (^)(id object, NSUInteger index, BOOL *stop))predicate {
     return [self indexOfObjectWithOptions:0 passingTest:predicate];
+}
+
+- (NSIndexSet *)indexesOfObjectsWithOptions:(NSEnumerationOptions)options
+                                passingTest:(BOOL (^)(id object, NSUInteger index, BOOL *stop))predicate {
+    NSMutableIndexSet *found = [NSMutableIndexSet indexSet];
+
+    [self enumerateObjectsWithOptions:options usingBlock:^(id object, NSUInteger index, BOOL *stop) {
+        if (predicate(object, index, stop)) {
+            @synchronized(found) {
+                [found addIndex:index];
+            }
+        }
+    }];
+    return found;
+}
+
+- (NSIndexSet *)indexesOfObjectsPassingTest:(BOOL (^)(id object, NSUInteger index, BOOL *stop))predicate {
+    return [self indexesOfObjectsWithOptions:0 passingTest:predicate];
+}
+
+- (NSUInteger)indexOfObjectAtIndexes:(NSIndexSet *)indexes options:(NSEnumerationOptions)options
+                         passingTest:(BOOL (^)(id object, NSUInteger index, BOOL *stop))predicate {
+    __block NSUInteger found = NSNotFound;
+
+    [indexes enumerateIndexesWithOptions:options usingBlock:^(NSUInteger index, BOOL *stop) {
+        if (predicate([self objectAtIndex:index], index, stop)) {
+            found = index;
+            *stop = YES;
+        }
+    }];
+    return found;
+}
+
+- (NSIndexSet *)indexesOfObjectsAtIndexes:(NSIndexSet *)indexes options:(NSEnumerationOptions)options
+                              passingTest:(BOOL (^)(id object, NSUInteger index, BOOL *stop))predicate {
+    NSMutableIndexSet *found = [NSMutableIndexSet indexSet];
+
+    [indexes enumerateIndexesWithOptions:options usingBlock:^(NSUInteger index, BOOL *stop) {
+        if (predicate([self objectAtIndex:index], index, stop)) {
+            @synchronized(found) {
+                [found addIndex:index];
+            }
+        }
+    }];
+    return found;
 }
 
 // the older accessors AppKit still sends, also over -count and -objectAtIndex:

@@ -37,6 +37,7 @@ typedef uint64_t NSTextCheckingTypes;
     NSRange _range;
     NSString *_replacementString;
     NSArray *_ranges;
+    NSArray *_alternativeStrings;
 }
 
 + (NSTextCheckingResult *)spellCheckingResultWithRange:(NSRange)range;
@@ -48,6 +49,12 @@ typedef uint64_t NSTextCheckingTypes;
 - (NSTextCheckingType)resultType;
 - (NSRange)range;
 - (NSString *)replacementString;
++ (NSTextCheckingResult *)correctionCheckingResultWithRange:(NSRange)range
+                                          replacementString:(NSString *)replacementString;
++ (NSTextCheckingResult *)correctionCheckingResultWithRange:(NSRange)range
+                                          replacementString:(NSString *)replacementString
+                                         alternativeStrings:(NSArray *)alternativeStrings;
+- (NSArray *)alternativeStrings;
 
 /* Regular-expression results carry the overall match at index 0 and one entry
  * per capture group after it. */

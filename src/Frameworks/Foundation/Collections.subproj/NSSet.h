@@ -25,6 +25,7 @@
 + (instancetype)set;
 + (instancetype)setWithObject:(ObjectType)object;
 + (instancetype)setWithArray:(NSArray<ObjectType> *)array;
++ (instancetype)setWithObjects:(id)firstObject, ... NS_REQUIRES_NIL_TERMINATION;
 + (instancetype)setWithObjects:(const ObjectType _Nonnull [_Nullable])objects
                           count:(NSUInteger)count;
 

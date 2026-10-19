@@ -35,6 +35,9 @@
 - (void)finishEncoding;
 - (NSData *)encodedData;
 
+- (void)encodeBytes:(const uint8_t *)bytes length:(NSUInteger)length forKey:(NSString *)key;
+- (void)encodeConditionalObject:(id)object forKey:(NSString *)key;
+
 @end
 
 #endif /* NSKeyedArchiver_h */

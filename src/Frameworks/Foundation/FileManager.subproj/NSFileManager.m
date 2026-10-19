@@ -9,6 +9,7 @@
 #import <Foundation/NSFileManager.h>
 #import <Foundation/NSArray.h>
 #import <Foundation/NSData.h>
+#import <Foundation/NSDate.h>
 #import <Foundation/NSDictionary.h>
 #import <Foundation/NSError.h>
 #import <Foundation/NSNumber.h>
@@ -25,6 +26,8 @@
 #include <sys/param.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <pwd.h>
+#include <grp.h>
 
 NSString *const NSFileSize = @"NSFileSize";
 NSString *const NSFileType = @"NSFileType";
@@ -254,12 +257,44 @@ static void _setPOSIXError(NSError **error) {
         type = NSFileTypeDirectory;
     } else if (S_ISLNK(info.st_mode)) {
         type = NSFileTypeSymbolicLink;
+    } else if (S_ISSOCK(info.st_mode)) {
+        type = NSFileTypeSocket;
+    } else if (S_ISCHR(info.st_mode)) {
+        type = NSFileTypeCharacterSpecial;
+    } else if (S_ISBLK(info.st_mode)) {
+        type = NSFileTypeBlockSpecial;
+    } else if (S_ISFIFO(info.st_mode)) {
+        type = NSFileTypeFIFO;
     }
 
-    NSMutableDictionary *attributes = [NSMutableDictionary dictionaryWithCapacity:2];
+    // the keys macOS fills from stat, owner names looked up from the ids
+    NSMutableDictionary *attributes = [NSMutableDictionary dictionaryWithCapacity:16];
+    struct passwd *owner = getpwuid(info.st_uid);
+    struct group *group = getgrgid(info.st_gid);
+
     [attributes setObject:[NSNumber numberWithUnsignedLongLong:(unsigned long long)info.st_size]
                    forKey:NSFileSize];
     [attributes setObject:type forKey:NSFileType];
+    [attributes setObject:[NSDate dateWithTimeIntervalSince1970:info.st_mtimespec.tv_sec + info.st_mtimespec.tv_nsec / 1e9]
+                   forKey:NSFileModificationDate];
+    [attributes setObject:[NSDate dateWithTimeIntervalSince1970:info.st_birthtimespec.tv_sec != 0
+                                      ? info.st_birthtimespec.tv_sec + info.st_birthtimespec.tv_nsec / 1e9
+                                      : info.st_ctimespec.tv_sec + info.st_ctimespec.tv_nsec / 1e9]
+                   forKey:NSFileCreationDate];
+    [attributes setObject:[NSNumber numberWithUnsignedShort:info.st_mode & 07777] forKey:NSFilePosixPermissions];
+    [attributes setObject:[NSNumber numberWithUnsignedLong:info.st_uid] forKey:NSFileOwnerAccountID];
+    [attributes setObject:[NSNumber numberWithUnsignedLong:info.st_gid] forKey:NSFileGroupOwnerAccountID];
+    if (owner != NULL)
+        [attributes setObject:_string(owner->pw_name) forKey:NSFileOwnerAccountName];
+    if (group != NULL)
+        [attributes setObject:_string(group->gr_name) forKey:NSFileGroupOwnerAccountName];
+    [attributes setObject:[NSNumber numberWithUnsignedLong:info.st_nlink] forKey:NSFileReferenceCount];
+    [attributes setObject:[NSNumber numberWithUnsignedLongLong:info.st_ino] forKey:NSFileSystemFileNumber];
+    [attributes setObject:[NSNumber numberWithInt:info.st_dev] forKey:NSFileSystemNumber];
+    if (S_ISCHR(info.st_mode) || S_ISBLK(info.st_mode))
+        [attributes setObject:[NSNumber numberWithInt:info.st_rdev] forKey:NSFileDeviceIdentifier];
+    [attributes setObject:[NSNumber numberWithBool:(info.st_flags & (UF_IMMUTABLE | SF_IMMUTABLE)) != 0] forKey:NSFileImmutable];
+    [attributes setObject:[NSNumber numberWithBool:(info.st_flags & (UF_APPEND | SF_APPEND)) != 0] forKey:NSFileAppendOnly];
     return attributes;
 }
 
@@ -689,6 +724,57 @@ static BOOL _copyFileBytes(const char *from, const char *to, mode_t mode,
 
 - (NSDirectoryEnumerator *)enumeratorAtPath:(NSString *)path {
     return [[[NSDirectoryEnumerator alloc] initWithPath:path] autorelease];
+}
+
+- (NSArray<NSString *> *)subpathsOfDirectoryAtPath:(NSString *)path error:(NSError **)error {
+    BOOL directory = NO;
+    NSMutableArray *paths;
+    NSString *entry;
+
+    if (![self fileExistsAtPath:path isDirectory:&directory] || !directory) {
+        errno = directory ? ENOENT : ENOTDIR;
+        _setPOSIXError(error);
+        return nil;
+    }
+    paths = [NSMutableArray array];
+    NSDirectoryEnumerator *walker = [self enumeratorAtPath:path];
+    while ((entry = [walker nextObject]) != nil)
+        [paths addObject:entry];
+    return paths;
+}
+
+- (NSArray<NSString *> *)subpathsAtPath:(NSString *)path {
+    return [self subpathsOfDirectoryAtPath:path error:NULL];
+}
+
+// rename(2) swaps the new item in, the original is kept under backupName only when asked
+- (BOOL)replaceItemAtURL:(NSURL *)original
+           withItemAtURL:(NSURL *)replacement
+          backupItemName:(NSString *)backupName
+                 options:(NSFileManagerItemReplacementOptions)options
+        resultingItemURL:(NSURL **)resultingURL
+                   error:(NSError **)error {
+    NSString *originalPath = [original path];
+    NSString *backupPath = nil;
+
+    if (backupName != nil && [self fileExistsAtPath:originalPath]) {
+        backupPath = [[originalPath stringByDeletingLastPathComponent] stringByAppendingPathComponent:backupName];
+        if (rename([originalPath fileSystemRepresentation], [backupPath fileSystemRepresentation]) != 0) {
+            _setPOSIXError(error);
+            return NO;
+        }
+    }
+    if (rename([[replacement path] fileSystemRepresentation], [originalPath fileSystemRepresentation]) != 0) {
+        _setPOSIXError(error);
+        if (backupPath != nil)
+            rename([backupPath fileSystemRepresentation], [originalPath fileSystemRepresentation]);
+        return NO;
+    }
+    if (backupPath != nil && !(options & NSFileManagerItemReplacementWithoutDeletingBackupItem))
+        [self removeItemAtPath:backupPath error:NULL];
+    if (resultingURL != NULL)
+        *resultingURL = original;
+    return YES;
 }
 
 

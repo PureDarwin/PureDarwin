@@ -17,6 +17,11 @@
 
 typedef NSString *NSAttributedStringKey;
 
+typedef NS_OPTIONS(NSUInteger, NSAttributedStringEnumerationOptions) {
+    NSAttributedStringEnumerationReverse = 1UL << 1,
+    NSAttributedStringEnumerationLongestEffectiveRangeNotRequired = 1UL << 20,
+};
+
 @interface NSAttributedString : NSObject <NSCopying, NSMutableCopying, NSCoding>
 
 - (instancetype)initWithString:(NSString *)string;
@@ -41,6 +46,13 @@ longestEffectiveRange:(NSRangePointer)range
 - (NSAttributedString *)attributedSubstringFromRange:(NSRange)range;
 - (BOOL)isEqualToAttributedString:(NSAttributedString *)other;
 
+- (void)enumerateAttributesInRange:(NSRange)range
+                           options:(NSAttributedStringEnumerationOptions)options
+                        usingBlock:(void (^)(NSDictionary *attributes, NSRange range, BOOL *stop))block;
+- (void)enumerateAttribute:(NSString *)name
+                   inRange:(NSRange)range
+                   options:(NSAttributedStringEnumerationOptions)options
+                usingBlock:(void (^)(id value, NSRange range, BOOL *stop))block;
 @end
 
 @interface NSMutableAttributedString : NSAttributedString

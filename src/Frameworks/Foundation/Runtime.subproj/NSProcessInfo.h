@@ -16,6 +16,32 @@
 #import <Foundation/NSArray.h>
 #import <Foundation/NSDictionary.h>
 #import <Foundation/NSString.h>
+#import <Foundation/NSNotification.h>
+
+typedef NS_ENUM(NSInteger, NSProcessInfoThermalState) {
+    NSProcessInfoThermalStateNominal,
+    NSProcessInfoThermalStateFair,
+    NSProcessInfoThermalStateSerious,
+    NSProcessInfoThermalStateCritical
+};
+
+FOUNDATION_EXPORT NSNotificationName const NSProcessInfoThermalStateDidChangeNotification;
+FOUNDATION_EXPORT NSNotificationName const NSProcessInfoPowerStateDidChangeNotification;
+
+// what an activity asks the system not to do while it runs
+typedef NS_OPTIONS(uint64_t, NSActivityOptions) {
+    NSActivityIdleDisplaySleepDisabled = (1ULL << 40),
+    NSActivityIdleSystemSleepDisabled = (1ULL << 20),
+    NSActivitySuddenTerminationDisabled = (1ULL << 14),
+    NSActivityAutomaticTerminationDisabled = (1ULL << 15),
+    NSActivityAnimationTrackingEnabled = (1ULL << 45),
+    NSActivityTrackingEnabled = (1ULL << 46),
+    NSActivityUserInitiated = (0x00FFFFFFULL | NSActivityIdleSystemSleepDisabled),
+    NSActivityUserInitiatedAllowingIdleSystemSleep = (NSActivityUserInitiated & ~NSActivityIdleSystemSleepDisabled),
+    NSActivityBackground = 0x000000FFULL,
+    NSActivityLatencyCritical = 0xFF00000000ULL,
+    NSActivityUserInteractive = (NSActivityUserInitiated | NSActivityLatencyCritical),
+};
 
 typedef struct {
     NSInteger majorVersion;
@@ -51,6 +77,19 @@ enum {
 - (BOOL)isOperatingSystemAtLeastVersion:(NSOperatingSystemVersion)version;
 - (NSUInteger)processorCount;
 - (unsigned long long)physicalMemory;
+- (NSUInteger)activeProcessorCount;
+- (NSProcessInfoThermalState)thermalState;
+- (BOOL)isLowPowerModeEnabled;
+
+- (id<NSObject>)beginActivityWithOptions:(NSActivityOptions)options reason:(NSString *)reason;
+- (void)endActivity:(id<NSObject>)activity;
+- (void)performActivityWithOptions:(NSActivityOptions)options reason:(NSString *)reason usingBlock:(void (^)(void))block;
+- (void)disableSuddenTermination;
+- (void)enableSuddenTermination;
+- (void)disableAutomaticTermination:(NSString *)reason;
+- (void)enableAutomaticTermination:(NSString *)reason;
+- (BOOL)automaticTerminationSupportEnabled;
+- (void)setAutomaticTerminationSupportEnabled:(BOOL)enabled;
 
 @end
 

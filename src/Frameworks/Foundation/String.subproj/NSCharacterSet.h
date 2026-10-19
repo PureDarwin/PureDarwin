@@ -28,6 +28,12 @@
 + (NSCharacterSet *)uppercaseLetterCharacterSet;
 + (NSCharacterSet *)whitespaceAndNewlineCharacterSet;
 + (NSCharacterSet *)whitespaceCharacterSet;
++ (NSCharacterSet *)URLFragmentAllowedCharacterSet;
++ (NSCharacterSet *)URLHostAllowedCharacterSet;
++ (NSCharacterSet *)URLPasswordAllowedCharacterSet;
++ (NSCharacterSet *)URLPathAllowedCharacterSet;
++ (NSCharacterSet *)URLQueryAllowedCharacterSet;
++ (NSCharacterSet *)URLUserAllowedCharacterSet;
 
 + (NSCharacterSet *)characterSetWithCharactersInString:(NSString *)string;
 + (NSCharacterSet *)characterSetWithRange:(NSRange)range;

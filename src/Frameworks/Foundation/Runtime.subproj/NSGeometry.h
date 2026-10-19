@@ -103,6 +103,14 @@ NS_INLINE NSRect NSMakeRect(CGFloat x, CGFloat y, CGFloat w, CGFloat h) {
     return r;
 }
 
+// NSPoint, NSSize and NSRect are the CG types, so converting between them is a copy
+NS_INLINE NSRect NSRectFromCGRect(CGRect r) { return r; }
+NS_INLINE CGRect NSRectToCGRect(NSRect r) { return r; }
+NS_INLINE NSPoint NSPointFromCGPoint(CGPoint p) { return p; }
+NS_INLINE CGPoint NSPointToCGPoint(NSPoint p) { return p; }
+NS_INLINE NSSize NSSizeFromCGSize(CGSize s) { return s; }
+NS_INLINE CGSize NSSizeToCGSize(NSSize s) { return s; }
+
 NS_INLINE CGFloat NSMinX(NSRect r) { return r.origin.x; }
 NS_INLINE CGFloat NSMinY(NSRect r) { return r.origin.y; }
 NS_INLINE CGFloat NSMaxX(NSRect r) { return r.origin.x + r.size.width; }
