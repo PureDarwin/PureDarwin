@@ -8,6 +8,8 @@
 	Responsibility: Ali Ozer
 */
 
+// numbers that are not CF instances (constant literals, NSNumber subclasses) answer through Objective-C
+#define CF_OBJC_DISPATCH_ENABLED 1
 #include <CoreFoundation/CFBase.h>
 #include <CoreFoundation/CFNumber.h>
 #include "CFInternal.h"

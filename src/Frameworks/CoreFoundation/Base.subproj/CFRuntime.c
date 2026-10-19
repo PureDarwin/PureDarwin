@@ -279,7 +279,11 @@ bool (*__CFObjCIsCollectable)(void *) = NULL;
 void *__CFConstantStringClassReferencePtr = &_CF_CONSTANT_STRING_SWIFT_CLASS;
 #else
 #if DEPLOYMENT_RUNTIME_OBJC
-#if TARGET_RT_64_BIT
+// with Foundation linked upward the symbol is Foundation's NSCFString class, re-exported from here,
+// so every CFSTR in every image gets a real isa
+#if PD_CF_STRING_CLASS_FROM_FOUNDATION
+extern int __CFConstantStringClassReference[];
+#elif TARGET_RT_64_BIT
 __attribute__((weak)) int __CFConstantStringClassReference[24] = {0};
 #else
 __attribute__((weak)) int __CFConstantStringClassReference[12] = {0};

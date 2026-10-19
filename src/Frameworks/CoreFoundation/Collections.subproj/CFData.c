@@ -308,8 +308,55 @@ static void *__CFDataAllocate(CFDataRef data, CFIndex size, Boolean clear) {
     return bytes;
 }
 
+
+// PD_DATA_TRACE=1: count CFData objects of 1 MB or more until they are deallocated, with where they came from
+#include <execinfo.h>
+#include <dlfcn.h>
+#include <os/lock.h>
+static os_unfair_lock __CFDataTraceLock = OS_UNFAIR_LOCK_INIT;
+static CFMutableSetRef __CFDataTraced;
+static long __CFDataTraceLive, __CFDataTraceMade;
+
+static int __CFDataTraceOn(void) {
+    static int on = -1;
+    if (on < 0) on = getenv("PD_DATA_TRACE") != NULL;
+    return on;
+}
+
+static void __CFDataTraceAdd(CFDataRef data, CFIndex length) {
+    if (!__CFDataTraceOn() || length < (1 << 20)) return;
+    os_unfair_lock_lock(&__CFDataTraceLock);
+    if (__CFDataTraced == NULL) __CFDataTraced = CFSetCreateMutable(kCFAllocatorSystemDefault, 0, NULL);
+    if (CFSetContainsValue(__CFDataTraced, data)) { os_unfair_lock_unlock(&__CFDataTraceLock); return; }
+    CFSetAddValue(__CFDataTraced, data);
+    long made = ++__CFDataTraceMade, live = ++__CFDataTraceLive;
+    os_unfair_lock_unlock(&__CFDataTraceLock);
+    if (made % 25 != 1) return;
+    void *frames[12];
+    int n = backtrace(frames, 12);
+    fprintf(stderr, "PD-DATA made %ld live %ld size %ld\n", made, live, (long)length);
+    for (int i = 2; i < n; i++) {
+        Dl_info info;
+        if (dladdr(frames[i], &info) && info.dli_sname)
+            fprintf(stderr, "PD-DATA   %s+0x%lx\n", info.dli_sname, (unsigned long)((char *)frames[i] - (char *)info.dli_saddr));
+        else if (info.dli_fname)
+            fprintf(stderr, "PD-DATA   %s+0x%lx\n", strrchr(info.dli_fname, '/') ? strrchr(info.dli_fname, '/') + 1 : info.dli_fname, (unsigned long)((char *)frames[i] - (char *)info.dli_fbase));
+    }
+}
+
+static void __CFDataTraceRemove(CFDataRef data) {
+    if (!__CFDataTraceOn() || __CFDataTraced == NULL) return;
+    os_unfair_lock_lock(&__CFDataTraceLock);
+    if (CFSetContainsValue(__CFDataTraced, data)) {
+        CFSetRemoveValue(__CFDataTraced, data);
+        __CFDataTraceLive--;
+    }
+    os_unfair_lock_unlock(&__CFDataTraceLock);
+}
+
 static void __CFDataDeallocate(CFTypeRef cf) {
     CFMutableDataRef data = (CFMutableDataRef)cf;
+    __CFDataTraceRemove(data);
     if (!__CFDataBytesInline(data) && !__CFDataDontDeallocate(data)) {
 	CFAllocatorRef deallocator = data->_bytesDeallocator;
 	if (deallocator != NULL) {
@@ -459,6 +506,7 @@ static CFMutableDataRef __CFDataInit(CFAllocatorRef allocator, _CFDataMutableVar
 	CFDataReplaceBytes(memory, CFRangeMake(0, 0), bytes, length);
     }
     __CFSetMutableVariety(memory, variety);
+    __CFDataTraceAdd(memory, length);
     return memory;
 }
 
@@ -589,6 +637,7 @@ void CFDataSetLength(CFMutableDataRef data, CFIndex newLength) {
     Boolean isGrowable;
     CF_OBJC_FUNCDISPATCHV(CFDataGetTypeID(), void, (NSMutableData *)data, setLength:(NSUInteger)newLength);
     CF_SWIFT_NSDATA_FUNCDISPATCHV(_kCFRuntimeIDCFData, void, data, NSData.setLength, newLength);
+    __CFDataTraceAdd(data, newLength);
     CFAssert1(__CFDataIsMutable(data), __kCFLogAssertion, "%s(): data is immutable", __PRETTY_FUNCTION__);
     oldLength = __CFDataLength(data);
     capacity = __CFDataCapacity(data);

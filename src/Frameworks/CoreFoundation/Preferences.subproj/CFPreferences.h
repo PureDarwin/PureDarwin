@@ -81,6 +81,9 @@ Returns success or failure. */
 CF_EXPORT
 Boolean CFPreferencesAppSynchronize(CFStringRef applicationID);
 
+CF_EXPORT
+Boolean CFPreferencesAppValueIsForced(CFStringRef key, CFStringRef applicationID);
+
 /* The primitive get mechanism; all arguments must be non-NULL
 (use the constants above for common values).  Only the exact
 location specified by app-user-host is searched.  The returned

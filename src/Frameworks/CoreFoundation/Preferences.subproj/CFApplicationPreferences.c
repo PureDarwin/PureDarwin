@@ -669,3 +669,8 @@ void _CFApplicationPreferencesRemoveDomain(_CFApplicationPreferences *self, CFPr
     updateDictRep(self);
     __CFUnlock(&__CFApplicationPreferencesLock);
 }
+
+// PureDarwin has no managed preferences, so no value is ever forced by policy
+Boolean CFPreferencesAppValueIsForced(CFStringRef key, CFStringRef applicationID) {
+    return false;
+}

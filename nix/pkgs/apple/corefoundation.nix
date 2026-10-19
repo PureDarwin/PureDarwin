@@ -20,6 +20,27 @@
 }:
 
 let
+  # classes and constants clients built against the macOS SDK bind to CoreFoundation,
+  # implemented in Foundation and re-exported from here
+  nsReexportClasses = [
+    "NSArray" "NSMutableArray" "NSDictionary" "NSMutableDictionary" "NSSet" "NSMutableSet"
+    "NSOrderedSet" "NSMutableOrderedSet" "NSData" "NSMutableData" "NSDate" "NSLocale"
+    "NSRunLoop" "NSURL" "NSUserDefaults"
+    # the classes the macOS SDK places in CoreFoundation too, apps bind them there
+    "NSTimer" "NSTimeZone" "NSCalendar" "NSDateComponents" "NSEnumerator" "NSException"
+    "NSInvocation" "NSMethodSignature" "NSPort" "NSMachPort" "NSStream" "NSInputStream" "NSOutputStream"
+    "NSConstantArray" "NSConstantDictionary"
+  ];
+  nsReexportSymbols = [
+    "___NSArray0__" "___NSDictionary0__" "_NSDefaultRunLoopMode" "_NSRunLoopCommonModes"
+    "_NSInternalInconsistencyException" "_NSInvalidArgumentException" "_NSRangeException"
+    "_NSSystemTimeZoneDidChangeNotification" "___CFConstantStringClassReference"
+  ];
+  tbdArch = if lib.hasPrefix "arm64" targetTriple then "arm64" else "x86_64";
+  reexportList = lib.concatStringsSep "\n" (nsReexportSymbols
+    ++ map (c: "_OBJC_CLASS_$_" + c) nsReexportClasses
+    ++ map (c: "_OBJC_METACLASS_$_" + c) nsReexportClasses
+    ++ [ "_OBJC_EHTYPE_$_NSException" ]);
 in
 stdenv.mkDerivation {
   pname = "puredarwin-corefoundation";
@@ -42,6 +63,21 @@ stdenv.mkDerivation {
     ${darwinCrossToolchain}/bin/${targetTriple}-ar crs placeholder-libs/libBlocksRuntime.a placeholder-libs/placeholder.o
     ${darwinCrossToolchain}/bin/${targetTriple}-ar crs placeholder-libs/libdispatch.a placeholder-libs/placeholder.o
 
+    # Foundation links CoreFoundation, so CF links a text stub of it, upward, to re-export from
+    printf '%b\n' '${reexportList}' > ns-reexports.txt
+    {
+      echo '--- !tapi-tbd'
+      echo 'tbd-version: 4'
+      echo 'targets: [ ${tbdArch}-macos ]'
+      echo 'install-name: /usr/lib/libFoundation.dylib'
+      echo 'exports:'
+      echo '  - targets: [ ${tbdArch}-macos ]'
+      echo '    symbols: [ ${lib.concatStringsSep ", " (map (s: "'" + s + "'") nsReexportSymbols)} ]'
+      echo '    objc-classes: [ ${lib.concatStringsSep ", " nsReexportClasses} ]'
+      echo '    objc-eh-types: [ NSException ]'
+      echo '...'
+    } > Foundation-stub.tbd
+
     mkdir -p foundation-headers/Foundation
     find ${foundationSrc} -name '*.h' -exec cp {} foundation-headers/Foundation/ \;
 
@@ -59,9 +95,9 @@ stdenv.mkDerivation {
       -DNIX_DARWIN_SDK_ROOT=$DARWIN_SDK_ROOT \
       -DBUILD_SHARED_LIBS=ON \
       ${lib.optionalString isArmv6 "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY"} \
-      -DCMAKE_C_FLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include -I${pdCompatInclude} -I${lib.getDev icu}/include -I${libobjc}/usr/include -I$PWD/foundation-headers -DU_DISABLE_RENAMING=1 -DDEPLOYMENT_RUNTIME_OBJC=1 -DINCLUDE_OBJC=1 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0" \
-      -DCMAKE_OBJC_FLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include -I${pdCompatInclude} -I${lib.getDev icu}/include -I${libobjc}/usr/include -I$PWD/foundation-headers -fno-objc-arc -DU_DISABLE_RENAMING=1 -DDEPLOYMENT_RUNTIME_OBJC=1 -DINCLUDE_OBJC=1 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0" \
-      -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=${nativeLd}/bin/ld -nostdlib -L$PWD/placeholder-libs -L${libSystem}/usr/lib -L${libobjc}/usr/lib -L${icu}/usr/lib -lSystem -lobjc ${lib.optionalString (compilerRt != null) "${compilerRt}/lib/libcompiler_rt.a"} -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-install_name,/usr/lib/libCoreFoundation.dylib ${lib.optionalString (!isArmv6) "-Wl,-platform_version,macos,26.5,26.5 -Wl,-fixup_chains"}"
+      -DCMAKE_C_FLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include -I${pdCompatInclude} -I${lib.getDev icu}/include -I${libobjc}/usr/include -I$PWD/foundation-headers -DU_DISABLE_RENAMING=1 -DDEPLOYMENT_RUNTIME_OBJC=1 -DINCLUDE_OBJC=1 ${lib.optionalString (!isArmv6) "-DPD_CF_STRING_CLASS_FROM_FOUNDATION=1"} -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0" \
+      -DCMAKE_OBJC_FLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include -I${pdCompatInclude} -I${lib.getDev icu}/include -I${libobjc}/usr/include -I$PWD/foundation-headers -fno-objc-arc -DU_DISABLE_RENAMING=1 -DDEPLOYMENT_RUNTIME_OBJC=1 -DINCLUDE_OBJC=1 ${lib.optionalString (!isArmv6) "-DPD_CF_STRING_CLASS_FROM_FOUNDATION=1"} -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0" \
+      -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=${nativeLd}/bin/ld -nostdlib -L$PWD/placeholder-libs -L${libSystem}/usr/lib -L${libobjc}/usr/lib -L${icu}/usr/lib -lSystem -lobjc ${lib.optionalString (compilerRt != null) "${compilerRt}/lib/libcompiler_rt.a"} -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-install_name,/usr/lib/libCoreFoundation.dylib ${lib.optionalString (!isArmv6) "-Wl,-upward_library,$PWD/Foundation-stub.tbd -Wl,-reexported_symbols_list,$PWD/ns-reexports.txt"} ${lib.optionalString (!isArmv6) "-Wl,-platform_version,macos,26.5,26.5 -Wl,-fixup_chains"}"
 
     runHook postConfigure
   '';

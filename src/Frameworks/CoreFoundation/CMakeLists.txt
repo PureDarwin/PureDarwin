@@ -265,6 +265,7 @@ add_framework(CoreFoundation
                 # URL
                 URL.subproj/CFURL.h
                 URL.subproj/CFURLAccess.h
+                URL.subproj/CFURLEnumerator.h
                 URL.subproj/CFURLComponents.h
               SOURCES
                 # Bridging (ObjC toll-free bridge glue; requires
@@ -291,6 +292,7 @@ add_framework(CoreFoundation
                 Collections.subproj/CFBasicHash.c
                 # AppServices
                 AppServices.subproj/CFNotificationCenter_PureDarwin.c
+                URL.subproj/CFURLResources_PureDarwin.c
                 # Collections
                 Collections.subproj/CFBinaryHeap.c
                 Collections.subproj/CFBitVector.c

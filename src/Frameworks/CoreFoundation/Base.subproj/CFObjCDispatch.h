@@ -107,6 +107,13 @@ typedef NSUInteger NSStringCompareOptions;
 - (id)localizedFailureReason;
 - (id)localizedRecoverySuggestion;
 
+// NSNumber, for numbers that are not CF instances such as clang's constant literals
+- (BOOL)boolValue;
+- (CFNumberType)_cfNumberType;
+- (Boolean)_getValue:(void *)value forType:(CFNumberType)type;
+- (CFComparisonResult)compare:(id)other;
+- (CFComparisonResult)_reverseCompare:(id)other;
+
 @end
 
 #endif

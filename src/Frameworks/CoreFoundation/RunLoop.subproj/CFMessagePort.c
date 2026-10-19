@@ -1221,7 +1221,8 @@ void CFMessagePortSetDispatchQueue(CFMessagePortRef ms, dispatch_queue_t queue) 
                     if (NULL != reply) {
                         kern_return_t const ret = mach_msg(reply, MACH_SEND_MSG, reply->msgh_size, 0, MACH_PORT_NULL, 0, MACH_PORT_NULL);
                         
-                        __CFMachMessageCheckForAndDestroyUnsentMessage(ret, msg);
+                        // the unsent message is the reply, the request's out-of-line data is already gone
+                        __CFMachMessageCheckForAndDestroyUnsentMessage(ret, reply);
                         
                         CFAllocatorDeallocate(kCFAllocatorSystemDefault, reply);
                     }

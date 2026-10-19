@@ -65,6 +65,7 @@
 #include <CoreFoundation/CFTree.h>
 #include <CoreFoundation/CFURL.h>
 #include <CoreFoundation/CFURLAccess.h>
+#include <CoreFoundation/CFURLEnumerator.h>
 #include <CoreFoundation/CFUUID.h>
 #include <CoreFoundation/CFUtilities.h>
 #include <CoreFoundation/CFBundle.h>

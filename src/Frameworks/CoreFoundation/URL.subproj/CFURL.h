@@ -465,6 +465,16 @@ CFURLRef CFURLCreateFileReferenceURL(CFAllocatorRef allocator, CFURLRef url, CFE
 CF_EXPORT
 CFURLRef CFURLCreateFilePathURL(CFAllocatorRef allocator, CFURLRef url, CFErrorRef *error) API_AVAILABLE(macos(10.6), ios(4.0), watchos(2.0), tvos(9.0));
 
+#if !TARGET_OS_IPHONE
+struct FSRef;
+
+CF_EXPORT
+CFURLRef CFURLCreateFromFSRef(CFAllocatorRef allocator, const struct FSRef *fsRef);
+
+CF_EXPORT
+Boolean CFURLGetFSRef(CFURLRef url, struct FSRef *fsRef);
+#endif
+
 CF_IMPLICIT_BRIDGING_ENABLED
 #endif
 
