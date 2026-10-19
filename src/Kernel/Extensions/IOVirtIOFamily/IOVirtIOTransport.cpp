@@ -10,6 +10,7 @@ enum {
     VIRTIO_PCI_CAP_NOTIFY_CFG = 2,
     VIRTIO_PCI_CAP_ISR_CFG    = 3,
     VIRTIO_PCI_CAP_DEVICE_CFG = 4,
+    VIRTIO_PCI_CAP_PCI_CFG    = 5,
     VIRTIO_PCI_CAP_SHARED_MEMORY_CFG = 8,
 
     kCapLen        = 2,
@@ -148,8 +149,9 @@ IOVirtIOTransport::attach(IOPCIDevice *pci)
         UInt8 cfgType = pci->configRead8((UInt8)(base + kCapCfgType));
         UInt8 bar     = pci->configRead8((UInt8)(base + kCapBar));
         UInt32 off    = pci->configRead32((UInt8)(base + kCapOffset));
-        IOLog("IOVirtIOTransport: vendor cap #%u at off=0x%x type=%u bar=%u regoff=0x%x\n",
-              nCaps, (unsigned)capOffset, cfgType, bar, off);
+        UInt32 len    = pci->configRead32((UInt8)(base + kCapLength));
+        IOLog("IOVirtIOTransport: vendor cap #%u at off=0x%x type=%u bar=%u regoff=0x%x len=0x%x\n",
+              nCaps, (unsigned)capOffset, cfgType, bar, off, len);
 
         // shared memory windows can be gigabytes, only record them, the driver maps what it uses
         if (cfgType == VIRTIO_PCI_CAP_SHARED_MEMORY_CFG) {
@@ -165,6 +167,9 @@ IOVirtIOTransport::attach(IOPCIDevice *pci)
             }
             continue;
         }
+
+        // a window onto config space through a register pair, never a bar to map
+        if (cfgType == VIRTIO_PCI_CAP_PCI_CFG) continue;
 
         IOMemoryMap *map = mapBar(pci, bar);
         if (!map) {
@@ -192,6 +197,9 @@ IOVirtIOTransport::attach(IOPCIDevice *pci)
             break;
         }
     }
+
+    IOLog("IOVirtIOTransport: %u vendor caps, common=%d notify=%d isr=%d device=%d shm=%u\n",
+          nCaps, fCommonCfg != 0, fNotifyCfg != 0, fIsrCfg != 0, fDeviceCfg != 0, fShmCount);
 
     if (!fCommonCfg || !fNotifyCfg) {
         IOLog("IOVirtIOTransport: attach failed (nCaps=%u commonCfg=%p notifyCfg=%p)\n",
