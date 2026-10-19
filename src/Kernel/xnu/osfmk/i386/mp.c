@@ -121,6 +121,11 @@ static int              NMIInterruptHandler(x86_saved_state_t *regs);
 
 boolean_t               smp_initialized = FALSE;
 uint32_t                TSC_sync_margin = 0xFFF;
+
+// pc firmware can start cpus with skewed tscs, which apple's never does
+// match each ap's IA32_TSC_ADJUST to the boot cpu, then correct whatever skew is left
+static boolean_t        tsc_adjust_ok;
+static uint64_t         tsc_adjust_boot;
 volatile boolean_t      force_immediate_debugger_NMI = FALSE;
 volatile boolean_t      pmap_tlb_flush_timeout = FALSE;
 #if DEBUG || DEVELOPMENT
@@ -239,6 +244,12 @@ smp_init(void)
 		kprintf("TSC sync margin disabled\n");
 		TSC_sync_margin = 0;
 	}
+	// intel only, the only place it was needed and tested
+	if (TSC_sync_margin && (cpuid_leaf7_features() & CPUID_LEAF7_FEATURE_TSCOFF) &&
+	    strncmp(cpuid_info()->cpuid_vendor, CPUID_VID_INTEL, sizeof(CPUID_VID_INTEL)) == 0) {
+		tsc_adjust_ok = TRUE;
+		tsc_adjust_boot = rdmsr64(MSR_IA32_TSC_ADJUST);
+	}
 	smp_initialized = TRUE;
 
 	cpu_prewarm_init();
@@ -259,6 +270,9 @@ static processor_start_info_t   start_info        __attribute__((aligned(64)));
 static volatile long            tsc_entry_barrier __attribute__((aligned(64)));
 static volatile long            tsc_exit_barrier  __attribute__((aligned(64)));
 static volatile uint64_t        tsc_target        __attribute__((aligned(64)));
+static volatile int64_t         tsc_fix_delta     __attribute__((aligned(64)));
+static volatile long            tsc_fix_ready     __attribute__((aligned(64)));
+static volatile long            tsc_fix_done      __attribute__((aligned(64)));
 
 /*
  * Poll a CPU to see when it has marked itself as running.
@@ -337,6 +351,9 @@ started_cpu(void)
 		 * I've just started-up, synchronize again with the starter cpu
 		 * and then snap my TSC.
 		 */
+		if (tsc_adjust_ok) {
+			wrmsr64(MSR_IA32_TSC_ADJUST, tsc_adjust_boot);
+		}
 		tsc_target   = 0;
 		atomic_decl(&tsc_entry_barrier, 1);
 		while (tsc_entry_barrier != 0) {
@@ -344,6 +361,17 @@ started_cpu(void)
 		}
 		tsc_target = rdtsc64();
 		atomic_decl(&tsc_exit_barrier, 1);
+
+		if (tsc_adjust_ok) {
+			while (tsc_fix_ready == 0) {
+				;       // spin for the starter's verdict
+			}
+			if (tsc_fix_delta != 0) {
+				wrmsr64(MSR_IA32_TSC_ADJUST,
+				    rdmsr64(MSR_IA32_TSC_ADJUST) - (uint64_t)tsc_fix_delta);
+			}
+			tsc_fix_done = 1;
+		}
 	}
 }
 
@@ -411,6 +439,19 @@ start_cpu(void *arg)
 		 */
 		cpu_datap(psip->target_cpu)->tsc_sync_delta = tsc_delta;
 #endif
+		if (tsc_adjust_ok) {
+			// the target pulls its tsc back by the measured skew, then reports done
+			tsc_fix_delta = (ABS(tsc_delta) > (int64_t) TSC_sync_margin) ? tsc_delta : 0;
+			tsc_fix_ready = 1;
+			while (tsc_fix_done == 0) {
+				;       // spin for the target to apply it
+			}
+			if (tsc_fix_delta != 0) {
+				kprintf("TSC sync for cpu %d: corrected by %lld via TSC_ADJUST\n",
+				    psip->target_cpu, tsc_fix_delta);
+				tsc_delta = 0;
+			}
+		}
 		if (ABS(tsc_delta) > (int64_t) TSC_sync_margin) {
 #if DEBUG
 			panic(
@@ -459,6 +500,9 @@ intel_startCPU(
 	start_info.target_lapic = lapic;
 	tsc_entry_barrier = 2;
 	tsc_exit_barrier = 2;
+	tsc_fix_delta = 0;
+	tsc_fix_ready = 0;
+	tsc_fix_done = 0;
 
 	/*
 	 * Perform the processor startup sequence with all running

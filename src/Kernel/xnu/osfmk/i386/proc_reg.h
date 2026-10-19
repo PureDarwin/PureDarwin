@@ -553,6 +553,7 @@ __END_DECLS
 #define MSR_IA32_P5_MC_TYPE                     1
 #define MSR_IA32_PLATFORM_ID                    0x17
 #define MSR_IA32_EBL_CR_POWERON                 0x2a
+#define MSR_IA32_TSC_ADJUST                     0x3b
 
 #define MSR_IA32_APIC_BASE                      0x1b
 #define     MSR_IA32_APIC_BASE_BSP                  (1<<8)
