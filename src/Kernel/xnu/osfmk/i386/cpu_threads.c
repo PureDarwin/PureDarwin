@@ -63,6 +63,8 @@ x86_topology_parameters_t       topoParms;
 static uint32_t         topoSMTShift;
 static uint32_t         topoLLCShift;
 static uint32_t         topoPackageShift;
+// hybrid parts (smt p-cores beside single-thread e-cores) have no uniform threads per core
+static boolean_t        topoHybrid;
 
 static uint32_t
 ceil_log2_u32(uint32_t value)
@@ -325,6 +327,15 @@ initTopoParms(void)
 	    nonzero_u32(cpuinfo->thread_count, 1));
 	topoParms.nPThreadsPerPackage = nonzero_u32(topoParms.nPThreadsPerPackage,
 	    nonzero_u32(cpuinfo->cpuid_logical_per_package, 1));
+
+	// raptor lake: 10 cores / 12 threads truncates to 1 thread per core, so take the totals as given
+	// leaf 7 edx bit 15 marks hybrid parts, the uneven count covers hypervisors that hide the bit
+	topoHybrid = (cpuinfo->cpuid_leaf7_extfeatures & CPUID_LEAF7_EXTFEATURE_HYBRID) != 0 ||
+	    (cpuinfo->core_count != 0 && (cpuinfo->thread_count % cpuinfo->core_count) != 0);
+	if (topoHybrid) {
+		topoParms.nLThreadsPerPackage = cpuinfo->thread_count;
+		topoParms.nLThreadsPerDie = cpuinfo->thread_count / topoParms.nLDiesPerPackage;
+	}
 
 	initTopoShifts(cpuinfo);
 
@@ -1184,7 +1195,7 @@ x86_validate_topology(void)
 			}
 			TOPO_DBG("\n");
 
-			if (nCores != topoParms.nLCoresPerDie) {
+			if (!topoHybrid && nCores != topoParms.nLCoresPerDie) {
 				panic("Should have %d Cores, but only found %d for Die %d",
 				    topoParms.nLCoresPerDie, nCores, die->pdie_num);
 			}
@@ -1262,7 +1273,7 @@ x86_validate_topology(void)
 			}
 			TOPO_DBG("\n");
 
-			if (nCPUs != topoParms.nLThreadsPerCore) {
+			if (!topoHybrid && nCPUs != topoParms.nLThreadsPerCore) {
 				panic("Should have %d Threads, but only found %d for Core %d",
 				    topoParms.nLThreadsPerCore, nCPUs, core->pcore_num);
 			}
@@ -1270,7 +1281,7 @@ x86_validate_topology(void)
 			core = core->next_in_pkg;
 		}
 
-		if (nCores != topoParms.nLCoresPerPackage) {
+		if (!topoHybrid && nCores != topoParms.nLCoresPerPackage) {
 			panic("Should have %d Cores, but only found %d for package %d",
 			    topoParms.nLCoresPerPackage, nCores, pkg->lpkg_num);
 		}

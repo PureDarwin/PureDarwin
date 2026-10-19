@@ -201,6 +201,7 @@
 #define CPUID_LEAF7_EXTFEATURE_SRBDS_CTRL       _Bit(9)         /* SRBDS MSR Presence and Mitigation Control */
 #define CPUID_LEAF7_EXTFEATURE_MDCLEAR          _Bit(10)        /* Overloaded VERW / L1D_FLUSH */
 #define CPUID_LEAF7_EXTFEATURE_TSXFA            _Bit(13)        /* TSX RTM_FORCE_ABORT MSR */
+#define CPUID_LEAF7_EXTFEATURE_HYBRID           _Bit(15)        /* Hybrid part (P-cores and E-cores) */
 #define CPUID_LEAF7_EXTFEATURE_IBRS             _Bit(26)        /* IBRS / IBPB */
 #define CPUID_LEAF7_EXTFEATURE_STIBP            _Bit(27)        /* Single Thread Indirect Branch Predictors */
 #define CPUID_LEAF7_EXTFEATURE_L1DF             _Bit(28)        /* L1D_FLUSH MSR */
