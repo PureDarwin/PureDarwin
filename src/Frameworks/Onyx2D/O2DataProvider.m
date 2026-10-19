@@ -17,8 +17,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 @implementation O2DataProvider
 
 -initWithData:(NSData *)data {
-   _inputStream=[[NSInputStream inputStreamWithData:data] retain];
-   [_inputStream open];
+   // the stream is made on first use: it copies the whole data, and bitmap surfaces never read through it
+   _inputStream=nil;
    _data=[data retain];
    _isDirectAccess=YES;
    _bytes=[data bytes];
@@ -54,7 +54,12 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 O2DataProviderRef O2DataProviderCreateWithData(void *info,const void *data,size_t size,O2DataProviderReleaseDataCallback releaseCallback) {
-   return [[O2DataProvider alloc] initWithBytes:data length:size];
+   O2DataProvider *self=[[O2DataProvider alloc] initWithBytes:data length:size];
+
+   // the caller owns the bytes and frees them in the callback once the provider goes away
+   self->_releaseInfo=info;
+   self->_releaseCallback=releaseCallback;
+   return self;
 }
 
 O2DataProviderRef O2DataProviderCreateWithCFData(CFDataRef data) {
@@ -89,6 +94,8 @@ CFDataRef O2DataProviderCopyData(O2DataProviderRef self) {
    [_inputStream release];
    [_data release];
    [_path release];
+   if(_releaseCallback!=NULL)
+    _releaseCallback(_releaseInfo,_bytes,_length);
    [super dealloc];
 }
 
@@ -97,6 +104,10 @@ CFDataRef O2DataProviderCopyData(O2DataProviderRef self) {
 }
 
 -(NSInputStream *)inputStream {
+   if(_inputStream==nil && _data!=nil){
+    _inputStream=[[NSInputStream inputStreamWithData:_data] retain];
+    [_inputStream open];
+   }
    return _inputStream;
 }
 

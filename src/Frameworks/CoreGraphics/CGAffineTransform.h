@@ -30,3 +30,4 @@ COREGRAPHICS_EXPORT CGAffineTransform CGAffineTransformTranslate(CGAffineTransfo
 
 COREGRAPHICS_EXPORT CGPoint CGPointApplyAffineTransform(CGPoint point, CGAffineTransform xform);
 COREGRAPHICS_EXPORT CGSize CGSizeApplyAffineTransform(CGSize size, CGAffineTransform xform);
+COREGRAPHICS_EXPORT CGRect CGRectApplyAffineTransform(CGRect rect, CGAffineTransform xform);

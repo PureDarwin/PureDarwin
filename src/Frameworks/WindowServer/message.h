@@ -127,6 +127,11 @@ struct wsRPCSimple {
 #define WS_EVENT_CLOSE        1003
 // the compositor moved the window, x and y are its top left in screen coordinates
 #define WS_EVENT_MOVED        1004
+// a drag from another client over a window, x and y are window-local like pointer events
+#define WS_EVENT_DRAG_ENTER   1005
+#define WS_EVENT_DRAG_MOTION  1006
+#define WS_EVENT_DRAG_LEAVE   1007
+#define WS_EVENT_DRAG_DROP    1008
 
 struct mach_event {
     int windowID;

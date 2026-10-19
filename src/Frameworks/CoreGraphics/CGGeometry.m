@@ -22,6 +22,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 const CGRect CGRectZero={{0,0},{0,0}};
 const CGRect CGRectNull={{INFINITY,INFINITY},{0,0}};
+// Apple's value, finite so that intersections with it stay finite
+const CGRect CGRectInfinite={{-8.98846567431158e+307,-8.98846567431158e+307},{1.79769313486232e+308,1.79769313486232e+308}};
 const CGPoint CGPointZero={0,0};
 const CGSize CGSizeZero={0,0};
 

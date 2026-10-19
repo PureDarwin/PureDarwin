@@ -17,4 +17,4 @@ COREGRAPHICS_EXPORT CGShadingRef CGShadingRetain(CGShadingRef self);
 COREGRAPHICS_EXPORT void CGShadingRelease(CGShadingRef self);
 
 COREGRAPHICS_EXPORT CGShadingRef CGShadingCreateAxial(CGColorSpaceRef colorSpace, CGPoint startPoint, CGPoint endPoint, CGFunctionRef function, bool extendStart, bool extendEnd);
-COREGRAPHICS_EXPORT CGShadingRef CGShadingCreateRadial(CGColorSpaceRef colorSpace, CGPoint startPoint, float startRadius, CGPoint endPoint, float endRadius, CGFunctionRef function, bool extendStart, bool extendEnd);
+COREGRAPHICS_EXPORT CGShadingRef CGShadingCreateRadial(CGColorSpaceRef colorSpace, CGPoint startPoint, CGFloat startRadius, CGPoint endPoint, CGFloat endRadius, CGFunctionRef function, bool extendStart, bool extendEnd);

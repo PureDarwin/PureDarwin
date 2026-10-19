@@ -7,6 +7,8 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
 #import <Onyx2D/O2Context.h>
+#import <objc/runtime.h>
+#import <Foundation/NSValue.h>
 #include <stdio.h>
 #include <dlfcn.h>
 #include <execinfo.h>
@@ -1415,6 +1417,31 @@ void O2ContextSetCTM(O2ContextRef self,O2AffineTransform matrix) {
    O2GStateSetDeviceSpaceCTM(O2ContextCurrentGState(self),deviceTransform);
 
    O2GStateSetUserSpaceCTM(O2ContextCurrentGState(self),matrix);
+}
+
+static char deviceTransformKey;
+
+// the base goes between the user CTM and the surface's own transform (the builtin context's flip),
+// which is what the gstate's device transform adds to the user CTM when the base is first set
+void O2ContextSetBaseCTM(O2ContextRef self,O2AffineTransform matrix) {
+   if(self==nil)
+    return;
+
+   O2GState *gState=O2ContextCurrentGState(self);
+   NSValue *saved=objc_getAssociatedObject(self,&deviceTransformKey);
+   O2AffineTransform surface;
+
+   if(saved==nil){
+    surface=O2AffineTransformConcat(O2AffineTransformInvert(O2GStateUserSpaceTransform(gState)),gState->_deviceSpaceTransform);
+    objc_setAssociatedObject(self,&deviceTransformKey,[NSValue valueWithBytes:&surface objCType:@encode(O2AffineTransform)],OBJC_ASSOCIATION_RETAIN);
+   }
+   else
+    [saved getValue:&surface];
+
+   O2AffineTransform base=O2AffineTransformConcat(matrix,surface);
+
+   self->_userToDeviceTransform=base;
+   O2GStateSetDeviceSpaceCTM(gState,O2AffineTransformConcat(O2GStateUserSpaceTransform(gState),base));
 }
 
 void O2ContextResetClip(O2ContextRef self) {

@@ -53,6 +53,30 @@ static NSArray *_preferredFontNames = nil;
    return nil;
 }
 
+-(NSString *)copyPostScriptName {
+   return nil;
+}
+
+-(NSArray *)copyTableTags {
+   return nil;
+}
+
+-(NSArray *)copyVariationAxes {
+   return nil;
+}
+
+-(NSDictionary *)copyVariations {
+   return nil;
+}
+
+-(O2Font *)createCopyWithVariations:(NSDictionary *)variations {
+   return nil;
+}
+
+-(BOOL)getGlyphBBoxes:(const O2Glyph *)glyphs count:(size_t)count bboxes:(O2Rect *)bboxes {
+   return NO;
+}
+
 -(O2Glyph)glyphWithGlyphName:(NSString *)name {
    O2InvalidAbstractInvocation();
    return 0;
@@ -510,6 +534,35 @@ NSString *O2FontCopyGlyphNameForGlyph(O2FontRef self,O2Glyph glyph) {
 
 NSData   *O2FontCopyTableForTag(O2FontRef self,uint32_t tag) {
    return [self copyTableForTag:(uint32_t)tag];
+}
+
+NSString *const O2FontVariationAxisName=@"kCGFontVariationAxisName";
+NSString *const O2FontVariationAxisMinValue=@"kCGFontVariationAxisMinValue";
+NSString *const O2FontVariationAxisMaxValue=@"kCGFontVariationAxisMaxValue";
+NSString *const O2FontVariationAxisDefaultValue=@"kCGFontVariationAxisDefaultValue";
+
+NSString *O2FontCopyPostScriptName(O2FontRef self) {
+   return [self copyPostScriptName];
+}
+
+NSArray *O2FontCopyTableTags(O2FontRef self) {
+   return [self copyTableTags];
+}
+
+NSArray *O2FontCopyVariationAxes(O2FontRef self) {
+   return [self copyVariationAxes];
+}
+
+NSDictionary *O2FontCopyVariations(O2FontRef self) {
+   return [self copyVariations];
+}
+
+O2FontRef O2FontCreateCopyWithVariations(O2FontRef self, NSDictionary *variations) {
+   return [self createCopyWithVariations:variations];
+}
+
+BOOL O2FontGetGlyphBBoxes(O2FontRef self, const O2Glyph *glyphs, size_t count, O2Rect *bboxes) {
+   return [self getGlyphBBoxes:glyphs count:count bboxes:bboxes];
 }
 
 uint16_t O2FontUnicodeForGlyphName(CFStringRef name){

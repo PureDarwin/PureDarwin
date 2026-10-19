@@ -17,3 +17,20 @@ CGContextRef CGPDFContextCreate(CGDataConsumerRef consumer,const CGRect *mediaBo
 COREGRAPHICS_EXPORT void CGPDFContextClose(CGContextRef self) {
    [self close];
 }
+
+const CFStringRef kCGPDFContextCreator=(CFStringRef)@"kCGPDFContextCreator";
+
+void CGPDFContextSetURLForRect(CGContextRef self,CFURLRef url,CGRect rect) {
+   if([(id)self isKindOfClass:[O2PDFContext class]])
+    [(O2PDFContext *)self setURL:(NSURL *)url forRect:rect];
+}
+
+void CGPDFContextSetDestinationForRect(CGContextRef self,CFStringRef name,CGRect rect) {
+   if([(id)self isKindOfClass:[O2PDFContext class]])
+    [(O2PDFContext *)self setDestination:(NSString *)name forRect:rect];
+}
+
+void CGPDFContextAddDestinationAtPoint(CGContextRef self,CFStringRef name,CGPoint point) {
+   if([(id)self isKindOfClass:[O2PDFContext class]])
+    [(O2PDFContext *)self addDestination:(NSString *)name atPoint:point];
+}

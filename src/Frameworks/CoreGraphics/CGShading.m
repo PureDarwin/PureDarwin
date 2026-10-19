@@ -21,6 +21,6 @@ CGShadingRef CGShadingCreateAxial(CGColorSpaceRef colorSpace,CGPoint startPoint,
    return O2ShadingCreateAxial(colorSpace,startPoint,endPoint,function,extendStart,extendEnd);
 }
 
-CGShadingRef CGShadingCreateRadial(CGColorSpaceRef colorSpace,CGPoint startPoint,float startRadius,CGPoint endPoint,float endRadius,CGFunctionRef function,bool extendStart,bool extendEnd) {
+CGShadingRef CGShadingCreateRadial(CGColorSpaceRef colorSpace,CGPoint startPoint,CGFloat startRadius,CGPoint endPoint,CGFloat endRadius,CGFunctionRef function,bool extendStart,bool extendEnd) {
    return O2ShadingCreateRadial(colorSpace,startPoint,startRadius,endPoint,endRadius,function,extendStart,extendEnd);
 }

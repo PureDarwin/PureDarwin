@@ -14,12 +14,17 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
  * closure for three method signatures. This must stay identical to the
  * typedef in OpenGL.framework's CGLTypes.h - repeating it is legal, changing
  * it is not. */
+// the Objective-C parts stay out of C clients, which only need the window ID and level types
+#ifdef __OBJC__
 #import <Foundation/NSGeometry.h>
+#endif
 
 typedef struct _CGLContextObject *CGLContextObj;
 #include <stdint.h>
 
+#ifdef __OBJC__
 @class O2Context, CGEvent;
+#endif
 
 typedef enum {
     CGSBackingStoreRetained = 0,

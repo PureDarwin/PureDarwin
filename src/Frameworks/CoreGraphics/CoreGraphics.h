@@ -28,4 +28,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <CoreGraphics/CGPDFPage.h>
 #import <CoreGraphics/CGShading.h>
 #import <CoreGraphics/CGDirectDisplay.h>
+#import <CoreGraphics/CGEvent.h>
+#import <CoreGraphics/CGDirectDisplayMetal.h>
 #import <CoreGraphics/CGWindowLevel.h>
+#import <CoreGraphics/CGWindowList.h>

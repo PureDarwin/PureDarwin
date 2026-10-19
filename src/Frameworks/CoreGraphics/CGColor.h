@@ -34,3 +34,11 @@ COREGRAPHICS_EXPORT const CGFloat *CGColorGetComponents(CGColorRef self);
 COREGRAPHICS_EXPORT CGFloat CGColorGetAlpha(CGColorRef self);
 
 COREGRAPHICS_EXPORT CGPatternRef CGColorGetPattern(CGColorRef self);
+
+COREGRAPHICS_EXPORT const CFStringRef kCGColorWhite;
+COREGRAPHICS_EXPORT const CFStringRef kCGColorBlack;
+COREGRAPHICS_EXPORT const CFStringRef kCGColorClear;
+
+COREGRAPHICS_EXPORT CFTypeID CGColorGetTypeID(void);
+COREGRAPHICS_EXPORT CGColorRef CGColorCreateSRGB(CGFloat r, CGFloat g, CGFloat b, CGFloat a);
+COREGRAPHICS_EXPORT CGColorRef CGColorGetConstantColor(CFStringRef name);

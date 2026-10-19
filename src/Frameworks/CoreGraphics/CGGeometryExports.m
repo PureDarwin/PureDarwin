@@ -45,6 +45,7 @@ EXPORT bool CGRectIsNull(CGRect rect)
 
 EXPORT bool CGRectIsInfinite(CGRect rect)
 {
+    if (rect.size.width >= 1.79769313486232e+308 && rect.size.height >= 1.79769313486232e+308) return true;
     return isinf(rect.size.width) && isinf(rect.size.height);
 }
 

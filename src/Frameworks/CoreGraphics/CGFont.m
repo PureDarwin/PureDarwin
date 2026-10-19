@@ -80,3 +80,59 @@ CFStringRef CGFontCopyGlyphNameForGlyph(CGFontRef self,CGGlyph glyph) {
 CFDataRef CGFontCopyTableForTag(CGFontRef self,uint32_t tag) {
    return (CFDataRef)O2FontCopyTableForTag(self,tag);
 }
+
+const CFStringRef kCGFontVariationAxisName=(CFStringRef)@"kCGFontVariationAxisName";
+const CFStringRef kCGFontVariationAxisMinValue=(CFStringRef)@"kCGFontVariationAxisMinValue";
+const CFStringRef kCGFontVariationAxisMaxValue=(CFStringRef)@"kCGFontVariationAxisMaxValue";
+const CFStringRef kCGFontVariationAxisDefaultValue=(CFStringRef)@"kCGFontVariationAxisDefaultValue";
+
+CGFontRef CGFontCreateWithDataProvider(CGDataProviderRef provider) {
+   if(provider==NULL)
+    return NULL;
+   return O2FontCreateWithDataProvider(provider);
+}
+
+CFStringRef CGFontCopyPostScriptName(CGFontRef self) {
+   return self!=NULL ? (CFStringRef)O2FontCopyPostScriptName(self) : NULL;
+}
+
+// Apple's array holds the tags themselves as raw values
+CFArrayRef CGFontCopyTableTags(CGFontRef self) {
+   if(self==NULL)
+    return NULL;
+
+   NSArray *tags=O2FontCopyTableTags(self);
+   CFIndex count=[tags count];
+   const void *values[count>0 ? count : 1];
+
+   for(CFIndex i=0;i<count;i++)
+    values[i]=(const void *)(uintptr_t)[[tags objectAtIndex:i] unsignedIntValue];
+   [tags release];
+   return CFArrayCreate(kCFAllocatorDefault,values,count,NULL);
+}
+
+CFArrayRef CGFontCopyVariationAxes(CGFontRef self) {
+   return self!=NULL ? (CFArrayRef)O2FontCopyVariationAxes(self) : NULL;
+}
+
+CFDictionaryRef CGFontCopyVariations(CGFontRef self) {
+   return self!=NULL ? (CFDictionaryRef)O2FontCopyVariations(self) : NULL;
+}
+
+CGFontRef CGFontCreateCopyWithVariations(CGFontRef self, CFDictionaryRef variations) {
+   if(self==NULL)
+    return NULL;
+   if(variations==NULL)
+    return CGFontRetain(self);
+
+   CGFontRef copy=O2FontCreateCopyWithVariations(self,(NSDictionary *)variations);
+
+   // a font without axes answers with itself, as Apple's does
+   return copy!=NULL ? copy : CGFontRetain(self);
+}
+
+bool CGFontGetGlyphBBoxes(CGFontRef self, const CGGlyph *glyphs, size_t count, CGRect *bboxes) {
+   if(self==NULL || (count>0 && (glyphs==NULL || bboxes==NULL)))
+    return false;
+   return O2FontGetGlyphBBoxes(self,glyphs,count,bboxes);
+}

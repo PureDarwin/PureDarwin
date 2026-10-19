@@ -16,6 +16,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 COREGRAPHICS_EXPORT const CGRect CGRectZero;
 COREGRAPHICS_EXPORT const CGRect CGRectNull;
+COREGRAPHICS_EXPORT const CGRect CGRectInfinite;
 COREGRAPHICS_EXPORT const CGPoint CGPointZero;
 COREGRAPHICS_EXPORT const CGSize CGSizeZero;
 
@@ -113,6 +114,7 @@ static inline bool CGRectEqualToRect(CGRect a, CGRect b) {
 }
 
 static inline bool CGRectIsInfinite(CGRect rect) {
+    if (rect.size.width >= 1.79769313486232e+308 && rect.size.height >= 1.79769313486232e+308) return true;
     return (isinf(rect.origin.x) ||
         isinf(rect.origin.y) ||
         isinf(rect.size.width) ||
@@ -124,6 +126,14 @@ static inline bool CGRectIsNull(CGRect rect) {
 }
 
 COREGRAPHICS_EXPORT CGRect CGRectUnion(CGRect a, CGRect b);
+
+#include <CoreFoundation/CFDictionary.h>
+COREGRAPHICS_EXPORT CFDictionaryRef CGRectCreateDictionaryRepresentation(CGRect rect);
+COREGRAPHICS_EXPORT CFDictionaryRef CGPointCreateDictionaryRepresentation(CGPoint point);
+COREGRAPHICS_EXPORT bool CGPointMakeWithDictionaryRepresentation(CFDictionaryRef dict, CGPoint *point);
+COREGRAPHICS_EXPORT CFDictionaryRef CGSizeCreateDictionaryRepresentation(CGSize size);
+COREGRAPHICS_EXPORT bool CGSizeMakeWithDictionaryRepresentation(CFDictionaryRef dict, CGSize *size);
+COREGRAPHICS_EXPORT bool CGRectMakeWithDictionaryRepresentation(CFDictionaryRef dict, CGRect *rect);
 COREGRAPHICS_EXPORT CGRect CGRectIntersection(CGRect a, CGRect b);
 COREGRAPHICS_EXPORT CGRect CGRectIntegral(CGRect rect);
 

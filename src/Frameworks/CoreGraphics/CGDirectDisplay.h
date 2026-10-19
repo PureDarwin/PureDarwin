@@ -32,6 +32,9 @@
 #import <CoreGraphics/CGWindow.h>
 #import <CoreGraphics/CGColorSpace.h>
 #import <CoreGraphics/CGImage.h>
+// display mode flags (kDisplayModeValidFlag and so on) for CGDisplayModeGetIOFlags, as Apple's header brings them in
+#include <IOKit/IOKitLib.h>
+#include <IOKit/graphics/IOGraphicsTypes.h>
 
 #if __BLOCKS__
 #import <dispatch/dispatch.h>
@@ -103,7 +106,7 @@ typedef struct CGDisplayStream *CGDisplayStreamRef;
 typedef struct CGDisplayStreamUpdate *CGDisplayStreamUpdateRef;
 #if __BLOCKS__
 // oh great, we're dragging in IOKit now... fake it for now
-typedef void *IOSurfaceRef;
+typedef struct __IOSurface *IOSurfaceRef;
 typedef void (^CGDisplayStreamFrameAvailableHandler)(CGDisplayStreamFrameStatus status,
         uint64_t displayTime, IOSurfaceRef frameSurface, CGDisplayStreamUpdateRef updateRef);
 #endif
@@ -168,6 +171,7 @@ COREGRAPHICS_EXPORT CGError CGCaptureAllDisplays(void);
 COREGRAPHICS_EXPORT CGError CGCaptureAllDisplaysWithOptions(CGCaptureOptions options);
 
 COREGRAPHICS_EXPORT CGError CGReleaseAllDisplays(void);
+COREGRAPHICS_EXPORT boolean_t CGDisplayIsCaptured(CGDirectDisplayID display);
 COREGRAPHICS_EXPORT CGWindowID CGShieldingWindowID(CGDirectDisplayID display);
 COREGRAPHICS_EXPORT CGWindowLevel CGShieldingWindowLevel(void);
 COREGRAPHICS_EXPORT CGContextRef CGDisplayGetDrawingContext(CGDirectDisplayID display);
@@ -227,9 +231,32 @@ COREGRAPHICS_EXPORT size_t CGDisplayModeGetPixelWidth(CGDisplayModeRef mode);
 COREGRAPHICS_EXPORT size_t CGDisplayModeGetPixelHeight(CGDisplayModeRef mode);
 COREGRAPHICS_EXPORT double CGDisplayModeGetRefreshRate(CGDisplayModeRef mode);
 COREGRAPHICS_EXPORT uint32_t CGDisplayModeGetIOFlags(CGDisplayModeRef mode);
+// deprecated since 10.11 but still how apps read the bit depth of a mode
+COREGRAPHICS_EXPORT CFStringRef CGDisplayModeCopyPixelEncoding(CGDisplayModeRef mode);
 COREGRAPHICS_EXPORT int32_t CGDisplayModeGetIODisplayModeID(CGDisplayModeRef mode);
 COREGRAPHICS_EXPORT bool CGDisplayModeIsUsableForDesktopGUI(CGDisplayModeRef mode);
 COREGRAPHICS_EXPORT CFTypeID CGDisplayModeGetTypeID(void);
+
+#define CGDisplayNoErr kCGErrorSuccess
+
+// local event suppression after posting synthetic events, and screen capture permission
+COREGRAPHICS_EXPORT CGError CGSetLocalEventsSuppressionInterval(CFTimeInterval seconds);
+COREGRAPHICS_EXPORT bool CGPreflightScreenCaptureAccess(void);
+COREGRAPHICS_EXPORT bool CGRequestScreenCaptureAccess(void);
+
+// options for CGDisplayCopyAllDisplayModes
+COREGRAPHICS_EXPORT const CFStringRef kCGDisplayShowDuplicateLowResolutionModes;
+
+// pixel encodings CGDisplayModeCopyPixelEncoding returns
+#define IO1BitIndexedPixels "P"
+#define IO2BitIndexedPixels "PP"
+#define IO4BitIndexedPixels "PPPP"
+#define IO8BitIndexedPixels "PPPPPPPP"
+#define IO16BitDirectPixels "-RRRRRGGGGGBBBBB"
+#define IO32BitDirectPixels "--------RRRRRRRRGGGGGGGGBBBBBBBB"
+#define kIO30BitDirectPixels "--RRRRRRRRRRGGGGGGGGGGBBBBBBBBBB"
+
+COREGRAPHICS_EXPORT io_service_t CGDisplayIOServicePort(CGDirectDisplayID display);
 
 // Gamma
 COREGRAPHICS_EXPORT CGError CGSetDisplayTransferByFormula(CGDirectDisplayID display, CGGammaValue redMin, CGGammaValue redMax, CGGammaValue redGamma, CGGammaValue greenMin, CGGammaValue greenMax, CGGammaValue greenGamma, CGGammaValue blueMin, CGGammaValue blueMax, CGGammaValue blueGamma);

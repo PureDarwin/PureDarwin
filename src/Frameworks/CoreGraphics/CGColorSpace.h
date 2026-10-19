@@ -40,6 +40,7 @@ COREGRAPHICS_EXPORT CGColorSpaceRef CGColorSpaceCreatePattern(CGColorSpaceRef ba
 
 // named spaces map onto Onyx2D's device spaces by model (no ICC profiles), unknown names give NULL
 COREGRAPHICS_EXPORT CGColorSpaceRef CGColorSpaceCreateWithName(CFStringRef name);
+COREGRAPHICS_EXPORT CFDataRef CGColorSpaceCopyICCData(CGColorSpaceRef space);
 
 COREGRAPHICS_EXPORT const CFStringRef kCGColorSpaceGenericGray;
 COREGRAPHICS_EXPORT const CFStringRef kCGColorSpaceGenericGrayGamma2_2;

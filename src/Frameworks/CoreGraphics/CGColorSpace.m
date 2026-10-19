@@ -98,3 +98,8 @@ CGColorSpaceModel CGColorSpaceGetModel(CGColorSpaceRef self) {
 size_t CGColorSpaceGetNumberOfComponents(CGColorSpaceRef self) {
    return O2ColorSpaceGetNumberOfComponents(self);
 }
+
+// Onyx2D's spaces are device spaces without an ICC profile, Apple answers NULL for those too
+CFDataRef CGColorSpaceCopyICCData(CGColorSpaceRef space) {
+   return NULL;
+}

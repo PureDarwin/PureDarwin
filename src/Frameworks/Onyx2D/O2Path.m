@@ -86,6 +86,12 @@ O2Point O2PathGetCurrentPoint(O2PathRef self) {
 }
 
 BOOL    O2PathEqualToPath(O2PathRef self,O2PathRef other){
+   // as on macOS, a path equals itself and NULL equals only NULL
+   if(self==other)
+    return YES;
+   if(self==NULL || other==NULL)
+    return NO;
+
    unsigned otherNumberOfOperators=O2PathNumberOfElements(other);
    
    if(self->_numberOfElements==otherNumberOfOperators){

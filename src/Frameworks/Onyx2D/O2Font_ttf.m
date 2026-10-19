@@ -69,7 +69,11 @@ O2FontRef O2FontCreateWithFontName_platform(NSString *name) {
 }
 
 O2FontRef O2FontCreateWithDataProvider_platform(O2DataProviderRef provider) {
+#ifdef FREETYPE_PRESENT
+   return [[O2Font_freetype alloc] initWithDataProvider:provider];
+#else
    return nil;
+#endif
 }
 
 @end

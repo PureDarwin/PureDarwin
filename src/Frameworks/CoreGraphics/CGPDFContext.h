@@ -8,6 +8,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 #import <CoreGraphics/CGContext.h>
 #import <CoreGraphics/CGDataConsumer.h>
+#include <CoreFoundation/CFURL.h>
 
 typedef struct O2PDFContext *CGPDFContextRef;
 
@@ -16,3 +17,9 @@ COREGRAPHICS_EXPORT const CFStringRef kCGPDFContextTitle;
 COREGRAPHICS_EXPORT CGContextRef CGPDFContextCreate(CGDataConsumerRef consumer, const CGRect *mediaBox, CFDictionaryRef auxiliaryInfo);
 
 COREGRAPHICS_EXPORT void CGPDFContextClose(CGContextRef self);
+
+COREGRAPHICS_EXPORT const CFStringRef kCGPDFContextCreator;
+
+COREGRAPHICS_EXPORT void CGPDFContextSetURLForRect(CGContextRef self, CFURLRef url, CGRect rect);
+COREGRAPHICS_EXPORT void CGPDFContextSetDestinationForRect(CGContextRef self, CFStringRef name, CGRect rect);
+COREGRAPHICS_EXPORT void CGPDFContextAddDestinationAtPoint(CGContextRef self, CFStringRef name, CGPoint point);

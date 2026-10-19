@@ -9,6 +9,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <CoreGraphics/CGColor.h>
 #import <Onyx2D/O2Color.h>
 #import <Onyx2D/O2ColorSpace.h>
+#import <CoreFoundation/CFRuntime.h>
+#include <dispatch/dispatch.h>
 
 CGColorRef CGColorRetain(CGColorRef self) {
    return O2ColorRetain(self);
@@ -68,4 +70,65 @@ CGFloat CGColorGetAlpha(CGColorRef self) {
 
 CGPatternRef CGColorGetPattern(CGColorRef self) {
    return O2ColorGetPattern(self);
+}
+
+const CFStringRef kCGColorWhite=(CFStringRef)@"kCGColorWhite";
+const CFStringRef kCGColorBlack=(CFStringRef)@"kCGColorBlack";
+const CFStringRef kCGColorClear=(CFStringRef)@"kCGColorClear";
+
+// O2Color is an ObjC class, so CFGetTypeID asks it through -_cfTypeID
+static CFTypeID colorTypeID=_kCFRuntimeNotATypeID;
+
+static const CFRuntimeClass colorClass={ 0, "CGColor", NULL, NULL, NULL, NULL, NULL, NULL, NULL };
+
+CFTypeID CGColorGetTypeID(void) {
+   static dispatch_once_t once;
+
+   dispatch_once(&once,^{
+    colorTypeID=_CFRuntimeRegisterClass(&colorClass);
+   });
+   return colorTypeID;
+}
+
+@implementation O2Color (CGColorTypeID)
+
+-(CFTypeID)_cfTypeID {
+   return CGColorGetTypeID();
+}
+
+@end
+
+CGColorRef CGColorCreateSRGB(CGFloat r,CGFloat g,CGFloat b,CGFloat a) {
+   CGColorSpaceRef space=CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+   CGFloat components[4]={ r, g, b, a };
+   CGColorRef result=CGColorCreate(space,components);
+
+   CGColorSpaceRelease(space);
+   return result;
+}
+
+// the constant colors live for the life of the process, as Apple's do
+CGColorRef CGColorGetConstantColor(CFStringRef name) {
+   static CGColorRef white,black,clear;
+   static dispatch_once_t once;
+
+   dispatch_once(&once,^{
+    CGColorSpaceRef gray=CGColorSpaceCreateWithName(kCGColorSpaceGenericGray);
+    CGFloat w[2]={ 1, 1 },b[2]={ 0, 1 },c[2]={ 0, 0 };
+
+    white=CGColorCreate(gray,w);
+    black=CGColorCreate(gray,b);
+    clear=CGColorCreate(gray,c);
+    CGColorSpaceRelease(gray);
+   });
+
+   if(name==NULL)
+    return NULL;
+   if(CFEqual(name,kCGColorWhite))
+    return white;
+   if(CFEqual(name,kCGColorBlack))
+    return black;
+   if(CFEqual(name,kCGColorClear))
+    return clear;
+   return NULL;
 }

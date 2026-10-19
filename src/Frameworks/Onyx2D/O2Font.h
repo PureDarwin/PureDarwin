@@ -70,6 +70,14 @@ typedef enum {
 
 - (NSData *)copyTableForTag:(uint32_t)tag;
 
+// sfnt and variation queries, the base class has no font file and answers nil or NO
+- (NSString *)copyPostScriptName;
+- (NSArray *)copyTableTags;
+- (NSArray *)copyVariationAxes;
+- (NSDictionary *)copyVariations;
+- (O2Font *)createCopyWithVariations:(NSDictionary *)variations;
+- (BOOL)getGlyphBBoxes:(const O2Glyph *)glyphs count:(size_t)count bboxes:(O2Rect *)bboxes;
+
 - (O2Glyph)glyphWithGlyphName:(NSString *)name;
 - (NSString *)copyGlyphNameForGlyph:(O2Glyph)glyph;
 
@@ -111,6 +119,18 @@ O2Glyph O2FontGetGlyphWithGlyphName(O2FontRef self, CFStringRef name);
 NSString *O2FontCopyGlyphNameForGlyph(O2FontRef self, O2Glyph glyph);
 
 NSData *O2FontCopyTableForTag(O2FontRef self, uint32_t tag);
+NSString *O2FontCopyPostScriptName(O2FontRef self);
+NSArray *O2FontCopyTableTags(O2FontRef self);
+NSArray *O2FontCopyVariationAxes(O2FontRef self);
+NSDictionary *O2FontCopyVariations(O2FontRef self);
+O2FontRef O2FontCreateCopyWithVariations(O2FontRef self, NSDictionary *variations);
+BOOL O2FontGetGlyphBBoxes(O2FontRef self, const O2Glyph *glyphs, size_t count, O2Rect *bboxes);
+
+// keys of the axis dictionaries, the CoreGraphics kCGFontVariationAxis* strings
+extern NSString *const O2FontVariationAxisName;
+extern NSString *const O2FontVariationAxisMinValue;
+extern NSString *const O2FontVariationAxisMaxValue;
+extern NSString *const O2FontVariationAxisDefaultValue;
 
 uint16_t O2FontUnicodeForGlyphName(CFStringRef name);
 

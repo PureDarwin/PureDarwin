@@ -17,8 +17,8 @@ void CGLayerRelease(CGLayerRef self) {
    O2LayerRelease(self);
 }
 
-CGLayerRef CGLayerCreateWithContext(CGContextRef context,CGSize size,id unused) {
-   return O2LayerCreateWithContext(context,size,unused);
+CGLayerRef CGLayerCreateWithContext(CGContextRef context,CGSize size,CFDictionaryRef auxiliaryInfo) {
+   return O2LayerCreateWithContext(context,size,(id)auxiliaryInfo);
 }
 
 CGSize CGLayerGetSize(CGLayerRef self) {

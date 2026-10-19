@@ -29,6 +29,8 @@
 #include <pthread.h>
 #include <poll.h>
 #include <time.h>
+#include <stdatomic.h>
+#include <mach/mach_time.h>
 #include <xkbcommon/xkbcommon.h>
 
 // a finished frame the compositor reads while AppKit draws the next one into the backing store
@@ -110,6 +112,10 @@ static struct {
      * reported as active is only ever an xdg toplevel. */
     int activeAppWindowID;
     uint32_t pointerButtonSerial;
+    // the newest key, button or focus serial, what wl_data_device.set_selection must quote
+    uint32_t inputSerial;
+    struct wl_data_device_manager *dataDeviceManager;
+    struct wl_data_device *dataDevice;
     struct wsWindow *windows;
     int connected;
     int lastMouseX, lastMouseY;
@@ -431,6 +437,8 @@ static void registryGlobal(void *data, struct wl_registry *registry, uint32_t na
          * before the enclosing roundtrip returns or that initial event is
          * dispatched without a listener and is not sent again. */
         wl_seat_add_listener(ws.seat, &seatListener, NULL);
+    } else if (strcmp(interface, wl_data_device_manager_interface.name) == 0) {
+        ws.dataDeviceManager = wl_registry_bind(registry, name, &wl_data_device_manager_interface, version < 3 ? version : 3);
     } else if (strcmp(interface, pd_window_position_manager_v1_interface.name) == 0) {
         ws.positionManager = wl_registry_bind(registry, name, &pd_window_position_manager_v1_interface, 1);
     } else if (strcmp(interface, zwlr_output_manager_v1_interface.name) == 0) {
@@ -451,6 +459,8 @@ static const struct wl_registry_listener registryListener = {
     .global = registryGlobal,
     .global_remove = registryGlobalRemove,
 };
+
+static void dataDeviceStart(void);
 
 static int ensureConnected(void) {
     if (ws.connected) {
@@ -500,6 +510,9 @@ static int ensureConnected(void) {
                 (ws.dmabuf != NULL) ? "available (GPU buffers possible)"
                                     : "absent (shm path)");
     }
+
+    if (ws.dataDeviceManager != NULL && ws.seat != NULL)
+        dataDeviceStart();
 
     ws.connected = 1;
     ws.dispatchRunning = 1;
@@ -925,6 +938,40 @@ enum {
     WS_OTHER_MOUSE_DRAGGED = 27,
 };
 
+// when this process last saw user input, in nanoseconds of mach_absolute_time, published for idle time readers
+static _Atomic uint64_t lastInputTime;
+static int lastInputToken = -1;
+static uint64_t lastInputPublished;
+
+// libnotify ships in libSystem without its header in this SDK
+extern uint32_t notify_register_check(const char *name, int *out_token);
+extern uint32_t notify_set_state(int token, uint64_t state);
+extern uint32_t notify_post(const char *name);
+
+#define kLastInputNotifyName "org.puredarwin.hid.lastinput"
+
+static void noteInput(void) {
+    static mach_timebase_info_data_t timebase;
+    uint64_t now;
+
+    if (timebase.denom == 0)
+        mach_timebase_info(&timebase);
+    now = mach_absolute_time() * timebase.numer / timebase.denom;
+
+    lastInputTime = now;
+    // at most once a second, the reader only needs whole seconds
+    if (now - lastInputPublished < 1000000000ULL)
+        return;
+    lastInputPublished = now;
+    if (lastInputToken < 0 && notify_register_check(kLastInputNotifyName, &lastInputToken) != 0)
+        return;
+    notify_set_state(lastInputToken, now);
+}
+
+uint64_t _windowServerLastInputTime(void) {
+    return lastInputTime;
+}
+
 static void queuePush(const struct mach_event *event) {
     pthread_mutex_lock(&ws.queueLock);
 
@@ -979,6 +1026,16 @@ static const char *const cursorNames[][5] = {
     { "dragCopyCursor", "copy", "dnd-copy", "left_ptr", NULL },
     { "dragLinkCursor", "alias", "dnd-link", "left_ptr", NULL },
     { "contextualMenuCursor", "context-menu", "left_ptr", NULL },
+    { "IBeamCursorForVerticalLayout", "vertical-text", "xterm", NULL },
+    { "busyButClickableCursor", "progress", "left_ptr_watch", "left_ptr", NULL },
+    { "columnResizeCursor", "col-resize", "sb_h_double_arrow", NULL },
+    { "rowResizeCursor", "row-resize", "sb_v_double_arrow", NULL },
+    { "zoomInCursor", "zoom-in", "left_ptr", NULL },
+    { "zoomOutCursor", "zoom-out", "left_ptr", NULL },
+    { "frameResizeTopLeftCursor", "nw-resize", "top_left_corner", NULL },
+    { "frameResizeTopRightCursor", "ne-resize", "top_right_corner", NULL },
+    { "frameResizeBottomLeftCursor", "sw-resize", "bottom_left_corner", NULL },
+    { "frameResizeBottomRightCursor", "se-resize", "bottom_right_corner", NULL },
 };
 
 // with the lock held: show the current image if the pointer is over one of our surfaces
@@ -1154,6 +1211,7 @@ static void pointerLeave(void *data, struct wl_pointer *pointer, uint32_t serial
 
 static void pointerMotion(void *data, struct wl_pointer *pointer, uint32_t time,
                           wl_fixed_t x, wl_fixed_t y) {
+    noteInput();
     struct mach_event event = {0};
     struct wsWindow *window = windowForID(ws.pointerWindowID);
     double newX = wl_fixed_to_double(x);
@@ -1182,10 +1240,12 @@ static void pointerMotion(void *data, struct wl_pointer *pointer, uint32_t time,
 
 static void pointerButton(void *data, struct wl_pointer *pointer, uint32_t serial,
                           uint32_t time, uint32_t button, uint32_t state) {
+    noteInput();
     struct mach_event event = {0};
     struct wsWindow *window = windowForID(ws.pointerWindowID);
     int pressed = (state == WL_POINTER_BUTTON_STATE_PRESSED);
 
+    ws.inputSerial = serial;
     if (pressed) {
         ws.pointerButtonSerial = serial;
     }
@@ -1217,6 +1277,7 @@ static void pointerButton(void *data, struct wl_pointer *pointer, uint32_t seria
 // deltaY is in lines and positive when scrolling up, the opposite sign to Wayland
 static void pointerAxis(void *data, struct wl_pointer *pointer, uint32_t time,
                         uint32_t axis, wl_fixed_t value) {
+    noteInput();
     struct mach_event event = {0};
     struct wsWindow *window = windowForID(ws.pointerWindowID);
     double lines = -wl_fixed_to_double(value) / 10.0;
@@ -1405,6 +1466,7 @@ static void keyboardKeymap(void *data, struct wl_keyboard *keyboard, uint32_t fo
 
 static void keyboardEnter(void *data, struct wl_keyboard *keyboard, uint32_t serial,
                           struct wl_surface *surface, struct wl_array *keys) {
+    ws.inputSerial = serial;
     if (getenv("PD_WS_TRACE") != NULL) {
         struct wsWindow *w = ws.windows;
 
@@ -1574,6 +1636,8 @@ static unsigned short macKeyCode(uint32_t key) {
 
 static void keyboardKey(void *data, struct wl_keyboard *keyboard, uint32_t serial,
                         uint32_t time, uint32_t key, uint32_t state) {
+    ws.inputSerial = serial;
+    noteInput();
     struct mach_event event = {0};
     /* Wayland reports evdev codes; xkb keycodes are evdev + 8. */
     xkb_keycode_t keycode = key + 8;
@@ -1835,7 +1899,8 @@ static void windowCreateRole(struct wsWindow *window, const char *title) {
         if (ws.layerShellVersion >= 4) {
             uint32_t keys = ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND;
 
-            if (window->level == kCGModalPanelWindowLevelKey)
+            // a modal panel and a login or lock screen hold the keyboard as soon as they show
+            if (window->level == kCGModalPanelWindowLevelKey || window->level >= kCGScreenSaverWindowLevelKey)
                 keys = ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE;
             else if (window->level <= kCGPopUpMenuWindowLevelKey)
                 keys = ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE;
@@ -2458,4 +2523,559 @@ void _windowServerDestroyFramePresenter(void *handle) {
     if (!presenter) return;
     for (int i = 0; i < WS_FRAMES; i++) frameDestroy(&presenter->frames[i]);
     free(presenter);
+}
+
+// the selection: what this process offers through wl_data_source, and the newest offer from another client
+struct wsOffer {
+    struct wl_data_offer *offer;
+    char **mimeTypes;
+    int count;
+};
+
+static struct {
+    pthread_mutex_t lock;
+    struct wsOffer *pending;
+    struct wsOffer *current;
+    unsigned generation;
+    struct wl_data_source *source;
+    WSSelectionSendHandler handler;
+} selection = { .lock = PTHREAD_MUTEX_INITIALIZER };
+
+// a drag from any client over our surfaces: the offer, where it is, and what the source allows
+static struct {
+    pthread_mutex_t lock;
+    struct wsOffer *offer;
+    struct wl_surface *surface;
+    int windowID;
+    uint32_t serial;
+    uint32_t sourceActions;
+    uint32_t action;
+} dragIn = { .lock = PTHREAD_MUTEX_INITIALIZER };
+
+static void offerFree(struct wsOffer *offer) {
+    if (offer == NULL)
+        return;
+    if (offer->offer != NULL)
+        wl_data_offer_destroy(offer->offer);
+    for (int i = 0; i < offer->count; i++)
+        free(offer->mimeTypes[i]);
+    free(offer->mimeTypes);
+    free(offer);
+}
+
+static void offerMimeType(void *data, struct wl_data_offer *proxy, const char *mimeType) {
+    struct wsOffer *offer = data;
+    char **grown = realloc(offer->mimeTypes, sizeof(char *) * (size_t)(offer->count + 1));
+
+    if (grown == NULL)
+        return;
+    offer->mimeTypes = grown;
+    offer->mimeTypes[offer->count++] = strdup(mimeType);
+}
+
+static void offerSourceActions(void *data, struct wl_data_offer *proxy, uint32_t actions) {
+    pthread_mutex_lock(&dragIn.lock);
+    dragIn.sourceActions = actions;
+    pthread_mutex_unlock(&dragIn.lock);
+}
+
+static void offerAction(void *data, struct wl_data_offer *proxy, uint32_t action) {
+    pthread_mutex_lock(&dragIn.lock);
+    dragIn.action = action;
+    pthread_mutex_unlock(&dragIn.lock);
+}
+
+static const struct wl_data_offer_listener offerListener = {
+    .offer = offerMimeType,
+    .source_actions = offerSourceActions,
+    .action = offerAction,
+};
+
+// a new offer announces its types before the selection or enter event that uses it
+static void deviceDataOffer(void *data, struct wl_data_device *device, struct wl_data_offer *proxy) {
+    struct wsOffer *offer = calloc(1, sizeof(*offer));
+
+    if (offer == NULL) {
+        wl_data_offer_destroy(proxy);
+        return;
+    }
+    offer->offer = proxy;
+    wl_data_offer_add_listener(proxy, &offerListener, offer);
+    pthread_mutex_lock(&selection.lock);
+    offerFree(selection.pending);
+    selection.pending = offer;
+    pthread_mutex_unlock(&selection.lock);
+}
+
+static void dragInPush(int code, double x, double y) {
+    struct mach_event event = {0};
+    struct wsWindow *window = windowForID(dragIn.windowID);
+
+    event.windowID = dragIn.windowID;
+    event.code = code;
+    event.x = x;
+    event.y = window != NULL ? window->h - y : y;
+    event.mods = currentModifiers;
+    queuePush(&event);
+}
+
+static void deviceEnter(void *data, struct wl_data_device *device, uint32_t serial, struct wl_surface *surface,
+                        wl_fixed_t x, wl_fixed_t y, struct wl_data_offer *proxy) {
+    int windowID = 0;
+
+    for (struct wsWindow *w = ws.windows; w != NULL; w = w->next) {
+        if (w->surface == surface)
+            windowID = w->windowID;
+    }
+    pthread_mutex_lock(&selection.lock);
+    pthread_mutex_lock(&dragIn.lock);
+    offerFree(dragIn.offer);
+    dragIn.offer = NULL;
+    if (proxy != NULL && selection.pending != NULL && selection.pending->offer == proxy) {
+        dragIn.offer = selection.pending;
+        selection.pending = NULL;
+    }
+    dragIn.surface = surface;
+    dragIn.windowID = windowID;
+    dragIn.serial = serial;
+    dragIn.action = 0;
+    pthread_mutex_unlock(&dragIn.lock);
+    pthread_mutex_unlock(&selection.lock);
+    if (getenv("PD_WS_TRACE") != NULL)
+        fprintf(stderr, "WindowServer: drag enter window=%d offer %p\n", windowID, (void *)proxy);
+    if (windowID != 0)
+        dragInPush(WS_EVENT_DRAG_ENTER, wl_fixed_to_double(x), wl_fixed_to_double(y));
+}
+
+static void deviceLeave(void *data, struct wl_data_device *device) {
+    int windowID;
+
+    pthread_mutex_lock(&dragIn.lock);
+    windowID = dragIn.windowID;
+    pthread_mutex_unlock(&dragIn.lock);
+    if (windowID != 0)
+        dragInPush(WS_EVENT_DRAG_LEAVE, 0, 0);
+    pthread_mutex_lock(&dragIn.lock);
+    offerFree(dragIn.offer);
+    dragIn.offer = NULL;
+    dragIn.surface = NULL;
+    dragIn.windowID = 0;
+    pthread_mutex_unlock(&dragIn.lock);
+}
+
+static void deviceMotion(void *data, struct wl_data_device *device, uint32_t time, wl_fixed_t x, wl_fixed_t y) {
+    if (dragIn.windowID != 0)
+        dragInPush(WS_EVENT_DRAG_MOTION, wl_fixed_to_double(x), wl_fixed_to_double(y));
+}
+
+// the offer stays until AppKit has read the data and called _windowServerDragFinish
+static void deviceDrop(void *data, struct wl_data_device *device) {
+    if (getenv("PD_WS_TRACE") != NULL)
+        fprintf(stderr, "WindowServer: drag drop window=%d\n", dragIn.windowID);
+    if (dragIn.windowID != 0)
+        dragInPush(WS_EVENT_DRAG_DROP, 0, 0);
+}
+
+static void deviceSelection(void *data, struct wl_data_device *device, struct wl_data_offer *proxy) {
+    pthread_mutex_lock(&selection.lock);
+    offerFree(selection.current);
+    selection.current = NULL;
+    if (proxy != NULL && selection.pending != NULL && selection.pending->offer == proxy) {
+        selection.current = selection.pending;
+        selection.pending = NULL;
+    }
+    selection.generation++;
+    pthread_mutex_unlock(&selection.lock);
+}
+
+static const struct wl_data_device_listener deviceListener = {
+    .data_offer = deviceDataOffer,
+    .enter = deviceEnter,
+    .leave = deviceLeave,
+    .motion = deviceMotion,
+    .drop = deviceDrop,
+    .selection = deviceSelection,
+};
+
+static void dataDeviceStart(void) {
+    ws.dataDevice = wl_data_device_manager_get_data_device(ws.dataDeviceManager, ws.seat);
+    wl_data_device_add_listener(ws.dataDevice, &deviceListener, NULL);
+}
+
+static void sourceTarget(void *data, struct wl_data_source *source, const char *mimeType) {
+}
+
+// another client asked for our selection: AppKit writes the bytes and closes the fd
+static void sourceSend(void *data, struct wl_data_source *source, const char *mimeType, int fd) {
+    WSSelectionSendHandler handler;
+
+    pthread_mutex_lock(&selection.lock);
+    handler = source == selection.source ? selection.handler : NULL;
+    pthread_mutex_unlock(&selection.lock);
+    if (getenv("PD_WS_TRACE") != NULL)
+        fprintf(stderr, "WindowServer: selection send %s fd %d handler %p\n", mimeType, fd, (void *)handler);
+    if (handler != NULL)
+        handler(mimeType, fd);
+    else
+        close(fd);
+}
+
+// someone else owns the selection now
+static void sourceCancelled(void *data, struct wl_data_source *source) {
+    pthread_mutex_lock(&selection.lock);
+    if (source == selection.source) {
+        selection.source = NULL;
+        selection.handler = NULL;
+    }
+    pthread_mutex_unlock(&selection.lock);
+    wl_data_source_destroy(source);
+}
+
+static const struct wl_data_source_listener sourceListener = {
+    .target = sourceTarget,
+    .send = sourceSend,
+    .cancelled = sourceCancelled,
+};
+
+int _windowServerSetSelection(const char *const *mimeTypes, int count, WSSelectionSendHandler handler) {
+    struct wl_data_source *source;
+
+    // the clipboard only follows a process that already has windows, it never connects on its own
+    if (!ws.connected || ws.dataDevice == NULL)
+        return 0;
+    source = wl_data_device_manager_create_data_source(ws.dataDeviceManager);
+    wl_data_source_add_listener(source, &sourceListener, NULL);
+    for (int i = 0; i < count; i++)
+        wl_data_source_offer(source, mimeTypes[i]);
+    pthread_mutex_lock(&selection.lock);
+    selection.source = source;
+    selection.handler = handler;
+    pthread_mutex_unlock(&selection.lock);
+    wl_data_device_set_selection(ws.dataDevice, count > 0 ? source : NULL, ws.inputSerial);
+    wl_display_flush(ws.display);
+    return 1;
+}
+
+int _windowServerSelectionIsOurs(void) {
+    int ours;
+
+    pthread_mutex_lock(&selection.lock);
+    ours = selection.source != NULL;
+    pthread_mutex_unlock(&selection.lock);
+    return ours;
+}
+
+unsigned _windowServerSelectionGeneration(void) {
+    unsigned generation;
+
+    if (!ws.connected)
+        return 0;
+    pthread_mutex_lock(&selection.lock);
+    generation = selection.generation;
+    pthread_mutex_unlock(&selection.lock);
+    return generation;
+}
+
+int _windowServerCopySelectionMimeTypes(char ***mimeTypesOut) {
+    int count = 0;
+
+    *mimeTypesOut = NULL;
+    pthread_mutex_lock(&selection.lock);
+    if (selection.current != NULL && selection.current->count > 0) {
+        *mimeTypesOut = calloc((size_t)selection.current->count, sizeof(char *));
+        for (int i = 0; *mimeTypesOut != NULL && i < selection.current->count; i++)
+            (*mimeTypesOut)[count++] = strdup(selection.current->mimeTypes[i]);
+    }
+    pthread_mutex_unlock(&selection.lock);
+    return count;
+}
+
+static void *readPipe(int fd, const char *what, const char *mimeType, size_t *lengthOut);
+
+void *_windowServerReadSelection(const char *mimeType, size_t *lengthOut) {
+    int fds[2];
+
+    *lengthOut = 0;
+    if (!ws.connected || pipe(fds) != 0)
+        return NULL;
+    pthread_mutex_lock(&selection.lock);
+    if (selection.current == NULL) {
+        pthread_mutex_unlock(&selection.lock);
+        close(fds[0]);
+        close(fds[1]);
+        return NULL;
+    }
+    wl_data_offer_receive(selection.current->offer, mimeType, fds[1]);
+    pthread_mutex_unlock(&selection.lock);
+    close(fds[1]);
+    wl_display_flush(ws.display);
+    return readPipe(fds[0], "selection", mimeType, lengthOut);
+}
+
+// the bytes another client writes into a pipe, giving up after two quiet seconds
+static void *readPipe(int fd, const char *what, const char *mimeType, size_t *lengthOut) {
+    char *buffer = NULL;
+    size_t length = 0, capacity = 0;
+
+    for (;;) {
+        struct pollfd pfd = { .fd = fd, .events = POLLIN };
+        ssize_t got;
+
+        if (poll(&pfd, 1, 2000) <= 0)
+            break;
+        if (length == capacity) {
+            char *grown = realloc(buffer, capacity ? capacity * 2 : 4096);
+            if (grown == NULL)
+                break;
+            buffer = grown;
+            capacity = capacity ? capacity * 2 : 4096;
+        }
+        got = read(fd, buffer + length, capacity - length);
+        if (got <= 0)
+            break;
+        length += (size_t)got;
+    }
+    close(fd);
+    if (getenv("PD_WS_TRACE") != NULL)
+        fprintf(stderr, "WindowServer: %s read %s gave %zu bytes\n", what, mimeType, length);
+    *lengthOut = length;
+    if (buffer == NULL)
+        buffer = malloc(1);
+    return buffer;
+}
+
+// the drag this process started, from start_drag until the compositor says how it ended
+static struct {
+    pthread_mutex_t lock;
+    struct wl_data_source *source;
+    struct wl_surface *icon;
+    struct wl_buffer *iconBuffer;
+    void *iconPixels;
+    size_t iconSize;
+    WSSelectionSendHandler handler;
+    int state;
+    uint32_t action;
+} dragOut = { .lock = PTHREAD_MUTEX_INITIALIZER };
+
+static void dragOutSetState(struct wl_data_source *source, int state) {
+    pthread_mutex_lock(&dragOut.lock);
+    if (source == dragOut.source && dragOut.state != WS_DRAG_FINISHED && dragOut.state != WS_DRAG_CANCELLED)
+        dragOut.state = state;
+    pthread_mutex_unlock(&dragOut.lock);
+}
+
+static void dragSourceTarget(void *data, struct wl_data_source *source, const char *mimeType) {
+}
+
+static void dragSourceSend(void *data, struct wl_data_source *source, const char *mimeType, int fd) {
+    WSSelectionSendHandler handler;
+
+    pthread_mutex_lock(&dragOut.lock);
+    handler = source == dragOut.source ? dragOut.handler : NULL;
+    pthread_mutex_unlock(&dragOut.lock);
+    if (getenv("PD_WS_TRACE") != NULL)
+        fprintf(stderr, "WindowServer: drag send %s fd %d\n", mimeType, fd);
+    if (handler != NULL)
+        handler(mimeType, fd);
+    else
+        close(fd);
+}
+
+static void dragSourceCancelled(void *data, struct wl_data_source *source) {
+    dragOutSetState(source, WS_DRAG_CANCELLED);
+}
+
+static void dragSourceDropPerformed(void *data, struct wl_data_source *source) {
+    dragOutSetState(source, WS_DRAG_DROPPED);
+}
+
+static void dragSourceFinished(void *data, struct wl_data_source *source) {
+    dragOutSetState(source, WS_DRAG_FINISHED);
+}
+
+static void dragSourceAction(void *data, struct wl_data_source *source, uint32_t action) {
+    pthread_mutex_lock(&dragOut.lock);
+    if (source == dragOut.source)
+        dragOut.action = action;
+    pthread_mutex_unlock(&dragOut.lock);
+}
+
+static const struct wl_data_source_listener dragSourceListener = {
+    .target = dragSourceTarget,
+    .send = dragSourceSend,
+    .cancelled = dragSourceCancelled,
+    .dnd_drop_performed = dragSourceDropPerformed,
+    .dnd_finished = dragSourceFinished,
+    .action = dragSourceAction,
+};
+
+// a surface showing the drag image under the pointer, the hot spot is where the pointer holds it
+static struct wl_surface *dragIcon(const void *argb, int width, int height, int hotX, int hotY) {
+    size_t size = (size_t)width * 4 * (size_t)height;
+    struct wl_surface *surface;
+    char name[32];
+    int fd;
+
+    if (argb == NULL || width <= 0 || height <= 0)
+        return NULL;
+    snprintf(name, sizeof(name), "/wsd.%u", (unsigned)getpid());
+    fd = shm_open(name, O_CREAT | O_EXCL | O_RDWR, 0600);
+    if (fd < 0)
+        return NULL;
+    shm_unlink(name);
+    if (ftruncate(fd, (off_t)size) != 0 ||
+        (dragOut.iconPixels = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)) == MAP_FAILED) {
+        dragOut.iconPixels = NULL;
+        close(fd);
+        return NULL;
+    }
+    struct wl_shm_pool *pool = wl_shm_create_pool(ws.shm, fd, (int32_t)size);
+    memcpy(dragOut.iconPixels, argb, size);
+    dragOut.iconBuffer = wl_shm_pool_create_buffer(pool, 0, width, height, width * 4, WL_SHM_FORMAT_ARGB8888);
+    dragOut.iconSize = size;
+    wl_shm_pool_destroy(pool);
+    close(fd);
+
+    surface = wl_compositor_create_surface(ws.compositor);
+    wl_surface_attach(surface, dragOut.iconBuffer, -hotX, -hotY);
+    wl_surface_damage(surface, 0, 0, width, height);
+    wl_surface_commit(surface);
+    return surface;
+}
+
+static void dragOutClear(void) {
+    if (dragOut.source != NULL)
+        wl_data_source_destroy(dragOut.source);
+    if (dragOut.icon != NULL)
+        wl_surface_destroy(dragOut.icon);
+    if (dragOut.iconBuffer != NULL)
+        wl_buffer_destroy(dragOut.iconBuffer);
+    if (dragOut.iconPixels != NULL)
+        munmap(dragOut.iconPixels, dragOut.iconSize);
+    dragOut.source = NULL;
+    dragOut.icon = NULL;
+    dragOut.iconBuffer = NULL;
+    dragOut.iconPixels = NULL;
+    dragOut.handler = NULL;
+    dragOut.state = WS_DRAG_NONE;
+    dragOut.action = 0;
+}
+
+int _windowServerDragStart(int windowID, const char *const *mimeTypes, int count, uint32_t actions,
+                           const void *argb, int width, int height, int hotX, int hotY,
+                           WSSelectionSendHandler handler) {
+    struct wsWindow *window = windowForID(windowID);
+
+    if (!ws.connected || ws.dataDevice == NULL || window == NULL || window->surface == NULL)
+        return 0;
+    pthread_mutex_lock(&dragOut.lock);
+    dragOutClear();
+    dragOut.source = wl_data_device_manager_create_data_source(ws.dataDeviceManager);
+    wl_data_source_add_listener(dragOut.source, &dragSourceListener, NULL);
+    for (int i = 0; i < count; i++)
+        wl_data_source_offer(dragOut.source, mimeTypes[i]);
+    if (wl_proxy_get_version((struct wl_proxy *)dragOut.source) >= 3)
+        wl_data_source_set_actions(dragOut.source, actions);
+    dragOut.handler = handler;
+    dragOut.state = WS_DRAG_ACTIVE;
+    dragOut.icon = dragIcon(argb, width, height, hotX, hotY);
+    pthread_mutex_unlock(&dragOut.lock);
+    if (getenv("PD_WS_TRACE") != NULL)
+        fprintf(stderr, "WindowServer: drag start window=%d types %d serial %u\n", windowID, count, ws.pointerButtonSerial);
+    wl_data_device_start_drag(ws.dataDevice, dragOut.source, window->surface, dragOut.icon, ws.pointerButtonSerial);
+    wl_display_flush(ws.display);
+    return 1;
+}
+
+int _windowServerDragState(uint32_t *actionOut) {
+    int state;
+
+    pthread_mutex_lock(&dragOut.lock);
+    state = dragOut.state;
+    if (actionOut != NULL)
+        *actionOut = dragOut.action;
+    pthread_mutex_unlock(&dragOut.lock);
+    return state;
+}
+
+void _windowServerDragEnd(void) {
+    pthread_mutex_lock(&dragOut.lock);
+    dragOutClear();
+    pthread_mutex_unlock(&dragOut.lock);
+    if (ws.connected)
+        wl_display_flush(ws.display);
+}
+
+int _windowServerCopyDragMimeTypes(char ***mimeTypesOut, uint32_t *sourceActionsOut) {
+    int count = 0;
+
+    *mimeTypesOut = NULL;
+    pthread_mutex_lock(&dragIn.lock);
+    if (dragIn.offer != NULL && dragIn.offer->count > 0) {
+        *mimeTypesOut = calloc((size_t)dragIn.offer->count, sizeof(char *));
+        for (int i = 0; *mimeTypesOut != NULL && i < dragIn.offer->count; i++)
+            (*mimeTypesOut)[count++] = strdup(dragIn.offer->mimeTypes[i]);
+    }
+    if (sourceActionsOut != NULL)
+        *sourceActionsOut = dragIn.sourceActions;
+    pthread_mutex_unlock(&dragIn.lock);
+    return count;
+}
+
+// the destination's answer: a type it would take, or NULL, and the actions it allows
+void _windowServerDragAccept(const char *mimeType, uint32_t actions, uint32_t preferred) {
+    pthread_mutex_lock(&dragIn.lock);
+    if (dragIn.offer != NULL) {
+        wl_data_offer_accept(dragIn.offer->offer, dragIn.serial, mimeType);
+        if (wl_proxy_get_version((struct wl_proxy *)dragIn.offer->offer) >= 3)
+            wl_data_offer_set_actions(dragIn.offer->offer, actions, preferred);
+    }
+    pthread_mutex_unlock(&dragIn.lock);
+    if (ws.connected)
+        wl_display_flush(ws.display);
+}
+
+uint32_t _windowServerDragAction(void) {
+    uint32_t action;
+
+    pthread_mutex_lock(&dragIn.lock);
+    action = dragIn.action;
+    pthread_mutex_unlock(&dragIn.lock);
+    return action;
+}
+
+void *_windowServerReadDrag(const char *mimeType, size_t *lengthOut) {
+    int fds[2];
+
+    *lengthOut = 0;
+    if (!ws.connected || pipe(fds) != 0)
+        return NULL;
+    pthread_mutex_lock(&dragIn.lock);
+    if (dragIn.offer == NULL) {
+        pthread_mutex_unlock(&dragIn.lock);
+        close(fds[0]);
+        close(fds[1]);
+        return NULL;
+    }
+    wl_data_offer_receive(dragIn.offer->offer, mimeType, fds[1]);
+    pthread_mutex_unlock(&dragIn.lock);
+    close(fds[1]);
+    wl_display_flush(ws.display);
+    return readPipe(fds[0], "drag", mimeType, lengthOut);
+}
+
+// after a drop the destination tells the source it is done, and the offer goes
+void _windowServerDragFinish(void) {
+    pthread_mutex_lock(&dragIn.lock);
+    if (dragIn.offer != NULL) {
+        if (wl_proxy_get_version((struct wl_proxy *)dragIn.offer->offer) >= 3)
+            wl_data_offer_finish(dragIn.offer->offer);
+        offerFree(dragIn.offer);
+        dragIn.offer = NULL;
+    }
+    dragIn.surface = NULL;
+    dragIn.windowID = 0;
+    pthread_mutex_unlock(&dragIn.lock);
+    if (ws.connected)
+        wl_display_flush(ws.display);
 }

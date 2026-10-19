@@ -34,7 +34,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <Onyx2D/O2ClipPhase.h>
 #import <Onyx2D/O2DataConsumer.h>
 
-const NSString *kO2PDFContextTitle=@"kO2PDFContextTitle";
+const NSString *kO2PDFContextTitle=@"kCGPDFContextTitle";
+const NSString *kO2PDFContextCreator=@"kCGPDFContextCreator";
 
 @implementation O2PDFContext
 
@@ -82,6 +83,11 @@ const NSString *kO2PDFContextTitle=@"kO2PDFContextTitle";
 
    if(title==nil)
     title=@"Untitled";
+
+   NSString *creator=[auxiliaryInfo objectForKey:kO2PDFContextCreator];
+
+   if(creator!=nil)
+    [_info setObjectForKey:"Creator" value:[O2PDFString pdfObjectWithString:creator]];
 
    [_info setObjectForKey:"Title" value:[O2PDFString pdfObjectWithString:title]];
 
@@ -656,6 +662,103 @@ const NSString *kO2PDFContextTitle=@"kO2PDFContextTitle";
    //        would contain the Kids object more than once, and its structure would be spoiled.
    //        Leaving this commented, deactivates per page spooling, however the final PDF will be perfectly valid.
    // [self internIndirectObjectsExcluding:[NSArray arrayWithObjects:_kids, _pages, _catalog, nil]];
+}
+
+// link areas are given in user space, the annotation wants page space
+-(O2PDFArray *)pageRectForUserRect:(O2Rect)rect {
+   O2AffineTransform ctm=O2ContextGetCTM(self);
+   O2Point corners[4]={
+    O2PointApplyAffineTransform(O2PointMake(O2RectGetMinX(rect),O2RectGetMinY(rect)),ctm),
+    O2PointApplyAffineTransform(O2PointMake(O2RectGetMaxX(rect),O2RectGetMinY(rect)),ctm),
+    O2PointApplyAffineTransform(O2PointMake(O2RectGetMinX(rect),O2RectGetMaxY(rect)),ctm),
+    O2PointApplyAffineTransform(O2PointMake(O2RectGetMaxX(rect),O2RectGetMaxY(rect)),ctm),
+   };
+   O2Float minX=corners[0].x,minY=corners[0].y,maxX=corners[0].x,maxY=corners[0].y;
+
+   for(int i=1;i<4;i++){
+    minX=MIN(minX,corners[i].x);
+    minY=MIN(minY,corners[i].y);
+    maxX=MAX(maxX,corners[i].x);
+    maxY=MAX(maxY,corners[i].y);
+   }
+
+   O2PDFArray *result=[O2PDFArray pdfArray];
+
+   [result addNumber:minX];
+   [result addNumber:minY];
+   [result addNumber:maxX];
+   [result addNumber:maxY];
+   return result;
+}
+
+// a link annotation on the current page, nothing happens outside a page
+-(O2PDFDictionary *)addLinkAnnotationForRect:(O2Rect)rect {
+   if(_page==nil)
+    return nil;
+
+   O2PDFArray *annots=nil;
+
+   if(![_page getArrayForKey:"Annots" value:&annots]){
+    annots=[O2PDFArray pdfArray];
+    [_page setObjectForKey:"Annots" value:annots];
+   }
+
+   O2PDFDictionary *annot=[O2PDFDictionary pdfDictionary];
+   O2PDFArray *border=[O2PDFArray pdfArray];
+
+   [border addInteger:0];
+   [border addInteger:0];
+   [border addInteger:0];
+   [annot setNameForKey:"Type" value:"Annot"];
+   [annot setNameForKey:"Subtype" value:"Link"];
+   [annot setObjectForKey:"Rect" value:[self pageRectForUserRect:rect]];
+   [annot setObjectForKey:"Border" value:border];
+   [annots addObject:annot];
+   return annot;
+}
+
+-(void)setURL:(NSURL *)url forRect:(O2Rect)rect {
+   O2PDFDictionary *annot=[self addLinkAnnotationForRect:rect];
+
+   if(annot==nil || url==nil)
+    return;
+
+   O2PDFDictionary *action=[O2PDFDictionary pdfDictionary];
+
+   [action setNameForKey:"S" value:"URI"];
+   [action setObjectForKey:"URI" value:[O2PDFString pdfObjectWithString:[url absoluteString]]];
+   [annot setObjectForKey:"A" value:action];
+}
+
+-(void)setDestination:(NSString *)name forRect:(O2Rect)rect {
+   O2PDFDictionary *annot=[self addLinkAnnotationForRect:rect];
+
+   if(annot==nil || name==nil)
+    return;
+   [annot setObjectForKey:"Dest" value:[O2PDFString pdfObjectWithString:name]];
+}
+
+// named destinations go into the catalog's Dests dictionary as [page /XYZ x y 0], zoom 0 keeps the viewer's
+-(void)addDestination:(NSString *)name atPoint:(O2Point)point {
+   if(_page==nil || name==nil)
+    return;
+
+   O2PDFDictionary *dests=nil;
+
+   if(![_catalog getDictionaryForKey:"Dests" value:&dests]){
+    dests=[O2PDFDictionary pdfDictionary];
+    [_catalog setObjectForKey:"Dests" value:dests];
+   }
+
+   O2Point p=O2PointApplyAffineTransform(point,O2ContextGetCTM(self));
+   O2PDFArray *dest=[O2PDFArray pdfArray];
+
+   [dest addObject:[self referenceForObject:_page]];
+   [dest addObject:[O2PDFObject_Name pdfObjectWithCString:"XYZ"]];
+   [dest addNumber:p.x];
+   [dest addNumber:p.y];
+   [dest addNumber:0];
+   [dests setObjectForKey:[name UTF8String] value:dest];
 }
 
 -(void)close {

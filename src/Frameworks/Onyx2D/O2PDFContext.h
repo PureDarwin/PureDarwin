@@ -9,9 +9,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <Onyx2D/O2Context.h>
 #import <Foundation/NSMapTable.h>
 
-@class O2PDFContext, O2PDFxref, O2PDFObject, O2PDFDictionary, O2PDFArray, NSMutableData, NSMutableDictionary, O2DataConsumer;
+@class NSURL, O2PDFContext, O2PDFxref, O2PDFObject, O2PDFDictionary, O2PDFArray, NSMutableData, NSMutableDictionary, O2DataConsumer;
 
 extern const NSString *kO2PDFContextTitle;
+extern const NSString *kO2PDFContextCreator;
 
 @interface O2PDFContext : O2Context {
     O2DataConsumer *_dataConsumer;
@@ -35,6 +36,10 @@ extern const NSString *kO2PDFContextTitle;
 - initWithConsumer:(O2DataConsumer *)consumer mediaBox:(const O2Rect *)mediaBox auxiliaryInfo:(NSDictionary *)auxiliaryInfo;
 
 - (unsigned)length;
+
+- (void)setURL:(NSURL *)url forRect:(O2Rect)rect;
+- (void)setDestination:(NSString *)name forRect:(O2Rect)rect;
+- (void)addDestination:(NSString *)name atPoint:(O2Point)point;
 
 - (void)appendData:(NSData *)data;
 - (void)appendBytes:(const void *)ptr length:(unsigned)length;

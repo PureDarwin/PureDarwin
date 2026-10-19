@@ -360,6 +360,7 @@ void O2ContextSetPDFCharWidths(O2ContextRef self, O2PDFCharWidths *value);
 // **PRIVATE** These are private in Apple's implementation as well as ours.
 
 void O2ContextSetCTM(O2ContextRef self, O2AffineTransform matrix);
+void O2ContextSetBaseCTM(O2ContextRef self, O2AffineTransform matrix);
 void O2ContextResetClip(O2ContextRef self);
 
 O2AffineTransform O2ContextGetTextRenderingMatrix(O2ContextRef self);

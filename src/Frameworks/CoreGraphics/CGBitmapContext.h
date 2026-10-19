@@ -12,6 +12,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 typedef void (*CGBitmapContextReleaseDataCallback)(void *userInfo, void *data);
 
 COREGRAPHICS_EXPORT CGContextRef CGBitmapContextCreate(void *data, size_t width, size_t height, size_t bitsPerComponent, size_t bytesPerRow, CGColorSpaceRef colorSpace, CGBitmapInfo bitmapInfo);
+COREGRAPHICS_EXPORT CGContextRef CGBitmapContextCreateWithData(void *data, size_t width, size_t height, size_t bitsPerComponent, size_t bytesPerRow, CGColorSpaceRef colorSpace, CGBitmapInfo bitmapInfo, CGBitmapContextReleaseDataCallback releaseCallback, void *releaseInfo);
 
 COREGRAPHICS_EXPORT void *CGBitmapContextGetData(CGContextRef self);
 COREGRAPHICS_EXPORT size_t CGBitmapContextGetWidth(CGContextRef self);

@@ -63,19 +63,19 @@ void CGContextClosePath(CGContextRef context) {
    O2ContextClosePath(context);
 }
 
-void CGContextMoveToPoint(CGContextRef context,float x,float y) {
+void CGContextMoveToPoint(CGContextRef context,CGFloat x,CGFloat y) {
    O2ContextMoveToPoint(context,x,y);
 }
 
-void CGContextAddLineToPoint(CGContextRef context,float x,float y) {
+void CGContextAddLineToPoint(CGContextRef context,CGFloat x,CGFloat y) {
    O2ContextAddLineToPoint(context,x,y);
 }
 
-void CGContextAddCurveToPoint(CGContextRef context,float cx1,float cy1,float cx2,float cy2,float x,float y) {
+void CGContextAddCurveToPoint(CGContextRef context,CGFloat cx1,CGFloat cy1,CGFloat cx2,CGFloat cy2,CGFloat x,CGFloat y) {
    O2ContextAddCurveToPoint(context,cx1,cy1,cx2,cy2,x,y);
 }
 
-void CGContextAddQuadCurveToPoint(CGContextRef context,float cx1,float cy1,float x,float y) {
+void CGContextAddQuadCurveToPoint(CGContextRef context,CGFloat cx1,CGFloat cy1,CGFloat x,CGFloat y) {
    O2ContextAddQuadCurveToPoint(context,cx1,cy1,x,y);
 }
 
@@ -91,11 +91,11 @@ void CGContextAddRects(CGContextRef context,const CGRect *rects,unsigned count) 
    O2ContextAddRects(context,rects,count);
 }
 
-void CGContextAddArc(CGContextRef context,float x,float y,float radius,float startRadian,float endRadian,bool clockwise) {
+void CGContextAddArc(CGContextRef context,CGFloat x,CGFloat y,CGFloat radius,CGFloat startRadian,CGFloat endRadian,bool clockwise) {
    O2ContextAddArc(context,x,y,radius,startRadian,endRadian,clockwise);
 }
 
-void CGContextAddArcToPoint(CGContextRef context,float x1,float y1,float x2,float y2,float radius) {
+void CGContextAddArcToPoint(CGContextRef context,CGFloat x1,CGFloat y1,CGFloat x2,CGFloat y2,CGFloat radius) {
    O2ContextAddArcToPoint(context,x1,y1,x2,y2,radius);
 }
 
@@ -180,15 +180,15 @@ void CGContextConcatCTM(CGContextRef context,CGAffineTransform matrix) {
    O2ContextConcatCTM(context,O2AffineTransformFromCG(matrix));
 }
 
-void CGContextTranslateCTM(CGContextRef context,float tx,float ty){
+void CGContextTranslateCTM(CGContextRef context,CGFloat tx,CGFloat ty){
    O2ContextTranslateCTM(context,tx,ty);
 }
 
-void CGContextScaleCTM(CGContextRef context,float scalex,float scaley){
+void CGContextScaleCTM(CGContextRef context,CGFloat scalex,CGFloat scaley){
    O2ContextScaleCTM(context,scalex,scaley);
 }
 
-void CGContextRotateCTM(CGContextRef context,float radians) {
+void CGContextRotateCTM(CGContextRef context,CGFloat radians) {
    O2ContextRotateCTM(context,radians);
 }
 
@@ -228,15 +228,15 @@ void CGContextSetStrokeColorWithColor(CGContextRef context,CGColorRef color) {
    O2ContextSetStrokeColorWithColor(context,color);
 }
 
-void CGContextSetGrayStrokeColor(CGContextRef context,float gray,float alpha) {
+void CGContextSetGrayStrokeColor(CGContextRef context,CGFloat gray,CGFloat alpha) {
    O2ContextSetGrayStrokeColor(context,gray,alpha);
 }
 
-void CGContextSetRGBStrokeColor(CGContextRef context,float r,float g,float b,float alpha) {
+void CGContextSetRGBStrokeColor(CGContextRef context,CGFloat r,CGFloat g,CGFloat b,CGFloat alpha) {
    O2ContextSetRGBStrokeColor(context,r,g,b,alpha);
 }
 
-void CGContextSetCMYKStrokeColor(CGContextRef context,float c,float m,float y,float k,float alpha) {
+void CGContextSetCMYKStrokeColor(CGContextRef context,CGFloat c,CGFloat m,CGFloat y,CGFloat k,CGFloat alpha) {
    O2ContextSetCMYKStrokeColor(context,c,m,y,k,alpha);
 }
 
@@ -248,19 +248,19 @@ void CGContextSetFillColorWithColor(CGContextRef context,CGColorRef color) {
    O2ContextSetFillColorWithColor(context,color);
 }
 
-void CGContextSetGrayFillColor(CGContextRef context,float gray,float alpha) {
+void CGContextSetGrayFillColor(CGContextRef context,CGFloat gray,CGFloat alpha) {
    O2ContextSetGrayFillColor(context,gray,alpha);
 }
 
-void CGContextSetRGBFillColor(CGContextRef context,float r,float g,float b,float alpha) {
+void CGContextSetRGBFillColor(CGContextRef context,CGFloat r,CGFloat g,CGFloat b,CGFloat alpha) {
    O2ContextSetRGBFillColor(context,r,g,b,alpha);
 }
 
-void CGContextSetCMYKFillColor(CGContextRef context,float c,float m,float y,float k,float alpha) {
+void CGContextSetCMYKFillColor(CGContextRef context,CGFloat c,CGFloat m,CGFloat y,CGFloat k,CGFloat alpha) {
    O2ContextSetCMYKFillColor(context,c,m,y,k,alpha);
 }
 
-void CGContextSetAlpha(CGContextRef context,float alpha) {
+void CGContextSetAlpha(CGContextRef context,CGFloat alpha) {
    O2ContextSetAlpha(context,alpha);
 }
 
@@ -280,11 +280,11 @@ void CGContextSetTextMatrix(CGContextRef context,CGAffineTransform matrix) {
    O2ContextSetTextMatrix(context,O2AffineTransformFromCG(matrix));
 }
 
-void CGContextSetTextPosition(CGContextRef context,float x,float y) {
+void CGContextSetTextPosition(CGContextRef context,CGFloat x,CGFloat y) {
    O2ContextSetTextPosition(context,x,y);
 }
 
-void CGContextSetCharacterSpacing(CGContextRef context,float spacing) {
+void CGContextSetCharacterSpacing(CGContextRef context,CGFloat spacing) {
    O2ContextSetCharacterSpacing(context,spacing);
 }
 
@@ -296,11 +296,11 @@ void CGContextSetFont(CGContextRef context,CGFontRef font) {
    O2ContextSetFont(context,font);
 }
 
-void CGContextSetFontSize(CGContextRef context,float size) {
+void CGContextSetFontSize(CGContextRef context,CGFloat size) {
    O2ContextSetFontSize(context,size);
 }
 
-void CGContextSelectFont(CGContextRef context,const char *name,float size,CGTextEncoding encoding) {
+void CGContextSelectFont(CGContextRef context,const char *name,CGFloat size,CGTextEncoding encoding) {
    O2ContextSelectFont(context,name,size,encoding);
 }
 
@@ -315,7 +315,24 @@ void CGContextSetShouldSubpixelQuantizeFonts(CGContextRef context,bool yesOrNo) 
 void CGContextSetAllowsFontSubpixelQuantization(CGContextRef context,bool yesOrNo) {
 }
 
-void CGContextSetLineWidth(CGContextRef context,float width) {
+// Onyx2D places glyphs at their exact positions, so subpixel positioning is always on
+void CGContextSetShouldSubpixelPositionFonts(CGContextRef context,bool yesOrNo) {
+}
+
+void CGContextSetAllowsFontSubpixelPositioning(CGContextRef context,bool yesOrNo) {
+}
+
+void CGContextSetBaseCTM(CGContextRef context,CGAffineTransform matrix) {
+   O2ContextSetBaseCTM(context,O2AffineTransformFromCG(matrix));
+}
+
+// the layer covers the whole clip, so bounding it by the rect only clips drawing to it
+void CGContextBeginTransparencyLayerWithRect(CGContextRef context,CGRect rect,CFDictionaryRef auxInfo) {
+   O2ContextBeginTransparencyLayer(context,(NSDictionary *)auxInfo);
+   O2ContextClipToRect(context,rect);
+}
+
+void CGContextSetLineWidth(CGContextRef context,CGFloat width) {
    O2ContextSetLineWidth(context,width);
 }
 
@@ -327,12 +344,17 @@ void CGContextSetLineJoin(CGContextRef context,CGLineJoin lineJoin) {
    O2ContextSetLineJoin(context,lineJoin);
 }
 
-void CGContextSetMiterLimit(CGContextRef context,float miterLimit) {
+void CGContextSetMiterLimit(CGContextRef context,CGFloat miterLimit) {
    O2ContextSetMiterLimit(context,miterLimit);
 }
 
-void CGContextSetLineDash(CGContextRef context,float phase,const float *lengths,unsigned count) {
-   O2ContextSetLineDash(context,phase,lengths,count);
+// Onyx2D keeps single precision, the public API takes CGFloat like every macOS caller
+void CGContextSetLineDash(CGContextRef context,CGFloat phase,const CGFloat *lengths,size_t count) {
+   O2Float narrow[count>0 ? count : 1];
+
+   for(size_t i=0;i<count;i++)
+    narrow[i]=lengths[i];
+   O2ContextSetLineDash(context,phase,lengths ? narrow : NULL,(unsigned)count);
 }
 
 void CGContextSetRenderingIntent(CGContextRef context,CGColorRenderingIntent renderingIntent) {
@@ -343,7 +365,7 @@ void CGContextSetBlendMode(CGContextRef context,CGBlendMode blendMode) {
    O2ContextSetBlendMode(context,blendMode);
 }
 
-void CGContextSetFlatness(CGContextRef context,float flatness) {
+void CGContextSetFlatness(CGContextRef context,CGFloat flatness) {
    O2ContextSetFlatness(context,flatness);
 }
 
@@ -351,11 +373,11 @@ void CGContextSetInterpolationQuality(CGContextRef context,CGInterpolationQualit
    O2ContextSetInterpolationQuality(context,quality);
 } 
 
-void CGContextSetShadowWithColor(CGContextRef context,CGSize offset,float blur,CGColorRef color) {
+void CGContextSetShadowWithColor(CGContextRef context,CGSize offset,CGFloat blur,CGColorRef color) {
    O2ContextSetShadowWithColor(context,offset,blur,color);
 }
 
-void CGContextSetShadow(CGContextRef context,CGSize offset,float blur) {
+void CGContextSetShadow(CGContextRef context,CGSize offset,CGFloat blur) {
    O2ContextSetShadow(context,offset,blur);
 }
 
@@ -371,7 +393,7 @@ void CGContextStrokeRect(CGContextRef context,CGRect rect) {
    O2ContextStrokeRect(context,rect);
 }
 
-void CGContextStrokeRectWithWidth(CGContextRef context,CGRect rect,float width) {
+void CGContextStrokeRectWithWidth(CGContextRef context,CGRect rect,CGFloat width) {
    O2ContextStrokeRectWithWidth(context,rect,width);
 }
 
@@ -415,7 +437,7 @@ void CGContextShowGlyphs(CGContextRef context,const CGGlyph *glyphs,unsigned cou
    O2ContextShowGlyphs(context,glyphs,count);
 }
 
-void CGContextShowGlyphsAtPoint(CGContextRef context,float x,float y,const CGGlyph *glyphs,unsigned count) {
+void CGContextShowGlyphsAtPoint(CGContextRef context,CGFloat x,CGFloat y,const CGGlyph *glyphs,unsigned count) {
    O2ContextShowGlyphsAtPoint(context,x,y,glyphs,count);
 }
 
@@ -427,7 +449,7 @@ void CGContextShowText(CGContextRef context,const char *text,unsigned count) {
    O2ContextShowText(context,text,count);
 }
 
-void CGContextShowTextAtPoint(CGContextRef context,float x,float y,const char *text,unsigned count) {
+void CGContextShowTextAtPoint(CGContextRef context,CGFloat x,CGFloat y,const char *text,unsigned count) {
    O2ContextShowTextAtPoint(context,x,y,text,count);
 }
 

@@ -8,6 +8,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 #import <CoreGraphics/CGBitmapContext.h>
 #import <Onyx2D/O2BitmapContext.h>
+#import <objc/runtime.h>
 
 CGContextRef CGBitmapContextCreate(void *bytes,size_t width,size_t height,size_t bitsPerComponent,size_t bytesPerRow,CGColorSpaceRef colorSpace,CGBitmapInfo bitmapInfo) {
    return O2BitmapContextCreate(bytes,width,height,bitsPerComponent,bytesPerRow,colorSpace,bitmapInfo);
@@ -53,3 +54,40 @@ CGImageRef CGBitmapContextCreateImage(CGContextRef self) {
    return O2BitmapContextCreateImage(self);
 }
 
+
+// runs the caller's release callback when the context that owns it goes away
+@interface CGBitmapContextRelease : NSObject {
+@public
+   CGBitmapContextReleaseDataCallback _callback;
+   void *_info;
+   void *_data;
+}
+@end
+
+@implementation CGBitmapContextRelease
+
+-(void)dealloc {
+   _callback(_info,_data);
+   [super dealloc];
+}
+
+@end
+
+static char releaseKey;
+
+CGContextRef CGBitmapContextCreateWithData(void *data,size_t width,size_t height,size_t bitsPerComponent,size_t bytesPerRow,CGColorSpaceRef colorSpace,CGBitmapInfo bitmapInfo,CGBitmapContextReleaseDataCallback releaseCallback,void *releaseInfo) {
+   CGContextRef context=CGBitmapContextCreate(data,width,height,bitsPerComponent,bytesPerRow,colorSpace,bitmapInfo);
+
+   // memory the context allocated itself is not the caller's to release
+   if(context==NULL || releaseCallback==NULL || data==NULL)
+    return context;
+
+   CGBitmapContextRelease *release=[[CGBitmapContextRelease alloc] init];
+
+   release->_callback=releaseCallback;
+   release->_info=releaseInfo;
+   release->_data=data;
+   objc_setAssociatedObject((id)context,&releaseKey,release,OBJC_ASSOCIATION_RETAIN);
+   [release release];
+   return context;
+}

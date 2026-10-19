@@ -15,7 +15,7 @@ typedef struct O2Layer *CGLayerRef;
 COREGRAPHICS_EXPORT CGLayerRef CGLayerRetain(CGLayerRef self);
 COREGRAPHICS_EXPORT void CGLayerRelease(CGLayerRef self);
 
-COREGRAPHICS_EXPORT CGLayerRef CGLayerCreateWithContext(CGContextRef context, CGSize size, id unused);
+COREGRAPHICS_EXPORT CGLayerRef CGLayerCreateWithContext(CGContextRef context, CGSize size, CFDictionaryRef auxiliaryInfo);
 
 COREGRAPHICS_EXPORT CGSize CGLayerGetSize(CGLayerRef self);
 COREGRAPHICS_EXPORT CGContextRef CGLayerGetContext(CGLayerRef self);

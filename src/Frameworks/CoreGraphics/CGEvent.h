@@ -130,6 +130,19 @@ typedef enum CGEventFilterMask : uint32_t {
 #define NX_NONCOALSESCEDMASK    0x100  // Don't @ me. Apple spelled it this way.
 #define NX_NONCOALESCEDMASK NX_NONCOALSESCEDMASK
 
+// which physical modifier key is down, the same values IOLLEvent.h gives
+#ifndef NX_DEVICELCTLKEYMASK
+#define NX_DEVICELCTLKEYMASK    0x00000001
+#define NX_DEVICELSHIFTKEYMASK  0x00000002
+#define NX_DEVICERSHIFTKEYMASK  0x00000004
+#define NX_DEVICELCMDKEYMASK    0x00000008
+#define NX_DEVICERCMDKEYMASK    0x00000010
+#define NX_DEVICELALTKEYMASK    0x00000020
+#define NX_DEVICERALTKEYMASK    0x00000040
+#define NX_DEVICE_ALPHASHIFT_STATELESS_MASK 0x00000080
+#define NX_DEVICERCTLKEYMASK    0x00002000
+#endif
+
 typedef enum CGEventFlags : uint64_t {
     kCGEventFlagMaskAlphaShift = NX_ALPHASHIFTMASK,
     kCGEventFlagMaskShift = NX_SHIFTMASK,

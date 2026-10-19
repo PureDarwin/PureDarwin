@@ -36,3 +36,20 @@ COREGRAPHICS_EXPORT CGGlyph CGFontGetGlyphWithGlyphName(CGFontRef self, CFString
 COREGRAPHICS_EXPORT CFStringRef CGFontCopyGlyphNameForGlyph(CGFontRef self, CGGlyph glyph);
 
 COREGRAPHICS_EXPORT CFDataRef CGFontCopyTableForTag(CGFontRef self, uint32_t tag);
+
+#import <CoreGraphics/CGDataProvider.h>
+#include <CoreFoundation/CFArray.h>
+#include <CoreFoundation/CFDictionary.h>
+
+COREGRAPHICS_EXPORT const CFStringRef kCGFontVariationAxisName;
+COREGRAPHICS_EXPORT const CFStringRef kCGFontVariationAxisMinValue;
+COREGRAPHICS_EXPORT const CFStringRef kCGFontVariationAxisMaxValue;
+COREGRAPHICS_EXPORT const CFStringRef kCGFontVariationAxisDefaultValue;
+
+COREGRAPHICS_EXPORT CGFontRef CGFontCreateWithDataProvider(CGDataProviderRef provider);
+COREGRAPHICS_EXPORT CFStringRef CGFontCopyPostScriptName(CGFontRef self);
+COREGRAPHICS_EXPORT CFArrayRef CGFontCopyTableTags(CGFontRef self);
+COREGRAPHICS_EXPORT CFArrayRef CGFontCopyVariationAxes(CGFontRef self);
+COREGRAPHICS_EXPORT CFDictionaryRef CGFontCopyVariations(CGFontRef self);
+COREGRAPHICS_EXPORT CGFontRef CGFontCreateCopyWithVariations(CGFontRef self, CFDictionaryRef variations);
+COREGRAPHICS_EXPORT bool CGFontGetGlyphBBoxes(CGFontRef self, const CGGlyph *glyphs, size_t count, CGRect *bboxes);
