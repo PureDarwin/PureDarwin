@@ -32,10 +32,4 @@ target_include_directories(PDFBSDrtw89.kext PRIVATE
 target_compile_definitions(PDFBSDrtw89.kext PRIVATE PDFBSD_WLAN=1)
 add_dependencies(PDFBSDrtw89.kext IO80211Family.kext)
 
-# firmware stays in the bundle and loads from disk, the kernel collection has a 64 MB cap
-install(FILES firmware/rtw89/rtw8852b_fw-1.bin firmware/rtw89/rtw8852c_fw-2.bin
-    DESTINATION System/Library/Extensions/PDFBSDrtw89.kext/Contents/Resources/firmware/rtw89
-    COMPONENT BaseSystem)
-install(FILES firmware/LICENCE.rtlwifi_firmware.txt
-    DESTINATION System/Library/Extensions/PDFBSDrtw89.kext/Contents/Resources
-    COMPONENT BaseSystem)
+# firmware comes from linux-firmware into /Library/Firmware/rtw89, see rtw89FirmwareBuild in nix/image-contents.nix

@@ -1311,8 +1311,14 @@ let
       rtw89FirmwareBuild = pkgs.runCommand "puredarwin-rtw89-firmware" { } ''
         fw=$out/Library/Firmware/rtw89
         mkdir -p $fw
-        cp ${../src/Kernel/Extensions/PDFBSDrtw89/firmware/rtw89}/*.bin $fw/
-        cp ${../src/Kernel/Extensions/PDFBSDrtw89/firmware/LICENCE.rtlwifi_firmware.txt} $fw/LICENCE.rtlwifi_firmware.txt
+        for f in rtw8852b_fw-1 rtw8852c_fw-2; do
+          src=${pkgs.linux-firmware}/lib/firmware/rtw89/$f.bin
+          if [ -e "$src.zst" ]; then ${pkgs.zstd}/bin/zstd -dqf "$src.zst" -o $fw/$f.bin
+          elif [ -e "$src.xz" ]; then ${pkgs.xz}/bin/xz -dc "$src.xz" > $fw/$f.bin
+          else cp -L "$src" $fw/$f.bin
+          fi
+        done
+        cp ${pkgs.linux-firmware.src}/LICENSES/LICENCE.rtlwifi_firmware.txt $fw/LICENCE.rtlwifi_firmware.txt
       '';
       # WCN6855 firmware for PDQwx from linux-firmware, under the names qwx(4) asks for
       qwxFirmwareBuild = pkgs.runCommand "puredarwin-qwx-firmware" { } ''
