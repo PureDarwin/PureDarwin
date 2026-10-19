@@ -52,5 +52,13 @@ NSArray *PDInputDevices(void);
 NSDictionary *PDBattery(void);
 NSDictionary *PDAccount(void);
 
+// the compositor's render device choices, @[ value, name ] with "auto" first, and the one in use
+NSArray *PDRenderChoices(void);
+NSString *PDRenderChoice(void);
+// writes GPU= to /Library/Preferences/org.puredarwin.argon.conf, "auto" removes it
+BOOL PDSetRenderChoice(NSString *value);
+// ends the desktop session and has launchd start it again, from a process outside it
+BOOL PDRestartSession(void);
+
 // mounts the EFI partition, rewrites boot-args.txt and unmounts, nil on success or the reason it failed
 NSString *PDWriteBootArgs(NSString *args);

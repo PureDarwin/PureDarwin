@@ -544,3 +544,30 @@
 /* No comment provided by engineer. */
 "Dock, %@" = "Dock, %@";
 
+
+/* No comment provided by engineer. */
+"Automatic" = "Automatic";
+
+/* No comment provided by engineer. */
+"Software (llvmpipe)" = "Software (llvmpipe)";
+
+/* No comment provided by engineer. */
+"Virtio GPU (virgl)" = "Virtio GPU (virgl)";
+
+/* No comment provided by engineer. */
+"Render with" = "Render with";
+
+/* No comment provided by engineer. */
+"Saved. It applies when the session restarts." = "Saved. It applies when the session restarts.";
+
+/* No comment provided by engineer. */
+"Could not write /Library/Preferences." = "Could not write /Library/Preferences.";
+
+/* No comment provided by engineer. */
+"Restart Session" = "Restart Session";
+
+/* No comment provided by engineer. */
+"Changes apply at the next session start. Open windows close." = "Changes apply at the next session start. Open windows close.";
+
+/* No comment provided by engineer. */
+"The compositor is not running." = "The compositor is not running.";

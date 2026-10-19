@@ -66,6 +66,11 @@ static NSMenu *addMenu(NSMenu *mainMenu, NSString *title)
 
     NSRect frame = NSMakeRect(0, 0, 760, 580);
     NSString *open = PDPref(@"org.puredarwin.Settings", @"OpenPane");
+    NSArray *args = [[NSProcessInfo processInfo] arguments];
+
+    // "Settings session" opens a pane from a shell
+    if ([args count] > 1 && ![args[1] hasPrefix:@"-"])
+        open = args[1];
 
     [self buildMenu];
     _window = [[NSWindow alloc] initWithContentRect:frame

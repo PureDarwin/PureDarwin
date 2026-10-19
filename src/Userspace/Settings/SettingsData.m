@@ -7,6 +7,7 @@
  */
 
 #include <stdint.h>
+#include <string.h>
 #if __has_include(<notify.h>)
 #include <notify.h>
 #else
@@ -536,6 +537,145 @@ static int run(NSArray *argv)
         waitpid(pid, &status, 0);
     free(args);
     return status;
+}
+
+static NSString * const PDArgonConf = @"/Library/Preferences/org.puredarwin.argon.conf";
+
+// a pci gpu's name from its registry model, or the vendor's
+static NSString *gpuName(unsigned vendor, unsigned device)
+{
+    __block NSString *name = nil;
+
+    eachService("IOPCIDevice", ^(io_service_t d) {
+        uint32_t ids = wordProperty(d, "vendor-id"), dev = wordProperty(d, "device-id");
+
+        if (name == nil && (ids & 0xffff) == vendor && (dev & 0xffff) == device && [stringProperty(d, "model") length] > 0)
+            name = stringProperty(d, "model");
+    });
+    if (name != nil)
+        return name;
+    switch (vendor) {
+        case 0x1002: return [NSString stringWithFormat:@"AMD Radeon %04x", device];
+        case 0x10de: return [NSString stringWithFormat:@"NVIDIA %04x", device];
+        case 0x8086: return [NSString stringWithFormat:@"Intel Graphics %04x", device];
+    }
+    return [NSString stringWithFormat:@"GPU %04x:%04x", vendor, device];
+}
+
+NSArray *PDRenderChoices(void)
+{
+    NSMutableArray *list = [NSMutableArray arrayWithObjects:
+        @[ @"auto", NSLocalizedString(@"Automatic", @"") ],
+        @[ @"soft", NSLocalizedString(@"Software (llvmpipe)", @"") ], nil];
+    NSMutableSet *nodes = [NSMutableSet set];
+    size_t len = 0;
+    char *text;
+
+    // kern.pd_dri.devices lines are "minor busid vendor device ...", render nodes from 128
+    if (sysctlbyname("kern.pd_dri.devices", NULL, &len, NULL, 0) == 0 && len > 0 && (text = calloc(1, len + 1)) != NULL) {
+        if (sysctlbyname("kern.pd_dri.devices", text, &len, NULL, 0) == 0) {
+            for (NSString *line in [[NSString stringWithUTF8String:text] componentsSeparatedByString:@"\n"]) {
+                unsigned minor, vendor, device;
+                char busid[64];
+
+                if (sscanf([line UTF8String], "%u %63s %x %x", &minor, busid, &vendor, &device) != 4 || minor < 128)
+                    continue;
+                [nodes addObject:[NSString stringWithFormat:@"renderD%u", minor]];
+                [list addObject:@[ [NSString stringWithFormat:@"%04x:%04x", vendor, device],
+                                   [NSString stringWithFormat:@"%@ (renderD%u)", gpuName(vendor, device), minor] ]];
+            }
+        }
+        free(text);
+    }
+    // render nodes the sysctl does not describe, a device tree gpu for one
+    for (NSString *name in [[[NSFileManager defaultManager] contentsOfDirectoryAtPath:@"/dev/dri" error:NULL] sortedArrayUsingSelector:@selector(compare:)]) {
+        if ([name hasPrefix:@"renderD"] && ![nodes containsObject:name])
+            [list addObject:@[ [@"/dev/dri/" stringByAppendingString:name], name ]];
+    }
+    // virgl has no render node, mesa reaches it through IOVirtIOGPU
+    if ([PDGraphics() isEqualToString:@"Virtio GPU"])
+        [list addObject:@[ @"virpipe", NSLocalizedString(@"Virtio GPU (virgl)", @"") ]];
+    return list;
+}
+
+static NSArray *argonLines(void)
+{
+    NSString *conf = [NSString stringWithContentsOfFile:PDArgonConf encoding:NSUTF8StringEncoding error:NULL];
+
+    return conf != nil ? [conf componentsSeparatedByString:@"\n"] : @[];
+}
+
+NSString *PDRenderChoice(void)
+{
+    NSString *value = @"auto";
+
+    // the last GPU= line wins, as in pd-wayland-session
+    for (NSString *line in argonLines()) {
+        if ([line hasPrefix:@"GPU="] && [line length] > 4)
+            value = [line substringFromIndex:4];
+    }
+    return value;
+}
+
+BOOL PDSetRenderChoice(NSString *value)
+{
+    NSMutableArray *keep = [NSMutableArray array];
+
+    for (NSString *line in argonLines()) {
+        if ([line length] > 0 && ![line hasPrefix:@"GPU="])
+            [keep addObject:line];
+    }
+    if (![value isEqualToString:@"auto"])
+        [keep addObject:[@"GPU=" stringByAppendingString:value]];
+    [[NSFileManager defaultManager] createDirectoryAtPath:[PDArgonConf stringByDeletingLastPathComponent]
+                              withIntermediateDirectories:YES attributes:nil error:NULL];
+    if ([keep count] == 0)
+        return [[NSFileManager defaultManager] removeItemAtPath:PDArgonConf error:NULL] ||
+               ![[NSFileManager defaultManager] fileExistsAtPath:PDArgonConf];
+    return [[[keep componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"] writeToFile:PDArgonConf atomically:YES
+                                                                                     encoding:NSUTF8StringEncoding error:NULL];
+}
+
+static pid_t processID(const char *comm)
+{
+    int mib[3] = { CTL_KERN, KERN_PROC, KERN_PROC_ALL };
+    struct kinfo_proc *procs;
+    size_t len = 0;
+    pid_t pid = 0;
+
+    if (sysctl(mib, 3, NULL, &len, NULL, 0) != 0)
+        return 0;
+    len += 16 * sizeof(*procs);
+    if ((procs = malloc(len)) == NULL)
+        return 0;
+    if (sysctl(mib, 3, procs, &len, NULL, 0) == 0) {
+        for (size_t i = 0; i < len / sizeof(*procs) && pid == 0; i++) {
+            if (strcmp(procs[i].kp_proc.p_comm, comm) == 0)
+                pid = procs[i].kp_proc.p_pid;
+        }
+    }
+    free(procs);
+    return pid;
+}
+
+BOOL PDRestartSession(void)
+{
+    pid_t compositor = processID("neuswc"), pid;
+    NSString *script;
+    char *args[4];
+    posix_spawnattr_t attr;
+    int err;
+
+    if (compositor == 0)
+        return NO;
+    // the session ends when neuswc does, the helper's own session id keeps it alive past that
+    script = [NSString stringWithFormat:@"sleep 1; kill %d; sleep 3; exec launchctl start org.puredarwin.wayland-session", compositor];
+    args[0] = "/bin/sh", args[1] = "-c", args[2] = (char *)[script UTF8String], args[3] = NULL;
+    posix_spawnattr_init(&attr);
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSID);
+    err = posix_spawn(&pid, args[0], NULL, &attr, args, environ);
+    posix_spawnattr_destroy(&attr);
+    return err == 0;
 }
 
 NSString *PDWriteBootArgs(NSString *args)

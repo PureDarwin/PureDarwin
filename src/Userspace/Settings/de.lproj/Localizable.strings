@@ -544,3 +544,30 @@
 /* No comment provided by engineer. */
 "Dock, %@" = "Dock, %@";
 
+
+/* No comment provided by engineer. */
+"Automatic" = "Automatisch";
+
+/* No comment provided by engineer. */
+"Software (llvmpipe)" = "Software (llvmpipe)";
+
+/* No comment provided by engineer. */
+"Virtio GPU (virgl)" = "Virtio-GPU (virgl)";
+
+/* No comment provided by engineer. */
+"Render with" = "Rendern mit";
+
+/* No comment provided by engineer. */
+"Saved. It applies when the session restarts." = "Gespeichert. Gilt nach dem Neustart der Sitzung.";
+
+/* No comment provided by engineer. */
+"Could not write /Library/Preferences." = "/Library/Preferences konnte nicht geschrieben werden.";
+
+/* No comment provided by engineer. */
+"Restart Session" = "Sitzung neu starten";
+
+/* No comment provided by engineer. */
+"Changes apply at the next session start. Open windows close." = "Änderungen gelten ab dem nächsten Sitzungsstart. Offene Fenster werden geschlossen.";
+
+/* No comment provided by engineer. */
+"The compositor is not running." = "Der Compositor läuft nicht.";

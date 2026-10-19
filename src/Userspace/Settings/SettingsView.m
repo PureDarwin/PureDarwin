@@ -376,6 +376,9 @@ static NSArray *paneInfo(NSString *pane)
     _message = [message copy];
 }
 
+// the session pane's render devices, @[ value, name ] pairs
+static NSArray *renderChoices;
+
 // panes that read the system load it when they open, so the window stays quick
 - (void)loadPane:(NSString *)pane
 {
@@ -391,6 +394,9 @@ static NSArray *paneInfo(NSString *pane)
     } else if ([pane isEqualToString:@"boot"]) {
         [_bootArgs release];
         _bootArgs = [bootWords() retain];
+    } else if ([pane isEqualToString:@"session"]) {
+        [renderChoices release];
+        renderChoices = [PDRenderChoices() retain];
     } else if ([pane isEqualToString:@"displays"]) {
         [_displayModes release];
         _displayModes = (NSArray *)CGDisplayCopyAllDisplayModes(CGMainDisplayID(), NULL);
@@ -1106,12 +1112,49 @@ static NSArray *paneInfo(NSString *pane)
 
 - (CGFloat)drawSessionAt:(CGFloat)y
 {
-    return [self card:@[
+    y = [self card:@[
         [self valueRow:@"Display server" value:@"Wayland"],
         [self valueRow:NSLocalizedString(@"Compositor", @"") value:[NSString stringWithFormat:NSLocalizedString(@"neuswc with pdwm, %@", @""), [self processState:@[ @"neuswc", @"pdwm", @"swc-launch" ]]]],
         [self valueRow:NSLocalizedString(@"Window server", @"") value:NSLocalizedString(@"AppKit over WindowServer", @"")],
         [self valueRow:NSLocalizedString(@"Menu bar", @"") value:[NSString stringWithFormat:NSLocalizedString(@"MenuBar, %@", @""), [self processState:@[ @"MenuBar" ]]]],
         [self valueRow:NSLocalizedString(@"Dock", @"") value:[NSString stringWithFormat:NSLocalizedString(@"Dock, %@", @""), [self processState:@[ @"Dock" ]]]],
+    ] at:y];
+    return [self drawRenderDeviceAt:y];
+}
+
+// which GPU the compositor renders with, written for pd-wayland-session to read at the next start
+- (CGFloat)drawRenderDeviceAt:(CGFloat)y
+{
+    NSString *current = PDRenderChoice();
+    NSMutableArray *names = [NSMutableArray array];
+    NSUInteger selected = 0;
+
+    for (NSArray *c in renderChoices) {
+        if ([c[0] isEqualToString:current])
+            selected = [names count];
+        [names addObject:c[1]];
+    }
+    // a value written by hand that is not in the list still shows
+    if (selected == 0 && ![current isEqualToString:@"auto"]) {
+        selected = [names count];
+        [names addObject:current];
+    }
+    y = [self title:NSLocalizedString(@"Graphics", @"") at:y];
+    return [self card:@[
+        [self popupRow:NSLocalizedString(@"Render with", @"") items:names selected:selected pick:^(NSUInteger i) {
+            NSString *value = i < [renderChoices count] ? renderChoices[i][0] : current;
+
+            [self setMessage:PDSetRenderChoice(value) ? NSLocalizedString(@"Saved. It applies when the session restarts.", @"")
+                                                      : NSLocalizedString(@"Could not write /Library/Preferences.", @"")];
+            [self setNeedsDisplay:YES];
+        }],
+        [self buttonRow:NSLocalizedString(@"Restart Session", @"")
+                   note:_message ?: NSLocalizedString(@"Changes apply at the next session start. Open windows close.", @"")
+                 action:^{
+            if (!PDRestartSession())
+                [self setMessage:NSLocalizedString(@"The compositor is not running.", @"")];
+            [self setNeedsDisplay:YES];
+        }],
     ] at:y];
 }
 
