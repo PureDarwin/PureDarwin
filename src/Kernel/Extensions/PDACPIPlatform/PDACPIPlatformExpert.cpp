@@ -716,6 +716,8 @@ bool PDACPIPlatformExpert::setNubInterruptVector(IOService *nub, UInt32 vector, 
 	return setNubInterruptVectors(nub, &vector, 1, flags);
 }
 
+IOSimpleLock *pd_acpi_pci_config_lock(void);
+
 IOReturn PDACPIPlatformExpert::callPlatformFunction(const OSSymbol *functionName, bool waitForFunction, void *param1, void *param2, void *param3, void *param4) {
 	bool ok;
 
@@ -765,6 +767,11 @@ IOReturn PDACPIPlatformExpert::callPlatformFunction(const OSSymbol *functionName
 		message[2] = vector & 0xFFU;                    // MSI data
 		kprintf("PDACPIPlatformExpert: MSI msg vector=0x%x addr=0x%08x data=0x%x\n",
 			vector, message[0], message[2]);
+		return kIOReturnSuccess;
+	} else if (functionName->isEqualTo("PDGetPCIConfigLock")) {
+		// uacpi reads pci config from its init thread while the host bridge walks devices
+		if (param1 == 0) return kIOReturnBadArgument;
+		*(IOSimpleLock **)param1 = pd_acpi_pci_config_lock();
 		return kIOReturnSuccess;
 	} else if (functionName->isEqualTo("SetBusClockRateMHz")) {
 		UInt32 rateMHz = (UInt32)((UInt64)param1);

@@ -56,7 +56,7 @@ __END_DECLS
 #define PFM64_SIZE     (2ULL*GB)
 #define PFM64_MIN_SIZE (512*MB)
 #define PFM64_MAX_SIZE (16ULL*GB)
-#define MAX_BAR_SIZE   (1ULL*GB)
+#define MAX_BAR_SIZE   (64ULL*GB)
 // NPHYSMAP; unfortunately this is too low to decode to PCI on some machines
 // #define PFM64_MAX  (512LL*GB)
 // cap to 32b page number max address
@@ -2179,6 +2179,8 @@ void CLASS::probeBaseAddressRegister(IOPCIConfigEntry * device, uint32_t lastBar
         start = (resetMask & (1 << kIOPCIResourceTypeMemory)) ? 0 : (saved & ~barMask);
         value &= ~barMask;
         size  = -value;
+        // a rom bar still holding its size mask was never placed, so the allocator places it
+        if (start == value) start = 0;
         IOPCIRangeInit(range, kIOPCIResourceTypeMemory, start, size, size);
     }
     while (false);
@@ -2831,7 +2833,9 @@ void CLASS::configure(uint32_t options)
                 consoleInfo.v_width, consoleInfo.v_height, fPFMConsole);
         }
         fConsoleRange = NULL;
-        getPlatform()->setConsoleInfo(0, kPEDisableScreen);
+        // pci=0x2 keeps the screen on so a stop here shows where
+        if (!(kIOPCIConfiguratorKPrintf & gIOPCIFlags))
+            getPlatform()->setConsoleInfo(0, kPEDisableScreen);
     }
 #endif
 
@@ -3660,6 +3664,16 @@ void CLASS::deviceApplyConfiguration(IOPCIConfigEntry * device, uint32_t typeMas
     DLOGI("Applying config (bm 0x%x, sm 0x%x) for device " D() "\n",
             device->rangeBaseChanges, device->rangeSizeChanges,
             DEVICE_IDENT(device));
+
+    // the console's own device stops decoding here, so the screen stays off until it is rebased
+    if ((kIOPCIConfiguratorKPrintf & gIOPCIFlags) && fConsoleRange)
+    {
+        for (int i = kIOPCIRangeBAR0; i <= kIOPCIRangeBAR5; i++)
+        {
+            if (device->ranges[i] == fConsoleRange)
+                getPlatform()->setConsoleInfo(0, kPEDisableScreen);
+        }
+    }
 
     reg16 = disableAccess(device, true);
 

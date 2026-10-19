@@ -37,6 +37,7 @@ class AppleI386PCI : public IOPCIBridge
     OSDeclareDefaultStructors(AppleI386PCI)
 
     IOSimpleLock *	lock;
+    bool		ownsLock;
     IODeviceMemory *	ioMemory;
 
     UInt8		maxBusNum;        /* Highest valid Bus Number */

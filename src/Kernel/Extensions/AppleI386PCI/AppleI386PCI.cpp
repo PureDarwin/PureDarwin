@@ -127,8 +127,15 @@ bool AppleI386PCI::start( IOService * provider )
     OSData *		prop;
     PCI_bus_info_t *	info;
 
-    if( 0 == (lock = IOSimpleLockAlloc()))
-	return( false );
+    // share acpi's lock when it has one, uacpi drives the same config ports from its own thread
+    lock = 0;
+    ownsLock = false;
+    provider->callPlatformFunction("PDGetPCIConfigLock", false, &lock, 0, 0, 0);
+    if( 0 == lock) {
+	if( 0 == (lock = IOSimpleLockAlloc()))
+	    return( false );
+	ownsLock = true;
+    }
 
     prop = (OSData *) provider->getProperty("pci-bus-info");
     if( 0 == prop)
@@ -193,7 +200,7 @@ void AppleI386PCI::free()
 {
     if( ioMemory)
 	ioMemory->release();
-    if( lock)
+    if( lock && ownsLock)
 	IOSimpleLockFree( lock);
 
     super::free();

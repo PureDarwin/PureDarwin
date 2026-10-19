@@ -401,6 +401,14 @@ uacpi_status uacpi_kernel_uninstall_interrupt_handler(uacpi_interrupt_handler ha
 
 } // extern "C"
 
+// the pci host bridge shares this lock, both sides drive the same 0xcf8/0xcfc pair
+IOSimpleLock *pd_acpi_pci_config_lock(void)
+{
+    if (gPciLock == NULL)
+        gPciLock = IOSimpleLockAlloc();
+    return gPciLock;
+}
+
 void pd_acpi_kernel_init(void)
 {
     if (gPciLock == NULL)
