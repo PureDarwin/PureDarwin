@@ -9,6 +9,12 @@
 , foundation
 , onyx2d
 , coregraphics
+, freetype
+, fontconfig
+, harfbuzz
+, fribidi
+, icu
+, libcxxDylib
 , src
 , appleSdk
 }:
@@ -29,6 +35,7 @@ stdenv.mkDerivation {
 
     mkdir -p staged/CoreText cf-headers
     cp *.h staged/CoreText/
+    rm -f staged/CoreText/CTInternal.h staged/CoreText/CTLayout.h
     ln -s ${corefoundation}/include cf-headers/CoreFoundation
 
     cc="${darwinCrossToolchain}/bin/${targetTriple}-clang"
@@ -47,10 +54,16 @@ stdenv.mkDerivation {
       -I${foundation}/usr/include
       -I${onyx2d}/usr/include
       -I${coregraphics}/usr/include
+      -I${freetype}/include/freetype2
+      -I${fontconfig}/include
+      -I${harfbuzz}/include/harfbuzz
+      -I${fribidi}/include/fribidi
+      -I${icu}/include
+      -DU_DISABLE_RENAMING=1
     "
 
     objs=""
-    for source in CTFont.m KTFont.m; do
+    for source in *.m; do
       object="''${source%.m}.o"
       echo "  CC $source"
       $cc $cflags -c "$source" -o "$object"
@@ -66,13 +79,29 @@ stdenv.mkDerivation {
       -L${foundation}/usr/lib \
       -L${onyx2d}/usr/lib \
       -L${coregraphics}/usr/lib \
+      -L${freetype}/lib \
+      -L${fontconfig}/lib \
+      -L${icu}/usr/lib \
+      -L${libcxxDylib}/usr/lib \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -Wl,-dylib_file,/usr/lib/libOnyx2D.dylib:${onyx2d}/usr/lib/libOnyx2D.dylib \
       -Wl,-platform_version,macos,26.5,26.5 \
       -Wl,-install_name,${installName} \
       $objs \
+      ${harfbuzz}/lib/libharfbuzz.a ${fribidi}/lib/libfribidi.a \
+      -lfreetype -lfontconfig -licucore -lc++ \
       -lCoreGraphics -lOnyx2D -lFoundation -lCoreFoundation -lobjc -lSystem \
       -o CoreText
+
+    # the CoreText checks, run inside PureDarwin
+    $cc $cflags -c tests/cttest.m -o cttest.o
+    $cc -isysroot "$DARWIN_SDK_ROOT" -fuse-ld=${nativeLd}/bin/ld -nostdlib \
+      -L${libSystem}/usr/lib -L${libobjc}/usr/lib -L${corefoundation}/usr/lib -L${foundation}/usr/lib \
+      -L${coregraphics}/usr/lib -L${onyx2d}/usr/lib \
+      -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
+      -Wl,-dylib_file,/usr/lib/libOnyx2D.dylib:${onyx2d}/usr/lib/libOnyx2D.dylib \
+      -Wl,-platform_version,macos,26.5,26.5 \
+      cttest.o CoreText -lCoreGraphics -lFoundation -lCoreFoundation -lobjc -lSystem -o cttest
 
     runHook postBuild
   '';
@@ -84,6 +113,7 @@ stdenv.mkDerivation {
     mkdir -p "$frameworkDir/Versions/A/Headers" "$frameworkDir/Versions/A/Resources"
     cp CoreText "$frameworkDir/Versions/A/CoreText"
     cp *.h "$frameworkDir/Versions/A/Headers/"
+    rm -f "$frameworkDir/Versions/A/Headers/CTInternal.h" "$frameworkDir/Versions/A/Headers/CTLayout.h"
     cp Info.plist "$frameworkDir/Versions/A/Resources/"
 
     ln -s A "$frameworkDir/Versions/Current"
@@ -91,6 +121,8 @@ stdenv.mkDerivation {
     ln -s Versions/Current/Headers "$frameworkDir/Headers"
     ln -s Versions/Current/Resources "$frameworkDir/Resources"
 
+    mkdir -p "$out/usr/bin"
+    cp cttest "$out/usr/bin/cttest"
     mkdir -p "$out/usr/lib" "$out/usr/include"
     ln -s "../../System/Library/Frameworks/CoreText.framework/Versions/A/CoreText" \
       "$out/usr/lib/libCoreText.dylib"
@@ -104,7 +136,7 @@ stdenv.mkDerivation {
   dontStrip = true;
 
   meta = with lib; {
-    description = "Cocotron CoreText compatibility framework";
+    description = "CoreText over FreeType, HarfBuzz, fontconfig, FriBidi and ICU";
     platforms = platforms.unix;
   };
 }
