@@ -260,7 +260,8 @@ mapBARFromConfig(IOPCIDevice         * provider,
 }
 
 #define kA733Compatible     "allwinner,sunxi-plat-dwc3"
-#define kSC8280XPCompatible "qcom,sc8280xp-dwc3"
+// a dwc3 core, published by the platform expert from inside its vendor wrapper
+#define kDWC3Compatible     "snps,dwc3"
 
 static bool
 isCompatible(IOService *provider, const char *compat)
@@ -276,7 +277,7 @@ IOService *
 RavynXHCIPort::probe(IOService *provider, SInt32 *score)
 {
     IOPCIDevice *pci = OSDynamicCast(IOPCIDevice, provider);
-    if (!pci && !isCompatible(provider, kA733Compatible) && !isCompatible(provider, kSC8280XPCompatible))
+    if (!pci && !isCompatible(provider, kA733Compatible) && !isCompatible(provider, kDWC3Compatible))
         return NULL;
     if (score) *score += 1000;
     return super::probe(provider, score);
@@ -515,30 +516,30 @@ interruptControllerReady(IOService *provider)
     return true;
 }
 
-// x13s usb_1: the firmware leaves the core clocked, powered, in host mode and halted
-// across ExitBootServices, so nothing here writes. A core whose clock is gated never
+// a dwc3 core the firmware leaves clocked, powered, in host mode and halted across
+// ExitBootServices, as the x13s's does, so nothing here writes. A core whose clock is gated never
 // answers the first read and the boot stops, so that read is logged first
-bool RavynXHCIPort::startSC8280XP(IOService *provider)
+bool RavynXHCIPort::startDWC3(IOService *provider)
 {
     fBARMap = provider->mapDeviceMemoryWithIndex(0, kIOMapInhibitCache);
     if (!fBARMap || fBARMap->getLength() < kDWC3_GSNPSID + 4) {
-        XHCI_Log("sc8280xp: %s has no usable reg", provider->getName());
+        XHCI_Log("dwc3: %s has no usable reg", provider->getName());
         return false;
     }
     volatile UInt32 *dwc = (volatile UInt32 *)fBARMap->getVirtualAddress();
 
-    XHCI_Log("sc8280xp: first read of the core at %016llx",
+    XHCI_Log("dwc3: first read of the core at %016llx",
              (unsigned long long)fBARMap->getPhysicalAddress());
     UInt32 id = dwc[kDWC3_GSNPSID / 4];
     UInt32 gctl = dwc[kDWC3_GCTL / 4];
-    XHCI_Log("sc8280xp: GSNPSID=%08x GCTL=%08x GUSB2PHYCFG=%08x GUSB3IPECTL=%08x",
+    XHCI_Log("dwc3: GSNPSID=%08x GCTL=%08x GUSB2PHYCFG=%08x GUSB3IPECTL=%08x",
              id, gctl, dwc[kDWC3_GUSB2PHYCFG / 4], dwc[kDWC3_GUSB3PIPECTL / 4]);
     if ((id >> 16) != kDWC3_USB31_ID) {
-        XHCI_Log("sc8280xp: not a usb31 core, leaving it alone");
+        XHCI_Log("dwc3: not a usb31 core, leaving it alone");
         return false;
     }
     if (kDWC3_GCTL_PRTCAP(gctl) != 1) {
-        XHCI_Log("sc8280xp: core is not in host mode, leaving it alone");
+        XHCI_Log("dwc3: core is not in host mode, leaving it alone");
         return false;
     }
     // HCCPARAMS1.AC64 is set, so buffers may sit above 4 GiB. Page alignment keeps each
@@ -547,9 +548,9 @@ bool RavynXHCIPort::startSC8280XP(IOService *provider)
 
     UInt32 poll = 0;
     if (PE_parse_boot_argn("pdxhci_poll", &poll, sizeof(poll)) && poll)
-        XHCI_Log("sc8280xp: pdxhci_poll set, polled");
+        XHCI_Log("dwc3: pdxhci_poll set, polled");
     else if (!interruptControllerReady(provider))
-        XHCI_Log("sc8280xp: %s has no usable interrupt, polled", provider->getName());
+        XHCI_Log("dwc3: %s has no usable interrupt, polled", provider->getName());
     else
         fPlatformInterrupt = true;
     return true;
@@ -629,8 +630,8 @@ bool RavynXHCIPort::start(IOService *provider)
         fBARMap = mapUsableBAR(fPCI, kIOPCIConfigBaseAddress0);
         if (!fBARMap) mapBARFromAssignedAddresses(fPCI, &fBARDesc, &fBARMap);
         if (!fBARMap) mapBARFromConfig(fPCI, &fBARDesc, &fBARMap);
-    } else if (isCompatible(provider, kSC8280XPCompatible)) {
-        if (!startSC8280XP(provider)) return false;
+    } else if (isCompatible(provider, kDWC3Compatible)) {
+        if (!startDWC3(provider)) return false;
     } else if (!startA733(provider)) {
         return false;
     }
