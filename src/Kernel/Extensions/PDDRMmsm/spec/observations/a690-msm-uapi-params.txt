@@ -1,0 +1,29 @@
+version 1.13.0 name msm date 0 desc MSM Snapdragon DRM
+param GPU_ID           0x0 (0)
+param GMEM_SIZE        0x400000 (4194304)
+param CHIP_ID          0xffff06090000 (281470782996480)
+param MAX_FREQ         0x29209080 (690000000)
+param TIMESTAMP        0x1de3b (122427)
+param GMEM_BASE        0x0 (0)
+param PRIORITIES       0x3 (3)
+param PP_PGTABLE       0x0 (0)
+param FAULTS           0x0 (0)
+param SUSPENDS         0x1 (1)
+param SYSPROF          error 22 (Invalid argument)
+param COMM             error 22 (Invalid argument)
+param CMDLINE          error 22 (Invalid argument)
+param VA_START         0x100000000 (4294967296)
+param VA_SIZE          0xffff00000000 (281470681743360)
+param HIGHEST_BANK_BIT 0x10 (16)
+param RAYTRACING       0x0 (0)
+param UBWC_SWIZZLE     0x6 (6)
+param MACROTILE_MODE   0x1 (1)
+param UCHE_TRAP_BASE   0x1fffffffff000 (562949953417216)
+param HAS_PRR          0x1 (1)
+bo 1 size 4096: iova 0x100000000, mmap offset 0x1018ef000
+bo 2 size 8192: iova 0x100001000, mmap offset 0x1018f0000
+bo 3 size 16384: iova 0x100003000, mmap offset 0x1018f2000
+submitqueue prio 0: ok id 1
+submitqueue prio 1: ok id 2
+submitqueue prio 2: ok id 3
+submitqueue prio 3: Invalid argument id 0

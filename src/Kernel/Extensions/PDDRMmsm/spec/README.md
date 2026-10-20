@@ -44,7 +44,7 @@ The raw captures from the stick (register dumps, traces and rd captures, which a
 
 In the PureDarwin tree
 
-This directory holds the clean-room specs that the PDDRMmsm kernel extension is written from (a306-msm8916-bringup.md and msm-uapi.md, plus a690-sc8280xp-bringup.md, a desk-only spec for the a6xx generation on the sc8280xp that has not been checked against hardware yet), and the user interface parameter tables they cite (in observations/). The raw register dumps, the traces and the GPU microcode stay out of the tree. The microcode is loaded from /Library/Firmware/qcom the first time the device is opened.
+This directory holds the clean-room specs that the PDDRMmsm kernel extension is written from (a306-msm8916-bringup.md and msm-uapi.md, plus a690-sc8280xp-bringup.md, the spec for the a6xx generation on the sc8280xp, checked against observations of a ThinkPad X13s in its version 1 but not yet implemented), and the user interface parameter tables they cite (in observations/). The a690 raw captures, like the MSM8916 ones, stay outside the tree. Its GPU state dumps contain SQE microcode, which was removed before anything read them (a690 spec, section 7.1). The raw register dumps, the traces and the GPU microcode stay out of the tree. The microcode is loaded from /Library/Firmware/qcom the first time the device is opened.
 
 
 Adding a generation or a chip

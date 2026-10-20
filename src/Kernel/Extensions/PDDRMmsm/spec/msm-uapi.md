@@ -1,15 +1,16 @@
-msm uAPI behaviour for A306, version 0
+msm uAPI behaviour for A306 and A690, version 1
 
 
 What this is
 
-This spec describes what userspace (Mesa's freedreno driver) needs from a kernel driver that speaks the msm DRM user interface (uAPI), the set of ioctls the Linux msm driver offers.
+This spec describes what userspace (Mesa's freedreno driver) needs from a kernel driver that speaks the msm DRM user interface (uAPI), the set of ioctls the Linux msm driver offers. Version 0 covered the A306. Version 1 adds the A690 in the Snapdragon 8cx Gen 3 (sc8280xp), observed on a Lenovo ThinkPad X13s.
 
 Every fact cites its source with one of these tags:
 
 - [UAPI] is Mesa's include/drm-uapi/msm_drm.h (MIT).
 - [MESA] is Mesa's src/freedreno/drm/msm/*.c (MIT), which shows how userspace calls each ioctl.
 - [OBS] is observations/msm-uapi-params.txt, from the Linux driver queried as a black box with tools/msmparams.c on the stick.
+- [OBS a690] is observations/a690-msm-uapi-params.txt, from the same kind of query against Linux 7.0.14 on the X13s (run1, 19 October 2026). See a690-sc8280xp-bringup.md, section 8.
 
 
 Identity [OBS]
@@ -29,6 +30,36 @@ What the Linux driver answers to each query:
     TIMESTAMP, VA_START, VA_SIZE, UCHE_TRAP_BASE, ...   EINVAL on this GPU
 
 A PureDarwin driver may report version 1.5, which covers softpin and robustness [MESA FD_VERSION_*], and PRIORITIES 1, because Mesa clamps the queue priority to PRIORITIES - 1 [MESA msm_pipe.c].
+
+
+Identity, A690 [OBS a690]
+
+The same queries against the A690. Most of the parameters that return EINVAL on the A306 have values here.
+
+    DRM version                 1.13.0, name "msm", description "MSM Snapdragon DRM"
+    GPU_ID                      0 (the kernel reports none; see below)
+    CHIP_ID                     0xffff06090000
+    GMEM_SIZE                   0x400000 (4 MB)
+    GMEM_BASE                   0
+    MAX_FREQ                    690000000
+    TIMESTAMP                   a counter value (0x1de3b when read), not EINVAL
+    PRIORITIES (= NR_RINGS)     3
+    PP_PGTABLE                  0
+    FAULTS                      0
+    SUSPENDS                    1
+    VA_START                    0x100000000
+    VA_SIZE                     0xffff00000000 (so the user range ends at 2^48)
+    HIGHEST_BANK_BIT            16
+    RAYTRACING                  0
+    UBWC_SWIZZLE                6
+    MACROTILE_MODE              1
+    UCHE_TRAP_BASE              0x1fffffffff000
+    HAS_PRR                     1
+    SYSPROF, COMM, CMDLINE      EINVAL (write-only parameters)
+
+GPU_ID 0 is deliberate on this chip: Mesa then matches the device by CHIP_ID. A CHIP_ID whose bits 47:32 are 0xffff matches the device table entry for FD690 whatever the fuse bits say, and Mesa derives the GPU id 690 from the core, major and minor bytes when it needs a number (a690-sc8280xp-bringup.md, section 1, from Mesa's device table). Under Linux, Mesa 26.0.8 reported the renderer "FD690" with these values. A PureDarwin driver for this chip should report the same GPU_ID and CHIP_ID rather than inventing 690.
+
+Buffers on the A690: GEM_INFO with MSM_INFO_GET_IOVA handed out 0x100000000, 0x100001000 and 0x100003000 for 4, 8 and 16 KB buffers. These are the first addresses of the VA_START range, page granular. Submit queues at priorities 0, 1 and 2 are accepted (ids 1 to 3), and priority 3 returns EINVAL, which agrees with PRIORITIES 3.
 
 
 Buffers [OBS, MESA]
