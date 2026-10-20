@@ -17,10 +17,28 @@ OSDefineMetaClassAndStructors(PDDesignWarePCI, PDEcamPCI)
 #define PCIE_LINK_STATUS_DLLLA      (1u << 13)
 #define PCIE_LINK_STATUS_WIDTH(s)   (((s) >> 4) & 0x3f)
 
+// the reg entry reg-names gives this name, as the binding lays them out (parf, dbi, elbi, atu,
+// config, ...). A node without reg-names has dbi then config
+static UInt32 regIndex(IOService *provider, const char *name, UInt32 fallback)
+{
+    OSData *names = OSDynamicCast(OSData, provider->getProperty("reg-names"));
+    const char *s = names != NULL ? (const char *)names->getBytesNoCopy() : NULL;
+    unsigned int len = names != NULL ? names->getLength() : 0;
+    UInt32 index = 0;
+
+    if (s == NULL)
+        return fallback;
+    for (unsigned int o = 0; o < len; o += strnlen(s + o, len - o) + 1, index++) {
+        if (strncmp(s + o, name, len - o) == 0)
+            return index;
+    }
+    return ~0U;
+}
+
 bool PDDesignWarePCI::mapConfigSpace(IOService *provider)
 {
-    IODeviceMemory *dbi = provider->getDeviceMemoryWithIndex(0);
-    IODeviceMemory *config = provider->getDeviceMemoryWithIndex(1);
+    IODeviceMemory *dbi = provider->getDeviceMemoryWithIndex(regIndex(provider, "dbi", 0));
+    IODeviceMemory *config = provider->getDeviceMemoryWithIndex(regIndex(provider, "config", 1));
 
     if (!dbi || !config || dbi->getLength() < 0x100 || config->getLength() < CONFIG_SPACE_SIZE) {
         IOLog("PDDesignWarePCI: %s has no usable dbi and config in reg\n", provider->getName());
