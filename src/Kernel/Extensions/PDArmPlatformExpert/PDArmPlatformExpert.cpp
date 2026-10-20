@@ -51,6 +51,7 @@ protected:
 	void startQemuRTC(void);
 	static void publishRTC(thread_call_param_t self, thread_call_param_t);
 	void publishSocNubs(void);
+	void publishBusNubs(IORegistryEntry *bus);
 };
 
 static bool pd_platform_is_bcm283x(void);
@@ -159,7 +160,25 @@ pd_compat_has(OSData *compat, const char *want)
 }
 
 // a board's own devices, imported from its tree by the loader. configure() stops at the root's
-// children and the peripherals sit one level down on a simple-bus
+// children and the peripherals sit on a simple-bus, some on one nested inside it (a qualcomm qup)
+void
+PDArmPlatformExpert::publishBusNubs(IORegistryEntry *bus)
+{
+	OSIterator *iter = bus->getChildIterator(gIODTPlane);
+	IORegistryEntry *child;
+
+	// a nested bus first: the nub made for an entry takes over its place in the tree, and the
+	// entry it replaced is left with no children to publish
+	while (iter != NULL && (child = (IORegistryEntry *)iter->getNextObject()) != NULL) {
+		if (pd_compat_has(OSDynamicCast(OSData, child->getProperty("compatible")), "simple-bus")) {
+			publishBusNubs(child);
+		}
+	}
+	OSSafeReleaseNULL(iter);
+	IOLog("PDArmPlatformExpert: publishing the devices on %s\n", bus->getName(gIODTPlane));
+	createNubs(this, IODTFindMatchingEntries(bus, kIODTExclusive, NULL));
+}
+
 void
 PDArmPlatformExpert::publishSocNubs(void)
 {
@@ -171,8 +190,7 @@ PDArmPlatformExpert::publishSocNubs(void)
 		if (!pd_compat_has(OSDynamicCast(OSData, child->getProperty("compatible")), "simple-bus")) {
 			continue;
 		}
-		IOLog("PDArmPlatformExpert: publishing the devices on %s\n", child->getName(gIODTPlane));
-		createNubs(this, IODTFindMatchingEntries(child, kIODTExclusive, NULL));
+		publishBusNubs(child);
 	}
 	OSSafeReleaseNULL(iter);
 	OSSafeReleaseNULL(root);
