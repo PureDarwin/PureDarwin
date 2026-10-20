@@ -159,8 +159,20 @@ pd_compat_has(OSData *compat, const char *want)
 	return false;
 }
 
+// a node whose children the platform expert publishes. like openbsd's simplebus, the qualcomm
+// wrappers firmware already set up count as buses: a geni qup's serial engines, and the
+// snps,dwc3 core inside a dwc3 wrapper
+static bool
+pd_is_bus(IORegistryEntry *entry)
+{
+	OSData *compat = OSDynamicCast(OSData, entry->getProperty("compatible"));
+
+	return pd_compat_has(compat, "simple-bus") || pd_compat_has(compat, "qcom,geni-se-qup") ||
+	    pd_compat_has(compat, "qcom,dwc3");
+}
+
 // a board's own devices, imported from its tree by the loader. configure() stops at the root's
-// children and the peripherals sit on a simple-bus, some on one nested inside it (a qualcomm qup)
+// children and the peripherals sit on a bus, some on one nested inside it
 void
 PDArmPlatformExpert::publishBusNubs(IORegistryEntry *bus)
 {
@@ -170,7 +182,7 @@ PDArmPlatformExpert::publishBusNubs(IORegistryEntry *bus)
 	// a nested bus first: the nub made for an entry takes over its place in the tree, and the
 	// entry it replaced is left with no children to publish
 	while (iter != NULL && (child = (IORegistryEntry *)iter->getNextObject()) != NULL) {
-		if (pd_compat_has(OSDynamicCast(OSData, child->getProperty("compatible")), "simple-bus")) {
+		if (pd_is_bus(child)) {
 			publishBusNubs(child);
 		}
 	}
@@ -187,7 +199,7 @@ PDArmPlatformExpert::publishSocNubs(void)
 	IORegistryEntry *child;
 
 	while (iter != NULL && (child = (IORegistryEntry *)iter->getNextObject()) != NULL) {
-		if (!pd_compat_has(OSDynamicCast(OSData, child->getProperty("compatible")), "simple-bus")) {
+		if (!pd_is_bus(child)) {
 			continue;
 		}
 		publishBusNubs(child);
