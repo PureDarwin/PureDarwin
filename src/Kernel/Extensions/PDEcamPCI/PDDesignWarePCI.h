@@ -3,8 +3,9 @@
 
 #include "PDEcamPCI.h"
 
-// a DesignWare root port. The port's own config space is its dbi (reg 0) and the one device
-// below it answers in the config window (reg 1). Interrupt routing and windows are PDEcamPCI's.
+// a DesignWare root port. The port's own config space is its dbi and the one device below it
+// answers in the config window, both found by reg-names (else reg 0 and 1). Interrupt routing
+// and windows are PDEcamPCI's.
 class PDDesignWarePCI : public PDEcamPCI
 {
     OSDeclareDefaultStructors(PDDesignWarePCI)
