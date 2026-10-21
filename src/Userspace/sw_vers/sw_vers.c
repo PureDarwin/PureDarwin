@@ -21,21 +21,24 @@ main(int argc, char **argv)
         return 0;
     }
 
-    if (argc == 2) {
-        if (strcmp(argv[1], "-productName") == 0) {
-            printf("%s\n", PRODUCT_NAME);
-            return 0;
-        }
-        if (strcmp(argv[1], "-productVersion") == 0) {
-            printf("%s\n", PRODUCT_VERSION);
-            return 0;
-        }
-        if (strcmp(argv[1], "-buildVersion") == 0) {
-            printf("%s\n", BUILD_VERSION);
-            return 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-productName") != 0 &&
+            strcmp(argv[i], "-productVersion") != 0 &&
+            strcmp(argv[i], "-buildVersion") != 0) {
+            print_usage();
+            return 1;
         }
     }
 
-    print_usage();
-    return 1;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-productName") == 0) {
+            printf("%s\n", PRODUCT_NAME);
+        } else if (strcmp(argv[i], "-productVersion") == 0) {
+            printf("%s\n", PRODUCT_VERSION);
+        } else if (strcmp(argv[i], "-buildVersion") == 0) {
+            printf("%s\n", BUILD_VERSION);
+        }
+    }
+
+    return 0;
 }
