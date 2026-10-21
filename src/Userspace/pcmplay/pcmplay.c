@@ -13,6 +13,7 @@
  * Usage: pcmplay file.pcm     (raw PCM, no header)
  *        cmd | pcmplay -      (stdin)
  */
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,38 +40,54 @@ int main(int argc, char **argv)
     int out = open("/dev/dsp0", O_WRONLY);
     if (out < 0) {
         perror("open /dev/dsp0");
+        if (in != STDIN_FILENO) {
+            close(in);
+        }
         return 1;
     }
 
     unsigned char buf[CHUNK_BYTES];
     long total = 0;
+    int ret = 0;
     for (;;) {
         ssize_t n = read(in, buf, sizeof(buf));
         if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
             perror("read");
+            ret = 1;
             break;
         }
-        if (n == 0)
+        if (n == 0) {
             break;
+        }
 
         ssize_t off = 0;
         while (off < n) {
             ssize_t w = write(out, buf + off, n - off);
             if (w < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
                 perror("write /dev/dsp0");
-                close(in);
-                close(out);
-                return 1;
+                ret = 1;
+                goto done;
             }
             off += w;
         }
         total += n;
     }
 
-    fprintf(stderr, "pcmplay: wrote %ld bytes (%.1f sec)\n",
-            total, (double)total / BYTES_PER_SEC);
+done:
+    if (ret == 0) {
+        fprintf(stderr, "pcmplay: wrote %ld bytes (%.1f sec)\n",
+                total, (double)total / BYTES_PER_SEC);
+    }
 
-    close(in);
+    if (in != STDIN_FILENO) {
+        close(in);
+    }
     close(out);
-    return 0;
+    return ret;
 }
