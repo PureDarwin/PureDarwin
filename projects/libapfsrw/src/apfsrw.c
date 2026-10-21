@@ -886,10 +886,21 @@ int apfsrw_read_root_file(struct apfsrw *fs, const char *path,
     err = lookup_inode(fs, file_id, &file_size);
     if (err != APFSRW_OK)
         return err;
+    if (file_size >= SIZE_MAX)
+        return APFSRW_EOVERFLOW;
+    if (file_size == 0) {
+        data = malloc(1);
+        if (data == NULL)
+            return APFSRW_ENOMEM;
+        data[0] = '\0';
+        *data_out = data;
+        *size_out = 0;
+        return APFSRW_OK;
+    }
     err = lookup_file_extent(fs, file_id, &extent_phys, &extent_len);
     if (err != APFSRW_OK)
         return err;
-    if (file_size > extent_len || file_size >= SIZE_MAX)
+    if (file_size > extent_len)
         return APFSRW_EOVERFLOW;
     data = malloc((size_t)file_size + 1);
     if (data == NULL)

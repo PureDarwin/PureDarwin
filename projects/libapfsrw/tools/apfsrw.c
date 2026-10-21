@@ -41,6 +41,23 @@ int main(int argc, char **argv)
         return 2;
     }
 
+    if (strcmp(argv[1], "info") != 0 &&
+        strcmp(argv[1], "ls") != 0 &&
+        strcmp(argv[1], "cat") != 0) {
+        usage(argv[0]);
+        return 2;
+    }
+
+    if (strcmp(argv[1], "cat") == 0 && argc != 4) {
+        usage(argv[0]);
+        return 2;
+    }
+
+    if ((strcmp(argv[1], "info") == 0 || strcmp(argv[1], "ls") == 0) && argc != 3) {
+        usage(argv[0]);
+        return 2;
+    }
+
     err = open_image(argv[2], &fs);
     if (err != APFSRW_OK)
         return 1;
@@ -73,21 +90,12 @@ int main(int argc, char **argv)
         uint8_t *data = NULL;
         size_t size = 0;
 
-        if (argc != 4) {
-            usage(argv[0]);
-            apfsrw_close(fs);
-            return 2;
-        }
         err = apfsrw_read_root_file(fs, argv[3], &data, &size);
         if (err == APFSRW_OK) {
             if (fwrite(data, 1, size, stdout) != size)
                 err = APFSRW_EIO;
             free(data);
         }
-    } else {
-        usage(argv[0]);
-        apfsrw_close(fs);
-        return 2;
     }
 
     if (err != APFSRW_OK)
