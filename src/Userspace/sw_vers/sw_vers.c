@@ -79,6 +79,16 @@ version_field(const char *key, const char *fallback)
     return (v != NULL && v[0] != '\0') ? v : fallback;
 }
 
+static const char *
+normalize_opt(const char *opt)
+{
+    /* macOS accepts both the historic -opt and the GNU-style --opt form. */
+    if (opt[0] == '-' && opt[1] == '-' && opt[2] != '\0') {
+        return opt + 1;
+    }
+    return opt;
+}
+
 static void
 print_usage(void)
 {
@@ -97,27 +107,26 @@ main(int argc, char **argv)
         return 0;
     }
 
-    if (argc == 2) {
-        /* macOS accepts both the historic -opt and the GNU-style --opt form. */
-        const char *opt = argv[1];
-        if (opt[0] == '-' && opt[1] == '-' && opt[2] != '\0')
-            opt++;
-        argv[1] = (char *)opt;
-
-        if (strcmp(argv[1], "-productName") == 0) {
-            printf("%s\n", version_field("ProductName", PRODUCT_NAME));
-            return 0;
-        }
-        if (strcmp(argv[1], "-productVersion") == 0) {
-            printf("%s\n", version_field("ProductVersion", PRODUCT_VERSION));
-            return 0;
-        }
-        if (strcmp(argv[1], "-buildVersion") == 0) {
-            printf("%s\n", version_field("ProductBuildVersion", BUILD_VERSION));
-            return 0;
+    for (int i = 1; i < argc; i++) {
+        const char *opt = normalize_opt(argv[i]);
+        if (strcmp(opt, "-productName") != 0 &&
+            strcmp(opt, "-productVersion") != 0 &&
+            strcmp(opt, "-buildVersion") != 0) {
+            print_usage();
+            return 1;
         }
     }
 
-    print_usage();
-    return 1;
+    for (int i = 1; i < argc; i++) {
+        const char *opt = normalize_opt(argv[i]);
+        if (strcmp(opt, "-productName") == 0) {
+            printf("%s\n", version_field("ProductName", PRODUCT_NAME));
+        } else if (strcmp(opt, "-productVersion") == 0) {
+            printf("%s\n", version_field("ProductVersion", PRODUCT_VERSION));
+        } else if (strcmp(opt, "-buildVersion") == 0) {
+            printf("%s\n", version_field("ProductBuildVersion", BUILD_VERSION));
+        }
+    }
+
+    return 0;
 }
