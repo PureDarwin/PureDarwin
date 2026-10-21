@@ -43,6 +43,9 @@ main(int argc, char **argv)
 			    event.dx, event.dy, event.wheel);
 			continue;
 		}
+		if (n < 0 && errno == EINTR) {
+			continue;
+		}
 		if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
 			usleep(50000);
 			continue;
