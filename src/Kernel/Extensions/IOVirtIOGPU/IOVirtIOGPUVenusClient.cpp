@@ -357,6 +357,9 @@ IOVirtIOGPUVenusClient::mSubmit(IOExternalMethodArguments *a)
     if (len) {
         bounce = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
             kernel_task, kIODirectionInOut | kIOMemoryPhysicallyContiguous, len, 0xFFFFFFFFULL);
+        // a long-running system has no large contiguous runs left, the queue takes the pieces instead
+        if (!bounce)
+            bounce = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task, kIODirectionInOut, len, 0xFFFFFFFFULL);
         if (!bounce)
             return kIOReturnNoMemory;
         if (ool) {

@@ -15,6 +15,7 @@
 #include "IOVirtIOGPU3DShared.h"
 #include "IOVirtIOGPUUserClient.h"
 #include "IOVirtIOGPUVenusClient.h"
+#include "IOVirtIOGPUDisplay.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/IOPlatformExpert.h>
 #include <kern/thread_call.h>
@@ -391,6 +392,39 @@ IOVirtIOGPU::ctrlWaitLocked(uint64_t *spins, uint64_t limitUs)
 
 // queue one request in a slot, header (+ response) with an optional payload between. sync callers wait for
 // their completion, async ones (fenced submits) return once it is queued and leave the payload to the slot
+// the header, every physical run of the payload and the response, chained in the slot's table, 0 when it does not fit
+unsigned
+IOVirtIOGPU::ctrlFillTable(CtrlSlot *s, IOBufferMemoryDescriptor *payload, uint32_t payloadLen, uint32_t cmdLen,
+                           uint32_t respLen)
+{
+    VRingDesc *t = s->table;
+    unsigned n = 0;
+
+    t[n++] = { s->phys, cmdLen, 0, 0 };
+    for (IOByteCount off = 0; off < payloadLen;) {
+        IOByteCount segLen = 0;
+        addr64_t pa = payload->getPhysicalSegment(off, &segLen, kIOMemoryMapperNone);
+
+        if (!pa || !segLen)
+            return 0;
+        if (segLen > payloadLen - off)
+            segLen = payloadLen - off;
+        if (n > 1 && t[n - 1].addr + t[n - 1].len == pa)
+            t[n - 1].len += (uint32_t)segLen;
+        else if (n == kCtrlTableEntries - 1)
+            return 0;
+        else
+            t[n++] = { pa, (uint32_t)segLen, 0, 0 };
+        off += segLen;
+    }
+    t[n++] = { s->phys + kCtrlRespOffset, respLen, VRING_DESC_F_WRITE, 0 };
+    for (unsigned i = 0; i + 1 < n; i++) {
+        t[i].flags |= VRING_DESC_F_NEXT;
+        t[i].next = (uint16_t)(i + 1);
+    }
+    return n;
+}
+
 bool
 IOVirtIOGPU::ctrlSubmit(const void *cmd, size_t cmdLen, IOBufferMemoryDescriptor *payload,
                         uint32_t payloadLen, void *resp, size_t respLen, bool async,
@@ -420,7 +454,7 @@ IOVirtIOGPU::ctrlSubmit(const void *cmd, size_t cmdLen, IOBufferMemoryDescriptor
                 cand = &fSlots[i];
         }
         // fenced work may not take the last slots, the flush timer and waiters still need them
-        if (cand && (!async || nfree > kCtrlSyncReserve)) {
+        if (cand && (!async || nfree > kCtrlSyncReserve) && fControlQ.numFree >= 3) {
             s = cand;
             break;
         }
@@ -438,12 +472,27 @@ IOVirtIOGPU::ctrlSubmit(const void *cmd, size_t cmdLen, IOBufferMemoryDescriptor
     if (!respLen)
         respLen = sizeof(VGpuCtrlHdr);
 
-    VirtIOChainEntry chain[3];
+    VirtIOChainEntry chain[3] = {};
     unsigned n = 0;
-    chain[n++] = { s->phys, (uint32_t)cmdLen, false };
-    if (payload && payloadLen)
-        chain[n++] = { payload->getPhysicalAddress(), payloadLen, false };
-    chain[n++] = { s->phys + kCtrlRespOffset, (uint32_t)respLen, true };
+    IOByteCount firstLen = 0;
+    addr64_t first = payload && payloadLen ? payload->getPhysicalSegment(0, &firstLen, kIOMemoryMapperNone) : 0;
+
+    chain[n++] = { s->phys, (uint32_t)cmdLen, false, false };
+    if (payload && payloadLen && firstLen >= payloadLen) {
+        chain[n++] = { first, payloadLen, false, false };
+    } else if (payload && payloadLen) {
+        // a payload in pieces goes through the slot's indirect table, one descriptor per physical run
+        unsigned count = s->table ? ctrlFillTable(s, payload, payloadLen, (uint32_t)cmdLen, (uint32_t)respLen) : 0;
+
+        if (!count) {
+            IOLockUnlock(fQueueLock);
+            DEBUG("ctrlSubmit: payload of %u bytes is not contiguous and cannot be split\n", payloadLen);
+            return false;
+        }
+        chain[0] = { s->tablePhys, count * (uint32_t)sizeof(VRingDesc), false, true };
+    }
+    if (!chain[0].indirect)
+        chain[n++] = { s->phys + kCtrlRespOffset, (uint32_t)respLen, true, false };
 
     int head = fTransport.addDescChainFree(&fControlQ, chain, n);
     if (head < 0) {
@@ -517,6 +566,67 @@ IOVirtIOGPU::gpuGetDisplayInfo(uint32_t *outWidth, uint32_t *outHeight)
         }
     }
     return false; // no scanout enabled - caller falls back to a default mode
+}
+
+bool
+IOVirtIOGPU::gpuGetScanouts(uint32_t widths[kMaxDisplays], uint32_t heights[kMaxDisplays])
+{
+    VGpuCtrlHdr req; bzero(&req, sizeof(req));
+    req.type = VIRTIO_GPU_CMD_GET_DISPLAY_INFO;
+
+    VGpuRespDisplayInfo resp; bzero(&resp, sizeof(resp));
+    if (!sendCommand(&req, sizeof(req), &resp, sizeof(resp)) ||
+        resp.hdr.type != VIRTIO_GPU_RESP_OK_DISPLAY_INFO)
+        return false;
+    for (unsigned i = 0; i < kMaxDisplays && i < kMaxScanouts; i++) {
+        bool on = resp.pmodes[i].enabled && resp.pmodes[i].r.width && resp.pmodes[i].r.height;
+
+        widths[i] = on ? resp.pmodes[i].r.width : 0;
+        heights[i] = on ? resp.pmodes[i].r.height : 0;
+    }
+    return true;
+}
+
+// scanout 0 is this framebuffer, every other one the host turns on gets an IOVirtIOGPUDisplay,
+// made once and told about every change after
+void
+IOVirtIOGPU::updateDisplays()
+{
+    uint32_t widths[kMaxDisplays], heights[kMaxDisplays];
+
+    if (fPCIDevice == NULL || !gpuGetScanouts(widths, heights))
+        return;
+    // boot-arg vgpu_heads=N lights scanouts below N at 1280x800 even when the host has them off, a
+    // headless qemu only turns on the outputs a window asks for
+    uint32_t heads = 0;
+    if (PE_parse_boot_argn("vgpu_heads", &heads, sizeof(heads))) {
+        for (unsigned i = 1; i < heads && i < kMaxDisplays; i++) {
+            if (widths[i] == 0) {
+                widths[i] = 1280;
+                heights[i] = 800;
+            }
+        }
+    }
+    for (unsigned i = 1; i < kMaxDisplays; i++) {
+        if (fDisplays[i] != NULL) {
+            fDisplays[i]->hostChanged(widths[i], heights[i]);
+            continue;
+        }
+        if (widths[i] == 0)
+            continue;
+
+        IOVirtIOGPUDisplay *display = IOVirtIOGPUDisplay::withScanout(this, i, widths[i], heights[i]);
+
+        if (display == NULL)
+            continue;
+        if (!display->attach(fPCIDevice) || !display->start(fPCIDevice)) {
+            IOLog("IOVirtIOGPU: display %u did not start\n", i);
+            display->detach(fPCIDevice);
+            display->release();
+            continue;
+        }
+        fDisplays[i] = display;
+    }
 }
 
 bool
@@ -1679,6 +1789,8 @@ IOVirtIOGPU::checkDisplayEvents()
     // modes must leave the bit set for the next tick rather than be swallowed.
     *(volatile uint32_t *)(cfg + kGpuCfgEventsClear) = VIRTIO_GPU_EVENT_DISPLAY;
     OSSynchronizeIO();
+    // the other scanouts first, scanout 0 may be the one that went away
+    updateDisplays();
 
     uint32_t width = 0, height = 0;
     if (!gpuGetDisplayInfo(&width, &height)) {
@@ -1806,7 +1918,7 @@ IOVirtIOGPU::start(IOService *provider)
     // still gets a clean 2D bring-up with driver features 0.
     uint32_t devFeat = fTransport.deviceFeaturesLow();
     uint32_t drvFeat = devFeat & (VIRTIO_GPU_F_VIRGL | VIRTIO_GPU_F_RESOURCE_BLOB |
-                                  VIRTIO_GPU_F_CONTEXT_INIT);
+                                  VIRTIO_GPU_F_CONTEXT_INIT | VIRTIO_RING_F_INDIRECT_DESC);
     if (!fTransport.negotiateFeatures(drvFeat)) {
         DEBUG("device rejected feature negotiation\n");
         return false;
@@ -1844,6 +1956,16 @@ IOVirtIOGPU::start(IOService *provider)
         s->phys = s->mem->getPhysicalAddress();
         bzero(s->virt, kCtrlSlotBytes);
         s->state = kSlotFree;
+        // taken while memory is unfragmented, so later submits never need a large contiguous run
+        if (fFeatures & VIRTIO_RING_F_INDIRECT_DESC) {
+            s->tableMem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+                kernel_task, kIODirectionInOut | kIOMemoryPhysicallyContiguous,
+                kCtrlTableEntries * sizeof(VRingDesc), 0xFFFFFFFFULL);
+            if (s->tableMem) {
+                s->table = (VRingDesc *)s->tableMem->getBytesNoCopy();
+                s->tablePhys = s->tableMem->getPhysicalAddress();
+            }
+        }
     }
 
     if (!setupInterrupt())
@@ -1941,12 +2063,17 @@ IOVirtIOGPU::start(IOService *provider)
         scheduleFlush();
 
     registerService();
+    updateDisplays();
     return true;
 }
 
 void
 IOVirtIOGPU::stop(IOService *provider)
 {
+    for (unsigned i = 0; i < kMaxDisplays; i++) {
+        if (fDisplays[i] != NULL)
+            fDisplays[i]->gpuGone();
+    }
     DEBUG("stop %p\n", provider);
 
     // Leaving the console parked would take the machine's last output path
@@ -1970,6 +2097,7 @@ IOVirtIOGPU::stop(IOService *provider)
     for (unsigned i = 0; i < fSlotCount; i++) {
         if (fSlots[i].payload) { fSlots[i].payload->release(); fSlots[i].payload = NULL; }
         if (fSlots[i].mem) { fSlots[i].mem->release(); fSlots[i].mem = NULL; }
+        if (fSlots[i].tableMem) { fSlots[i].tableMem->release(); fSlots[i].tableMem = NULL; fSlots[i].table = NULL; }
     }
     fSlotCount = 0;
     // clients are gone by now, so whatever is left is only exports nobody dropped

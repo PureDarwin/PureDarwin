@@ -16,9 +16,13 @@
 #include <IOKit/pci/IOPCIDevice.h>
 #include "IOVirtIOTransport.h"
 
+class IOVirtIOGPUDisplay;
+
 class IOVirtIOGPU : public IOFramebuffer
 {
     OSDeclareDefaultStructors(IOVirtIOGPU);
+    // the scanouts past the first are framebuffers of their own, they send 2D commands through this one
+    friend class IOVirtIOGPUDisplay;
 
 private:
     IOPCIDevice      *fPCIDevice;
@@ -29,13 +33,16 @@ private:
 
     // control queue slots of one page, request at 0 and response at kCtrlRespOffset. fenced submits stay in
     // flight until the host retires the fence, so completions come back out of order, matched by head
-    enum { kCtrlSlots = 32, kCtrlSlotBytes = 4096, kCtrlRespOffset = 2048, kCtrlSyncReserve = 4 };
+    enum { kCtrlSlots = 32, kCtrlSlotBytes = 4096, kCtrlRespOffset = 2048, kCtrlSyncReserve = 4, kCtrlTableEntries = 2050 };
     enum { kSlotFree = 0, kSlotBusy, kSlotDone, kSlotOrphan };
     struct CtrlSlot {
         IOBufferMemoryDescriptor *mem;
         uint8_t  *virt;
         uint64_t  phys;
         IOBufferMemoryDescriptor *payload;  // submit stream, released once the device returns it
+        IOBufferMemoryDescriptor *tableMem; // indirect descriptors for a payload in pieces
+        VRingDesc *table;
+        uint64_t  tablePhys;
         uint64_t  fenceId;                  // async slots only
         uint16_t  head;
         uint8_t   state;
@@ -159,6 +166,12 @@ private:
     bool     sendCursorCommand(const void *cmd, size_t cmdLen);
 
     bool     gpuGetDisplayInfo(uint32_t *outWidth, uint32_t *outHeight);
+    // every scanout's size, 0x0 where the host has it off
+    enum { kMaxDisplays = 16 };
+    bool     gpuGetScanouts(uint32_t widths[kMaxDisplays], uint32_t heights[kMaxDisplays]);
+    IOVirtIOGPUDisplay *fDisplays[kMaxDisplays];
+    // a framebuffer for every scanout past the first the host has on, and news of the rest
+    void     updateDisplays();
     bool     gpuCreateResource2D(uint32_t resourceId, uint32_t width, uint32_t height);
     bool     gpuSetScanout(uint32_t scanoutId, uint32_t resourceId, uint32_t width, uint32_t height);
     bool     gpuTransferToHost2D(uint32_t resourceId, uint32_t x, uint32_t y,
@@ -220,6 +233,8 @@ public:
     bool     gpuMapBlob(uint32_t resId, uint64_t offset, uint32_t *outMapInfo);
     bool     gpuUnmapBlob(uint32_t resId);
     // cmd may be NULL for an empty stream. with a fence the call returns once queued
+    unsigned ctrlFillTable(CtrlSlot *s, IOBufferMemoryDescriptor *payload, uint32_t payloadLen, uint32_t cmdLen,
+                           uint32_t respLen);
     bool     gpuSubmitRing(uint32_t ctxId, bool useRing, uint32_t ring, IOBufferMemoryDescriptor *cmd,
                            uint32_t cmdLen, uint64_t fenceId);
     bool     fenceRetired(uint64_t fenceId);

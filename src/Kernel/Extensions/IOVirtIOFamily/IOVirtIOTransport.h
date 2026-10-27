@@ -36,7 +36,8 @@ struct VRingDesc {
     uint16_t flags;
     uint16_t next;
 };
-enum { VRING_DESC_F_NEXT = 1, VRING_DESC_F_WRITE = 2 };
+enum { VRING_DESC_F_NEXT = 1, VRING_DESC_F_WRITE = 2, VRING_DESC_F_INDIRECT = 4 };
+enum { VIRTIO_RING_F_INDIRECT_DESC = 1u << 28 };
 
 struct VRingAvailHdr { uint16_t flags; uint16_t idx; };
 struct VRingUsedHdr  { uint16_t flags; uint16_t idx; };
@@ -49,6 +50,8 @@ struct VirtIOChainEntry {
     uint64_t addr;
     uint32_t len;
     bool     write;
+    // addr/len name a table of VRingDesc the device reads the chain from
+    bool     indirect;
 };
 
 enum {

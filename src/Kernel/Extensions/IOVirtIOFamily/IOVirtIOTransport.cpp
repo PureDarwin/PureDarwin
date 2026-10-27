@@ -360,6 +360,8 @@ IOVirtIOTransport::addDescChain(VirtQueue *vq, const VirtIOChainEntry *entries, 
         desc[d].addr  = entries[i].addr;
         desc[d].len   = entries[i].len;
         desc[d].flags = entries[i].write ? VRING_DESC_F_WRITE : 0;
+        if (entries[i].indirect)
+            desc[d].flags |= VRING_DESC_F_INDIRECT;
         if (i + 1 < count) {
             desc[d].flags |= VRING_DESC_F_NEXT;
             desc[d].next = (uint16_t)((vq->nextFreeDesc + i + 1) % vq->queueSize);
@@ -461,6 +463,8 @@ IOVirtIOTransport::addDescChainFree(VirtQueue *vq, const VirtIOChainEntry *entri
         desc[d].addr  = entries[i].addr;
         desc[d].len   = entries[i].len;
         desc[d].flags = entries[i].write ? VRING_DESC_F_WRITE : 0;
+        if (entries[i].indirect)
+            desc[d].flags |= VRING_DESC_F_INDIRECT;
         if (i + 1 < count)
             desc[d].flags |= VRING_DESC_F_NEXT;
         else

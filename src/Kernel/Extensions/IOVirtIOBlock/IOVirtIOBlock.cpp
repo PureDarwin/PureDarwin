@@ -305,7 +305,7 @@ IOVirtIOBlock::submitOne(uint32_t type, uint64_t sector,
                       IOMemoryDescriptor *buffer, UInt64 offset, UInt64 length,
                       bool deviceWrites)
 {
-    VirtIOChainEntry entries[kMaxDataDesc + 2];
+    VirtIOChainEntry entries[kMaxDataDesc + 2] = {};
     unsigned count = 0;
 
     fReqHdr->type     = OSSwapHostToLittleInt32(type);

@@ -8,6 +8,7 @@ set_property(TARGET IOVirtIOGPU.kext PROPERTY OUTPUT_NAME IOVirtIOGPU)
 
 target_sources(IOVirtIOGPU.kext PRIVATE
     IOVirtIOGPU.cpp
+    IOVirtIOGPUDisplay.cpp
     IOVirtIOGPUUserClient.cpp
     IOVirtIOGPUSurfaceClient.cpp
     IOVirtIOGPUVenusClient.cpp
