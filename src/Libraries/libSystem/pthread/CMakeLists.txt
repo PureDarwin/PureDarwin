@@ -3,6 +3,9 @@ target_include_directories(pthread_common_headers INTERFACE ${CMAKE_CURRENT_SOUR
 
 add_library(pthread_common_private_headers INTERFACE)
 target_include_directories(pthread_common_private_headers INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/private)
+if(PUREDARWIN_KEXTS_ONLY)
+    return()
+endif()
 
 add_darwin_static_library(pthread_static)
 set_target_properties(pthread_static PROPERTIES EXCLUDE_FROM_ALL TRUE)

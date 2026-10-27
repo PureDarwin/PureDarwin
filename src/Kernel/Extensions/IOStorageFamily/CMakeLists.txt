@@ -1,3 +1,11 @@
+add_library(IOStorageFamilyHeaders INTERFACE)
+target_include_directories(IOStorageFamilyHeaders INTERFACE include)
+
+# a dependent kext's own build configures only the headers above
+if(PUREDARWIN_KEXT_HEADERS_ONLY)
+    return()
+endif()
+
 add_kext_bundle(IOStorageFamily INFO_PLIST Info.plist KERNEL_PRIVATE
     BUNDLE_IDENTIFIER com.apple.iokit.IOStorageFamily BUNDLE_VERSION 2.1)
 
@@ -29,10 +37,6 @@ install(TARGETS IOStorageFamily DESTINATION System/Library/Extensions COMPONENT 
 # add_bundle_iconset(IOStorageFamily IconResources/Internal.iconset)
 # add_bundle_iconset(IOStorageFamily IconResources/Removable.iconset)
 # add_bundle_resources(IOStorageFamily en.lproj/InfoPlist.strings)
-
-
-add_library(IOStorageFamilyHeaders INTERFACE)
-target_include_directories(IOStorageFamilyHeaders INTERFACE include)
 
 
 add_darwin_object_library(IOStorageFamilyUserHeaders)

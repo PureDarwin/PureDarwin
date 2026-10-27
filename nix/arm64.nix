@@ -20,6 +20,9 @@
 , iokitCFStaticBuild
 , kernelSource
 , kextsSource
+, kextsOnlySource
+, kextsOnlyArgs
+, xnuHeadersArm64Build
 , launchctlBuild
 , launchdBuild
 , libSystemBuild
@@ -3059,9 +3062,9 @@ let
       "-DPUREDARWIN_KERNEL_COMPILER_RT=${compilerRtArmv6Build}/lib/libcompiler_rt.a"
     ];
   };
-  kextsArm64Build = mkPureDarwinBuild {
+  kextsArm64Build = mkPureDarwinBuild ({
     pname = "puredarwin-kexts-arm64";
-    src = kextsSource;
+    src = kextsOnlySource;
     buildTargets = [
       "IOPCIFamily" "IOStorageFamily" "IOCDStorageFamily.kext"
       "IODVDStorageFamily.kext" "IOBDStorageFamily.kext" "IOVirtIOFamily.kext"
@@ -3115,7 +3118,7 @@ let
     enableIOGraphicsFamily = true;
     puredarwinArch = "arm64";
     inherit arm64CrossToolchain;
-  };
+  } // kextsOnlyArgs xnuHeadersArm64Build);
   # ARM64 minimal mirrors the x86 minimal split: native libSystem,
   # launchd/launchctl, and the CLI userland are present alongside the
   # ARM64 kernel and kexts. Keep the kernel payload separate so this

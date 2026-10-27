@@ -148,6 +148,13 @@ if(NOT PUREDARWIN_XNU_KERNEL_CONFIG MATCHES "^(RELEASE|DEVELOPMENT|DEBUG|KASAN)$
 endif()
 
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install)
+# a prebuilt header install goes where the in-tree one would, so kexts see the same paths
+set(PUREDARWIN_PREBUILT_XNU_HEADERS "" CACHE PATH "Prebuilt xnu header install to use instead of building it")
+if(PUREDARWIN_PREBUILT_XNU_HEADERS)
+    file(COPY ${PUREDARWIN_PREBUILT_XNU_HEADERS}/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install
+        NO_SOURCE_PERMISSIONS)
+    add_custom_target(xnu_headers.extproj)
+else()
 externalproject_add(xnu_headers.extproj
     PREFIX ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_build
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}
@@ -195,6 +202,7 @@ endif()
 if(_xnu_build_darwin_host_tools)
     add_dependencies(xnu_headers.extproj ${_xnu_darwin_host_tools})
 endif()
+endif()
 
 add_library(xnu_headers INTERFACE)
 add_dependencies(xnu_headers xnu_headers.extproj)
@@ -220,6 +228,11 @@ add_dependencies(xnu_kernel_private_headers xnu_headers.extproj)
 target_include_directories(xnu_kernel_private_headers INTERFACE
     ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install/System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders
 )
+
+# a kexts-only build has no kernel to build or install
+if(PUREDARWIN_KEXTS_ONLY)
+    return()
+endif()
 
 externalproject_add(xnu
     PREFIX ${CMAKE_CURRENT_BINARY_DIR}/xnu_build

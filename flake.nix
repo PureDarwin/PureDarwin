@@ -44,6 +44,9 @@
             kernelSource
             libSystemSource
             kextsSource
+            xnuHeadersSource
+            kextsOnlyFiles
+            kextsOnlySource
             userlandSource
             fbdoomSource
             cctoolsSource
@@ -4062,6 +4065,7 @@
           # focused on the x86 build and the shared plumbing both arches use.
           arm64 = import ./nix/arm64.nix {
             inherit lib pkgs isDarwin;
+            inherit kextsOnlySource xnuHeadersArm64Build kextsOnlyArgs;
             inherit arm64CrossToolchain;
             inherit armv6CrossToolchain;
             inherit coreFoundationBuild;
@@ -4666,25 +4670,144 @@
             installKernel = true;
             xnuKernelConfig = "DEBUG";
           };
-          xnuHeadersBuild = mkPureDarwinBuild {
+          # the kasan and kcov denylists name .c files the headers source leaves out
+          xnuHeadersPostPatch = old: {
+            postPatch = (old.postPatch or "") + ''
+              printf '#!/bin/sh\nexit 0\n' > src/Kernel/xnu/san/tools/validate_denylist.sh
+            '';
+          };
+          xnuHeadersBuild = (mkPureDarwinBuild {
             pname = "puredarwin-xnu-headers";
-            src = kernelSource;
+            src = xnuHeadersSource;
             buildTargets = [ "xnu_headers.extproj" ];
             enableUserspace = false;
             installUserland = false;
             installKernel = false;
             installXnuHeaders = true;
             xnuKernelConfig = "RELEASE";
-          };
-          kextsBuild = mkPureDarwinBuild {
-            pname = "puredarwin-kexts";
-            src = kextsSource;
-            buildTargets = [ "kexts" ];
+          }).overrideAttrs xnuHeadersPostPatch;
+          xnuHeadersArm64Build = (mkPureDarwinBuild {
+            pname = "puredarwin-xnu-headers-arm64";
+            src = xnuHeadersSource;
+            buildTargets = [ "xnu_headers.extproj" ];
             enableUserspace = false;
             installUserland = false;
             installKernel = false;
-            installKexts = true;
-            enableIOGraphicsFamily = true;
+            installXnuHeaders = true;
+            xnuKernelConfig = "RELEASE";
+            puredarwinArch = "arm64";
+            inherit arm64CrossToolchain;
+          }).overrideAttrs xnuHeadersPostPatch;
+          # kext builds configure only the kexts and take the xnu headers prebuilt
+          kextsOnlyArgs = xnuHeaders: {
+            enableTools = false;
+            extraCmakeFlags = [
+              "-DPUREDARWIN_KEXTS_ONLY=ON"
+              "-DPUREDARWIN_PREBUILT_XNU_HEADERS=${xnuHeaders}"
+            ];
+          };
+          # the kexts nix/lib/kexts.nix gives an arch, one derivation per kext directory,
+          # each from that directory, the header dirs it includes and the kext-only root project
+          kextList = import ./nix/lib/kexts.nix;
+          kextsFor = arch: builtins.filter (k: builtins.elem arch k.arches) kextList;
+          kextDirSource = arch: dir:
+            let
+              fs = lib.fileset;
+              ext = d: ./src/Kernel/Extensions + "/${d}";
+              own = builtins.filter (k: k.dir == dir) (kextsFor arch);
+              # kext dirs nested in this one belong to their own derivations
+              nested = lib.unique (builtins.filter (d: lib.hasPrefix "${dir}/" d) (map (k: k.dir) kextList));
+              depsOf = d: lib.concatMap (k: k.headers or [ ]) (builtins.filter (k: k.dir == d) kextList);
+              headerDirs = map (x: x.key) (builtins.genericClosure {
+                startSet = map (d: { key = d; }) (lib.concatMap (k: k.headers or [ ]) own);
+                operator = x: map (d: { key = d; }) (depsOf x.key);
+              });
+              # a family with header targets brings its CMakeLists.txt, which stops after them
+              headerFiles = d: fs.unions ([
+                (fs.fileFilter (f: f.hasExt "h" || f.hasExt "hpp" || f.hasExt "inc" || f.hasExt "def") (ext d))
+              ] ++ lib.optional (builtins.any (k: k.dir == d && (k.headerTargets or false)) kextList)
+                (ext "${d}/CMakeLists.txt"));
+            in
+            fs.toSource {
+              root = ./.;
+              fileset = fs.unions ([
+                kextsOnlyFiles
+                ./src/Kernel/Extensions/CMakeLists.txt
+                (if nested == [ ] then ext dir else fs.difference (ext dir) (fs.unions (map ext nested)))
+              ] ++ map headerFiles (lib.subtractLists [ dir ] headerDirs)
+                ++ map (x: ./. + "/${x}") (lib.unique (lib.concatMap (k: k.extra or [ ]) own)));
+            };
+          # the slice configures only the dirs it has, and dirs that are not its own only define headers
+          kextPostPatch = dir: ''
+            cat - src/Kernel/Extensions/CMakeLists.txt > CMakeLists.kext <<'EOF'
+            set(_pd_kext_dir "${dir}")
+            macro(add_subdirectory _pd_dir)
+                set(_pd_subdir "''${_pd_dir}")
+                if(NOT IS_ABSOLUTE "''${_pd_subdir}")
+                    set(_pd_subdir "''${CMAKE_CURRENT_SOURCE_DIR}/''${_pd_subdir}")
+                endif()
+                if(EXISTS "''${_pd_subdir}/CMakeLists.txt")
+                    file(RELATIVE_PATH _pd_rel "''${CMAKE_SOURCE_DIR}/src/Kernel/Extensions" "''${_pd_subdir}")
+                    set(_pd_headers_only "''${PUREDARWIN_KEXT_HEADERS_ONLY}")
+                    if(_pd_rel MATCHES "^[.][.]/" OR _pd_rel STREQUAL _pd_kext_dir)
+                        set(PUREDARWIN_KEXT_HEADERS_ONLY OFF)
+                    else()
+                        set(PUREDARWIN_KEXT_HEADERS_ONLY ON)
+                    endif()
+                    _add_subdirectory(''${ARGV})
+                    set(PUREDARWIN_KEXT_HEADERS_ONLY "''${_pd_headers_only}")
+                endif()
+            endmacro()
+            # drop ordering on kexts outside the slice
+            macro(add_dependencies _pd_target)
+                if(NOT "''${_pd_target}" STREQUAL "kexts")
+                    set(_pd_deps)
+                    foreach(_pd_dep ''${ARGN})
+                        if(TARGET "''${_pd_dep}" OR NOT CMAKE_CURRENT_SOURCE_DIR MATCHES "/src/Kernel/Extensions(/|$)")
+                            list(APPEND _pd_deps "''${_pd_dep}")
+                        endif()
+                    endforeach()
+                    if(_pd_deps)
+                        _add_dependencies("''${_pd_target}" ''${_pd_deps})
+                    endif()
+                endif()
+            endmacro()
+            EOF
+            mv CMakeLists.kext src/Kernel/Extensions/CMakeLists.txt
+          '';
+          mkKext = arch: xnuHeaders: dir:
+            let
+              own = builtins.filter (k: k.dir == dir) (kextsFor arch);
+              built = builtins.filter (k: !(builtins.elem arch (k.plistOnly or [ ]))) own;
+            in
+            (mkPureDarwinBuild ({
+              pname = "puredarwin-kext-${lib.toLower (lib.removeSuffix ".kext" (builtins.head own).name)}";
+              src = kextDirSource arch dir;
+              # a plist-only kext is just configured, build.ninja is already up to date
+              buildTargets = if built == [ ] then [ "build.ninja" ] else map (k: k.target or k.name) built;
+              enableUserspace = false;
+              installUserland = false;
+              installKernel = false;
+              installKexts = true;
+              installKextNames = map (k: k.name) own;
+              enableIOGraphicsFamily = true;
+            } // lib.optionalAttrs (arch != "x86_64") {
+              puredarwinArch = arch;
+              inherit arm64CrossToolchain;
+            } // kextsOnlyArgs xnuHeaders)).overrideAttrs (old: {
+              postPatch = (old.postPatch or "") + kextPostPatch dir;
+            });
+          kextDirs = arch: lib.unique (map (k: k.dir) (kextsFor arch));
+          kextBuilds = lib.genAttrs (kextDirs "x86_64") (mkKext "x86_64" xnuHeadersBuild);
+          # one tree as before, with the links replaced by copies, since the base system splits cp -a it into images
+          kextsBuild = pkgs.symlinkJoin {
+            name = "puredarwin-kexts-0.1";
+            paths = builtins.attrValues kextBuilds;
+            postBuild = ''
+              find $out -type l | while read -r f; do
+                cp --remove-destination "$(readlink -f "$f")" "$f"
+              done
+            '';
           };
           # FreeBSD's drm-kmod (Linux 6.14 DRM and amdgpu on LinuxKPI), with the
           # files PureDarwin leaves out removed and its small patch applied
@@ -4873,7 +4996,7 @@
               xclockBuild xeyesBuild thunarBuild xfce4AppfinderBuild xfce4PanelBuild xfce4SessionBuild
               xfce4SettingsBuild xfce4TerminalBuild xfconfBuild xfdesktopBuild xfwm4Build xinitBuild
               xkbcommonBuild xkbcompBuild xkeyboardConfigBuild xlibBuild xlibLocaleBuild xmessageBuild
-              xnu-loader xnuHeadersBuild xorgBuild xwaylandBuild xrdbBuild xrandrBuild xtermBuild xvfbBuild xvfbFontsBuild xvfbPixmanBuild
+              xnu-loader xnuHeadersBuild xnuHeadersArm64Build xorgBuild xwaylandBuild xrdbBuild xrandrBuild xtermBuild xvfbBuild xvfbFontsBuild xvfbPixmanBuild
               xvfbLibICEBuild xvfbLibSMBuild xvfbLibXauBuild xvfbLibXcompositeBuild xvfbLibXcursorBuild
               xvfbLibXdamageBuild xvfbLibXdmcpBuild xvfbLibXextBuild xvfbLibXfixesBuild
               xvfbLibXineramaBuild xvfbLibXkbfileBuild xvfbLibXpresentBuild xvfbLibXrandrBuild

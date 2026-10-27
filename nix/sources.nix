@@ -25,7 +25,8 @@ let
       inherit src;
       filter = path: type:
         let
-          rel = pkgs.lib.removePrefix "${toString src}/" (toString path);
+          # nested filters are handed paths under the original root, so strip that prefix
+          rel = pkgs.lib.removePrefix "${toString src.origSrc}/" (toString path);
           isOsfmkImpl =
             type == "regular"
             && pkgs.lib.hasPrefix "src/Kernel/xnu/osfmk/" rel
@@ -76,6 +77,57 @@ let
     "src/Libraries"
     "tools"
   ];
+  fs = pkgs.lib.fileset;
+  headersIn = dir: fs.fileFilter (f: f.hasExt "h") dir;
+  # xnu without the .c, .cpp and .s files its header install never reads
+  xnuHeaderTree = fs.difference ../src/Kernel/xnu (fs.unions (map
+    (d: fs.fileFilter (f: f.hasExt "c" || f.hasExt "cpp" || f.hasExt "s") (../src/Kernel/xnu + "/${d}"))
+    [ "osfmk" "bsd" "iokit" "libkern" "libsa" "pexpert" "security" "san" ]));
+  # what xnu_headers.extproj reads, so a kernel .c edit leaves the headers alone
+  xnuHeadersSource = fs.toSource {
+    root = ../.;
+    fileset = fs.unions [
+      ../CMakeLists.txt
+      ../src/CMakeLists.txt
+      ../cmake
+      ../tools
+      ../src/Kernel/CMakeLists.txt
+      xnuHeaderTree
+      ../src/Kernel/libfirehose_kernel
+      ../src/Libraries/CMakeLists.txt
+      ../src/Libraries/AvailabilityVersions
+      ../src/Libraries/libSystem/CMakeLists.txt
+      ../src/Libraries/libSystem/libplatform
+      ../src/Libraries/libSystem/pthread
+    ];
+  };
+  # the kexts with PUREDARWIN_KEXTS_ONLY and prebuilt xnu headers: xnu and the libraries as headers only
+  kextsOnlyFiles = fs.unions [
+    ../CMakeLists.txt
+    ../src/CMakeLists.txt
+    ../cmake
+    ../src/Kernel/CMakeLists.txt
+    ../src/Kernel/libkmod
+    ../src/Kernel/xnu/CMakeLists.txt
+    ../src/Kernel/xnu/EXTERNAL_HEADERS
+    (headersIn ../src/Kernel/xnu)
+    ../src/Libraries/CMakeLists.txt
+    ../src/Libraries/AvailabilityVersions
+    ../src/Libraries/libSystem/pthread/CMakeLists.txt
+    ../src/Libraries/libSystem/pthread/include
+    ../src/Libraries/libSystem/pthread/private
+  ];
+  kextsOnlySource = fs.toSource {
+    root = ../.;
+    fileset = fs.unions [
+      kextsOnlyFiles
+      ../projects
+      ../src/Kernel/Extensions
+      ../src/Kernel/fbsdkpi
+      (headersIn ../src/Libraries/libsandbox)
+      ../src/Libraries/PDSurface/include
+    ];
+  };
   userlandSource = stripOsfmkImpl (sourceWith "puredarwin-userland-source" [
     # nohup detaches from the console session through _vprocmgr_detach_from_console;
     # vproc_priv.h is private and not in the SDK.
@@ -128,6 +180,11 @@ let
     "src/Kernel/xnu/bsd/uuid"
     "src/Kernel/xnu/bsd/kern/makesyscalls.sh"
     "src/Kernel/xnu/bsd/kern/syscalls.master"
+    # IOKit.framework, which PDGOP links
+    "src/Kernel/xnu/iokit"
+    "src/Kernel/Extensions/IOHIDFamily/include"
+    "src/Kernel/Extensions/IOHIDFamily/IOHIDFamily"
+    "src/Kernel/Extensions/IOHIDFamily/IOHIDSystem/IOKit"
     "src/Libraries"
     "src/Libraries/libSystem/libmalloc/compat-include"
     "src/Userspace"
@@ -332,6 +389,9 @@ in {
     kernelSource
     libSystemSource
     kextsSource
+    xnuHeadersSource
+    kextsOnlyFiles
+    kextsOnlySource
     userlandSource
     fbdoomSource
     cctoolsSource

@@ -141,6 +141,15 @@ stdenv.mkDerivation ({
     # xnu defaults HOST_GM4 to the system gm4, which aborts on CoreFoundation's
     # fork-without-exec guard when flex forks it. Use nixpkgs m4, as Linux does.
     export HOST_GM4=${m4}/bin/m4
+  '' + lib.optionalString (installKernel || installKexts) ''
+    # keep the build directory out of kernel and kext binaries
+    prefixMap="-ffile-prefix-map=$NIX_BUILD_TOP=/puredarwin -fdebug-prefix-map=$NIX_BUILD_TOP=/puredarwin"
+    export CFLAGS="$prefixMap" CXXFLAGS="$prefixMap" OBJCFLAGS="$prefixMap" ASMFLAGS="$prefixMap"
+    # xnu's MakeInc.def tests RC_NONARCH_CFLAGS but reads the misspelt RC_NONARCH_CLFAGS
+    export RC_NONARCH_CFLAGS="$prefixMap" RC_NONARCH_CLFAGS="$prefixMap"
+    # ld64 writes each .o mtime into the N_OSO entries unless this is set,
+    # and -oso_prefix in the cmake flags drops the source root from their paths
+    export ZERO_AR_DATE=1
   '' + ''
 
     if [ -e src/Kernel/xnu/Makefile ]; then
@@ -211,6 +220,7 @@ EOF
       -DPUREDARWIN_TCC_SOURCE=${tinycc.src} \
       ${lib.optionalString (xorgDriverIncludes != null) "-DPUREDARWIN_XORG_INCLUDE_DIRS=${lib.escapeShellArg (lib.concatStringsSep ";" xorgDriverIncludes)}"} \
       ${lib.optionalString (prebuiltLibSystem != null) "-DPUREDARWIN_PREBUILT_LIBSYSTEM_ROOT=${prebuiltLibSystem}"} \
+      ${lib.optionalString (installKernel || installKexts) ''"-DCMAKE_MODULE_LINKER_FLAGS=-Wl,-oso_prefix,$PWD/"''} \
       ${lib.concatStringsSep " \\\n      " extraCmakeFlags}
     runHook postConfigure
   '';
@@ -316,6 +326,7 @@ EOF
     if [ -e build-nix/src/Libraries/IOKit/libIOKitCF.a ]; then
       cp build-nix/src/Libraries/IOKit/libIOKitCF.a $out/usr/lib/system/
     fi
+
     cp build-nix/src/Libraries/dyld/dyld $out/usr/lib/
 
     if [ -e build-nix/src/Libraries/XPC/launchd/launchd_real ]; then

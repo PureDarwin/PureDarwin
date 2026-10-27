@@ -8,6 +8,10 @@ project(PUREDARWIN)
 # frontend available project-wide.
 enable_language(OBJC)
 
+# kexts only: no libraries, userspace or generated framework headers
+option(PUREDARWIN_KEXTS_ONLY "Configure only what the kexts need" OFF)
+
+if(NOT PUREDARWIN_KEXTS_ONLY)
 file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/generated-headers/objc)
 file(GLOB _pd_objc4_headers ${CMAKE_SOURCE_DIR}/src/Libraries/objc4/runtime/*.h)
 foreach(_pd_h ${_pd_objc4_headers})
@@ -53,6 +57,7 @@ foreach(_pd_h ${_pd_cf_headers})
     file(CREATE_LINK ${_pd_h} ${CMAKE_BINARY_DIR}/generated-headers/CoreFoundation/${_pd_name} SYMBOLIC)
   endif()
 endforeach()
+endif()
 
 if((NOT CMAKE_C_COMPILER_ID MATCHES "AppleClang") AND (NOT CMAKE_C_COMPILER_ID MATCHES "Clang"))
     message(FATAL_ERROR "PureDarwin must be compiled with clang.")

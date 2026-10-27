@@ -1,3 +1,18 @@
+add_library(IOUSBFamilyHeaders INTERFACE)
+target_include_directories(IOUSBFamilyHeaders INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/IOKit/usb
+)
+
+add_subdirectory(IOUSBCompositeDriver)
+add_subdirectory(AppleUSBMergeNub)
+add_subdirectory(IOUSBHIDDriver)
+
+# a dependent kext's own build configures only the headers above
+if(PUREDARWIN_KEXT_HEADERS_ONLY)
+    return()
+endif()
+
 add_kext_bundle(IOUSBFamily KERNEL_PRIVATE INFO_PLIST Info.plist
     BUNDLE_IDENTIFIER org.puredarwin.iokit.IOUSBFamily BUNDLE_VERSION 1.0.0)
 
@@ -21,16 +36,6 @@ target_include_directories(IOUSBFamily PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../IOStorageFamily/include)
 target_link_libraries(IOUSBFamily PRIVATE IOUSBFamilyHeaders)
 install(TARGETS IOUSBFamily DESTINATION System/Library/Extensions COMPONENT BaseSystem)
-
-add_library(IOUSBFamilyHeaders INTERFACE)
-target_include_directories(IOUSBFamilyHeaders INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/IOKit/usb
-)
-
-add_subdirectory(IOUSBCompositeDriver)
-add_subdirectory(AppleUSBMergeNub)
-add_subdirectory(IOUSBHIDDriver)
 
 add_kext_bundle(AppleUSBEHCI.kext KERNEL_PRIVATE INFO_PLIST AppleUSBEHCI/Info.plist
     BUNDLE_IDENTIFIER com.apple.driver.AppleUSBEHCI BUNDLE_VERSION 4.1.5)

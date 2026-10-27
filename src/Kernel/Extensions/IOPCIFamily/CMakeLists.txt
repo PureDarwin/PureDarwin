@@ -1,3 +1,14 @@
+add_library(IOPCIFamilyHeaders INTERFACE)
+target_include_directories(IOPCIFamilyHeaders INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+add_subdirectory(ApplePIODMA)
+
+# a dependent kext's own build configures only the headers above
+if(PUREDARWIN_KEXT_HEADERS_ONLY)
+    return()
+endif()
+
 add_kext_bundle(IOPCIFamily KERNEL_PRIVATE INFO_PLIST Info.plist BUNDLE_IDENTIFIER com.apple.iokit.IOPCIFamily BUNDLE_VERSION 2.4.1)
 target_sources(IOPCIFamily PRIVATE
     IOPCIBridge.cpp
@@ -16,9 +27,3 @@ if(PUREDARWIN_ARCH STREQUAL "x86_64")
     target_link_libraries(IOPCIFamily PRIVATE IOACPIFamilyHeaders)
 endif()
 install(TARGETS IOPCIFamily DESTINATION System/Library/Extensions COMPONENT BaseSystem)
-
-add_library(IOPCIFamilyHeaders INTERFACE)
-target_include_directories(IOPCIFamilyHeaders INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-add_subdirectory(ApplePIODMA)

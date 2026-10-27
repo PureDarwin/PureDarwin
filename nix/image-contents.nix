@@ -299,6 +299,7 @@
 , xmessageBuild
 , xnu-loader
 , xnuHeadersBuild
+, xnuHeadersArm64Build
 , xorgBuild
 , xrdbBuild
 , xrandrBuild
@@ -732,6 +733,7 @@ let
     libSystem = libSystemBuild;
     libapfsrw = libapfsrwBuild;
     xnu-headers = xnuHeadersBuild;
+    xnu-headers-arm64 = xnuHeadersArm64Build;
     xnu = kernelBuild;
     xnu-debug = kernelDebugBuild;
     kernel = kernelBuild;

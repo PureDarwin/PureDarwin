@@ -3,6 +3,13 @@
 # KERNEL branch defines it as 0 and would collide.
 add_compile_definitions(__DARWIN_ONLY_UNIX_CONFORMANCE=1)
 
+# kexts take only the availability and pthread header targets
+if(PUREDARWIN_KEXTS_ONLY)
+    add_subdirectory(AvailabilityVersions)
+    add_subdirectory(libSystem/pthread)
+    return()
+endif()
+
 foreach(_puredarwin_library_dir
     AvailabilityVersions
     architecture
