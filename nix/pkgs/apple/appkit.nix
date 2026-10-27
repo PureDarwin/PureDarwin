@@ -13,6 +13,7 @@
 , quartzcore
 , applicationservices
 , coreservices
+, carbon
 , openglFramework
 , windowserver
 , freetype2
@@ -118,6 +119,7 @@ stdenv.mkDerivation {
       -L${fontconfig}/lib \
       -F${openglFramework}/System/Library/Frameworks \
       -F${coreservices}/System/Library/Frameworks \
+      -F${carbon}/System/Library/Frameworks/Carbon.framework/Frameworks \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -Wl,-dylib_file,/usr/lib/libGL.1.dylib:${mesa}/usr/lib/libGL.1.dylib \
       -Wl,-dylib_file,/usr/lib/libGLU.1.dylib:${glu}/usr/lib/libGLU.1.dylib \
@@ -126,6 +128,7 @@ stdenv.mkDerivation {
       $objects \
       -framework OpenGL \
       -framework CoreServices \
+      -framework HIToolbox \
       -lWindowServer -lQuartzCore -lCoreText -lCoreGraphics -lOnyx2D \
       -lFoundation -lCoreFoundation -lobjc -lSystem \
       -lfreetype -lfontconfig \

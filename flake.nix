@@ -3988,6 +3988,7 @@
               quartzcore = quartzcoreBuild;
               applicationservices = applicationservicesBuild;
               coreservices = coreServicesBuild;
+              carbon = carbonBuild;
               openglFramework = openglFrameworkNoxBuild;
               windowserver = windowserverBuild;
               freetype2 = freetype2Build;

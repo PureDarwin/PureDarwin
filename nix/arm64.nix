@@ -793,6 +793,7 @@ let
     quartzcore = quartzcoreMsmArm64Build;
     applicationservices = applicationservicesBuild;
     coreservices = coreServicesArm64Build;
+    carbon = carbonArm64Build;
     openglFramework = openglFrameworkArm64NoxBuild;
     windowserver = windowserverArm64Build;
     freetype2 = freetype2Arm64Build;
