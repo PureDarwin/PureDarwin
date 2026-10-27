@@ -76,6 +76,10 @@ if(PUREDARWIN_ARCH STREQUAL "x86_64")
         if(EXISTS "${PD_DRMKMOD_DIR}/drivers/gpu/drm/nouveau")
             add_subdirectory(PDDRMnouveau)
         endif()
+        # radeon for terascale and gcn 1 and 2, from the drm-kmod tree that kept it
+        if(EXISTS "${PD_DRMKMOD_DIR}/drivers/gpu/drm/radeon")
+            add_subdirectory(PDDRMradeon)
+        endif()
     endif()
 elseif(PUREDARWIN_ARM64)
     # arm64 bring-up of the layer: platform-device drm drivers from the device tree

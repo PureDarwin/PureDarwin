@@ -2191,6 +2191,29 @@ void *
 linuxkpi_dma_alloc_attrs(struct device *dev, size_t size, dma_addr_t *dma_handle,
     gfp_t gfp, unsigned long attrs)
 {
+#ifdef PD_LINUXKPI
+	// pd: a write-combined buffer stays write-combined, a gpu that does not snoop sees the cpu's writes
+	extern int pdos_bootarg_int(const char *, int);
+
+	if ((attrs & DMA_ATTR_WRITE_COMBINE) != 0 && pdos_bootarg_int("pddmawc", 1) != 0) {
+		struct linux_dma_priv *priv = dev->dma_priv;
+		void *mem;
+
+		size = PAGE_ALIGN(size);
+		mem = kmem_alloc_contig(size, gfp & GFP_NATIVE_MASK, 0, BUS_SPACE_MAXADDR,
+		    PAGE_SIZE << get_order(size), 0, VM_MEMATTR_WRITE_COMBINING);
+		if (mem == NULL) {
+			*dma_handle = 0;
+			return (NULL);
+		}
+		*dma_handle = linux_dma_map_phys_common(dev, vtophys(mem), size, priv->dmat);
+		if (*dma_handle == 0) {
+			kmem_free(mem, size);
+			mem = NULL;
+		}
+		return (mem);
+	}
+#endif
 	return (linuxkpi_dma_alloc_noncoherent(dev, size, dma_handle,
 	    DMA_BIDIRECTIONAL, gfp));
 }
@@ -2211,6 +2234,22 @@ linuxkpi_dma_sync(struct device *dev, dma_addr_t dma_addr, size_t size,
 	struct lkpi_dma_obj *obj;
 
 	priv = dev->dma_priv;
+
+#if defined(PD_LINUXKPI) && defined(__aarch64__)
+	// pd: 1:1 mappings have no busdma object, so the cache lines are cleaned by physical address
+	{
+		extern void pdos_dma_sync_phys(uint64_t, size_t);
+
+		DMA_PRIV_LOCK(priv);
+		obj = pctrie_is_empty(&priv->ptree) ? NULL :
+		    LINUX_DMA_PCTRIE_LOOKUP(&priv->ptree, dma_addr);
+		DMA_PRIV_UNLOCK(priv);
+		if (obj == NULL) {
+			pdos_dma_sync_phys(dma_addr, size);
+			return;
+		}
+	}
+#endif
 
 	if (pctrie_is_empty(&priv->ptree))
 		return;

@@ -1,5 +1,7 @@
 #include "IOGOPFramebuffer.h"
 
+#include <IOKit/pci/IOPCIDevice.h>
+
 #include <miscfs/devfs/devfs.h>
 #include <kern/thread_call.h>
 #include <sys/conf.h>
@@ -256,21 +258,211 @@ fb0_unpublish()
     gFb0RetryCount = 0;
 }
 
+// true when the firmware framebuffer lies in one of this pci device's memory BARs
+static bool
+gop_on_device(IOPCIDevice *pci, uint64_t phys, uint64_t size)
+{
+    for (IOItemCount i = 0; i < pci->getDeviceMemoryCount(); i++) {
+        IODeviceMemory *bar = pci->getDeviceMemoryWithIndex(i);
+        if (bar == NULL)
+            continue;
+        uint64_t start = bar->getPhysicalAddress(), len = bar->getLength();
+        if (phys >= start && phys + size <= start + len)
+            return true;
+    }
+    return false;
+}
+
 IOService *
 IOGOPFramebuffer::probe(IOService *provider, SInt32 *score)
 {
     DEBUG("probe %p\n", provider);
 
-    // with pdnouveau=1 nouveau takes BAR 1 over and the firmware framebuffer in it loses its mapping
-    int nouveau = 0;
-    OSData *vendor = OSDynamicCast(OSData, provider->getProperty("vendor-id"));
-    PE_parse_boot_argn("pdnouveau", &nouveau, sizeof(nouveau));
-    if (nouveau && vendor != NULL && vendor->getLength() >= 2 &&
-        *(const uint16_t *)vendor->getBytesNoCopy() == 0x10de) {
-        IOLog("IOGOPFramebuffer: pdnouveau=1, leaving the nvidia gpu to nouveau\n");
-        return NULL;
+    // every display device matches, only the one whose BAR holds the firmware framebuffer drives it
+    IOPCIDevice *pci = OSDynamicCast(IOPCIDevice, provider);
+    IOPlatformExpert *pe = getPlatform();
+    PE_Video video;
+    if (pci != NULL && pe != NULL && pe->getConsoleInfo(&video) == kIOReturnSuccess && video.v_baseAddr != 0) {
+        uint64_t phys = video.v_baseAddr & ~3UL;
+        if (!gop_on_device(pci, phys, (uint64_t)video.v_rowBytes * video.v_height)) {
+            IOLog("IOGOPFramebuffer: the firmware framebuffer at 0x%llx is not on %04x:%04x, leaving that gpu alone\n",
+                  (unsigned long long)phys, pci->configRead16(kIOPCIConfigVendorID),
+                  pci->configRead16(kIOPCIConfigDeviceID));
+            return NULL;
+        }
     }
     return this;
+}
+
+// the chipsets nvkm_device_ctor in linux 6.14's nouveau knows, NV04 through AD10x
+static bool
+nouveau_supports(uint32_t boot0, uint32_t *chipset)
+{
+    static const uint16_t known[] = {
+        0x004, 0x005, 0x010, 0x011, 0x015, 0x017, 0x018, 0x01a, 0x01f, 0x020, 0x025, 0x028,
+        0x02a, 0x030, 0x031, 0x034, 0x035, 0x036, 0x040, 0x041, 0x042, 0x043, 0x044, 0x045,
+        0x046, 0x047, 0x049, 0x04a, 0x04b, 0x04c, 0x04e, 0x050, 0x063, 0x067, 0x068, 0x084,
+        0x086, 0x092, 0x094, 0x096, 0x098, 0x0a0, 0x0a3, 0x0a5, 0x0a8, 0x0aa, 0x0ac, 0x0af,
+        0x0c0, 0x0c1, 0x0c3, 0x0c4, 0x0c8, 0x0ce, 0x0cf, 0x0d7, 0x0d9, 0x0e4, 0x0e6, 0x0e7,
+        0x0ea, 0x0f0, 0x0f1, 0x106, 0x108, 0x117, 0x118, 0x120, 0x124, 0x126, 0x12b, 0x130,
+        0x132, 0x134, 0x136, 0x137, 0x138, 0x13b, 0x140, 0x162, 0x164, 0x166, 0x167, 0x168,
+        0x172, 0x173, 0x174, 0x176, 0x177, 0x192, 0x193, 0x194, 0x196, 0x197,
+    };
+
+    *chipset = 0;
+    if (boot0 == 0 || boot0 == 0xffffffff)
+        return false;
+    if ((boot0 & 0x1f000000) != 0)
+        *chipset = (boot0 & 0x1ff00000) >> 20;
+    else if ((boot0 & 0xff00fff0) == 0x20004000)
+        *chipset = (boot0 & 0x00f00000) ? 0x05 : 0x04;
+    for (unsigned i = 0; i < sizeof(known) / sizeof(known[0]); i++) {
+        if (known[i] == *chipset)
+            return true;
+    }
+    return false;
+}
+
+// boot0 from BAR 0, read only while the firmware left memory decoding on
+static uint32_t
+nvidia_boot0(IOPCIDevice *pci)
+{
+    uint32_t boot0 = 0xffffffff;
+
+    if ((pci->configRead16(kIOPCIConfigCommand) & kIOPCICommandMemorySpace) == 0)
+        return boot0;
+    IOMemoryMap *map = pci->mapDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0, kIOMapInhibitCache);
+    if (map == NULL)
+        return boot0;
+    if (map->getLength() >= 4)
+        boot0 = *(volatile uint32_t *)map->getVirtualAddress();
+    map->release();
+    return boot0;
+}
+
+// the drm kext that would take this gpu over, NULL when none is expected to
+static const char *
+gop_drm_driver(IOPCIDevice *pci)
+{
+    uint16_t vendor = pci->configRead16(kIOPCIConfigVendorID);
+    int on;
+
+    if (vendor == 0x10de || vendor == 0x12d2) {
+        uint32_t boot0, chipset;
+        on = 0;
+        PE_parse_boot_argn("pdnouveau", &on, sizeof(on));
+        if (!on)
+            return NULL;
+        boot0 = nvidia_boot0(pci);
+        if (!nouveau_supports(boot0, &chipset)) {
+            IOLog("IOGOPFramebuffer: nvidia gpu %04x:%04x (boot0 0x%08x, chipset 0x%x) is not one nouveau "
+                  "supports, keeping the firmware framebuffer\n",
+                  vendor, pci->configRead16(kIOPCIConfigDeviceID), boot0, chipset);
+            return NULL;
+        }
+        return "nouveau";
+    }
+    if (vendor == 0x1002) {
+        on = 1;
+        PE_parse_boot_argn("pdamdgpu", &on, sizeof(on));
+        return on ? "amdgpu" : NULL;
+    }
+    if (vendor == 0x8086) {
+        on = 1;
+        PE_parse_boot_argn("pdi915", &on, sizeof(on));
+        return on ? "i915" : NULL;
+    }
+    return NULL;
+}
+
+// a drm driver remaps the gpu's BARs, so the firmware framebuffer stays only until it has lit a display
+void
+IOGOPFramebuffer::waitForDrm(IOService *provider)
+{
+    IOPCIDevice *pci = OSDynamicCast(IOPCIDevice, provider);
+
+    if (pci == NULL || (drmName = gop_drm_driver(pci)) == NULL)
+        return;
+
+    drmWaiting = true;
+    drmTimeout = thread_call_allocate(drmTimedOut, this);
+    if (drmTimeout != NULL) {
+        uint64_t deadline;
+        retain();
+        clock_interval_to_deadline(15, kSecondScale, &deadline);
+        thread_call_enter_delayed(drmTimeout, deadline);
+    }
+    IOLog("IOGOPFramebuffer: %04x:%04x, keeping the firmware framebuffer until %s lights a display\n",
+          pci->configRead16(kIOPCIConfigVendorID), pci->configRead16(kIOPCIConfigDeviceID), drmName);
+    OSDictionary *match = serviceMatching("IOFramebuffer");
+    if (match != NULL) {
+        drmNotifier = addMatchingNotification(gIOPublishNotification, match, drmPublished, this, NULL);
+        match->release();
+    }
+}
+
+// each drm kext's PDDRMFramebuffer<driver> registers only after its first modeset, so this is the handover point
+bool
+IOGOPFramebuffer::drmPublished(void *target, void *, IOService *fb, IONotifier *)
+{
+    IOGOPFramebuffer *self = (IOGOPFramebuffer *)target;
+    IOService *driver = fb->getProvider();
+
+    if (strncmp(fb->getMetaClass()->getClassName(), "PDDRMFramebuffer", 16) != 0)
+        return true;
+    if (driver == NULL || driver->getProvider() != self->getProvider() || !self->drmWaiting)
+        return true;
+    self->drmWaiting = false;
+    if (self->drmTimeout != NULL && thread_call_cancel(self->drmTimeout))
+        self->release();
+    IOLog("IOGOPFramebuffer: %s lit a display, handing the gpu over\n", self->drmName);
+    fb0_unpublish();
+    // the console still draws into the firmware framebuffer, which is vram the drm driver now owns
+    vc_progress_set(FALSE, 0);
+    self->getPlatform()->setConsoleInfo(NULL, kPEDisableScreen);
+    return true;
+}
+
+void
+IOGOPFramebuffer::drmTimedOut(thread_call_param_t param, thread_call_param_t)
+{
+    IOGOPFramebuffer *self = (IOGOPFramebuffer *)param;
+    IOService *gpu = self->getProvider();
+    bool attached = false;
+
+    if (self->drmWaiting && gpu != NULL) {
+        OSIterator *it = gpu->getClientIterator();
+        OSObject *client;
+        while (it != NULL && (client = it->getNextObject()) != NULL) {
+            if (strncmp(client->getMetaClass()->getClassName(), "PDDRM", 5) == 0)
+                attached = true;
+        }
+        OSSafeReleaseNULL(it);
+        // the drm kext leaves the reason it let go of the gpu in PDDRMStatus
+        OSString *status = OSDynamicCast(OSString, gpu->getProperty("PDDRMStatus"));
+        bool delayed = status != NULL && status->isEqualTo("attach delayed by pddrm_delay");
+        bool pending = delayed || status == NULL || status->isEqualTo("attached, no display lit yet");
+        // a driver from the aux KC probes late, so look again until it has given a reason
+        // a delayed attach does not use up the checks
+        if (pending && (delayed || self->drmChecks++ < 4)) {
+            uint64_t deadline;
+            if (self->drmChecks == 1)
+                IOLog("IOGOPFramebuffer: %s did not take over within 15 s, keeping the firmware framebuffer\n",
+                      self->drmName);
+            clock_interval_to_deadline(15, kSecondScale, &deadline);
+            self->retain();
+            thread_call_enter_delayed(self->drmTimeout, deadline);
+        } else {
+            const char *why = status != NULL ? status->getCStringNoCopy() :
+                attached ? "attached, no display lit yet" : "the driver never probed this gpu";
+            IOLog("IOGOPFramebuffer: %s gave up the gpu, the firmware framebuffer keeps the display\n",
+                  self->drmName);
+            // a compositor waiting for the gpu driver's framebuffer reads this and stops waiting
+            self->setProperty("PDDRMGaveUp", kOSBooleanTrue);
+            IOLog("IOGOPFramebuffer: %s: %s\n", self->drmName, why);
+        }
+    }
+    self->release();
 }
 
 bool
@@ -311,6 +503,7 @@ IOGOPFramebuffer::start(IOService *provider)
     DEBUG("successfully started\n");
 
     registerService();
+    waitForDrm(provider);
     return true;
 }
 
@@ -318,6 +511,17 @@ void
 IOGOPFramebuffer::stop(IOService *provider)
 {
     DEBUG("stop %p\n", provider);
+    drmWaiting = false;
+    if (drmNotifier != NULL) {
+        drmNotifier->remove();
+        drmNotifier = NULL;
+    }
+    if (drmTimeout != NULL) {
+        if (thread_call_cancel(drmTimeout))
+            release();
+        thread_call_free(drmTimeout);
+        drmTimeout = NULL;
+    }
     fb0_unpublish();
     super::stop(provider);
 }

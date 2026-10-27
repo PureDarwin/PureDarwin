@@ -28,7 +28,7 @@ __haiku_init_hardware()
 	// device_printf (dev_err, dev_info) learns %pV and the other linux %p forms
 	pd_driver_vsnprintf = pd_drm_vsnprintf;
 	// shows the aux KC got this far, matching comes after
-	printf("PDDRMi915: kext loaded, matching gen6 to gen9 and gen12+ intel graphics\n");
+	printf("PDDRMi915: kext loaded, matching gen6 to gen12+ intel graphics\n");
 	pd_i915_selftest();
 	pd_lkpi_init_hardware();
 }

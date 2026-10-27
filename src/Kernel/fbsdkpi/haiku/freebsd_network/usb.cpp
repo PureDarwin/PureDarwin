@@ -168,6 +168,12 @@ usb_cleanup_device(freebsd_usb_device* udev)
 }
 
 
+#ifdef __PUREDARWIN__
+extern "C" status_t pd_fbsd_attach_usb_found(device_t root, driver_t* driver,
+	void* compat_device, void (*prepare)(void*, device_t));
+#endif
+
+
 struct compat_usb_device {
 	freebsd_usb_device udev;
 	struct usb_attach_arg uaa;
@@ -239,9 +245,20 @@ _fbsd_init_hardware_uhub(driver_t* drivers[])
 		// We just "transferred ownership" of usb_dev to sProbedDevices.
 		memset(&udev, 0, sizeof(udev));
 
+#ifdef __PUREDARWIN__
+		// puredarwin attaches the one device it was given here, as its pci path does
+		if (pd_fbsd_attach_usb_found(root, driver, compat_device, prepare_usb_attach) != B_OK) {
+			free_compat_usb_device(compat_device);
+			continue;
+		}
+		found = true;
+		usb_cleanup_device(&udev);
+		return B_OK;
+#else
 		report_probed_device(BUS_uhub, compat_device, driver,
 			prepare_usb_attach, free_compat_usb_device);
 		found = true;
+#endif
 	}
 
 	device_delete_child(NULL, root);
@@ -389,6 +406,9 @@ usbd_transfer_setup(struct freebsd_usb_device* udev,
 		uint8_t endpoint = setup->endpoint;
 		uint8_t iface_index = ifaces[setup->if_index];
 		if (endpoint == UE_ADDR_ANY) {
+			// the ep_index'th match, run puts one tx queue on each bulk-out endpoint
+			uint8_t skip = setup->ep_index;
+			endpoint = 0;
 			for (int i = 0; i < udev->endpoints_max; i++) {
 				const uint8 type = UE_GET_XFERTYPE(udev->endpoints[i].edesc->bmAttributes);
 				const uint8 dir = UE_GET_DIR(udev->endpoints[i].edesc->bEndpointAddress);
@@ -398,6 +418,10 @@ usbd_transfer_setup(struct freebsd_usb_device* udev,
 					continue;
 				if (dir != setup->direction)
 					continue;
+				if (skip > 0) {
+					skip--;
+					continue;
+				}
 
 				endpoint = udev->endpoints[i].edesc->bEndpointAddress;
 				xfer->type = type;
@@ -414,8 +438,15 @@ usbd_transfer_setup(struct freebsd_usb_device* udev,
 				xfer->max_data_length = iface->endpoint[i].descr->max_packet_size;
 			break;
 		}
-		if (xfer->pipe == -1)
+		if (xfer->pipe == -1) {
+			// freebsd hands back no transfer for an optional endpoint the device lacks
+			if (setup->flags.no_pipe_ok) {
+				delete xfer;
+				ppxfer[setup - setup_start] = NULL;
+				continue;
+			}
 			panic("failed to locate endpoint!");
+		}
 
 		xfer->nframes = setup->frames;
 		if (xfer->nframes == 0)
@@ -444,6 +475,8 @@ usbd_transfer_unsetup(struct usb_xfer** pxfer, uint16_t n_setup)
 {
 	for (int i = 0; i < n_setup; i++) {
 		struct usb_xfer* xfer = pxfer[i];
+		if (xfer == NULL)
+			continue;
 		usbd_transfer_drain(xfer);
 		cv_destroy(&xfer->condition);
 

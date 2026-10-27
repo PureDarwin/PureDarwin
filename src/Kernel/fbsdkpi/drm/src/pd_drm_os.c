@@ -98,7 +98,7 @@ pd_acpi_dev_handle(struct acpi_device *adev)
 	return NULL;
 }
 
-// amdgpu reads the vbios out of VFCT, instances count from 1 as in acpica
+// amdgpu and radeon read the vbios out of VFCT, instances count from 1 as in acpica
 acpi_status
 acpi_get_table(const char *signature, uint32_t instance,
     struct acpi_table_header **table)
@@ -110,8 +110,16 @@ acpi_get_table(const char *signature, uint32_t instance,
 	if (pdos_acpi_get_table(signature, instance > 0 ? instance - 1 : 0,
 	    &data, &size) != 0)
 		return AE_NOT_FOUND;
-	*table = data;
-	return AE_OK;
+	// a kmalloc copy, so acpi_put_table frees it without knowing the size
+	*table = kmemdup(data, size, GFP_KERNEL);
+	pdos_acpi_put_table(data, size);
+	return *table != NULL ? AE_OK : AE_NO_MEMORY;
+}
+
+void
+acpi_put_table(struct acpi_table_header *table)
+{
+	kfree(table);
 }
 
 acpi_status
@@ -245,32 +253,6 @@ drm_connector_attach_content_protection_property(
 void
 drm_hdcp_update_content_protection(struct drm_connector *connector, u64 val)
 {
-}
-
-// i2c buses are driven through their algo, nothing registers them
-int
-lkpi_i2c_add_adapter(struct i2c_adapter *adapter)
-{
-	return 0;
-}
-
-int
-lkpi_i2c_del_adapter(struct i2c_adapter *adapter)
-{
-	return 0;
-}
-
-int
-lkpi_i2c_bit_add_bus(struct i2c_adapter *adapter)
-{
-	return -ENODEV;
-}
-
-int
-lkpi_i2cbb_transfer(struct i2c_adapter *adapter, struct i2c_msg *msgs,
-    int nmsgs)
-{
-	return -EIO;
 }
 
 // files and character devices arrive with /dev/dri

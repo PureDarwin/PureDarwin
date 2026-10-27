@@ -5,6 +5,7 @@
 #include <indium/pd-sync.hpp>
 
 #include <algorithm>
+#include <mutex>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -48,7 +49,15 @@ namespace Indium {
 
 	static const size_t arenaBytes = (size_t)3 << 30;
 
-	void init(const char **extensions, size_t count, bool) {
+	// Metal loads into every process that links it (Wine's Mac driver, to list GPUs): the arena, the Vulkan executor
+	// and its fault handling start with the first resource or queue, as a Mac device costs nothing until used
+	static const char **wantExtensions;
+	static size_t wantCount;
+	static std::once_flag started;
+
+	static void startExecutor() {
+		const char **extensions = wantExtensions;
+		size_t count = wantCount;
 		static const char *const swapchain[] = { "VK_KHR_swapchain" };
 		struct pd_vk_handles h;
 
@@ -73,6 +82,15 @@ namespace Indium {
 		}
         if (getenv("AIRJITD_OPENGL") && strcmp(getenv("AIRJITD_OPENGL"),"0") &&
             (!getenv("PDMTL_RESIDENT") || strcmp(getenv("PDMTL_RESIDENT"),"0"))) pdmtl_resident(1);
+	}
+
+	void init(const char **extensions, size_t count, bool) {
+		wantExtensions = extensions;
+		wantCount = count;
+	}
+
+	void ensureStarted() {
+		std::call_once(started, startExecutor);
 	}
 
 	void finit() {}
@@ -594,10 +612,12 @@ namespace IndiumPD {
 	}
 
 	std::shared_ptr<Indium::CommandQueue> Device::newCommandQueue() {
+		Indium::ensureStarted();
 		return std::make_shared<CommandQueue>(shared_from_this());
 	}
 
 	std::shared_ptr<Indium::RenderPipelineState> Device::newRenderPipelineState(const Indium::RenderPipelineDescriptor &desc) {
+		Indium::ensureStarted();
 		if (!desc.vertexFunction || !desc.fragmentFunction)
 			return nullptr;
 		return std::make_shared<RenderPipelineState>(shared_from_this(), desc);
@@ -610,6 +630,7 @@ namespace IndiumPD {
 
 	std::shared_ptr<Indium::ComputePipelineState> Device::newComputePipelineState(std::shared_ptr<Indium::Function> function, Indium::PipelineOption,
 	                                                                              std::shared_ptr<Indium::ComputePipelineReflection>) {
+		Indium::ensureStarted();
 		auto f = std::dynamic_pointer_cast<Function>(function);
 
 		if (!f)
@@ -618,10 +639,12 @@ namespace IndiumPD {
 	}
 
 	std::shared_ptr<Indium::Buffer> Device::newBuffer(size_t length, Indium::ResourceOptions) {
+		Indium::ensureStarted();
 		return std::make_shared<Buffer>(shared_from_this(), length);
 	}
 
 	std::shared_ptr<Indium::Buffer> Device::newBuffer(const void *pointer, size_t length, Indium::ResourceOptions) {
+		Indium::ensureStarted();
 		auto b = std::make_shared<Buffer>(shared_from_this(), length);
 
 		memcpy(b->contents(), pointer, length);
@@ -629,6 +652,7 @@ namespace IndiumPD {
 	}
 
 	std::shared_ptr<Indium::Library> Device::newLibrary(const void *data, size_t length) {
+		Indium::ensureStarted();
 		struct pdmtl_lib *lib = pdmtl_lib_load_data(data, length);
 
 		if (!lib)
@@ -637,14 +661,17 @@ namespace IndiumPD {
 	}
 
 	std::shared_ptr<Indium::Texture> Device::newTexture(const Indium::TextureDescriptor &desc) {
+		Indium::ensureStarted();
 		return std::make_shared<Texture>(shared_from_this(), desc);
 	}
 
 	std::shared_ptr<Indium::SamplerState> Device::newSamplerState(const Indium::SamplerDescriptor &desc) {
+		Indium::ensureStarted();
 		return std::make_shared<SamplerState>(shared_from_this(), desc);
 	}
 
 	std::shared_ptr<Indium::DepthStencilState> Device::newDepthStencilState(const Indium::DepthStencilDescriptor &desc) {
+		Indium::ensureStarted();
 		return std::make_shared<DepthStencilState>(shared_from_this(), desc);
 	}
 

@@ -50,6 +50,8 @@
 , withMsmDrm ? false
 # gallium nouveau on the nouveau kernel driver through /dev/dri, next to the amdgpu and intel drivers
 , withNouveauDrm ? false
+# virgl on PD's IOVirtIOGPU winsys next to the drm drivers, the sw driver list tries it before llvmpipe
+, withVirgl ? false
 # host mesa_clc and vtn_bindgen2, crocus precompiles its CL kernels with them
 , mesaClcTools ? null
 , libdrmAmdgpu ? null
@@ -64,7 +66,8 @@ let
   pythonEnv = python3.withPackages (ps: [ ps.mako ps.pyyaml ps.setuptools ]);
 
   # /dev/dri drivers: Darwin is a drm system, libdrm comes from PD's /dev/dri build
-  drm = withAmdgpuDrm || withMsmDrm;
+  drm = withAmdgpuDrm || withMsmDrm || withNouveauDrm;
+  virgl = withVirgl || !drm;
 
   depIncludes = lib.optionals withAmdgpuDrm [
     "-I${libelf}/usr/include"
@@ -101,7 +104,7 @@ let
     + lib.optionalString withAmdgpuDrm ":${libelf}/usr/lib/pkgconfig";
 in
 stdenv.mkDerivation rec {
-  pname = "puredarwin-mesa${lib.optionalString (!withX11) "-nox"}${lib.optionalString withAmdgpuDrm "-amdgpu"}${lib.optionalString withIntelDrm "-intel"}${lib.optionalString withNouveauDrm "-nouveau"}${lib.optionalString withMsmDrm "-msm"}";
+  pname = "puredarwin-mesa${lib.optionalString (!withX11) "-nox"}${lib.optionalString withAmdgpuDrm "-amdgpu"}${lib.optionalString withIntelDrm "-intel"}${lib.optionalString withNouveauDrm "-nouveau"}${lib.optionalString withMsmDrm "-msm"}${lib.optionalString (withVirgl && drm) "-virgl"}";
   version = "26.1.6";
 
   # archive.mesa3d.org and the rest of freedesktop have been unreachable, so
@@ -247,6 +250,7 @@ stdenv.mkDerivation rec {
     cp src/gallium/winsys/radeon/drm/radeon_surface.{c,h} src/gallium/winsys/radeon/puredarwin/
     python3 ${radeonWinsysSrc}/patch-mesa.py
 
+  '' + lib.optionalString virgl ''
     mkdir -p src/gallium/winsys/virgl/puredarwin
     cp ${virglWinsysSrc}/virgl_puredarwin_winsys.c src/gallium/winsys/virgl/puredarwin/
     cp ${virglWinsysSrc}/virgl_puredarwin_public.h src/gallium/winsys/virgl/puredarwin/
@@ -406,7 +410,7 @@ EOF
       --libdir=lib \
       --buildtype=release \
       -Ddefault_library=shared \
-      -Dgallium-drivers=${if withMsmDrm then "llvmpipe,softpipe,freedreno" else if withAmdgpuDrm then "llvmpipe,softpipe,radeonsi,zink${lib.optionalString withIntelDrm ",crocus,iris"}${lib.optionalString withNouveauDrm ",nouveau"}" else "llvmpipe,softpipe,virgl,r600,zink"} \
+      -Dgallium-drivers=${if withMsmDrm then "llvmpipe,softpipe,freedreno" else if withNouveauDrm && !withAmdgpuDrm then "llvmpipe,softpipe,nouveau" else if withAmdgpuDrm then "llvmpipe,softpipe,radeonsi,zink${lib.optionalString withIntelDrm ",crocus,iris"}${lib.optionalString withNouveauDrm ",nouveau"}${lib.optionalString withVirgl ",virgl"}" else "llvmpipe,softpipe,virgl,r600,zink"} \
       -Dvulkan-drivers=${if withAmdgpuDrm then "swrast,amd" else "swrast"} \
       ${lib.optionalString withMsmDrm "-Dfreedreno-kmds=msm"} \
       ${lib.optionalString withAmdgpuDrm "-Damd-use-llvm=false"} \

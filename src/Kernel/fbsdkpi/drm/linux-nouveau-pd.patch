@@ -118,6 +118,31 @@ index 5664c4c..a789ce9 100644
  
  	if (!(cli = kzalloc(sizeof(*cli), GFP_KERNEL))) {
  		ret = -ENOMEM;
+@@ -1403,6 +1445,9 @@ nouveau_platform_device_create(const struct nvkm_device_tegra_func *func,
+ 	struct nouveau_drm *drm;
+ 	int err;
+ 
++#ifndef __linux__
++	pd_nouveau_options();
++#endif
+ 	err = nvkm_device_tegra_new(func, pdev, nouveau_config, nouveau_debug, pdevice);
+ 	if (err)
+ 		goto err_free;
+diff --git a/drivers/gpu/drm/nouveau/nouveau_gem.c b/drivers/gpu/drm/nouveau/nouveau_gem.c
+--- a/drivers/gpu/drm/nouveau/nouveau_gem.c
++++ b/drivers/gpu/drm/nouveau/nouveau_gem.c
+@@ -383,6 +383,11 @@ nouveau_gem_set_domain(struct drm_gem_object *gem, uint32_t read_domains,
+ 
+ 	if (!domains)
+ 		return -EINVAL;
++#ifndef __linux__
++	// a bo pinned for a cpu mapping stays put, relocs pick the dma object for where it is
++	if (bo->pin_count)
++		domains = nvbo->valid_domains;
++#endif
+ 
+ 	valid_domains &= ~(NOUVEAU_GEM_DOMAIN_VRAM | NOUVEAU_GEM_DOMAIN_GART);
+ 
 diff --git a/drivers/gpu/drm/nouveau/nouveau_sched.c b/drivers/gpu/drm/nouveau/nouveau_sched.c
 index 4412f27..097c4e5 100644
 --- a/drivers/gpu/drm/nouveau/nouveau_sched.c
@@ -228,3 +253,45 @@ index abf3eda..454bdf1 100644
  }
  
  static struct nvkm_i2c_bus_probe
+diff --git a/drivers/gpu/drm/nouveau/nvkm/falcon/gm200.c b/drivers/gpu/drm/nouveau/nvkm/falcon/gm200.c
+--- a/drivers/gpu/drm/nouveau/nvkm/falcon/gm200.c
++++ b/drivers/gpu/drm/nouveau/nvkm/falcon/gm200.c
+@@ -226,6 +226,14 @@
+ 		nvkm_falcon_wr32(falcon, 0x044, *pmbox1);
+ 
+ 	nvkm_falcon_wr32(falcon, 0x104, fw->boot_addr);
++#ifndef __linux__
++	{
++		extern void (*pd_flcn_mc_dump)(const char *);
++
++		if (pd_flcn_mc_dump != NULL)
++			pd_flcn_mc_dump("falcon start");
++	}
++#endif
+ 	nvkm_falcon_wr32(falcon, 0x100, 0x00000002);
+ 
+ 	if (nvkm_msec(falcon->owner->device, 2000,
+@@ -236,6 +244,23 @@
+ 
+ 	mbox0 = nvkm_falcon_rd32(falcon, 0x040);
+ 	mbox1 = nvkm_falcon_rd32(falcon, 0x044);
++#ifndef __linux__
++	if (ret) {
++		// pd: the falcon's own registers and the mc's error capture at the timeout
++		extern void (*pd_flcn_mc_dump)(const char *);
++		int i;
++
++		printf("pd flcn: boot_addr 0x%x\n", fw->boot_addr);
++		for (i = 0; i < 0x200; i += 0x20)
++			printf("pd flcn %03x: %08x %08x %08x %08x %08x %08x %08x %08x\n", i,
++			    nvkm_falcon_rd32(falcon, i), nvkm_falcon_rd32(falcon, i + 4),
++			    nvkm_falcon_rd32(falcon, i + 8), nvkm_falcon_rd32(falcon, i + 12),
++			    nvkm_falcon_rd32(falcon, i + 16), nvkm_falcon_rd32(falcon, i + 20),
++			    nvkm_falcon_rd32(falcon, i + 24), nvkm_falcon_rd32(falcon, i + 28));
++		if (pd_flcn_mc_dump != NULL)
++			pd_flcn_mc_dump("falcon timeout");
++	}
++#endif
+ 	if (FLCN_ERRON(falcon, ret || mbox0 != mbox0_ok, "mbox %08x %08x", mbox0, mbox1))
+ 		ret = ret ?: -EIO;
+ 

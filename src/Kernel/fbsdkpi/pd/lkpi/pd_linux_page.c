@@ -239,7 +239,9 @@ is_vmalloc_addr(const void *addr)
 void *
 _ioremap_attr(vm_paddr_t phys_addr, unsigned long size, int attr)
 {
-	// a cached mapping is only asked for write-back
+	// write-back maps cached, write-combining as such (2), anything else uncached
+	if (attr == VM_MEMATTR_WRITE_COMBINING)
+		return pdos_map_phys(phys_addr, size, 2);
 	return pdos_map_phys(phys_addr, size, attr != VM_MEMATTR_WRITE_BACK);
 }
 
@@ -307,6 +309,15 @@ vmap(struct page **pages, unsigned int count, unsigned long flags, int prot)
 	pd_vmaps = vm;
 	mtx_unlock(&pd_page_lock);
 	return va;
+}
+
+// pinning user memory into struct pages needs a vm_map wiring path PD lacks, radeon's userptr
+// ioctl gets the fault a bad address would
+long
+lkpi_get_user_pages(unsigned long start, unsigned long nr_pages, unsigned int gup_flags,
+    struct page **pages)
+{
+	return -EFAULT;
 }
 
 void

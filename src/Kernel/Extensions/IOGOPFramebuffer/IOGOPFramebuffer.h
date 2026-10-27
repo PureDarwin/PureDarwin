@@ -11,6 +11,15 @@ private:
     UInt32  height;
     UInt32  pitch;
     UInt32  bpp;
+    IONotifier   *drmNotifier;
+    thread_call_t drmTimeout;
+    bool          drmWaiting;
+    const char   *drmName;
+    int           drmChecks;
+
+    static bool drmPublished(void *target, void *ref, IOService *fb, IONotifier *notifier);
+    static void drmTimedOut(thread_call_param_t self, thread_call_param_t);
+    void waitForDrm(IOService *provider);
 
 public:
     IOService * probe(IOService * provider, SInt32 * score) override;

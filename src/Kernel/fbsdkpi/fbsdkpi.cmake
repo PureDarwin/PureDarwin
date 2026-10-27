@@ -42,6 +42,11 @@ set(FBSDKPI_NET80211_SOURCES
     ieee80211_scan_sta.c ieee80211_scan_sw.c ieee80211_sta.c
     ieee80211_superg.c ieee80211_vht.c ieee80211_wds.c ieee80211_xauth.c)
 
+# haiku's freebsd usb shim, for drivers that sit on a usb interface
+set(FBSDKPI_USB_SOURCES
+    usb.cpp usb_util.c dev/usb/fbsd_usb_error.c dev/usb/fbsd_usb_util.c
+    dev/usb/fbsd_usb_lookup.c dev/usb/usb_process.c)
+
 set(FBSDKPI_IFLIB_SOURCES
     device_if.c ifdi_if.c iflib.c kobj.c mp_ring.c strsep.c
     subr_gtaskqueue.c)
@@ -115,7 +120,7 @@ function(_fbsdkpi_firmware name out)
 endfunction()
 
 function(add_fbsdkpi_driver name)
-    cmake_parse_arguments(FD "IFLIB;LINUXKPI;LINUXKPI_DRM" "CLASS;BUNDLE_IDENTIFIER;INFO_PLIST"
+    cmake_parse_arguments(FD "IFLIB;LINUXKPI;LINUXKPI_DRM;USB" "CLASS;BUNDLE_IDENTIFIER;INFO_PLIST"
         "SOURCES;INCLUDES;DEFINITIONS;FIRMWARE;XNU_SOURCES;LKPI_INCLUDES;LKPI_DEFINITIONS;LKPI_OPTIONS;OBJECTS" ${ARGN})
 
     set(core)
@@ -130,6 +135,12 @@ function(add_fbsdkpi_driver name)
         "${FBSDKPI_DIR}/pd/pd_firmware.c"
         "${FBSDKPI_DIR}/haiku/kernel_util/RadixBitmap.cpp"
         "${FBSDKPI_DIR}/haiku/kernel_util/Random.cpp")
+    if(FD_USB)
+        foreach(src IN LISTS FBSDKPI_USB_SOURCES)
+            list(APPEND core "${FBSDKPI_DIR}/haiku/freebsd_network/${src}")
+        endforeach()
+        list(APPEND core "${FBSDKPI_DIR}/pd/pd_usb.cpp")
+    endif()
     _fbsdkpi_firmware(${name} firmware ${FD_FIRMWARE})
     _fbsdkpi_objects(${name}_core SOURCES ${core} ${firmware})
     set(objects $<TARGET_OBJECTS:${name}_core>)
@@ -215,6 +226,9 @@ function(add_fbsdkpi_driver name)
         BUNDLE_IDENTIFIER ${FD_BUNDLE_IDENTIFIER} BUNDLE_VERSION 1.0.0)
     set_property(TARGET ${name}.kext PROPERTY OUTPUT_NAME ${name})
     set(xnusrc "${FBSDKPI_DIR}/xnu/pd_fbsd_os.cpp")
+    if(FD_USB)
+        list(APPEND xnusrc "${FBSDKPI_DIR}/xnu/pd_fbsd_usb.cpp")
+    endif()
     if(FD_XNU_SOURCES)
         list(APPEND xnusrc ${FD_XNU_SOURCES})
     else()
@@ -252,6 +266,10 @@ function(add_fbsdkpi_driver name)
         -Wno-unused-parameter -Wno-deprecated-declarations)
     set_property(TARGET ${name}.kext PROPERTY CXX_STANDARD 14)
     add_dependencies(${name}.kext IONetworkingFamily.kext)
+    if(FD_USB)
+        target_link_libraries(${name}.kext PRIVATE IOUSBFamilyHeaders)
+        target_compile_definitions(${name}.kext PRIVATE PDFBSD_USB=1)
+    endif()
     install(TARGETS ${name}.kext DESTINATION System/Library/Extensions
         COMPONENT BaseSystem)
 endfunction()

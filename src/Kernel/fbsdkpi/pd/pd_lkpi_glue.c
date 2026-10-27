@@ -78,13 +78,16 @@ fill_devinfo(device_t dev, struct pci_devinfo *dinfo)
 	dinfo->cfg.func = info->function;
 
 	for (int bar = 0; bar < 6; bar++) {
-		uint32 size = info->u.h0.base_register_sizes[bar];
+		uint64_t size = info->u.h0.base_register_sizes[bar];
 		uint8 flags = info->u.h0.base_register_flags[bar];
 		uint64_t base = info->u.h0.base_registers[bar];
 		bool is64 = (flags & PCI_BASE_ADDRESS_TYPE_64) != 0
 			&& (flags & PCI_BASE_ADDRESS_SPACE_IO) == 0;
-		if (is64 && bar < 5)
+		// a 64-bit bar's size spans both halves, a resizable bar of 16 GB has none in the low one
+		if (is64 && bar < 5) {
 			base |= (uint64_t)info->u.h0.base_registers[bar + 1] << 32;
+			size |= (uint64_t)info->u.h0.base_register_sizes[bar + 1] << 32;
+		}
 
 		dinfo->bars[bar].pm_reg = PCIR_BAR(bar);
 		dinfo->bars[bar].pm_value = base | (flags & 0xf);

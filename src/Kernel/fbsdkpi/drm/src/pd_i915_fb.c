@@ -113,7 +113,9 @@ void
 pd_i915_fb_register(struct drm_device *dev)
 {
 	extern void pd_i915_mmap_register(void);
+	extern void pd_i915_hangdump_test(struct drm_device *dev);
 
 	pd_amdgpu_fb_register(dev);
 	pd_i915_mmap_register();
+	pd_i915_hangdump_test(dev);
 }

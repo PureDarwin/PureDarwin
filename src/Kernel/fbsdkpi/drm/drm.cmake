@@ -2,6 +2,7 @@ set(PD_DRM_DIR "${CMAKE_CURRENT_LIST_DIR}")
 include("${PD_DRM_DIR}/amdgpu-sources.cmake")
 include("${PD_DRM_DIR}/i915-sources.cmake")
 include("${PD_DRM_DIR}/nouveau-sources.cmake")
+include("${PD_DRM_DIR}/radeon-sources.cmake")
 
 set(PD_DRM_CORE_SOURCES
     drm_atomic.c drm_atomic_helper.c drm_atomic_state_helper.c drm_atomic_uapi.c
@@ -35,14 +36,16 @@ set(PD_DRM_VIDEO_SOURCES aperture.c)
 # PureDarwin's own pieces, MIT
 set(PD_DRM_PD_SOURCES pd_dma_buf.c pd_dma_fence_unwrap.c pd_sync_file.c
     pd_drm_managed.c pd_drm_gem_helpers.c pd_drm_glue.c pd_drm_os.c pd_drm_cdev.c
-    pd_drm_shmem.c pd_drm_printf.c
+    pd_drm_shmem.c pd_drm_printf.c pd_i2c_bit.c
     pd_drm_testclient.c pd_lfile_lkpi.c)
 set(PD_DRM_AMDGPU_PD_SOURCES pd_amdgpu_absent.c pd_amdgpu_absent_blocks.c
     pd_amdgpu_fb.c pd_amdgpu_mmap.c)
 
+# DRM_AMDGPU_CIK puts gcn2 (kaveri, kabini, mullins, bonaire, hawaii) in amdgpu's device table
 set(PD_DRM_KCONFIG APERTURE_HELPERS ARCH_HAVE_NMI_SAFE_CMPXCHG
     BACKLIGHT_CLASS_DEVICE FB NEED_SG_DMA_LENGTH PCI PM PM_SLEEP SMP
-    SUSPEND VIDEO_CMDLINE 64BIT DRM_CLIENT DRM_CLIENT_SETUP DRM_EXEC DRM_GPUVM)
+    SUSPEND VIDEO_CMDLINE 64BIT DRM_CLIENT DRM_CLIENT_SETUP DRM_EXEC DRM_GPUVM
+    DRM_AMDGPU_CIK)
 # arm64 boards come from the device tree, with no acpi, dmi or amd display
 if(PUREDARWIN_ARM64)
     list(APPEND PD_DRM_KCONFIG ARM64)
@@ -104,8 +107,8 @@ function(pd_drm_amdgpu_includes drmkmod out)
     set(${out} ${l} PARENT_SCOPE)
 endfunction()
 
-# the i915 kconfig values drm-kmod's kconfig.mk sets, without error capture and dp tunnels
-set(PD_DRM_I915_KCONFIG DRM_I915_FORCE_PROBE=\"*\" DRM_I915_REQUEST_TIMEOUT=20000
+# the i915 kconfig values drm-kmod's kconfig.mk sets, without error compression and dp tunnels
+set(PD_DRM_I915_KCONFIG DRM_I915_CAPTURE_ERROR DRM_I915_FORCE_PROBE=\"*\" DRM_I915_REQUEST_TIMEOUT=20000
     DRM_I915_USERFAULT_AUTOSUSPEND=250 DRM_I915_STOP_TIMEOUT=100
     DRM_I915_PREEMPT_TIMEOUT=640 DRM_I915_PREEMPT_TIMEOUT_COMPUTE=7500
     DRM_I915_HEARTBEAT_INTERVAL=2500 DRM_I915_TIMESLICE_DURATION=1
@@ -121,4 +124,11 @@ endfunction()
 function(pd_drm_nouveau_includes drmkmod out)
     set(n "${drmkmod}/drivers/gpu/drm/nouveau")
     set(${out} "${n}/include" "${n}/include/nvkm" "${n}/nvkm" "${n}" PARENT_SCOPE)
+endfunction()
+
+# radeon reaches amd's shared atombios headers through amd/include
+function(pd_drm_radeon_includes drmkmod out)
+    set(${out}
+        "${drmkmod}/drivers/gpu/drm/radeon"
+        "${drmkmod}/drivers/gpu/drm/amd/include" PARENT_SCOPE)
 endfunction()

@@ -3,7 +3,8 @@
 #ifndef _PD_NOUVEAU_PRE_H_
 #define _PD_NOUVEAU_PRE_H_
 
-#define CONFIG_NOUVEAU_DEBUG		5
+// up to spam, nouveau_debug= picks the level each subdev prints at
+#define CONFIG_NOUVEAU_DEBUG		7
 #define CONFIG_NOUVEAU_DEBUG_DEFAULT	3
 
 #include <linux/i2c.h>
@@ -15,6 +16,9 @@
 #include <linux/maple_tree.h>
 #include <linux/acpi.h>
 #include <linux/device.h>
+// nvkm prints its debug, trace and spam levels through dev_dbg, which linuxkpi compiles out
+#undef dev_dbg
+#define dev_dbg(dev, fmt, ...)	dev_info(dev, fmt, ##__VA_ARGS__)
 #include <linux/workqueue.h>
 #include <drm/drm_encoder_slave.h>
 
@@ -40,9 +44,7 @@ i2c_new_client_device(struct i2c_adapter *adap, struct i2c_board_info const *inf
 
 static inline void i2c_unregister_device(struct i2c_client *client) { }
 
-struct regulator;
-static inline int regulator_get_voltage(struct regulator *r) { return -ENODEV; }
-static inline int regulator_set_voltage(struct regulator *r, int min_uv, int max_uv) { return -ENODEV; }
+#include <linux/regulator/consumer.h>
 
 
 // request_module ends in a FreeBSD kld load, PD loads nothing on request
@@ -105,6 +107,13 @@ struct iommu_domain;
 static inline size_t iommu_unmap(struct iommu_domain *d, unsigned long iova, size_t size) { return 0; }
 struct device;
 static inline bool tegra_dev_iommu_get_stream_id(struct device *dev, u32 *sid) { return false; }
+
+// the tegra build matches by device tree compatible alone, its id tables register no newbus driver
+#ifdef CONFIG_NOUVEAU_PLATFORM_DRIVER
+#include <linux/module.h>
+#undef MODULE_DEVICE_TABLE
+#define MODULE_DEVICE_TABLE(_bus, _table)
+#endif
 
 #define WQ_MAX_ACTIVE	512
 #define unrcu_pointer(p)	(p)

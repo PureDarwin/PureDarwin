@@ -1819,10 +1819,11 @@
               libdrmAmdgpu = libdrmAmdgpuBuild;
               libelf = libelfBuild;
             };
-          # radeonsi with crocus and iris, the loader picks one by the drm device's pci id
+          # the system mesa: radeonsi, crocus, iris and nouveau by the drm device's pci id, else virgl or llvmpipe
           mesaGpuBuild = mesaAmdgpuBuild.override {
             withIntelDrm = true;
             withNouveauDrm = true;
+            withVirgl = true;
             mesaClcTools = pkgs.mesa.cross_tools;
           };
           openglFrameworkNoxBuild =
@@ -4843,6 +4844,30 @@
             patch -p1 < ${./src/Kernel/fbsdkpi/drm/drm-kmod-pd.patch}
             patch -p1 < ${./src/Kernel/fbsdkpi/drm/drm-kmod-i915-pd.patch}
           '';
+          # the same drm-kmod with radeon kept and its PureDarwin patch applied. radeon_freebsd.c
+          # and the trace and register table headers carry no licence notice, PD brings its own
+          # trace header and regenerates the tables from reg_srcs with the MIT mkregtable
+          drmKmodRadeonSrc = pkgs.runCommand "puredarwin-drm-kmod-radeon-src" {
+            src = drmKmodSrc.src;
+            nativeBuildInputs = [ pkgs.stdenv.cc ];
+          } ''
+            cp -r $src $out
+            chmod -R u+w $out
+            cd $out
+            rm -rf drivers/gpu/drm/i915
+            grep -v '^#' ${./src/Kernel/fbsdkpi/drm/drm-kmod-remove.txt} | while read -r f; do
+              rm -rf "$f"
+            done
+            patch -p1 < ${./src/Kernel/fbsdkpi/drm/drm-kmod-pd.patch}
+            patch -p1 < ${./src/Kernel/fbsdkpi/drm/drm-kmod-radeon-pd.patch}
+            r=drivers/gpu/drm/radeon
+            rm -f $r/radeon_freebsd.c $r/radeon_trace_freebsd.h $r/*_reg_safe.h
+            cc -o mkregtable $r/mkregtable.c
+            for t in r100 r200 r300 r420 rn50 rs600 rv515 r600 evergreen cayman; do
+              ./mkregtable $r/reg_srcs/$t > $r/''${t}_reg_safe.h
+            done
+            rm mkregtable
+          '';
           # nouveau from linux 6.14, the release drm-kmod's drm core follows, in a copy of the
           # drm-kmod tree with the ch7006 and sil164 headers nouveau's nv04 tv-out includes
           linux614Src = pkgs.fetchurl {
@@ -4863,10 +4888,65 @@
             cp -r ${./src/Kernel/fbsdkpi/drm/nouveau}/. drivers/gpu/drm/nouveau/
             chmod -R u+w drivers/gpu/drm/nouveau
           '';
+          # a drm kext's own slice of the tree, so edits to other kexts leave it alone
+          drmKextSource = kexts:
+            let
+              fs = lib.fileset;
+              headers = dir: fs.fileFilter (f: f.hasExt "h" || f.hasExt "hpp") (./. + "/${dir}");
+            in
+            fs.toSource {
+              root = ./.;
+              fileset = fs.unions ([
+                kextsOnlyFiles
+                ./src/Kernel/fbsdkpi
+                ./src/Kernel/Extensions/CMakeLists.txt
+                (headers "src/Kernel/Extensions/IOACPIFamily/include")
+                (headers "src/Kernel/Extensions/IOGraphicsFamily")
+                (headers "src/Kernel/Extensions/IOHIDFamily/IOHIDSystem")
+                (headers "src/Kernel/Extensions/IOPCIFamily/include")
+                # fbsdkpi links its IOKit/network shim to these
+                (headers "src/Kernel/Extensions/IONetworkingFamily")
+              ] ++ map (k: ./. + "/src/Kernel/Extensions/${k}") kexts);
+            };
+          # the root project adds every kext, so skip the directories this slice leaves out
+          drmKextPostPatch = ''
+            cat - src/Kernel/Extensions/CMakeLists.txt > CMakeLists.drm <<'EOF'
+            macro(add_subdirectory _pd_dir)
+                set(_pd_subdir "''${_pd_dir}")
+                if(NOT IS_ABSOLUTE "''${_pd_subdir}")
+                    set(_pd_subdir "''${CMAKE_CURRENT_SOURCE_DIR}/''${_pd_subdir}")
+                endif()
+                if(EXISTS "''${_pd_subdir}/CMakeLists.txt")
+                    _add_subdirectory(''${ARGV})
+                endif()
+            endmacro()
+            # kexts outside the slice are already defined or absent, so drop the absent ones
+            macro(add_dependencies _pd_target)
+                if(NOT "''${_pd_target}" STREQUAL "kexts")
+                    set(_pd_deps)
+                    foreach(_pd_dep ''${ARGN})
+                        if(TARGET "''${_pd_dep}" OR NOT _pd_dep MATCHES "[.]kext$")
+                            list(APPEND _pd_deps "''${_pd_dep}")
+                        endif()
+                    endforeach()
+                    if(_pd_deps)
+                        _add_dependencies("''${_pd_target}" ''${_pd_deps})
+                    endif()
+                endif()
+            endmacro()
+            EOF
+            mv CMakeLists.drm src/Kernel/Extensions/CMakeLists.txt
+          '';
+          mkDrmKext = kexts: args: (mkPureDarwinBuild ({ src = drmKextSource kexts; } // args // {
+            extraCmakeFlags = (kextsOnlyArgs (if (args.puredarwinArch or "x86_64") == "arm64"
+              then xnuHeadersArm64Build else xnuHeadersBuild)).extraCmakeFlags ++ (args.extraCmakeFlags or [ ]);
+            enableTools = false;
+          })).overrideAttrs (old: {
+            postPatch = (old.postPatch or "") + drmKextPostPatch;
+          });
           # nvidia graphics from nv50 on, opt-in with the pdnouveau=1 boot-arg
-          drmNouveauBuild = mkPureDarwinBuild {
+          drmNouveauBuild = mkDrmKext [ "PDDRMnouveau" ] {
             pname = "puredarwin-drm-nouveau";
-            src = kextsSource;
             buildTargets = [ "PDDRMnouveau.kext" ];
             enableUserspace = false;
             installUserland = false;
@@ -4885,7 +4965,15 @@
             for chip in tu102 tu104 tu106 tu10x tu116 tu117 ga102 ga103 ga104 ga106 ga107 \
               ad102 ad103 ad104 ad106 ad107; do
               [ -e "$src/$chip" ] || continue
-              cp -a "$src/$chip" "$fw/"
+              # resolved, turing's gr/fecs_bl.bin links into gm200, which isn't shipped
+              cp -rL "$src/$chip" "$fw/"
+            done
+            # gm20b (tegra x1) loads acr, pmu and gr images, some of them links to other chips
+            cp -rL "$src/gm20b" "$fw/"
+            # pascal's signed acr, gr, sec2 and nvdec images link into gp102 and gm200, so copy them resolved
+            for chip in gp100 gp102 gp104 gp106 gp107 gp108; do
+              [ -e "$src/$chip" ] || continue
+              cp -rL "$src/$chip" "$fw/"
             done
             chmod -R u+w $fw
             find $fw -name '*-570.*' -delete
@@ -4909,9 +4997,8 @@
           };
           # the amdgpu kext, built apart from the boot kexts and loaded from the
           # auxiliary kernel collection
-          drmAmdgpuBuild = mkPureDarwinBuild {
+          drmAmdgpuBuild = mkDrmKext [ "PDDRMamdgpu" ] {
             pname = "puredarwin-drm-amdgpu";
-            src = kextsSource;
             buildTargets = [ "PDDRMamdgpu.kext" ];
             enableUserspace = false;
             installUserland = false;
@@ -4922,10 +5009,21 @@
             # report every compile error of a bring-up build at once
             ninjaFlags = [ "-k" "0" ];
           };
+          # radeonkms for evergreen and northern islands (terascale 2), loaded from the aux KC
+          drmRadeonBuild = mkDrmKext [ "PDDRMradeon" ] {
+            pname = "puredarwin-drm-radeon";
+            buildTargets = [ "PDDRMradeon.kext" ];
+            enableUserspace = false;
+            installUserland = false;
+            installKernel = false;
+            installKexts = true;
+            installKextNames = [ "PDDRMradeon.kext" ];
+            extraCmakeFlags = [ "-DPD_DRMKMOD_DIR=${drmKmodRadeonSrc}" ];
+            ninjaFlags = [ "-k" "0" ];
+          };
           # the adreno drm driver for arm64, the fbsdkpi layer's first arm64 user
-          drmMsmArm64Build = mkPureDarwinBuild {
+          drmMsmArm64Build = mkDrmKext [ "PDDRMmsm" "PDDRMDri" ] {
             pname = "puredarwin-drm-msm-arm64";
-            src = kextsSource;
             buildTargets = [ "PDDRMmsm.kext" "PDDRMDri.kext" ];
             enableUserspace = false;
             installUserland = false;
@@ -5484,6 +5582,25 @@
             renoir = [ "renoir" "green_sardine" ];
             # rembrandt (radeon 680m and 660m) also predates ip discovery in its firmware names
             rembrandt = [ "yellow_carp" ];
+            # navi 31 (radeon rx 7900 xt and xtx), its gc, psp, smu, sdma, dcn and vcn ip versions
+            navi31 = [ "gc_11_0_0" "psp_13_0_0" "smu_13_0_0" "sdma_6_0_0" "dcn_3_2_0" "vcn_4_0_0" ];
+            # navi 32 (radeon rx 7800 xt), the files the driver asked for on it
+            navi32 = [ "gc_11_0_3" "psp_13_0_10" "smu_13_0_10" "sdma_6_0_3" "dcn_3_2_0" "vcn_4_0_0" ];
+            # navi 33 (radeon rx 7600 and 7700s), its gc, psp, smu, sdma, dcn and vcn ip versions
+            navi33 = [ "gc_11_0_2" "psp_13_0_7" "smu_13_0_7" "sdma_6_0_2" "dcn_3_2_1" "vcn_4_0_4" ];
+            # raven ridge and picasso apus (vega 3, 8 and 11) predate ip discovery, codename files
+            raven = [ "raven_" "raven2_" "picasso_" ];
+            # gcn2 (sea islands) also predates ip discovery: the kaveri, kabini and mullins apus, bonaire and hawaii dgpus
+            kaveri = [ "kaveri_" ];
+            kabini = [ "kabini_" ];
+            mullins = [ "mullins_" ];
+            bonaire = [ "bonaire_" ];
+            hawaii = [ "hawaii_" ];
+            # polaris (gcn4, rx 400 and 500) and vega m predate ip discovery, codename files
+            polaris10 = [ "polaris10_" ];
+            polaris11 = [ "polaris11_" ];
+            polaris12 = [ "polaris12_" ];
+            vegam = [ "vegam_" ];
           };
           # families: a list of amdgpuFirmwareFamilies names, or "all"
           mkAmdgpuFirmware = families: let
@@ -5513,10 +5630,54 @@
             # the default carries only the two APUs PD is tested on, see image-amdgpu-allfw
             # userland brings pdkext, which loads the aux KC (the wayland base leaves it out)
             extraPackages = dropGpuDefaults old.extraPackages ++ [ userlandBuild amdgpuAuxFiles
-              (mkAmdgpuFirmware [ "granite-ridge" "mendocino" "navi21" "navi22" "navi23" "navi24" "renoir" "rembrandt" ]) ];
+              (mkAmdgpuFirmware [ "granite-ridge" "mendocino" "navi21" "navi22" "navi23" "navi24" "navi31" "navi32" "navi33" "raven" "renoir" "rembrandt" "kaveri" "kabini" "mullins" "polaris10" "polaris11" "polaris12" "vegam" ]) ];
             imageFileName = "puredarwin-amdgpu.img";
             # the aux KC is not SIP protected on ext4, allow unrestricted fs and untrusted kexts
             bootArgs = old.bootArgs + " csr-active-config=0x3";
+          });
+          # radeon in the auxiliary KC on its own, for the turks bring-up
+          drmRadeonKexts = pkgs.symlinkJoin {
+            name = "puredarwin-kexts-radeon";
+            paths = [ kextsBuild drmRadeonBuild ];
+          };
+          kcRadeonBuild = pkgs.callPackage ./nix/pkgs/toolchain/kc.nix {
+            kernel = kernelBuild;
+            inherit kernelSource;
+            kexts = drmRadeonKexts;
+            kcTools = kc-tools.packages.${system}.default;
+            auxKexts = [ "PDDRMradeon.kext" ];
+            excludeKexts = [ "PDAmdGPU.kext" ];
+          };
+          radeonAuxFiles = pkgs.runCommand "puredarwin-radeon-aux" { } ''
+            mkdir -p $out/Library/KernelCollections
+            cp ${kcRadeonBuild}/aux.kc $out/Library/KernelCollections/AuxiliaryKernelExtensions.kc
+          '';
+          # the radeon microcode northern islands asks for (pfp, me, mc, smc, rlc and uvd), into
+          # /Library/Firmware/radeon. AMD's licence allows redistribution, LICENSE.radeon goes along.
+          radeonFirmware = pkgs.runCommand "puredarwin-radeon-firmware" { } ''
+            fw=$out/Library/Firmware/radeon
+            mkdir -p $fw
+            for n in BARTS_pfp BARTS_me BARTS_mc BARTS_smc TURKS_pfp TURKS_me TURKS_mc TURKS_smc \
+              CAICOS_pfp CAICOS_me CAICOS_mc CAICOS_smc BTC_rlc SUMO_uvd; do
+              for src in ${pkgs.linux-firmware}/lib/firmware/radeon/$n.bin*; do
+                [ -e "$src" ] || continue
+                case "$src" in
+                  *.zst) ${pkgs.zstd}/bin/zstd -dqf "$src" -o "$fw/$n.bin" ;;
+                  *.xz) ${pkgs.xz}/bin/xz -dc "$src" > "$fw/$n.bin" ;;
+                  *) cp -L "$src" "$fw/$n.bin" ;;
+                esac
+              done
+              [ -s "$fw/$n.bin" ] || { echo "missing radeon/$n.bin"; exit 1; }
+            done
+            cp ${pkgs.linux-firmware.src}/LICENSES/LICENSE.radeon $fw/LICENSE.radeon 2>/dev/null || \
+              cp ${pkgs.linux-firmware.src}/LICENSE.radeon $fw/LICENSE.radeon
+          '';
+          imageRadeonBuild = linuxPackages.image-wayland-minimal.override (old: {
+            kc = kcRadeonBuild;
+            extraPackages = dropGpuDefaults old.extraPackages ++ [ userlandBuild radeonAuxFiles radeonFirmware ];
+            imageFileName = "puredarwin-radeon.img";
+            # the aux KC is not SIP protected on ext4, allow unrestricted fs and untrusted kexts
+            bootArgs = old.bootArgs + " csr-active-config=0x3 fbsdkpi_debug=1";
           });
           # i915 in the auxiliary KC, the GOP framebuffer in the boot KC drives the display
           # when it doesn't attach
@@ -5540,8 +5701,8 @@
           i915Firmware = pkgs.runCommand "puredarwin-i915-firmware" { } ''
             fw=$out/Library/Firmware/i915
             mkdir -p $fw
-            # DMC for gen9 to MTL (cfl and cml load kbl's), GuC and HuC for gen12 and MTL, MTL's GSC
-            for src in ${pkgs.linux-firmware}/lib/firmware/i915/{skl,kbl,bxt,glk,tgl,rkl,adls,adlp,mtl}_dmc* \
+            # DMC for gen9 to MTL (cfl and cml load kbl's, ehl and jsl icl's, arl mtl's), GuC and HuC for gen12 and MTL, MTL's GSC
+            for src in ${pkgs.linux-firmware}/lib/firmware/i915/{skl,kbl,bxt,glk,icl,tgl,rkl,adls,adlp,mtl}_dmc* \
                 ${pkgs.linux-firmware}/lib/firmware/i915/{tgl,adlp,mtl}_{guc,huc}* \
                 ${pkgs.linux-firmware}/lib/firmware/i915/mtl_gsc*; do
               [ -e "$src" ] || continue
@@ -5640,24 +5801,25 @@
             excludeKexts = [ "PDAmdGPU.kext" ];
           };
           # what every desktop image carries for the drm drivers: the combined aux KC and firmware
-          gpuDefaultPackages = [ gpuAuxFiles (mkAmdgpuFirmware [ "granite-ridge" "mendocino" "navi21" "navi22" "navi23" "navi24" "renoir" "rembrandt" ]) i915Firmware ];
+          gpuDefaultPackages = [ gpuAuxFiles (mkAmdgpuFirmware [ "granite-ridge" "mendocino" "navi21" "navi22" "navi23" "navi24" "navi31" "navi32" "navi33" "raven" "renoir" "rembrandt" "kaveri" "kabini" "mullins" "polaris10" "polaris11" "polaris12" "vegam" ]) i915Firmware ];
           gpuAuxFiles = pkgs.runCommand "puredarwin-gpu-aux" { } ''
             mkdir -p $out/Library/KernelCollections
             cp ${kcGpuBuild}/aux.kc $out/Library/KernelCollections/AuxiliaryKernelExtensions.kc
           '';
-          # CPU compositing: with the radeonsi libraries on DYLD_LIBRARY_PATH neuswc dies at
-          # launch on a machine without the amdgpu gpu, apps still find them in pd-amdgpu-mesa
+          # CPU compositing, apps still get the gpu through the system mesa
           gpuNeuswcEnv = pkgs.writeTextDir "etc/neuswc.env" ''
-            NEUSWC_ENV="ARGON_GFX=cpu ARGON_GFX_STATS=1 SWC_WAIT_HW_FB=30"
+            NEUSWC_ENV="ARGON_GFX=cpu SWC_WAIT_HW_FB=30"
             NEUSWC_LOG=/var/log/neuswc.log
           '';
           imageGpuBuild = linuxPackages.image-wayland-minimal.override (old: {
             kc = kcGpuBuild;
             extraPackages = dropGpuDefaults old.extraPackages ++ [ userlandBuild gpuAuxFiles
-              (mkAmdgpuFirmware [ "granite-ridge" "mendocino" "navi21" "navi22" "navi23" "navi24" "renoir" "rembrandt" ]) i915Firmware gfxInfoTool
-              radvFiles libdrmAmdgpuBuild vulkanLoaderNoxBuild vulkanToolsNoxBuild gpuNeuswcEnv ];
-            imageFileName = "puredarwin-gpu.img";
-            bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 gopconsole=1 -noprogress csr-active-config=0x3 fbsdkpi_debug=1";
+              (mkAmdgpuFirmware [ "granite-ridge" "mendocino" "navi21" "navi22" "navi23" "navi24" "navi31" "navi32" "navi33" "raven" "renoir" "rembrandt" "kaveri" "kabini" "mullins" "polaris10" "polaris11" "polaris12" "vegam" ]) i915Firmware gfxInfoTool
+              radvFiles libdrmAmdgpuBuild vulkanLoaderNoxBuild vulkanToolsNoxBuild i915GlNeuswcEnv pdgltriBuild libelfBuild nouveauFirmware ];
+            imageFileName = "puredarwin-gpu-nouveau.img";
+            # every drm firmware family no longer fits the wayland-minimal root
+            rootMB = old.rootMB + 600;
+            bootArgs = "-v debug=0x210 -nogzalloc_mode keepsyms=1 gopconsole=1 -noprogress csr-active-config=0x3 fbsdkpi_debug=1 pdnouveau=1";
           });
           # the combined gpu image with the BIOS loader in the MBR
           imageGpuLegacyBuild = imageGpuBuild.override {
@@ -5694,14 +5856,11 @@
             bootArgs = old.bootArgs + " -v fbsdkpi_debug=1";
             imageFileName = "puredarwin-amdgpu-debug.img";
           });
-          # radv on /dev/dri: only the vulkan driver and its icd are taken from the
-          # amdgpu mesa, so the desktop keeps its own gl libraries
+          # radv on /dev/dri and its icd, the same files the system mesa carries
           radvFiles = pkgs.runCommand "puredarwin-radv-files" { } ''
-            mkdir -p $out/usr/lib/pd-amdgpu-mesa $out/usr/share/vulkan/icd.d
-            cp ${mesaAmdgpuBuild}/usr/lib/libvulkan_radeon.dylib $out/usr/lib/
-            cp ${mesaAmdgpuBuild}/usr/share/vulkan/icd.d/radeon_icd.x86_64.json $out/usr/share/vulkan/icd.d/
-            # radeonsi's gl libraries sit apart, a test picks them with DYLD_LIBRARY_PATH
-            cp -P ${mesaAmdgpuBuild}/usr/lib/lib{EGL,GLESv2,GL,gallium}*.dylib $out/usr/lib/pd-amdgpu-mesa/
+            mkdir -p $out/usr/lib $out/usr/share/vulkan/icd.d
+            cp ${mesaGpuBuild}/usr/lib/libvulkan_radeon.dylib $out/usr/lib/
+            cp ${mesaGpuBuild}/usr/share/vulkan/icd.d/radeon_icd.x86_64.json $out/usr/share/vulkan/icd.d/
           '';
           amdcsBuild =
             pkgs.callPackage ./nix/pkgs/gpu/amdcs.nix {
@@ -5713,7 +5872,7 @@
             pkgs.callPackage ./nix/pkgs/gpu/pdgltri.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
-              mesa = mesaAmdgpuBuild;
+              mesa = mesaGpuBuild;
             };
           # drmprobe, then vulkaninfo on radv, once at boot, to the console
           gpuTestLaunchd = pkgs.runCommand "puredarwin-gpu-test-launchd" { } ''
@@ -5727,7 +5886,7 @@
             echo "gputest: sdma submission"
             /usr/sbin/amdcs 2>&1
             echo "gputest: gles triangle on radeonsi"
-            DYLD_LIBRARY_PATH=/usr/lib/pd-amdgpu-mesa /usr/sbin/pdgltri 2>&1
+            /usr/sbin/pdgltri 2>&1
             echo "gputest: done"
             EOF2
             chmod 755 $out/usr/sbin/pd-gpu-test
@@ -5752,9 +5911,9 @@
             bootArgs = old.bootArgs + " -v fbsdkpi_debug=1";
             imageFileName = "puredarwin-amdgpu-mesa.img";
           });
-          # neuswc composites with GL on radeonsi (gles) or with pixman (cpu), stats every 5 s on the console
+          # neuswc composites with GL on radeonsi (gles) or with pixman (cpu)
           neuswcEnv = gfx: pkgs.writeTextDir "etc/neuswc.env" ''
-            NEUSWC_ENV="DYLD_LIBRARY_PATH=/usr/lib/pd-amdgpu-mesa ARGON_GFX=${gfx} ARGON_GFX_STATS=1 SWC_WAIT_HW_FB=30"
+            NEUSWC_ENV="ARGON_GFX=${gfx} SWC_WAIT_HW_FB=30"
             NEUSWC_LOG=/dev/console
           '';
           # bare metal too: no boot-time gpu tests, and neuswc composites on the cpu when amdgpu does not come up
@@ -5798,6 +5957,11 @@
             image-amdgpu-720 = imageAmdgpu720Build;
             image-amdgpu-switch = imageAmdgpuSwitchBuild;
             image-amdgpu-allfw = imageAmdgpuAllFwBuild;
+            drm-kmod-radeon-src = drmKmodRadeonSrc;
+            drm-radeon = drmRadeonBuild;
+            kc-radeon = kcRadeonBuild;
+            radeon-firmware = radeonFirmware;
+            image-radeon = imageRadeonBuild;
             drm-kmod-i915-src = drmKmodI915Src;
             drm-i915 = drmI915Build;
             drm-kmod-nouveau-src = drmKmodNouveauSrc;

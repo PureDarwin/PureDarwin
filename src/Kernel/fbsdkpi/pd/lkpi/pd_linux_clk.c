@@ -10,9 +10,10 @@
 #include <linux/of.h>
 #include <linux/clk.h>
 #include <linux/reset.h>
+#include <linux/regulator/consumer.h>
 #include <linux/pd_providers.h>
 
-enum { PD_PROV_CLK, PD_PROV_RESET, PD_PROV_POWER };
+enum { PD_PROV_CLK, PD_PROV_RESET, PD_PROV_POWER, PD_PROV_REGULATOR };
 
 struct pd_provider {
 	int		kind;
@@ -69,6 +70,62 @@ pd_power_provider_add(const char *compatible, const struct pd_power_ops *ops, vo
 	return (provider_add(PD_PROV_POWER, compatible, ops, priv));
 }
 
+int
+pd_regulator_provider_add(const char *compatible, const struct pd_regulator_ops *ops, void *priv)
+{
+	return (provider_add(PD_PROV_REGULATOR, compatible, ops, priv));
+}
+
+struct pd_binding {
+	const char		*compatible;
+	const char		*list;
+	const char		*name;
+	struct device_node	*provider;
+	u32			arg;
+};
+
+static struct pd_binding sBindings[16];
+static int sBindingCount;
+
+int
+pd_consumer_binding_add(const char *consumer_compatible, const char *list, const char *name,
+    struct device_node *provider, u32 arg)
+{
+	int error = 0;
+
+	mutex_lock(pd_provider_lock_get());
+	if (sBindingCount == nitems(sBindings))
+		error = -ENOSPC;
+	else
+		sBindings[sBindingCount++] = (struct pd_binding){ consumer_compatible, list, name, provider, arg };
+	mutex_unlock(pd_provider_lock_get());
+	return (error);
+}
+
+// the binding standing in for a list entry the consumer's node does not have
+static int
+binding_for(const struct device_node *np, const char *list, const char *id, struct of_phandle_args *args)
+{
+	int found = -ENOENT;
+
+	mutex_lock(pd_provider_lock_get());
+	for (int i = 0; i < sBindingCount && found != 0; i++) {
+		const struct pd_binding *b = &sBindings[i];
+
+		if (strcmp(b->list, list) != 0 || !of_device_is_compatible(np, b->compatible))
+			continue;
+		if (id != NULL && strcmp(b->name, id) != 0)
+			continue;
+		memset(args, 0, sizeof(*args));
+		args->np = b->provider;
+		args->args_count = 1;
+		args->args[0] = b->arg;
+		found = 0;
+	}
+	mutex_unlock(pd_provider_lock_get());
+	return (found);
+}
+
 static const struct pd_provider *
 provider_for(int kind, const struct device_node *np)
 {
@@ -95,10 +152,15 @@ lookup_np(int kind, struct device_node *np, const char *list, const char *cells,
 
 	if (np == NULL)
 		return (-ENODEV);
-	if (id != NULL && (index = of_property_match_string(np, names, id)) < 0)
-		return (-ENOENT);
-	if (of_parse_phandle_with_args(np, list, cells, index, &args) != 0)
-		return (-ENOENT);
+	if (of_find_property(np, list, NULL) == NULL) {
+		if (binding_for(np, list, id, &args) != 0)
+			return (-ENOENT);
+	} else {
+		if (id != NULL && (index = of_property_match_string(np, names, id)) < 0)
+			return (-ENOENT);
+		if (of_parse_phandle_with_args(np, list, cells, index, &args) != 0)
+			return (-ENOENT);
+	}
 	*prov = provider_for(kind, args.np);
 	if (*prov == NULL) {
 		printf("pd platform: no provider for %s %s of %s on %s\n", list, id != NULL ? id : "",
@@ -478,4 +540,104 @@ pd_power_domains_on(struct device_node *np)
 			printf("pd platform: power domain %d of %s did not come on\n", i, np->full_name);
 	}
 	return (0);
+}
+
+// regulators, a consumer's <id>-supply phandle or a binding for it
+
+struct regulator {
+	const struct pd_regulator_ops	*ops;
+	void				*hw;
+	int				enabled;
+};
+
+struct regulator *
+regulator_get(struct device *dev, const char *id)
+{
+	char list[64];
+	struct of_phandle_args args;
+	struct device_node *np = dev != NULL ? dev->of_node : NULL;
+	const struct pd_provider *prov;
+	struct regulator *r;
+	void *hw;
+
+	if (np == NULL || id == NULL)
+		return (ERR_PTR(-ENODEV));
+	snprintf(list, sizeof(list), "%s-supply", id);
+	memset(&args, 0, sizeof(args));
+	args.np = of_parse_phandle(np, list, 0);
+	if (args.np == NULL && binding_for(np, list, NULL, &args) != 0)
+		return (ERR_PTR(-ENOENT));
+	prov = provider_for(PD_PROV_REGULATOR, args.np);
+	if (prov == NULL) {
+		printf("pd platform: no regulator provider for %s of %s\n", list, np->full_name);
+		return (ERR_PTR(-EPROBE_DEFER));
+	}
+	hw = ((const struct pd_regulator_ops *)prov->ops)->xlate(prov->priv, args.np);
+	if (hw == NULL)
+		return (ERR_PTR(-EINVAL));
+	r = kzalloc(sizeof(*r), GFP_KERNEL);
+	r->ops = prov->ops;
+	r->hw = hw;
+	return (r);
+}
+
+void
+regulator_put(struct regulator *r)
+{
+	if (!IS_ERR_OR_NULL(r))
+		kfree(r);
+}
+
+static void
+devm_regulator_release(void *arg)
+{
+	regulator_put(arg);
+}
+
+struct regulator *
+devm_regulator_get(struct device *dev, const char *id)
+{
+	struct regulator *r = regulator_get(dev, id);
+
+	if (!IS_ERR(r))
+		lkpi_devm_add_action(dev, devm_regulator_release, r);
+	return (r);
+}
+
+int
+regulator_enable(struct regulator *r)
+{
+	int error;
+
+	if (IS_ERR_OR_NULL(r))
+		return (-EINVAL);
+	error = r->ops->enable != NULL ? r->ops->enable(r->hw) : 0;
+	if (error == 0)
+		r->enabled++;
+	return (error);
+}
+
+int
+regulator_disable(struct regulator *r)
+{
+	if (IS_ERR_OR_NULL(r) || r->enabled == 0)
+		return (-EINVAL);
+	r->enabled--;
+	return (r->ops->disable != NULL ? r->ops->disable(r->hw) : 0);
+}
+
+int
+regulator_get_voltage(struct regulator *r)
+{
+	if (IS_ERR_OR_NULL(r) || r->ops->get_voltage == NULL)
+		return (-ENODEV);
+	return (r->ops->get_voltage(r->hw));
+}
+
+int
+regulator_set_voltage(struct regulator *r, int min_uv, int max_uv)
+{
+	if (IS_ERR_OR_NULL(r) || r->ops->set_voltage == NULL)
+		return (-ENODEV);
+	return (r->ops->set_voltage(r->hw, min_uv, max_uv));
 }

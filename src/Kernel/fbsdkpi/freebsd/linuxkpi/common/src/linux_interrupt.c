@@ -109,6 +109,13 @@ lkpi_devm_irq_release(struct device *dev, void *p)
 	lkpi_irq_release(dev, irqe);
 }
 
+#ifdef __PUREDARWIN__
+/* PureDarwin: device tree platform devices take their vectors outside newbus. */
+int pd_platform_request_irq(unsigned int irq, irq_handler_t handler,
+    irq_handler_t thread_handler, void *arg);
+void pd_platform_free_irq(unsigned int irq, void *arg);
+#endif
+
 int
 lkpi_request_irq(struct device *xdev, unsigned int irq,
     irq_handler_t handler, irq_handler_t thread_handler,
@@ -122,6 +129,10 @@ lkpi_request_irq(struct device *xdev, unsigned int irq,
 	int rid;
 
 	dev = lkpi_pci_find_irq_dev(irq);
+#ifdef __PUREDARWIN__
+	if (dev == NULL)
+		return (pd_platform_request_irq(irq, handler, thread_handler, arg));
+#endif
 	if (dev == NULL)
 		return -ENXIO;
 	if (xdev != NULL && xdev != dev)
@@ -221,6 +232,10 @@ lkpi_free_irq(unsigned int irq, void *device __unused)
 	struct device *dev;
 
 	dev = lkpi_pci_find_irq_dev(irq);
+#ifdef __PUREDARWIN__
+	if (dev == NULL)
+		pd_platform_free_irq(irq, device);
+#endif
 	if (dev == NULL)
 		return;
 	irqe = lkpi_irq_ent(dev, irq);

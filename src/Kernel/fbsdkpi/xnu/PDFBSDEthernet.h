@@ -61,6 +61,11 @@ private:
 	bool publishMedia();
 
 	IOPCIDevice			*fPCI;
+#ifdef PDFBSD_USB
+	// a usb driver runs on an interface, through the pdusb handle
+	IOService			*fUSBInterface;
+	void				*fUSBDev;
+#endif
 	IOEthernetInterface	*fInterface;
 	void				*fIfp;
 	bool				fEnabled;

@@ -1,0 +1,37 @@
+diff -ruN a/drivers/gpu/drm/radeon/radeon_agp.c b/drivers/gpu/drm/radeon/radeon_agp.c
+--- a/drivers/gpu/drm/radeon/radeon_agp.c	2026-10-26 15:12:07.343438837 +0000
++++ b/drivers/gpu/drm/radeon/radeon_agp.c	2026-10-26 15:12:07.362915601 +0000
+@@ -32,7 +32,8 @@
+ 
+ #include "radeon.h"
+ 
+-#ifdef __FreeBSD__
++/* PureDarwin has no agp bus, radeon builds without CONFIG_AGP */
++#if defined(__FreeBSD__) && !defined(__PUREDARWIN__)
+ #include <dev/agp/agpvar.h>
+ #endif
+ 
+diff -ruN a/drivers/gpu/drm/radeon/radeon_drv.c b/drivers/gpu/drm/radeon/radeon_drv.c
+--- a/drivers/gpu/drm/radeon/radeon_drv.c	2026-10-26 15:07:42.315864513 +0000
++++ b/drivers/gpu/drm/radeon/radeon_drv.c	2026-10-26 15:07:54.848223889 +0000
+@@ -344,6 +344,20 @@
+ 
+ 	drm_client_setup(ddev, format);
+ 
++#ifdef __PUREDARWIN__
++	/* opt-in bring-up client: colour bars on every lit crtc (boot-arg drm_testpattern=1) */
++	{
++		extern long pd_drm_tunable_long(const char *path, long def);
++		extern int pd_drm_test_client(struct drm_device *dev);
++		extern void pd_radeon_fb_register(struct drm_device *dev);
++		if (pd_drm_tunable_long("drm.testpattern", 0) != 0)
++			pd_drm_test_client(ddev);
++		else
++			/* the IOFramebuffer brings the display up when it starts */
++			pd_radeon_fb_register(ddev);
++	}
++#endif
++
+ 	return 0;
+ 
+ err_agp:

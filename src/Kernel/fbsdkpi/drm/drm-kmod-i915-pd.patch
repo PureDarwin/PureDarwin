@@ -157,6 +157,39 @@ diff --git a/drivers/gpu/drm/i915/i915_driver.c b/drivers/gpu/drm/i915/i915_driv
  	enable_rpm_wakeref_asserts(&i915->runtime_pm);
  
  	i915_welcome_messages(i915);
+diff --git a/drivers/gpu/drm/i915/i915_gpu_error.c b/drivers/gpu/drm/i915/i915_gpu_error.c
+--- a/drivers/gpu/drm/i915/i915_gpu_error.c
++++ b/drivers/gpu/drm/i915/i915_gpu_error.c
+@@ -2177,10 +2177,17 @@
+ 	return error;
+ }
+ 
++#ifdef __PUREDARWIN__
++/* linuxkpi's DEFINE_MUTEX sets the lock up from a sysinit, which needs file scope */
++static DEFINE_MUTEX(capture_mutex);
++#endif
++
+ static struct i915_gpu_coredump *
+ i915_gpu_coredump(struct intel_gt *gt, intel_engine_mask_t engine_mask, u32 dump_flags)
+ {
++#ifndef __PUREDARWIN__
+ 	static DEFINE_MUTEX(capture_mutex);
++#endif
+ 	int ret = mutex_lock_interruptible(&capture_mutex);
+ 	struct i915_gpu_coredump *dump;
+ 
+@@ -2203,6 +2210,11 @@
+ 
+ 	i915 = error->i915;
+ 	drm_info(&i915->drm, "%s\n", error_msg(error));
++#ifdef __PUREDARWIN__
++	/* no sysfs error node on PureDarwin, the state goes to the kernel log */
++	extern void pd_i915_hangdump(struct i915_gpu_coredump *error);
++	pd_i915_hangdump(error);
++#endif
+ 
+ 	if (error->simulated ||
+ 	    cmpxchg(&i915->gpu_error.first_error, NULL, error))
 diff --git a/drivers/gpu/drm/i915/i915_module.c b/drivers/gpu/drm/i915/i915_module.c
 --- a/drivers/gpu/drm/i915/i915_module.c
 +++ b/drivers/gpu/drm/i915/i915_module.c

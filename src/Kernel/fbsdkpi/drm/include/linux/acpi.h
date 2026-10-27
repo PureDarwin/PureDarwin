@@ -18,6 +18,7 @@ typedef uint64_t acpi_integer;
 
 #define AE_OK 0x0000
 #define AE_ERROR 0x0001
+#define AE_NO_MEMORY 0x0004
 #define AE_NOT_FOUND 0x0005
 #define AE_NOT_EXIST 0x0006
 #define AE_BAD_PARAMETER 0x1001

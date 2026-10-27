@@ -12,6 +12,7 @@
 #include <linux/device.h>
 #include <linux/dma-mapping.h>
 #include <linux/platform_device.h>
+#include <linux/interrupt.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/pd_providers.h>
@@ -287,4 +288,84 @@ devm_platform_ioremap_resource_byname(struct platform_device *pdev, const char *
 {
 	return (devm_ioremap_resource(&pdev->dev,
 	    platform_get_resource_byname(pdev, IORESOURCE_MEM, name)));
+}
+
+// interrupts of device tree platform devices, straight onto the nub's vectors in pd_pci.c
+
+typedef int32_t (*pd_haiku_handler)(void *);
+int install_io_interrupt_handler(int32_t vector, pd_haiku_handler handler, void *data, uint32_t flags);
+int remove_io_interrupt_handler(int32_t vector, pd_haiku_handler handler, void *data);
+
+struct pd_platform_irq {
+	unsigned int	irq;
+	irq_handler_t	handler;
+	irq_handler_t	thread_handler;
+	void		*arg;
+	uint64_t	count;
+	uint64_t	unhandled;
+	uint64_t	next_report;
+};
+
+static struct pd_platform_irq sIrqs[16];
+
+static int32_t
+pd_platform_irq_handler(void *data)
+{
+	struct pd_platform_irq *pi = data;
+	irqreturn_t ret;
+
+	linux_set_current(curthread);
+	ret = pi->handler != NULL ? pi->handler(pi->irq, pi->arg) : IRQ_WAKE_THREAD;
+	if (ret == IRQ_WAKE_THREAD && pi->thread_handler != NULL)
+		ret = pi->thread_handler(pi->irq, pi->arg);
+
+	// counts at each power of ten, so a storm shows in the log without flooding it
+	pi->count++;
+	if (ret == IRQ_NONE)
+		pi->unhandled++;
+	if (pi->count >= pi->next_report) {
+		printf("pd platform: irq %u count %llu unhandled %llu\n", pi->irq,
+		    (unsigned long long)pi->count, (unsigned long long)pi->unhandled);
+		pi->next_report = pi->next_report == 0 ? 10 : pi->next_report * 10;
+	}
+	// haiku's B_HANDLED_INTERRUPT and B_UNHANDLED_INTERRUPT
+	return (ret == IRQ_NONE ? 0 : 1);
+}
+
+int
+pd_platform_request_irq(unsigned int irq, irq_handler_t handler, irq_handler_t thread_handler, void *arg)
+{
+	struct pd_platform_irq *pi = NULL;
+	int error;
+
+	for (int i = 0; i < nitems(sIrqs); i++) {
+		if (sIrqs[i].irq == 0 && sIrqs[i].handler == NULL && sIrqs[i].thread_handler == NULL) {
+			pi = &sIrqs[i];
+			break;
+		}
+	}
+	if (pi == NULL)
+		return (-ENOSPC);
+	*pi = (struct pd_platform_irq){ irq, handler, thread_handler, arg, 0, 0, 1 };
+	error = install_io_interrupt_handler(irq, pd_platform_irq_handler, pi, 0);
+	printf("pd platform: irq %u handler installed, %d\n", irq, error);
+	if (error != 0) {
+		memset(pi, 0, sizeof(*pi));
+		return (-ENXIO);
+	}
+	return (0);
+}
+
+void
+pd_platform_free_irq(unsigned int irq, void *arg)
+{
+	for (int i = 0; i < nitems(sIrqs); i++) {
+		struct pd_platform_irq *pi = &sIrqs[i];
+
+		if (pi->irq == irq && (pi->handler != NULL || pi->thread_handler != NULL)) {
+			remove_io_interrupt_handler(irq, pd_platform_irq_handler, pi);
+			memset(pi, 0, sizeof(*pi));
+			return;
+		}
+	}
 }

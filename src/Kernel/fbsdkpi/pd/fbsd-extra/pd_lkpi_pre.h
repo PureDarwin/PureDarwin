@@ -198,6 +198,7 @@ long long strtoll(const char *, char **, int);
 unsigned long long strtoull(const char *, char **, int);
 #define strtouq(p, e, b) strtoull(p, e, b)
 char *strchrnul(const char *, int);
+void explicit_bzero(void *, __SIZE_TYPE__);
 unsigned int arc4random_uniform(unsigned int);
 void qsort(void *, __SIZE_TYPE__, __SIZE_TYPE__, int (*)(const void *, const void *));
 void *bsearch(const void *, const void *, __SIZE_TYPE__, __SIZE_TYPE__,

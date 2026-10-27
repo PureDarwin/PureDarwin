@@ -8,6 +8,8 @@
 namespace Indium {
 	// the executor's instance, valid after init() was given the window system's extensions
 	extern VkInstance globalInstance;
+	// PureDarwin: the executor starts on first use, before the globals mean anything
+	void ensureStarted();
 	// and how to reach its functions: the executor's own loader or driver, never whichever libvulkan an app brought
 	extern PFN_vkGetInstanceProcAddr globalGetInstanceProcAddr;
 };

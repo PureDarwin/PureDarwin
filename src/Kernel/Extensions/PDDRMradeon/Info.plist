@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>English</string>
+    <key>CFBundleExecutable</key>
+    <string>PDDRMradeon</string>
+    <key>CFBundleGetInfoString</key>
+    <string>1.0.0, Copyright (C) 2026 PureDarwin Project. All rights reserved.</string>
+    <key>CFBundleIdentifier</key>
+    <string>org.puredarwin.driver.PDDRMradeon</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>PDDRMradeon</string>
+    <key>CFBundlePackageType</key>
+    <string>KEXT</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>CFBundleVersion</key>
+    <string>1.0.0</string>
+    <key>IOKitPersonalities</key>
+    <dict>
+        <key>PDDRMradeon</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>org.puredarwin.driver.PDDRMradeon</string>
+            <key>IOClass</key>
+            <string>PDDRMradeon</string>
+            <key>IOMatchCategory</key>
+            <string>PDDRMDevice</string>
+            <key>IOPCIClassMatch</key>
+            <string>0x03000000&amp;0xff000000</string>
+            <key>IOPCIPrimaryMatch</key>
+            <string>0x67201002&amp;0xffe0ffff 0x67401002&amp;0xffe0ffff 0x67601002&amp;0xffe0ffff</string>
+            <key>IOProbeScore</key>
+            <integer>7000</integer>
+            <key>IOProviderClass</key>
+            <string>IOPCIDevice</string>
+        </dict>
+        <key>PDDRMFramebufferRadeon</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>org.puredarwin.driver.PDDRMradeon</string>
+            <key>IOClass</key>
+            <string>PDDRMFramebufferRadeon</string>
+            <key>IOProviderClass</key>
+            <string>PDDRMradeon</string>
+        </dict>
+    </dict>
+    <key>OSBundleLibraries</key>
+    <dict>
+        <key>org.puredarwin.driver.PDDRMDri</key>
+        <string>1.0.0</string>
+        <key>com.apple.iokit.IOGraphicsFamily</key>
+        <string>576.1</string>
+        <key>com.apple.iokit.IOPCIFamily</key>
+        <string>2.9</string>
+        <key>com.apple.kpi.iokit</key>
+        <string>10.0.0d1</string>
+        <key>com.apple.kpi.libkern</key>
+        <string>10.0.0d1</string>
+        <key>com.apple.kpi.mach</key>
+        <string>10.0.0d1</string>
+        <key>com.apple.kpi.unsupported</key>
+        <string>10.0.0d1</string>
+        <key>com.apple.kpi.bsd</key>
+        <string>10.0.0d1</string>
+    </dict>
+    <key>OSBundleCompatibleVersion</key>
+    <string>1.0.0</string>
+</dict>
+</plist>

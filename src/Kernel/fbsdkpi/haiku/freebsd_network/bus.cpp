@@ -163,6 +163,21 @@ bus_alloc_ioport_resource(device_t dev, struct resource *res, pci_info *info,
 	if (pci_enable_io(dev, SYS_RES_IOPORT) != 0)
 		return -1;
 
+#if !defined(__x86_64__) && !defined(__i386__)
+	// no port i/o here, the bar sits in the host bridge's i/o window and is reached as memory
+	void* pcidev = pd_pci_iokit_device(info->bus, info->device, info->function);
+	uint64_t va = pcidev != NULL ? pdos_pci_bar_map(pcidev, bar_index, NULL, NULL) : 0;
+	if (va == 0) {
+		dprintf("bus_alloc_ioport_resource: bar %d did not map\n", bar_index);
+		return -1;
+	}
+	res->r_mapped_area = -2;
+	res->r_bustag = BUS_SPACE_TAG_MEM;
+	res->r_bushandle = (bus_space_handle_t)va;
+	return 0;
+#endif
+
+	res->r_mapped_area = -1;
 	res->r_bustag = BUS_SPACE_TAG_IO;
 	res->r_bushandle = info->u.h0.base_registers[bar_index];
 	return 0;
@@ -244,7 +259,7 @@ bus_release_resource(device_t dev, int type, int rid, struct resource *res)
 	if (res->r_type != type)
 		panic("bus_release_resource: mismatch");
 
-	if (type == SYS_RES_MEMORY && res->r_mapped_area == -2)
+	if ((type == SYS_RES_MEMORY || type == SYS_RES_IOPORT) && res->r_mapped_area == -2)
 		pdos_unmap_phys((void*)res->r_bushandle, 0);
 	else if (type == SYS_RES_MEMORY)
 		delete_area(res->r_mapped_area);

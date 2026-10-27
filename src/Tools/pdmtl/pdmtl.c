@@ -93,18 +93,49 @@ static void print_frame(void *pc) {
 }
 #endif
 
+static struct sigaction prev_sa[NSIG];
+
+// a fault outside this library and JIT code belongs to the host process, which may handle it itself (Wine does)
+static int foreign_fault(void *uc) {
+#if defined(__APPLE__) && defined(__x86_64__)
+  Dl_info here, at;
+  void *pc = (void *)((ucontext_t *)uc)->uc_mcontext->__ss.__rip;
+
+  return dladdr((void *)foreign_fault, &here) && dladdr(pc, &at) && at.dli_fbase && at.dli_fbase != here.dli_fbase;
+#else
+  (void)uc;
+  return 0;
+#endif
+}
+
+// hand the signal to whoever had it before pdmtl_init, or fault again with the default action
+static void chain_signal(int sig, siginfo_t *si, void *uc) {
+  struct sigaction *prev = &prev_sa[sig];
+
+  if ((prev->sa_flags & SA_SIGINFO) && prev->sa_sigaction)
+    prev->sa_sigaction(sig, si, uc);
+  else if (prev->sa_handler != SIG_DFL && prev->sa_handler != SIG_IGN)
+    prev->sa_handler(sig);
+  else
+    signal(sig, SIG_DFL);
+}
+
 static void on_signal(int sig, siginfo_t *si, void *uc) {
   struct guard *g;
 
-  // async-signal-unsafe, yet it is the only trace a fault leaves
-  fprintf(stderr, "pdmtl: signal %d, address %p\n", sig, si ? si->si_addr : 0);
   pthread_once(&gonce, gkey_init);
   g = pthread_getspecific(gkey);
+  // an abort is the app's own crash
+  if (sig == SIGABRT || (!g && foreign_fault(uc))) {
+    chain_signal(sig, si, uc);
+    return;
+  }
+  // async-signal-unsafe, yet it is the only trace a fault leaves
+  fprintf(stderr, "pdmtl: signal %d, address %p\n", sig, si ? si->si_addr : 0);
 #if defined(__APPLE__) && defined(__x86_64__)
   {
     static int once;
     _STRUCT_X86_THREAD_STATE64 *ss = &((ucontext_t *)uc)->uc_mcontext->__ss;
-    Dl_info here, at;
     void **fp = (void **)ss->__rbp;
 
     // the first fault names the pc, the return address on the stack (a call through null has pc 0) and the
@@ -143,13 +174,6 @@ static void on_signal(int sig, siginfo_t *si, void *uc) {
       }
     }
     once = 1;
-    // an abort, or a fault in another library's code (outside this library and JIT code), is the app's own crash:
-    // let it happen
-    if (sig == SIGABRT || (!g && dladdr((void *)on_signal, &here) && dladdr((void *)ss->__rip, &at) && at.dli_fbase &&
-        at.dli_fbase != here.dli_fbase)) {
-      signal(sig, SIG_DFL);
-      return;
-    }
   }
 #else
   (void)uc;
@@ -189,9 +213,16 @@ int pdmtl_init(size_t bytes) {
 
   memset(&sa, 0, sizeof(sa));
   sa.sa_sigaction = on_signal;
-  sa.sa_flags = SA_SIGINFO | SA_NODEFER;
-  for (k = 0; k < PD_ARRAY_LEN(sigs); k++)
+  sa.sa_flags = SA_SIGINFO | SA_NODEFER | SA_ONSTACK;
+  for (k = 0; k < PD_ARRAY_LEN(sigs); k++) {
+    // a host with its own handler keeps it: Wine's run with its masks on its signal stack, and a handler wrapped in
+    // this one left Wine threads off that stack, where xnu could not write the next frame and killed them with SIGILL
+    sigaction(sigs[k], 0, &prev_sa[sigs[k]]);
+    if ((prev_sa[sigs[k]].sa_flags & SA_SIGINFO) || (prev_sa[sigs[k]].sa_handler != SIG_DFL &&
+                                                     prev_sa[sigs[k]].sa_handler != SIG_IGN))
+      continue;
     sigaction(sigs[k], &sa, 0);
+  }
   return 0;
 }
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// tegra fuse readout, filled in once PD runs on a tegra soc
+// tegra fuse readout: the sku fields nouveau reads, filled from the efuse on tegra210
 #ifndef _PD_SOC_TEGRA_FUSE_H_
 #define _PD_SOC_TEGRA_FUSE_H_
 

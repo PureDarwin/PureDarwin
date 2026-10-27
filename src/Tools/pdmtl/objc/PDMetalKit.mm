@@ -75,6 +75,7 @@ static VkSurfaceKHR wayland_surface(void *display, void *surface) {
   VkWaylandSurfaceCreateInfoKHR ci = { VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR };
   VkSurfaceKHR s = VK_NULL_HANDLE;
 
+  Indium::ensureStarted();
   if (!create && Indium::globalGetInstanceProcAddr)
     create = (PFN_vkCreateWaylandSurfaceKHR)Indium::globalGetInstanceProcAddr(Indium::globalInstance, "vkCreateWaylandSurfaceKHR");
   ci.display = (struct wl_display *)display, ci.surface = (struct wl_surface *)surface;
@@ -202,6 +203,7 @@ static void cancelAppKitFrame(void *context,void *pixels) {
     return nil;
   _layer = layer, _pixelFormat = MTLPixelFormatBGRA8Unorm;
   _window = (GLFWwindow *)window;
+  Indium::ensureStarted();
   if (!glBackend() && glfwCreateWindowSurface(Indium::globalInstance, _window, NULL, &_surface) != VK_SUCCESS) {
     fprintf(stderr, "CAMetalLayer: no Vulkan surface for the window (did Metal load with surface extensions?)\n");
     [self release];
@@ -251,6 +253,17 @@ static void cancelAppKitFrame(void *context,void *pixels) {
 - (void)setWindowOrigin:(CGPoint)origin {
   if (_wlSubsurface)
     _windowServerMoveSubsurface((int)_windowNumber, _wlSubsurface, (int)origin.x, (int)origin.y);
+}
+
+// the layer takes the subsurface over for a Vulkan surface of its own, this backend stops presenting and forgets it
+- (void *)relinquishWaylandSurface:(void **)subsurface {
+  void *surface = _wlSurface;
+
+  _kit.reset();
+  if (subsurface)
+    *subsurface = _wlSubsurface;
+  _wlSurface = _wlSubsurface = NULL;
+  return surface;
 }
 
 // a new device or size is a new swapchain, a new format only changes the views onto it

@@ -294,10 +294,13 @@ fill_bars(void *dev, pci_info *info)
 			pdos_pci_write(dev, reg + 4, 4, 0xffffffff);
 			uint32 highMask = pdos_pci_read(dev, reg + 4, 4);
 			pdos_pci_write(dev, reg + 4, 4, high);
+			// both halves size one 64-bit window, a 4 GB or larger bar has no bits in the low half
+			uint64 size64 = ~(((uint64)highMask << 32) | (mask & PCI_address_memory_32_mask)) + 1;
+			info->u.h0.base_register_sizes[bar] = (uint32)size64;
 			bar++;
 			info->u.h0.base_registers_pci[bar] = high;
 			info->u.h0.base_registers[bar] = high;
-			info->u.h0.base_register_sizes[bar] = highMask == 0xffffffff ? 0 : ~highMask;
+			info->u.h0.base_register_sizes[bar] = (uint32)(size64 >> 32);
 			info->u.h0.base_register_flags[bar] = 0;
 		}
 	}

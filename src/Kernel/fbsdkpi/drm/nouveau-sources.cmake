@@ -719,5 +719,12 @@ set(PD_DRM_NOUVEAU_SOURCES
     nvc0_fence.c
 )
 
+# the tegra platform driver for gm20b, the jetson tx1's gpu
+# its acpi glue is x86 only, nouveau_acpi.h has the stubs for the rest
+if(PUREDARWIN_ARM64)
+    list(APPEND PD_DRM_NOUVEAU_SOURCES nouveau_platform.c)
+    list(REMOVE_ITEM PD_DRM_NOUVEAU_SOURCES nouveau_acpi.c)
+endif()
+
 set(PD_DRM_NOUVEAU_PD_SOURCES pd_nouveau_glue.c pd_nouveau_mmap.c pd_nouveau_pstate.c
     pd_nouveau_fb.c pd_amdgpu_fb.c)

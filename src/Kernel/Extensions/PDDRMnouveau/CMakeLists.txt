@@ -43,9 +43,33 @@ endforeach()
 foreach(src IN LISTS PD_DRM_NOUVEAU_PD_SOURCES)
     list(APPEND nv "${PD_DRM_DIR}/src/${src}")
 endforeach()
+# arm64 brings nouveau up on tegra210 as a device tree platform device
+set(nvplat)
+set(nvobjs PDDRMnouveau_drm PDDRMnouveau_nouveau)
+set(nvxnu "${CMAKE_CURRENT_SOURCE_DIR}/../../fbsdkpi/xnu/PDDRMDevice.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../fbsdkpi/xnu/PDDRMFramebuffer.cpp")
+if(PUREDARWIN_ARM64)
+    set(nvplat CONFIG_NOUVEAU_PLATFORM_DRIVER CONFIG_ARCH_TEGRA_210_SOC CONFIG_OF)
+    set(nvxnu "${CMAKE_CURRENT_SOURCE_DIR}/../../fbsdkpi/xnu/PDDRMPlatformDevice.cpp")
+    # FreeBSD's tegra210 car, pmc and efuse pieces, NetBSD's polled i2c, and PD's provider glue
+    set(tegra "${FBSDKPI_DIR}/freebsd/arm64/nvidia/tegra210/tegra210_gpu.c"
+        "${FBSDKPI_DIR}/netbsd/arch/arm/nvidia/tegra_i2c_poll.c")
+    _fbsdkpi_objects(PDDRMnouveau_bsd SOURCES ${tegra}
+        INCLUDES "${FBSDKPI_DIR}/freebsd" ${lkpiinc}
+        DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE
+        OPTIONS "SHELL:-include ${FBSDKPI_DIR}/pd/fbsd-extra/pd_lkpi_pre.h")
+    _fbsdkpi_objects(PDDRMnouveau_tegra SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/pd_tegra210_gpu.c"
+        INCLUDES "${FBSDKPI_DIR}/freebsd/arm64/nvidia/tegra210" "${FBSDKPI_DIR}/netbsd/arch/arm/nvidia"
+            ${lkpiinc} ${coreinc}
+        DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${drmdefs}
+            KBUILD_MODNAME=\"nouveau\" LINUXKPI_PARAM_PREFIX=nouveau_
+        OPTIONS ${lkpiopt})
+    list(APPEND nvobjs PDDRMnouveau_bsd PDDRMnouveau_tegra)
+endif()
+
 _fbsdkpi_objects(PDDRMnouveau_nouveau SOURCES ${nv}
     INCLUDES ${lkpiinc} ${coreinc} ${nvinc}
-    DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${drmdefs} CONFIG_DRM_NOUVEAU PD_DRM_FB_DRIVER_BUFFERS
+    DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${drmdefs} CONFIG_DRM_NOUVEAU PD_DRM_FB_DRIVER_BUFFERS ${nvplat}
         CONFIG_NOUVEAU_I2C_INTERNAL CONFIG_NOUVEAU_I2C_INTERNAL_DEFAULT
         KBUILD_MODNAME=\"nouveau\" LINUXKPI_PARAM_PREFIX=nouveau_
     OPTIONS ${lkpiopt} "SHELL:-include ${PD_DRM_DIR}/include/pd_nouveau_pre.h"
@@ -60,10 +84,8 @@ add_fbsdkpi_driver(PDDRMnouveau
     LKPI_INCLUDES ${drminc}
     LKPI_DEFINITIONS ${drmdefs} KBUILD_MODNAME=\"linuxkpi\"
     LKPI_OPTIONS ${drmopts}
-    OBJECTS PDDRMnouveau_drm PDDRMnouveau_nouveau
-    XNU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/../../fbsdkpi/xnu/PDDRMDevice.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../../fbsdkpi/xnu/PDDRMFramebuffer.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/pstate_sysctl.cpp"
+    OBJECTS ${nvobjs}
+    XNU_SOURCES ${nvxnu} "${CMAKE_CURRENT_SOURCE_DIR}/pstate_sysctl.cpp"
 )
 
 # nouveau attaches only when asked to with the pdnouveau=1 boot-arg

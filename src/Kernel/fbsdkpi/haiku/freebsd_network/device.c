@@ -110,12 +110,54 @@ driver_printf(const char *format, ...)
 // a drm kext sets this to its formatter, which knows linux's %p extensions
 int (*pd_driver_vsnprintf)(char *buf, size_t size, const char *format, va_list vl);
 
+// the last line that reads like a failure, for the iokit side to report when an attach goes wrong
+static char sLastError[160];
+
+const char *
+pd_driver_last_error(void)
+{
+	return sLastError;
+}
+
+static int
+driver_has_word(const char *line, const char *word)
+{
+	for (; *line != '\0'; line++) {
+		size_t i = 0;
+		while (word[i] != '\0' && line[i] != '\0' &&
+		    (line[i] | 0x20) == (word[i] | 0x20))
+			i++;
+		if (word[i] == '\0')
+			return 1;
+	}
+	return 0;
+}
+
+static void
+driver_note_error(const char *line)
+{
+	static const char *const words[] = { "fail", "error", "unable", "unknown", "invalid",
+		"not found", "no connected", "timeout", "timed out" };
+
+	for (unsigned i = 0; i < sizeof(words) / sizeof(words[0]); i++) {
+		if (driver_has_word(line, words[i])) {
+			strlcpy(sLastError, line, sizeof(sLastError));
+			size_t n = strlen(sLastError);
+			if (n > 0 && sLastError[n - 1] == '\n')
+				sLastError[n - 1] = '\0';
+			return;
+		}
+	}
+}
+
 static int
 driver_vprintf_etc(const char *extra, const char *format, va_list vl)
 {
 	char buf[256];
 	int ret = pd_driver_vsnprintf != NULL ? pd_driver_vsnprintf(buf, sizeof(buf), format, vl)
 		: vsnprintf(buf, sizeof(buf), format, vl);
+
+	driver_note_error(buf);
 
 	if (extra)
 		dprintf("[%s] (%s) %s", gDriverName, extra, buf);

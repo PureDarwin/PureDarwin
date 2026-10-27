@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "util/u_surface.h"
 #include "util/u_memory.h"
@@ -383,7 +384,8 @@ static void virgl_pd_fence_reference(struct virgl_winsys *vws,
 {
    struct virgl_pd_fence *old = (struct virgl_pd_fence *)*dst;
    struct virgl_pd_fence *nsrc = (struct virgl_pd_fence *)src;
-   if (old && pipe_reference(&old->reference, nsrc ? &nsrc->reference : NULL))
+   // a fence stored into an empty slot still takes its reference
+   if (pipe_reference(old ? &old->reference : NULL, nsrc ? &nsrc->reference : NULL))
       FREE(old);
    *dst = src;
 }
@@ -441,7 +443,9 @@ struct virgl_winsys *virgl_puredarwin_winsys_wrap(struct sw_winsys *sws)
 
    pdws->conn = pd_virgl_open();
    if (!pdws->conn) {
-      fprintf(stderr, "virgl_pd: cannot open IOVirtIOGPU 3D user client\n");
+      // no virtio-gpu 3d device is the normal case off qemu, the next driver takes over quietly
+      if (getenv("VIRGL_PD_DEBUG"))
+         fprintf(stderr, "virgl_pd: cannot open IOVirtIOGPU 3D user client\n");
       FREE(pdws);
       return NULL;
    }

@@ -12,6 +12,7 @@ set(PD_DRM_I915_SOURCES
     i915/i915_gem_evict.c
     i915/i915_gem_gtt.c
     i915/i915_gem_ww.c
+    i915/i915_gpu_error.c
     i915/i915_ioctl.c
     i915/i915_irq.c
     i915/i915_memcpy.c
@@ -257,4 +258,4 @@ set(PD_DRM_I915_SOURCES
     i915/soc/intel_pch.c
 )
 
-set(PD_DRM_I915_PD_SOURCES pd_i915_glue.c pd_i915_fb.c pd_i915_mmap.c pd_amdgpu_fb.c)
+set(PD_DRM_I915_PD_SOURCES pd_i915_glue.c pd_i915_fb.c pd_i915_hangdump.c pd_i915_mmap.c pd_amdgpu_fb.c)

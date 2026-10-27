@@ -150,13 +150,22 @@ ffsl(long mask)
 	return mask == 0 ? 0 : __builtin_ctzl(mask) + 1;
 }
 
-// mb, rmb and wmb order device and write-combined memory too, so on x86 they are the fence
+// the kernel exports only ffs, linuxkpi's __ffs64 needs this one
+int
+ffsll(long long mask)
+{
+	return mask == 0 ? 0 : __builtin_ctzll(mask) + 1;
+}
+
+// mb, rmb and wmb order device and write-combined memory too, so they are the fence or dsb
 // instructions, a compiler fence leaves cpu writes in the wc buffers when the gpu reads
 void
 memory_full_barrier(void)
 {
 #if defined(__x86_64__)
 	__asm__ volatile("mfence" ::: "memory");
+#elif defined(__aarch64__)
+	__asm__ volatile("dsb sy" ::: "memory");
 #else
 	__atomic_thread_fence(__ATOMIC_SEQ_CST);
 #endif
@@ -167,6 +176,8 @@ memory_read_barrier(void)
 {
 #if defined(__x86_64__)
 	__asm__ volatile("lfence" ::: "memory");
+#elif defined(__aarch64__)
+	__asm__ volatile("dsb ld" ::: "memory");
 #else
 	__atomic_thread_fence(__ATOMIC_ACQUIRE);
 #endif
@@ -177,6 +188,8 @@ memory_write_barrier(void)
 {
 #if defined(__x86_64__)
 	__asm__ volatile("sfence" ::: "memory");
+#elif defined(__aarch64__)
+	__asm__ volatile("dsb st" ::: "memory");
 #else
 	__atomic_thread_fence(__ATOMIC_RELEASE);
 #endif

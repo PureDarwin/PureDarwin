@@ -410,6 +410,13 @@ of_get_child_by_name(const struct device_node *np, const char *name)
 	return (NULL);
 }
 
+// the first node in tree order with the compatible string, the search starts at the root
+struct device_node *
+of_find_compatible_node(struct device_node *from, const char *type, const char *compat)
+{
+	return (pd_of_node_for_entry(pdos_dt_find_compatible(compat)));
+}
+
 struct device_node *
 of_find_node_by_phandle(phandle ph)
 {

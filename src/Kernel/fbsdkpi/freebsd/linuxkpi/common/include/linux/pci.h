@@ -396,9 +396,18 @@ int _lkpi_pci_enable_msi_range(struct pci_dev *pdev, int minvec, int maxvec);
 #define	pci_info(pdev, fmt, ...)					\
     dev_info(&(pdev)->dev, fmt, ##__VA_ARGS__)
 
+#ifdef __PUREDARWIN__
+/* PureDarwin: platform devices sit on a pci-typed newbus root. */
+bool pd_dev_is_platform(const struct device *);
+#endif
+
 static inline bool
 dev_is_pci(struct device *dev)
 {
+#ifdef __PUREDARWIN__
+	if (pd_dev_is_platform(dev))
+		return (false);
+#endif
 	return (is_pci_device(dev->bsddev));
 }
 

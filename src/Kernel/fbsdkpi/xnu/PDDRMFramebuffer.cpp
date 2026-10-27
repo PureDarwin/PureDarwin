@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-// the IOFramebuffer face of a drm kext, its aperture is the pinned scanout buffer
-// the console, neuswc and WindowServer draw straight into what KMS shows
+// the IOFramebuffer face of a drm kext, one per lit display, its aperture is that display's pinned
+// scanout buffer. the console, neuswc and WindowServer draw straight into what KMS shows
 
 #include <IOKit/IOLib.h>
 #include <IOKit/IOUserClient.h>
@@ -9,6 +9,8 @@
 #include <pexpert/pexpert.h>
 
 #include "pd_drm_fb.h"
+
+extern "C" const char *pd_driver_last_error(void);
 
 
 
@@ -21,6 +23,9 @@ class PDDRMFramebuffer : public IOFramebuffer
 
 	struct pd_drm_fb_info fInfo;
 	IODisplayModeID fMode;
+	// which of the display client's displays this is, display 0 makes the others' framebuffers
+	int fDisplay;
+	IOService *fProvider;
 	IOFBInterruptProc fConnectProc;
 	OSObject *fConnectTarget;
 	void *fConnectRef;
@@ -30,8 +35,10 @@ class PDDRMFramebuffer : public IOFramebuffer
 
 	static void displayChanged(void *context);
 	static void switchTest(thread_call_param_t self, thread_call_param_t);
+	void spawnDisplays();
 
 public:
+	int display() const { return fDisplay; }
 	bool start(IOService *provider) override;
 	void stop(IOService *provider) override;
 	IOReturn registerForInterruptType(IOSelect interruptType, IOFBInterruptProc proc,
@@ -70,23 +77,45 @@ pd_pddrm_fb_log_kprintf(void)
 bool
 PDDRMFramebuffer::start(IOService *provider)
 {
+	OSNumber *index = OSDynamicCast(OSNumber, getProperty("PDDRMDisplay"));
+
+	fDisplay = index != NULL ? (int)index->unsigned32BitValue() : 0;
+	fProvider = provider;
 	if (pd_drm_fb == NULL) {
 		PDDRM_FB_LOG("PDDRMFramebuffer: the drm kext has no display client\n");
+		if (provider->getProvider() != NULL)
+			provider->getProvider()->setProperty("PDDRMStatus", "no display client (the gpu has no heads)");
 		return false;
 	}
-	int error = pd_drm_fb->setup(&fInfo);
+	// display 0 probes and lights them all, the others find theirs already lit
+	int error = fDisplay == 0 ? pd_drm_fb->setup(&fInfo) : pd_drm_fb->on_screen(fDisplay, &fInfo);
+	if (error != 0 && fDisplay != 0) {
+		PDDRM_FB_LOG("PDDRMFramebuffer: display %d is not lit (%d)\n", fDisplay, error);
+		return false;
+	}
 	if (error != 0) {
 		PDDRM_FB_LOG("PDDRMFramebuffer: no display lit (%d)\n", error);
+		IOService *gpu = provider->getProvider();
+		char why[224];
+		// the display client returns ENODEV when no connector reports a display
+		if (error == -19 || error == 19)
+			snprintf(why, sizeof(why), "%s", pd_driver_last_error());
+		else
+			snprintf(why, sizeof(why), "modeset failed (%d): %s", error, pd_driver_last_error());
+		if (gpu != NULL)
+			gpu->setProperty("PDDRMStatus", why);
 		return false;
 	}
 	fMode = 1;
 	pd_drm_fb->changed = displayChanged;
-	pd_drm_fb->changed_context = this;
+	pd_drm_fb->changed_context[fDisplay] = this;
 	if (!IOFramebuffer::start(provider))
 		return false;
-	PDDRM_FB_LOG("PDDRMFramebuffer: %ux%u@%u pitch %u at phys 0x%llx, %d modes\n", fInfo.width,
-		fInfo.height, fInfo.refresh, fInfo.pitch, fInfo.phys, pd_drm_fb->mode_count());
+	PDDRM_FB_LOG("PDDRMFramebuffer: display %d %ux%u@%u pitch %u at phys 0x%llx, %d modes\n", fDisplay,
+		fInfo.width, fInfo.height, fInfo.refresh, fInfo.pitch, fInfo.phys, pd_drm_fb->mode_count(fDisplay));
 	registerService();
+	if (fDisplay == 0)
+		spawnDisplays();
 
 	// IOGOPFramebuffer stays registered: terminating an IOFramebuffer from another driver's
 	// start panics in IOFramebuffer::terminate, and neuswc picks this one over it
@@ -96,8 +125,8 @@ PDDRMFramebuffer::start(IOService *provider)
 	int want = 0;
 	if (PE_parse_boot_argn("pdfb_switch", &want, sizeof(want)) && want > 0) {
 		struct pd_drm_fb_mode mode;
-		for (int i = 0; i < pd_drm_fb->mode_count(); i++) {
-			if (pd_drm_fb->get_mode(i, &mode) == 0 && (int)mode.width == want / 10000 &&
+		for (int i = 0; i < pd_drm_fb->mode_count(fDisplay); i++) {
+			if (pd_drm_fb->get_mode(fDisplay, i, &mode) == 0 && (int)mode.width == want / 10000 &&
 			    (int)mode.height == want % 10000) {
 				fSwitchTo = i + 1;
 				break;
@@ -133,10 +162,39 @@ PDDRMFramebuffer::stop(IOService *provider)
 		fSwitchCall = NULL;
 	}
 	if (pd_drm_fb != NULL) {
-		pd_drm_fb->changed = NULL;
-		pd_drm_fb->release();
+		pd_drm_fb->changed_context[fDisplay] = NULL;
+		// the buffers belong to the display client, display 0 hands them all back
+		if (fDisplay == 0)
+			pd_drm_fb->release();
 	}
 	IOFramebuffer::stop(provider);
+}
+
+// display 0 makes a framebuffer for every lit display that has none yet, on the same gpu
+void
+PDDRMFramebuffer::spawnDisplays()
+{
+	for (int i = 1; i < pd_drm_fb->display_count() && i < PD_DRM_FB_MAX_DISPLAYS; i++) {
+		struct pd_drm_fb_info info;
+
+		if (pd_drm_fb->changed_context[i] != NULL || pd_drm_fb->on_screen(i, &info) != 0)
+			continue;
+
+		PDDRMFramebuffer *fb = OSTypeAlloc(PDDRMFramebuffer);
+
+		if (fb == NULL || !fb->init()) {
+			OSSafeReleaseNULL(fb);
+			continue;
+		}
+		fb->setProperty("PDDRMDisplay", i, 32);
+		if (!fb->attach(fProvider))
+			PDDRM_FB_LOG("PDDRMFramebuffer: display %d could not attach\n", i);
+		else if (!fb->start(fProvider)) {
+			PDDRM_FB_LOG("PDDRMFramebuffer: display %d did not start\n", i);
+			fb->detach(fProvider);
+		}
+		fb->release();
+	}
 }
 
 // the client re-probed after a connector change and lit the preferred mode
@@ -146,14 +204,19 @@ PDDRMFramebuffer::displayChanged(void *context)
 	PDDRMFramebuffer *self = (PDDRMFramebuffer *)context;
 	struct pd_drm_fb_mode mode;
 
-	if (pd_drm_fb->get_mode(0, &mode) == 0) {
-		IOLog("PDDRMFramebuffer: display changed, now %ux%u@%u\n", mode.width,
+	if (pd_drm_fb->on_screen(self->fDisplay, &self->fInfo) != 0) {
+		bzero(&self->fInfo, sizeof(self->fInfo));
+		IOLog("PDDRMFramebuffer: display %d went dark\n", self->fDisplay);
+	} else if (pd_drm_fb->get_mode(self->fDisplay, 0, &mode) == 0) {
+		IOLog("PDDRMFramebuffer: display %d changed, now %ux%u@%u\n", self->fDisplay, mode.width,
 			mode.height, mode.refresh);
 	}
-	pd_drm_fb->on_screen(&self->fInfo);
 	self->fMode = 1;
 	if (self->fConnectProc != NULL)
 		self->fConnectProc(self->fConnectTarget, self->fConnectRef);
+	// a monitor that was plugged in gets its framebuffer
+	if (self->fDisplay == 0)
+		self->spawnDisplays();
 }
 
 IOReturn
@@ -201,13 +264,13 @@ PDDRMFramebuffer::getCurrentDisplayMode(IODisplayModeID *displayMode, IOIndex *d
 IOReturn
 PDDRMFramebuffer::setDisplayMode(IODisplayModeID displayMode, IOIndex depth)
 {
-	if (depth != kDepth || displayMode < 1 || displayMode > pd_drm_fb->mode_count())
+	if (depth != kDepth || displayMode < 1 || displayMode > pd_drm_fb->mode_count(fDisplay))
 		return kIOReturnUnsupportedMode;
 	if (displayMode == fMode)
 		return kIOReturnSuccess;
 
 	struct pd_drm_fb_info info;
-	int error = pd_drm_fb->set_mode((int)displayMode - 1, &info);
+	int error = pd_drm_fb->set_mode(fDisplay, (int)displayMode - 1, &info);
 	if (error != 0) {
 		IOLog("PDDRMFramebuffer: mode %d failed (%d)\n", (int)displayMode, error);
 		return kIOReturnError;
@@ -239,7 +302,7 @@ PDDRMFramebuffer::getInformationForDisplayMode(IODisplayModeID displayMode,
 {
 	struct pd_drm_fb_mode mode;
 
-	if (pd_drm_fb->get_mode((int)displayMode - 1, &mode) != 0)
+	if (pd_drm_fb->get_mode(fDisplay, (int)displayMode - 1, &mode) != 0)
 		return kIOReturnUnsupportedMode;
 	bzero(info, sizeof(*info));
 	info->nominalWidth = mode.width;
@@ -262,7 +325,7 @@ PDDRMFramebuffer::getPixelInformation(IODisplayModeID displayMode, IOIndex depth
 	struct pd_drm_fb_mode mode;
 
 	if (aperture != kIOFBSystemAperture || depth != kDepth ||
-	    pd_drm_fb->get_mode((int)displayMode - 1, &mode) != 0)
+	    pd_drm_fb->get_mode(fDisplay, (int)displayMode - 1, &mode) != 0)
 		return kIOReturnUnsupportedMode;
 
 	// XRGB8888, which is 32 bit direct pixels in memory order b, g, r, x. The
@@ -270,7 +333,13 @@ PDDRMFramebuffer::getPixelInformation(IODisplayModeID displayMode, IOIndex depth
 	bzero(info, sizeof(*info));
 	info->activeWidth = mode.width;
 	info->activeHeight = mode.height;
-	info->bytesPerRow = displayMode == fMode ? fInfo.pitch : mode.width * 4;
+	info->bytesPerRow = mode.width * 4;
+	// the lit mode draws in the area all displays share, which can be smaller than the mode
+	if (displayMode == fMode) {
+		info->activeWidth = fInfo.width;
+		info->activeHeight = fInfo.height;
+		info->bytesPerRow = fInfo.pitch;
+	}
 	strlcpy(info->pixelFormat, IO32BitDirectPixels, sizeof(info->pixelFormat));
 	info->pixelType = kIORGBDirectPixels;
 	info->componentMasks[0] = 0x00ff0000;
@@ -285,7 +354,7 @@ PDDRMFramebuffer::getPixelInformation(IODisplayModeID displayMode, IOIndex depth
 IOReturn
 PDDRMFramebuffer::getDisplayModes(IODisplayModeID *allDisplayModes)
 {
-	int count = pd_drm_fb->mode_count();
+	int count = pd_drm_fb->mode_count(fDisplay);
 
 	for (int i = 0; i < count; i++)
 		allDisplayModes[i] = i + 1;
@@ -295,7 +364,7 @@ PDDRMFramebuffer::getDisplayModes(IODisplayModeID *allDisplayModes)
 IOItemCount
 PDDRMFramebuffer::getDisplayModeCount(void)
 {
-	return pd_drm_fb->mode_count();
+	return pd_drm_fb->mode_count(fDisplay);
 }
 
 // the presenter (type kPDDRMPresenterType): a compositor draws into the mapped back buffer
@@ -347,7 +416,7 @@ PDDRMPresenter::clientClose(void)
 	uint64_t sequence, ns;
 
 	if (pd_drm_fb != NULL)
-		pd_drm_fb->flip(0, &sequence, &ns);
+		pd_drm_fb->flip(fFramebuffer->display(), 0, &sequence, &ns);
 	terminate();
 	return kIOReturnSuccess;
 }
@@ -359,8 +428,8 @@ PDDRMPresenter::clientMemoryForType(UInt32 type, IOOptionBits *options,
 	struct pd_drm_fb_info info;
 	uint64_t phys;
 
-	if (pd_drm_fb == NULL || type > 1 || pd_drm_fb->on_screen(&info) != 0 ||
-	    pd_drm_fb->buffer((int)type, &phys) != 0)
+	if (pd_drm_fb == NULL || type > 1 || pd_drm_fb->on_screen(fFramebuffer->display(), &info) != 0 ||
+	    pd_drm_fb->buffer(fFramebuffer->display(), (int)type, &phys) != 0)
 		return kIOReturnBadArgument;
 	*memory = IODeviceMemory::withRange(phys, (IOPhysicalLength)info.pitch * info.height);
 	*options = kIOMapWriteCombineCache;
@@ -371,8 +440,9 @@ IOReturn
 PDDRMPresenter::getInfo(OSObject *target, void *reference, IOExternalMethodArguments *args)
 {
 	struct pd_drm_fb_info info;
+	int display = ((PDDRMPresenter *)target)->fFramebuffer->display();
 
-	if (pd_drm_fb->on_screen(&info) != 0)
+	if (pd_drm_fb->on_screen(display, &info) != 0)
 		return kIOReturnNotReady;
 	args->scalarOutput[0] = info.width;
 	args->scalarOutput[1] = info.height;
@@ -388,7 +458,9 @@ PDDRMPresenter::flip(OSObject *target, void *reference, IOExternalMethodArgument
 
 	static uint64_t sFlips, sLastNs;
 
-	if (pd_drm_fb->flip((int)args->scalarInput[0], &sequence, &ns) != 0)
+	int display = ((PDDRMPresenter *)target)->fFramebuffer->display();
+
+	if (pd_drm_fb->flip(display, (int)args->scalarInput[0], &sequence, &ns) != 0)
 		return kIOReturnError;
 	// a sign of life: the first flips, then one line per thousand
 	if (++sFlips <= 3 || sFlips % 1000 == 0)
@@ -407,7 +479,8 @@ PDDRMPresenter::exportBuffer(OSObject *target, void *reference, IOExternalMethod
 
 	if (pd_drm_fb->export_fd == NULL || args->scalarInput[0] > 1)
 		return kIOReturnUnsupported;
-	int ret = pd_drm_fb->export_fd((int)args->scalarInput[0], &fd);
+	int ret = pd_drm_fb->export_fd(((PDDRMPresenter *)target)->fFramebuffer->display(),
+		(int)args->scalarInput[0], &fd);
 	if (ret != 0) {
 		IOLog("PDDRMFramebuffer: exporting buffer %llu failed (%d)\n", args->scalarInput[0], ret);
 		return kIOReturnError;

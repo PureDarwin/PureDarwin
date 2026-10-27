@@ -6,11 +6,27 @@
 #include <IOKit/IOService.h>
 #include <IOKit/pci/IOPCIDevice.h>
 #include <pexpert/pexpert.h>
+#include <kern/thread_call.h>
+#include <kern/thread.h>
+#include <string.h>
 
 #include "pd_fbsd_os.h"
 #include "pd_fbsd_attach.h"
 #include "pd_fbsd_xnu.h"
 #include "pd_drm_fb.h"
+
+extern "C" const char *pd_driver_last_error(void);
+
+// why the driver let go of the gpu, for IOGOPFramebuffer to show when it keeps the display
+static void
+pd_drm_note_status(IOService *gpu, const char *why)
+{
+	char line[224];
+	const char *last = pd_driver_last_error();
+
+	snprintf(line, sizeof(line), "%s%s%s", why, last[0] != '\0' ? ": " : "", last);
+	gpu->setProperty("PDDRMStatus", line);
+}
 
 #define PDDRM_STR2(x)	#x
 #define PDDRM_STR(x)	PDDRM_STR2(x)
@@ -38,8 +54,12 @@ public:
 	void systemWillShutdown(IOOptionBits specifier) override;
 
 private:
+	bool attachLinux(void);
+	static void attachLater(void *self, wait_result_t);
+
 	IOPCIDevice *fPCI;
 	void *fDevice;
+	int fDelay;
 };
 
 OSDefineMetaClassAndStructors(PDFBSD_CLASS, IOService);
@@ -48,6 +68,7 @@ static IOLock *sAttachLock;
 
 // an unclean stop leaves the PSP ring behind and the next create fails, so destroy rings
 // through MP0 C2PMSG_64 first. False when the PSP does not answer, then the gpu is left alone.
+#ifdef PDDRM_AMD_PSP
 static bool
 pd_amd_psp_ready(IOPCIDevice *pci)
 {
@@ -64,18 +85,22 @@ pd_amd_psp_ready(IOPCIDevice *pci)
 	uint32_t sos = *c81, before = *c64;
 	bool ok = false;
 
+	// a discrete gpu's secure os is not running at cold boot, the driver loads it
+	if (sos == 0)
+		ok = true;
 	// the secure os reports its version in C2PMSG_81 once it runs
-	if (sos != 0 && sos != 0xffffffff) {
+	else if (sos != 0xffffffff) {
 		*c64 = 0x30000;
 		for (int i = 0; i < 200 && (*c64 & 0x80000000) == 0; i++)
 			IOSleep(10);
 		ok = (*c64 & 0x80000000) != 0;
 	}
 	IOLog(PDDRM_STR(PDFBSD_CLASS) ": psp sos 0x%08x, destroy rings C2PMSG_64 0x%08x -> 0x%08x, %s\n",
-		sos, before, *c64, ok ? "ready" : "NOT ANSWERING, leaving the gpu alone");
+		sos, before, *c64, sos == 0 ? "not started, the driver loads it" : ok ? "ready" : "NOT ANSWERING, leaving the gpu alone");
 	map->release();
 	return ok;
 }
+#endif
 
 #if defined(PDDRM_OPT_IN_BOOTARG) || defined(PDDRM_OPT_OUT_BOOTARG)
 // an opt-in driver stays out of the way unless its boot-arg asks for it, an opt-out one
@@ -94,11 +119,22 @@ PDFBSD_CLASS::probe(IOService *provider, SInt32 *score)
 	IOPCIDevice *pci = OSDynamicCast(IOPCIDevice, provider);
 
 	PE_parse_boot_argn(PDDRM_GATE_BOOTARG, &on, sizeof(on));
+	// boot-arg pddrm_only=0xDDDD attaches only to that pci device id, to test one gpu of several
+	int only = 0;
+	if (pci != NULL && PE_parse_boot_argn("pddrm_only", &only, sizeof(only)) && only != 0 &&
+	    pci->configRead16(kIOPCIConfigDeviceID) != (uint16_t)only) {
+		PDDRM_LOG(PDDRM_STR(PDFBSD_CLASS) ": pddrm_only=0x%x, not attaching %04x\n", only,
+		    pci->configRead16(kIOPCIConfigDeviceID));
+		pci->setProperty("PDDRMStatus", "probe declined by the boot-arg pddrm_only");
+		return NULL;
+	}
 	PDDRM_LOG(PDDRM_STR(PDFBSD_CLASS) ": probing %04x:%04x, %s=%d\n",
 		pci != NULL ? pci->configRead16(kIOPCIConfigVendorID) : 0,
 		pci != NULL ? pci->configRead16(kIOPCIConfigDeviceID) : 0, PDDRM_GATE_BOOTARG, on);
 	if (on == 0) {
 		PDDRM_LOG(PDDRM_STR(PDFBSD_CLASS) ": not attaching, %s=%d\n", PDDRM_GATE_BOOTARG, on);
+		if (pci != NULL)
+			pci->setProperty("PDDRMStatus", "probe declined by the boot-arg " PDDRM_GATE_BOOTARG);
 		return NULL;
 	}
 	return IOService::probe(provider, score);
@@ -160,22 +196,61 @@ PDFBSD_CLASS::start(IOService *provider)
 
 	if (!fPCI->open(this)) {
 		PDDRM_LOG(PDDRM_STR(PDFBSD_CLASS) ": cannot open the pci device\n");
+		fPCI->setProperty("PDDRMStatus", "probe failed: the pci device is held by another driver");
 		return false;
 	}
 	fPCI->setBusMasterEnable(true);
 	fPCI->setMemoryEnable(true);
 	fPCI->setIOEnable(true);
 
+#ifdef PDDRM_AMD_PSP
 	if (fPCI->configRead16(kIOPCIConfigVendorID) == 0x1002 && !pd_amd_psp_ready(fPCI)) {
+		fPCI->setProperty("PDDRMStatus", "probe failed: the PSP does not answer");
 		fPCI->close(this);
 		return false;
 	}
+#endif
 
 #ifdef PDDRM_INTEL_STOLEN
 	if (fPCI->configRead16(kIOPCIConfigVendorID) == 0x8086)
 		pd_intel_stolen(fPCI);
 #endif
 
+	// boot-arg pddrm_delay=N attaches the linux driver N seconds later, so networking and the log
+	// saver are up before a gpu that can take the machine down
+	int delay = 0;
+	if (PE_parse_boot_argn("pddrm_delay", &delay, sizeof(delay)) && delay > 0) {
+		thread_t thread;
+
+		fDelay = delay;
+		retain();
+		// its own thread like a driver start, a thread call worker is meant for short callbacks
+		if (kernel_thread_start(&PDFBSD_CLASS::attachLater, this, &thread) == KERN_SUCCESS) {
+			PDDRM_LOG(PDDRM_STR(PDFBSD_CLASS) ": pddrm_delay=%d, attaching in %d s\n", delay, delay);
+			fPCI->setProperty("PDDRMStatus", "attach delayed by pddrm_delay");
+			thread_deallocate(thread);
+			return true;
+		}
+		release();
+	}
+	return attachLinux();
+}
+
+void
+PDFBSD_CLASS::attachLater(void *self, wait_result_t)
+{
+	PDFBSD_CLASS *dev = (PDFBSD_CLASS *)self;
+
+	IOSleep((unsigned)dev->fDelay * 1000);
+	if (!dev->attachLinux())
+		PDDRM_LOG(PDDRM_STR(PDFBSD_CLASS) ": delayed attach failed\n");
+	dev->release();
+	thread_terminate(current_thread());
+}
+
+bool
+PDFBSD_CLASS::attachLinux(void)
+{
 	pdos_xnu_init();
 	if (sAttachLock == NULL)
 		sAttachLock = IOLockAlloc();
@@ -186,10 +261,14 @@ PDFBSD_CLASS::start(IOService *provider)
 	IOLockUnlock(sAttachLock);
 	if (fDevice == NULL) {
 		PDDRM_LOG(PDDRM_STR(PDFBSD_CLASS) ": the linux driver did not attach\n");
+		const char *last = pd_driver_last_error();
+		bool bios = strnstr(last, "bios", 224) != NULL || strnstr(last, "BIOS", 224) != NULL;
+		pd_drm_note_status(fPCI, bios ? "VBIOS read failed" : "probe failed");
 		fPCI->close(this);
 		return false;
 	}
 	PDDRM_LOG(PDDRM_STR(PDFBSD_CLASS) ": attached\n");
+	fPCI->setProperty("PDDRMStatus", "attached, no display lit yet");
 	registerService();
 	return true;
 }

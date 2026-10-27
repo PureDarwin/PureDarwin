@@ -94,6 +94,16 @@ strchrnul(const char *s, int c)
 	return (char *)s;
 }
 
+// a bzero the compiler keeps, through a volatile pointer
+void
+explicit_bzero(void *p, size_t len)
+{
+	volatile unsigned char *b = p;
+
+	while (len-- > 0)
+		*b++ = 0;
+}
+
 unsigned int
 arc4random_uniform(unsigned int upper)
 {
@@ -301,8 +311,12 @@ kmem_alloc_contig(unsigned long size, int flags, unsigned long low,
 	int memattr)
 {
 	uint64_t phys;
-	void *va = pdos_malloc_contig(size, alignment > PAGE_SIZE ? alignment : PAGE_SIZE,
-		high, &phys);
+	void *va;
+
+	// a write-combined view for devices that do not snoop the cpu caches, zeroed already
+	if (memattr == VM_MEMATTR_WRITE_COMBINING)
+		return pdos_malloc_contig_wc(size, alignment > PAGE_SIZE ? alignment : PAGE_SIZE, high, &phys);
+	va = pdos_malloc_contig(size, alignment > PAGE_SIZE ? alignment : PAGE_SIZE, high, &phys);
 	if (va != NULL && (flags & M_ZERO) != 0)
 		memset(va, 0, size);
 	return va;

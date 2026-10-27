@@ -10,6 +10,10 @@
 #include "PDFBSDEthernet.h"
 #include "pd_fbsd_os.h"
 #include "pd_fbsd_attach.h"
+#ifdef PDFBSD_USB
+#include <IOKit/usb/IOUSBInterface.h>
+#include "pd_fbsd_usb.h"
+#endif
 
 #define super PDFBSD_BASE
 OSDefineMetaClassAndStructors(PDFBSD_CLASS, PDFBSD_BASE);
@@ -26,6 +30,19 @@ PDFBSD_CLASS::start(IOService *provider)
 	if (!super::start(provider))
 		return false;
 
+#ifdef PDFBSD_USB
+	fUSBInterface = OSDynamicCast(IOUSBInterface, provider);
+	if (fUSBInterface == NULL)
+		return false;
+	fUSBInterface->retain();
+	if (!fUSBInterface->open(this)) {
+		IOLog(PDFBSD_STR(PDFBSD_CLASS) ": cannot open the usb interface\n");
+		return false;
+	}
+	fUSBDev = pdusb_open(fUSBInterface);
+	if (fUSBDev == NULL)
+		return false;
+#else
 	fPCI = OSDynamicCast(IOPCIDevice, provider);
 	if (fPCI == NULL)
 		return false;
@@ -37,6 +54,7 @@ PDFBSD_CLASS::start(IOService *provider)
 	fPCI->setBusMasterEnable(true);
 	fPCI->setMemoryEnable(true);
 	fPCI->setIOEnable(true);
+#endif
 
 	pdos_xnu_init();
 	if (sTxLock == NULL)
@@ -48,11 +66,21 @@ PDFBSD_CLASS::start(IOService *provider)
 
 	// attaching runs the whole FreeBSD probe and attach, one device at a time
 	IOLockLock(sAttachLock);
+#ifdef PDFBSD_USB
+	fIfp = pd_fbsd_attach_usb(fUSBDev);
+#else
 	fIfp = pd_fbsd_attach_pci(fPCI);
+#endif
 	IOLockUnlock(sAttachLock);
 	if (fIfp == NULL) {
 		IOLog(PDFBSD_STR(PDFBSD_CLASS) ": the FreeBSD driver did not attach\n");
+#ifdef PDFBSD_USB
+		pdusb_close(fUSBDev);
+		fUSBDev = NULL;
+		fUSBInterface->close(this);
+#else
 		fPCI->close(this);
+#endif
 		return false;
 	}
 	pd_fbsd_set_cookie(fIfp, this);
@@ -118,6 +146,16 @@ PDFBSD_CLASS::stop(IOService *provider)
 		fPCI->close(this);
 		OSSafeReleaseNULL(fPCI);
 	}
+#ifdef PDFBSD_USB
+	if (fUSBDev != NULL) {
+		pdusb_close(fUSBDev);
+		fUSBDev = NULL;
+	}
+	if (fUSBInterface != NULL) {
+		fUSBInterface->close(this);
+		OSSafeReleaseNULL(fUSBInterface);
+	}
+#endif
 	super::stop(provider);
 }
 

@@ -137,6 +137,8 @@ struct device {
 	struct fwnode_handle *fwnode;
 #ifdef __PUREDARWIN__
 	struct device_node *of_node;
+	/* PureDarwin: no generic power domains, platform probes leave it NULL */
+	struct dev_pm_domain *pm_domain;
 #endif
 	struct cdev	*backlight_dev;
 	struct backlight_device	*bd;

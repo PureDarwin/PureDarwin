@@ -122,6 +122,42 @@ dt_reg(IORegistryEntry *node, struct pd_fbsd_platform *pd)
 	return pd->nmem;
 }
 
+// a three-cell gic specifier (type, number, flags) becomes the one-word intid the gic controller indexes
+// by: spis start at intid 32 and ppis at 16 (arm gic architecture), type 0 is an spi, 1 a ppi
+static void
+gic_specifiers_to_intids(IOService *nub, OSArray *specs)
+{
+	OSArray *out;
+
+	if (specs == NULL || specs->getCount() == 0)
+		return;
+	out = OSArray::withCapacity(specs->getCount());
+	for (unsigned int i = 0; out != NULL && i < specs->getCount(); i++) {
+		OSData *d = OSDynamicCast(OSData, specs->getObject(i));
+		if (d == NULL || d->getLength() != 3 * sizeof(uint32_t) ||
+		    ((const uint32_t *)d->getBytesNoCopy())[0] > 1) {
+			out->release();
+			return;
+		}
+		const uint32_t *c = (const uint32_t *)d->getBytesNoCopy();
+		uint32_t intid = c[1] + (c[0] == 0 ? 32 : 16);
+		OSData *n = OSData::withBytes(&intid, sizeof(intid));
+		out->setObject(n);
+		n->release();
+	}
+	if (out != NULL) {
+		nub->setProperty(gIOInterruptSpecifiersKey, out);
+		// a nub resolved before this still points at the three-cell data, whose first word (0) became vector 0
+		for (int i = 0; nub->_interruptSources != NULL && i < nub->_numInterruptSources && i < (int)out->getCount(); i++) {
+			if (nub->_interruptSources[i].vectorData != NULL)
+				nub->_interruptSources[i].vectorData = OSDynamicCast(OSData, out->getObject(i));
+		}
+		IOLog(PDDRM_NAME ": %u gic specifiers as intids, first %u\n", out->getCount(),
+		    *(const uint32_t *)OSDynamicCast(OSData, out->getObject(0))->getBytesNoCopy());
+		out->release();
+	}
+}
+
 bool
 PDFBSD_CLASS::start(IOService *provider)
 {
@@ -152,6 +188,7 @@ PDFBSD_CLASS::start(IOService *provider)
 	// node's interrupt controller is published, which may never happen
 	OSArray *specs = OSDynamicCast(OSArray, provider->getProperty(gIOInterruptSpecifiersKey));
 	pd.nirq = specs != NULL ? specs->getCount() : 0;
+	gic_specifiers_to_intids(provider, specs);
 	OSArray *ctrls = OSDynamicCast(OSArray, provider->getProperty(gIOInterruptControllersKey));
 	OSSymbol *ctrl = ctrls != NULL ? OSDynamicCast(OSSymbol, ctrls->getObject(0)) : NULL;
 	IOLog(PDDRM_NAME ": interrupt controller %s\n", ctrl != NULL ? ctrl->getCStringNoCopy() : "none");

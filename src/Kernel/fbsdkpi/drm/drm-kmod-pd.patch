@@ -108,3 +108,170 @@ diff --git a/drivers/gpu/drm/drm_prime.c b/drivers/gpu/drm/drm_prime.c
  	SYSCTL_ADD_PROC(ctx_list, oid_list, OID_AUTO, "PCI_ID",
  	    CTLTYPE_STRING | CTLFLAG_RD, NULL, tmp,
  	    sysctl_pci_id, "A", "PCI vendor and device ID");
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_ttm.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_ttm.c
+@@ -1870,6 +1870,7 @@
+ 
+ 	dma_set_max_seg_size(adev->dev, UINT_MAX);
+ 	/* No others user of address space so set it to 0 */
++	DRM_INFO("pd ttm: %s\n", "ttm_device_init");
+ 	r = ttm_device_init(&adev->mman.bdev, &amdgpu_bo_driver, adev->dev,
+ #ifdef __linux__
+ 			       adev_to_drm(adev)->anon_inode->i_mapping,
+@@ -1888,6 +1889,7 @@
+ 		return r;
+ 	}
+ 
++	DRM_INFO("pd ttm: %s\n", "amdgpu_ttm_pools_init");
+ 	r = amdgpu_ttm_pools_init(adev);
+ 	if (r) {
+ 		DRM_ERROR("failed to init ttm pools(%d).\n", r);
+@@ -1896,6 +1898,12 @@
+ 	adev->mman.initialized = true;
+ 
+ 	/* Initialize VRAM pool with all of VRAM divided into pages */
++#ifndef __linux__
++	// pd maps at most 1 GB of a bar in one piece, so a larger resizable bar is used like a small one
++	if (adev->gmc.visible_vram_size > (1ULL << 30))
++		adev->gmc.visible_vram_size = 1ULL << 30;
++#endif
++	DRM_INFO("pd ttm: %s\n", "amdgpu_vram_mgr_init");
+ 	r = amdgpu_vram_mgr_init(adev);
+ 	if (r) {
+ 		DRM_ERROR("Failed initializing VRAM heap.\n");
+@@ -1915,6 +1918,7 @@
+ 			"No need to ioremap when real vram size is 0\n");
+ 	else
+ #endif
++		DRM_INFO("pd ttm: %s\n", "ioremap_wc aperture");
+ 		adev->mman.aper_base_kaddr = ioremap_wc(adev->gmc.aper_base,
+ 				adev->gmc.visible_vram_size);
+ #endif
+@@ -1923,6 +1927,7 @@
+ 	 *The reserved vram for firmware must be pinned to the specified
+ 	 *place on the VRAM, so reserve it early.
+ 	 */
++	DRM_INFO("pd ttm: %s\n", "amdgpu_ttm_fw_reserve_vram_init");
+ 	r = amdgpu_ttm_fw_reserve_vram_init(adev);
+ 	if (r)
+ 		return r;
+@@ -1931,6 +1936,7 @@
+ 	 *The reserved vram for driver must be pinned to the specified
+ 	 *place on the VRAM, so reserve it early.
+ 	 */
++	DRM_INFO("pd ttm: %s\n", "amdgpu_ttm_drv_reserve_vram_init");
+ 	r = amdgpu_ttm_drv_reserve_vram_init(adev);
+ 	if (r)
+ 		return r;
+@@ -1941,6 +1947,7 @@
+ 	 * reserved for IP discovey.
+ 	 */
+ 	if (adev->mman.discovery_bin) {
++		DRM_INFO("pd ttm: %s\n", "amdgpu_ttm_reserve_tmr");
+ 		r = amdgpu_ttm_reserve_tmr(adev);
+ 		if (r)
+ 			return r;
+@@ -1952,6 +1959,7 @@
+ 	 * and driver.
+ 	 */
+ 	if (!adev->gmc.is_app_apu) {
++		DRM_INFO("pd ttm: %s\n", "amdgpu_bo_create_kernel_at stolen vga");
+ 		r = amdgpu_bo_create_kernel_at(adev, 0,
+ 					       adev->mman.stolen_vga_size,
+ 					       &adev->mman.stolen_vga_memory,
+@@ -1959,6 +1967,7 @@
+ 		if (r)
+ 			return r;
+ 
++		DRM_INFO("pd ttm: %s\n", "amdgpu_bo_create_kernel_at stolen vga");
+ 		r = amdgpu_bo_create_kernel_at(adev, adev->mman.stolen_vga_size,
+ 					       adev->mman.stolen_extended_size,
+ 					       &adev->mman.stolen_extended_memory,
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+@@ -2125,8 +2125,10 @@
+ 		goto error;
+ 	}
+ 
++	DRM_INFO("pd dm: dc_hardware_init\n");
+ 	dc_hardware_init(adev->dm.dc);
+ 
++	DRM_INFO("pd dm: hpd rx workqueue\n");
+ 	adev->dm.hpd_rx_offload_wq = hpd_rx_irq_create_workqueue(adev->dm.dc);
+ 	if (!adev->dm.hpd_rx_offload_wq) {
+ 		DRM_ERROR("amdgpu: failed to create hpd rx offload workqueue.\n");
+@@ -2142,6 +2144,7 @@
+ 		dc_setup_system_context(adev->dm.dc, &pa_config);
+ 	}
+ 
++	DRM_INFO("pd dm: freesync\n");
+ 	adev->dm.freesync_module = mod_freesync_create(adev->dm.dc);
+ 	if (!adev->dm.freesync_module) {
+ 		DRM_ERROR(
+@@ -2150,6 +2153,7 @@
+ 		DRM_DEBUG_DRIVER("amdgpu: freesync_module init done %p.\n",
+ 				adev->dm.freesync_module);
+ 
++	DRM_INFO("pd dm: color mod\n");
+ 	amdgpu_dm_init_color_mod();
+ 
+ 	if (adev->dm.dc->caps.max_links > 0) {
+@@ -2206,6 +2210,7 @@
+ 			dc_dmub_srv_enable_dpia_trace(adev->dm.dc);
+ 	}
+ 
++	DRM_INFO("pd dm: initialize_drm_device\n");
+ 	if (amdgpu_dm_initialize_drm_device(adev)) {
+ 		DRM_ERROR(
+ 		"amdgpu: failed to initialize sw for display support.\n");
+@@ -2221,6 +2226,7 @@
+ 	adev_to_drm(adev)->mode_config.cursor_width = adev->dm.dc->caps.max_cursor_size;
+ 	adev_to_drm(adev)->mode_config.cursor_height = adev->dm.dc->caps.max_cursor_size;
+ 
++	DRM_INFO("pd dm: vblank init\n");
+ 	if (drm_vblank_init(adev_to_drm(adev), adev->dm.display_indexes_num)) {
+ 		DRM_ERROR(
+ 		"amdgpu: failed to initialize sw for display support.\n");
+@@ -5023,6 +5029,8 @@
+  *
+  * Returns 0 on success
+  */
++long pd_drm_tunable_long(const char *path, long def);
++
+ static int amdgpu_dm_initialize_drm_device(struct amdgpu_device *adev)
+ {
+ 	struct amdgpu_display_manager *dm = &adev->dm;
+@@ -5212,6 +5220,7 @@
+ 		if (!aencoder)
+ 			goto fail;
+ 
++		DRM_INFO("pd dm: link %d encoder and connector\n", i);
+ 		if (amdgpu_dm_encoder_init(dm->ddev, aencoder, i)) {
+ 			DRM_ERROR("KMS: Failed to initialize encoder\n");
+ 			goto fail;
+@@ -5226,10 +5235,16 @@
+ 			dm->hpd_rx_offload_wq[aconnector->base.index].aconnector =
+ 				aconnector;
+ 
++		DRM_INFO("pd dm: link %d connection type\n", i);
+ 		if (!dc_link_detect_connection_type(link, &new_connection_type))
+ 			DRM_ERROR("KMS: Failed to detect connector\n");
+ 
+-		if (aconnector->base.force && new_connection_type == dc_connection_none) {
++		DRM_INFO("pd dm: link %d type %d signal 0x%x connector id %d enum %d\n", i,
++		    new_connection_type, link->connector_signal, link->link_id.id, link->link_id.enum_id);
++		// boot-arg pddm_skip is a mask of links whose boot detect is left out
++		if (pd_drm_tunable_long("pddm.skip", 0) & (1L << i)) {
++			DRM_INFO("pd dm: link %d detect skipped by pddm_skip\n", i);
++		} else if (aconnector->base.force && new_connection_type == dc_connection_none) {
+ 			emulated_link_detect(link);
+ 			amdgpu_dm_update_connector_after_detect(aconnector);
+ 		} else {
+@@ -5237,6 +5252,7 @@
+ 
+ 			mutex_lock(&dm->dc_lock);
+ 			dc_exit_ips_for_hw_access(dm->dc);
++			DRM_INFO("pd dm: link %d detect\n", i);
+ 			ret = dc_link_detect(link, DETECT_REASON_BOOT);
+ 			mutex_unlock(&dm->dc_lock);
+ 

@@ -30,8 +30,10 @@ void *pdos_malloc(size_t size, int zero, int canwait);
 void pdos_free(void *ptr);
 size_t pdos_malloc_size(void *ptr);
 void *pdos_malloc_contig(size_t size, size_t align, uint64_t maxaddr, uint64_t *phys);
+void *pdos_malloc_contig_wc(size_t size, size_t align, uint64_t maxaddr, uint64_t *phys);
 void pdos_free_contig(void *ptr, size_t size);
 uint64_t pdos_vtophys(const void *va);
+// uncached: 0 cached, 1 uncached, 2 write-combining
 void *pdos_map_phys(uint64_t phys, size_t size, int uncached);
 void pdos_unmap_phys(void *va, size_t size);
 // maps a physically contiguous range for a device's dma through its iommu,
@@ -124,6 +126,8 @@ void *pdos_dt_parent(void *node);
 // children in order, NULL past the last one
 void *pdos_dt_child(void *node, int index);
 void *pdos_dt_find_phandle(uint32_t phandle);
+void *pdos_dt_root(void);
+void *pdos_dt_find_compatible(const char *compat);
 // the node's name with its unit address, e.g. "gpu@1c00000"
 void pdos_dt_name(void *node, char *buf, uint32_t len);
 // the network boundary, called by the FreeBSD side
@@ -135,6 +139,8 @@ void *pdos_map_pages(const uint64_t *phys, size_t count, int uncached);
 void pdos_unmap_pages(void *va);
 int pdos_acpi_get_table(const char *signature, uint32_t instance, void **data,
 	size_t *size);
+// gives back a table copy from pdos_acpi_get_table
+void pdos_acpi_put_table(void *data, size_t size);
 void pdos_net_input(void *ifp_cookie, const void *frame, size_t len);
 void pdos_net_input_chain(void *ifp_cookie, void *fbsd_mbuf);
 void pdos_net_link(void *ifp_cookie, int up, uint64_t baudrate);

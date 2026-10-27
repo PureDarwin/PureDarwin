@@ -17,6 +17,8 @@ int pd_fbsd_init(void);
 // probes and attaches the drivers of this kext on an IOPCIDevice
 // returns the ifnet the driver created, or NULL
 void *pd_fbsd_attach_pci(void *pcidev);
+// the same on a usb interface, usbdev is the handle pdusb_open returned
+void *pd_fbsd_attach_usb(void *usbdev);
 void pd_fbsd_detach(void *ifp);
 
 // the same for drivers that create no ifnet, returns the attached device_t

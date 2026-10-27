@@ -4,6 +4,8 @@
 #include <IOKit/IOLib.h>
 #include <IOKit/IODeviceTreeSupport.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
+#include <IOKit/IOPlatformExpert.h>
+#include <IOKit/IOSubMemoryDescriptor.h>
 #include <IOKit/IODMACommand.h>
 #include <IOKit/IOMapper.h>
 #include <IOKit/IOFilterInterruptEventSource.h>
@@ -30,6 +32,7 @@
 extern "C" {
 extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
 extern boolean_t ml_set_interrupts_enabled(boolean_t enable);
+extern boolean_t ml_get_interrupts_enabled(void);
 }
 
 static lck_grp_t *sGroup;
@@ -113,6 +116,13 @@ pdos_sleep_us(uint64_t us)
 {
 	if (us == 0)
 		return;
+	// inside a kernel fpu section interrupts are off, blocking there would never be woken, so spin
+	if (!ml_get_interrupts_enabled()) {
+		for (; us > 1000; us -= 1000)
+			IODelay(1000);
+		IODelay((unsigned)us);
+		return;
+	}
 	static int sSleepEvent;
 	assert_wait_timeout((event_t)&sSleepEvent, THREAD_UNINT, (uint32_t)us,
 		NSEC_PER_USEC);
@@ -230,9 +240,55 @@ pdos_free_contig(void *ptr, size_t size)
 	pd_mapping *m = mapping_take(ptr);
 	if (m == NULL)
 		return;
+	if (m->map != NULL) {
+		m->map->release();
+		m->desc->release();
+	}
 	m->buffer->complete();
 	m->buffer->release();
 	IOFree(m, sizeof(pd_mapping));
+}
+
+// contiguous memory the cpu sees write-combined, for a device that does not snoop the cpu caches
+void *
+pdos_malloc_contig_wc(size_t size, size_t align, uint64_t maxaddr, uint64_t *phys)
+{
+	uint64_t pa = 0;
+	void *cached = pdos_malloc_contig(size, align, maxaddr, &pa);
+	if (cached == NULL)
+		return NULL;
+	pd_mapping *m = mapping_take(cached);
+	bzero(cached, size);
+	// the zeroes reach dram before the write-combined alias is used
+	m->buffer->performOperation(kIOMemoryIncoherentIOFlush, 0, size);
+	IOMemoryDescriptor *desc = IOMemoryDescriptor::withPhysicalAddress(
+		(IOPhysicalAddress)pa, size, kIODirectionNone | kIOMemoryMapperNone);
+	IOMemoryMap *map = desc != NULL ? desc->map(kIOMapAnywhere | kIOMapWriteCombineCache) : NULL;
+	if (map == NULL) {
+		if (desc != NULL)
+			desc->release();
+		m->buffer->complete();
+		m->buffer->release();
+		IOFree(m, sizeof(pd_mapping));
+		return NULL;
+	}
+	m->desc = desc;
+	m->map = map;
+	m->va = (void *)map->getVirtualAddress();
+	mapping_add(m);
+	if (phys != NULL)
+		*phys = pa;
+	return m->va;
+}
+
+extern "C" void flush_dcache64(addr64_t addr, unsigned count, int phys);
+
+// clean and invalidate the cpu caches over a physical range through the physmap, no allocation
+extern "C" void
+pdos_dma_sync_phys(uint64_t phys, size_t len)
+{
+	if (len != 0)
+		flush_dcache64((addr64_t)phys, (unsigned)len, TRUE);
 }
 
 uint64_t
@@ -266,8 +322,14 @@ pdos_pci_note(void *dev)
 	}
 }
 
+static void *mapping_track(IOMemoryDescriptor *desc, IOMemoryMap *map, uint64_t offset);
+
+// a bar this large is mapped a piece at a time, a whole 16 GB vram bar in 4 KB pages would stall the vm for minutes
+#define PD_BAR_WHOLE_MAX	(256ULL << 20)
+#define PD_MAP_MAX	(1ULL << 30)
+
 static void *
-bar_window_va(uint64_t phys, size_t size)
+bar_window_va(uint64_t phys, size_t size, IOOptionBits cacheMode)
 {
 	for (int d = 0; d < PD_BAR_DEVS && sBarDevs[d] != NULL; d++) {
 		for (int bar = 0; bar < 6; bar++) {
@@ -282,6 +344,33 @@ bar_window_va(uint64_t phys, size_t size)
 			}
 			if (phys < w->phys || phys + size > w->phys + w->size)
 				continue;
+			// boot-arg pd_bar_whole=1 maps every bar whole as before, to compare against the piece maps
+			int whole = 0;
+			PE_parse_boot_argn("pd_bar_whole", &whole, sizeof(whole));
+			if (w->size > PD_BAR_WHOLE_MAX && !whole) {
+				IODeviceMemory *mem = sBarDevs[d]->getDeviceMemoryWithRegister(
+					kIOPCIConfigBaseAddress0 + bar * 4);
+				uint64_t start = trunc_page_64(phys - w->phys);
+				uint64_t len = round_page_64(phys - w->phys + size) - start;
+				IOMemoryDescriptor *sub;
+				IOMemoryMap *map;
+
+				if (mem == NULL)
+					return NULL;
+				sub = IOSubMemoryDescriptor::withSubRange(mem, start, len, kIODirectionNone);
+				if (sub == NULL)
+					return NULL;
+				if (len >= PD_BAR_WHOLE_MAX)
+					IOLog("pdos: mapping bar %d piece 0x%llx+0x%llx\n", bar, start, len);
+				map = sub->map(kIOMapAnywhere | cacheMode);
+				if (len >= PD_BAR_WHOLE_MAX)
+					IOLog("pdos: bar %d piece mapped at %p\n", bar, map ? (void *)map->getVirtualAddress() : NULL);
+				if (map == NULL) {
+					sub->release();
+					return NULL;
+				}
+				return mapping_track(sub, map, (phys - w->phys) - start);
+			}
 			if (w->map == NULL) {
 				w->map = sBarDevs[d]->mapDeviceMemoryWithRegister(
 					kIOPCIConfigBaseAddress0 + bar * 4, kIOMapInhibitCache);
@@ -294,10 +383,36 @@ bar_window_va(uint64_t phys, size_t size)
 	return NULL;
 }
 
+// records a mapping so pdos_unmap_phys finds it by the address it returns
+static void *
+mapping_track(IOMemoryDescriptor *desc, IOMemoryMap *map, uint64_t offset)
+{
+	pd_mapping *m = (pd_mapping *)IOMalloc(sizeof(pd_mapping));
+
+	if (m == NULL) {
+		map->release();
+		desc->release();
+		return NULL;
+	}
+	bzero(m, sizeof(*m));
+	m->va = (void *)(map->getVirtualAddress() + offset);
+	m->desc = desc;
+	m->map = map;
+	mapping_add(m);
+	return m->va;
+}
+
 void *
 pdos_map_phys(uint64_t phys, size_t size, int uncached)
 {
-	void *bar_va = bar_window_va(phys, size);
+	// one 16 GB uncached map hangs real hardware in map(), callers fall back to smaller maps
+	if (size > PD_MAP_MAX) {
+		IOLog("pdos: not mapping 0x%llx+0x%lx in one piece, over the 1 GB limit\n", phys, size);
+		return NULL;
+	}
+	// 2 asks for write-combining, the way ioremap_wc maps a vram aperture
+	IOOptionBits cacheMode = uncached == 2 ? kIOMapWriteCombineCache : uncached ? kIOMapInhibitCache : 0;
+	void *bar_va = bar_window_va(phys, size, cacheMode == 0 ? kIOMapInhibitCache : cacheMode);
 	if (bar_va != NULL)
 		return bar_va;
 
@@ -305,7 +420,7 @@ pdos_map_phys(uint64_t phys, size_t size, int uncached)
 		(IOPhysicalAddress)phys, size, kIODirectionNone | kIOMemoryMapperNone);
 	if (desc == NULL)
 		return NULL;
-	IOMemoryMap *map = desc->map(kIOMapAnywhere | (uncached ? kIOMapInhibitCache : 0));
+	IOMemoryMap *map = desc->map(kIOMapAnywhere | cacheMode);
 	if (map == NULL) {
 		desc->release();
 		return NULL;
@@ -910,30 +1025,58 @@ pdos_cpu_number(void)
 	return 0;
 }
 
-// kernel fpu: dc's display mode library runs sse code between begin and end,
-// with interrupts off so the interrupted thread's registers are put back intact
+// kernel fpu: dc's display mode library runs sse code between begin and end, with interrupts off so
+// nothing else touches the registers. depth, saved state and the interrupt flag belong to the thread, a
+// thread that blocks inside a section resumes elsewhere and still ends its own section
 #if defined(__x86_64__)
-#define PD_FPU_CPUS 64
-
-extern "C" int cpu_number(void);
+#define PD_FPU_SLOTS 64
 
 struct pd_fpu_save {
 	uint8_t area[512] __attribute__((aligned(16)));
+	thread_t thread;
 	int depth;
-	int intr;
 };
-static pd_fpu_save pd_fpu_saves[PD_FPU_CPUS];
+static pd_fpu_save pd_fpu_saves[PD_FPU_SLOTS];
 
+extern "C" void _disable_preemption(void);
+extern "C" void _enable_preemption(void);
+
+// preemption is off here, so the scan and the claim cannot race on this cpu
+static pd_fpu_save *
+pd_fpu_slot(thread_t thread, bool claim)
+{
+	pd_fpu_save *free_slot = NULL;
+
+	for (int i = 0; i < PD_FPU_SLOTS; i++) {
+		if (pd_fpu_saves[i].thread == thread)
+			return &pd_fpu_saves[i];
+		if (free_slot == NULL && pd_fpu_saves[i].thread == NULL)
+			free_slot = &pd_fpu_saves[i];
+	}
+	if (claim && free_slot != NULL &&
+	    OSCompareAndSwapPtr(NULL, thread, (void * volatile *)&free_slot->thread))
+		return free_slot;
+	// another cpu took the free slot first, look again, a full table returns nothing
+	return claim && free_slot != NULL ? pd_fpu_slot(thread, true) : NULL;
+}
+
+// like linux this only holds off preemption, interrupts stay on for the whole section
 extern "C" void
 lkpi_kernel_fpu_begin(void)
 {
-	int intr = ml_set_interrupts_enabled(FALSE);
-	pd_fpu_save *s = &pd_fpu_saves[cpu_number() % PD_FPU_CPUS];
+	pd_fpu_save *s;
 	uint32_t mxcsr = 0x1f80;
 
-	if (s->depth++ > 0)
+	_disable_preemption();
+	s = pd_fpu_slot(current_thread(), true);
+	if (s == NULL) {
+		_enable_preemption();
 		return;
-	s->intr = intr;
+	}
+	if (s->depth++ > 0) {
+		_enable_preemption();
+		return;
+	}
 	__asm__ volatile("fxsave64 %0" : "=m"(s->area));
 	__asm__ volatile("fninit; ldmxcsr %0" : : "m"(mxcsr));
 }
@@ -941,14 +1084,37 @@ lkpi_kernel_fpu_begin(void)
 extern "C" void
 lkpi_kernel_fpu_end(void)
 {
-	pd_fpu_save *s = &pd_fpu_saves[cpu_number() % PD_FPU_CPUS];
+	pd_fpu_save *s = pd_fpu_slot(current_thread(), false);
 
+	if (s == NULL)
+		return;
 	if (--s->depth > 0)
 		return;
 	__asm__ volatile("fxrstor64 %0" : : "m"(s->area));
-	ml_set_interrupts_enabled(s->intr ? TRUE : FALSE);
+	s->thread = NULL;
+	_enable_preemption();
 }
 #endif
+
+// points the platform console at a mapped framebuffer, so a debug boot can watch text land on the gpu's own scanout
+extern "C" void
+pdos_console_redirect(void *va, uint32_t width, uint32_t height, uint32_t pitch)
+{
+	IOPlatformExpert *pe = OSDynamicCast(IOPlatformExpert, IOService::getPlatform());
+	PE_Video video;
+
+	if (pe == NULL || va == NULL)
+		return;
+	bzero(&video, sizeof(video));
+	if (pe->getConsoleInfo(&video) != kIOReturnSuccess)
+		bzero(&video, sizeof(video));
+	video.v_baseAddr = (unsigned long)va;
+	video.v_rowBytes = pitch;
+	video.v_width = width;
+	video.v_height = height;
+	video.v_depth = 32;
+	pe->setConsoleInfo(&video, kPEEnableScreen);
+}
 
 #ifdef PDOS_HAVE_ACPI
 // getACPITableData is protected, a derived class may name it
@@ -981,6 +1147,13 @@ pdos_acpi_get_table(const char *signature, uint32_t instance, void **data,
 	table->release();
 	return *data != NULL ? 0 : ENOMEM;
 }
+
+void
+pdos_acpi_put_table(void *data, size_t size)
+{
+	if (data != NULL)
+		IOFreeData(data, size);
+}
 #else
 // drivers built without the acpi family headers see no tables
 int
@@ -988,6 +1161,11 @@ pdos_acpi_get_table(const char *signature, uint32_t instance, void **data,
 	size_t *size)
 {
 	return ENOENT;
+}
+
+void
+pdos_acpi_put_table(void *data, size_t size)
+{
 }
 #endif
 
@@ -1174,7 +1352,7 @@ iokit_interrupt_index(IOPCIDevice *pci, int index)
 	return -1;
 }
 
-// interrupts, the handler runs in the filter at primary interrupt level
+// interrupts, the filter only signals and the handler runs on the work loop thread
 
 class PDFBSD_INTR_CLASS : public OSObject
 {
@@ -1182,6 +1360,8 @@ class PDFBSD_INTR_CLASS : public OSObject
 public:
 	pdos_intr_fn					fn;
 	void							*arg;
+	// platform nubs run the handler on the work loop, linuxkpi locks there may sleep
+	bool							threaded;
 	IOFilterInterruptEventSource	*source;
 	IOWorkLoop						*workLoop;
 
@@ -1190,12 +1370,17 @@ public:
 	static bool filter(OSObject *owner, IOFilterInterruptEventSource *source)
 	{
 		PDFBSD_INTR_CLASS *self = (PDFBSD_INTR_CLASS *)owner;
+		if (self->threaded)
+			return true;
 		self->fn(self->arg);
 		return false;
 	}
 
 	static void action(OSObject *owner, IOInterruptEventSource *source, int count)
 	{
+		PDFBSD_INTR_CLASS *self = (PDFBSD_INTR_CLASS *)owner;
+		if (self->threaded)
+			self->fn(self->arg);
 	}
 };
 
@@ -1214,6 +1399,13 @@ pdos_intr_install(void *dev, int index, pdos_intr_fn fn, void *arg)
 	}
 	intr->fn = fn;
 	intr->arg = arg;
+	// linuxkpi spinlocks are sleeping mutexes as in a freebsd ithread, so handlers run on the work
+	// loop thread, a handler in the filter that met a held lock would stop the cpu with interrupts off
+	intr->threaded = true;
+	// boot-arg pd_intr_filter=1 runs pci handlers in the filter as before, to compare
+	int in_filter = 0;
+	if (pci != NULL && PE_parse_boot_argn("pd_intr_filter", &in_filter, sizeof(in_filter)) && in_filter)
+		intr->threaded = false;
 	intr->workLoop = IOWorkLoop::workLoop();
 	// a device tree nub numbers its interrupts as the node lists them
 	int iokitIndex = pci != NULL ? iokit_interrupt_index(pci, index) : index;
@@ -1230,6 +1422,16 @@ pdos_intr_install(void *dev, int index, pdos_intr_fn fn, void *arg)
 		OSSafeReleaseNULL(intr->workLoop);
 		intr->release();
 		return NULL;
+	}
+	IOLog("fbsdkpi: interrupt %d of %s uses iokit source %d%s\n", index, nub->getName(), iokitIndex,
+	    pci != NULL && index > 0 ? " (msi)" : pci != NULL ? " (legacy line)" : "");
+	// boot-arg pdamdgpu_intr_off=1 leaves an amd gpu's interrupt disabled, to tell a freeze in interrupt
+	// handling from one in the driver's own work, the driver's waits then time out instead
+	int off = 0;
+	if (pci != NULL && pci->configRead16(kIOPCIConfigVendorID) == 0x1002 &&
+	    PE_parse_boot_argn("pdamdgpu_intr_off", &off, sizeof(off)) && off) {
+		IOLog("fbsdkpi: pdamdgpu_intr_off=1, interrupt %d of %s stays disabled\n", index, nub->getName());
+		return intr;
 	}
 	intr->source->enable();
 	return intr;
@@ -1275,16 +1477,74 @@ pdos_dt_child(void *node, int index)
 	IORegistryEntry *e = (IORegistryEntry *)node, *found = NULL;
 	if (e == NULL)
 		return NULL;
-	OSIterator *it = e->getChildIterator(gIODTPlane);
-	if (it == NULL)
-		return NULL;
-	for (int i = 0; OSObject *o = it->getNextObject(); i++) {
-		if (i == index) {
-			found = OSDynamicCast(IORegistryEntry, o);
-			break;
+	// the registry changes while drivers match, an iterator that saw a change ends early and goes invalid
+	for (int tries = 0; tries < 16; tries++) {
+		OSIterator *it = e->getChildIterator(gIODTPlane);
+		if (it == NULL)
+			return NULL;
+		found = NULL;
+		for (int i = 0; OSObject *o = it->getNextObject(); i++) {
+			if (i == index) {
+				found = OSDynamicCast(IORegistryEntry, o);
+				break;
+			}
 		}
+		bool valid = it->isValid();
+		it->release();
+		if (found != NULL || valid)
+			return found;
 	}
-	it->release();
+	return NULL;
+}
+
+// the root stays in the registry for the system's life, so no reference is kept
+void *
+pdos_dt_root(void)
+{
+	IORegistryEntry *root = IORegistryEntry::fromPath("/", gIODTPlane);
+	if (root != NULL)
+		root->release();
+	return root;
+}
+
+// true when a nul-separated compatible list names want
+static bool
+dt_compat_has(IORegistryEntry *e, const char *want)
+{
+	OSData *d = OSDynamicCast(OSData, e->getProperty("compatible"));
+	const char *str = d != NULL ? (const char *)d->getBytesNoCopy() : NULL;
+	uint32_t len = d != NULL ? d->getLength() : 0;
+
+	for (uint32_t o = 0; str != NULL && o < len; o += strnlen(str + o, len - o) + 1) {
+		if (strncmp(str + o, want, len - o) == 0)
+			return true;
+	}
+	return false;
+}
+
+// the first node in tree order with the compatible string, walked again when the registry changed underneath
+void *
+pdos_dt_find_compatible(const char *compat)
+{
+	IORegistryEntry *root = IORegistryEntry::fromPath("/", gIODTPlane);
+	IORegistryEntry *found = NULL;
+
+	if (root == NULL)
+		return NULL;
+	for (int tries = 0; tries < 16 && found == NULL; tries++) {
+		IORegistryIterator *it = IORegistryIterator::iterateOver(root, gIODTPlane, kIORegistryIterateRecursively);
+		IORegistryEntry *e;
+
+		while (it != NULL && found == NULL && (e = it->getNextObject()) != NULL) {
+			if (dt_compat_has(e, compat))
+				found = e;
+		}
+		bool valid = it != NULL && it->isValid();
+		OSSafeReleaseNULL(it);
+		if (valid)
+			break;
+	}
+	root->release();
 	return found;
 }
 

@@ -115,7 +115,9 @@ stdenv.mkDerivation {
     substituteInPlace src/vulkan/wsi/wsi_common_x11.c \
       --replace-fail 'wsi_conn->has_xfixes = (ver_reply->major_version >= 2);' \
                      'wsi_conn->has_xfixes = ver_reply != NULL && (ver_reply->major_version >= 2);'
-    # no dma-buf export or dri3 here: the cpu image path is the only way to present
+  '' + lib.optionalString (withX11 || withWayland) ''
+    # no dma-buf export, dri3 or linux-dmabuf here: the cpu image path is the only way to present, and a
+    # wayland surface on a device wsi takes as hardware finds no zwp_linux_dmabuf_v1 and reports itself lost
     substituteInPlace src/virtio/vulkan/vn_wsi.c \
       --replace-fail 'const bool use_sw_device =' 'const bool use_sw_device = true ||'
   '';

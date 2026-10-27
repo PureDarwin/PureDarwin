@@ -50,6 +50,12 @@ init_root_device(device_t *_root, int bus_type)
 		NULL,
 		sizeof(struct root_device_softc),
 	};
+	// usb drivers are registered on uhub, the usb shim attaches them under this root
+	static driver_t sRootDriverUSB = {
+		"uhub",
+		NULL,
+		sizeof(struct root_device_softc),
+	};
 
 	device_t root = device_add_child(NULL, NULL, 0);
 	if (root == NULL)
@@ -61,9 +67,9 @@ init_root_device(device_t *_root, int bus_type)
 		return B_NO_MEMORY;
 	}
 	bzero(root->softc, sizeof(struct root_device_softc));
-	if (bus_type != BUS_pci)
-		panic("only pci devices attach on puredarwin");
-	root->driver = &sRootDriverPCI;
+	if (bus_type != BUS_pci && bus_type != BUS_uhub)
+		panic("only pci and usb devices attach on puredarwin");
+	root->driver = bus_type == BUS_uhub ? &sRootDriverUSB : &sRootDriverPCI;
 	((struct root_device_softc *)root->softc)->bus = bus_type;
 	root->root = root;
 	if (_root != NULL)
@@ -255,6 +261,49 @@ _fbsd_init_hardware_pci(driver_t *drivers[])
 	return B_OK;
 }
 
+// the usb module of a kext built with the usb shim, weak so pci-only kexts link without it
+status_t pd_usb_register(void *dev) __attribute__((weak));
+void pd_usb_unregister(void) __attribute__((weak));
+
+// the usb shim found a driver for the device pd_fbsd_attach_usb gave it, attach it as pci does
+status_t
+pd_fbsd_attach_usb_found(device_t root, driver_t *driver, void *compat,
+	void (*prepare)(void *, device_t))
+{
+	device_t device = device_add_child(root, NULL, 0);
+	if (device == NULL)
+		return B_NO_MEMORY;
+	strlcpy(device->device_name, driver->name, sizeof(device->device_name));
+	prepare(compat, device);
+	if (device_set_driver(device, driver) != 0) {
+		device_delete_child(root, device);
+		return B_ERROR;
+	}
+
+	int32 before = gDeviceCount;
+	mtx_lock(&Giant);
+	if (device->methods.device_probe(device) >= 0 && device_attach(device) == 0
+		&& (pd_fbsd_post_attach == NULL || pd_fbsd_post_attach(device) == 0)) {
+		dprintf("%s: attached %s\n", gDriverName, device_get_nameunit(device));
+	} else {
+		dprintf("%s: usb probe, attach or wlan setup failed\n", gDriverName);
+		mtx_unlock(&Giant);
+		device_delete_child(root, device);
+		return B_ERROR;
+	}
+	mtx_unlock(&Giant);
+	sAttachedDevice = device;
+
+	sAttached = NULL;
+	for (int i = 0; i < MAX_DEVICES; i++) {
+		if (gDevices[i] != NULL && gDevices[i]->root_device == root)
+			sAttached = gDevices[i];
+	}
+	if (sAttached == NULL && gDeviceCount > before)
+		sAttached = gDevices[gDeviceCount - 1];
+	return sAttached != NULL ? B_OK : B_ERROR;
+}
+
 int
 pd_fbsd_init(void)
 {
@@ -292,6 +341,20 @@ pd_fbsd_attach_pci(void *pcidev)
 	sAttached = NULL;
 	__haiku_init_hardware();
 	sPendingPci = NULL;
+	return sAttached;
+}
+
+void *
+pd_fbsd_attach_usb(void *usbdev)
+{
+	if (pd_usb_register == NULL || pd_fbsd_init() != 0)
+		return NULL;
+	if (pd_usb_register(usbdev) != B_OK)
+		return NULL;
+	sAttached = NULL;
+	__haiku_init_hardware();
+	if (sAttached == NULL)
+		pd_usb_unregister();
 	return sAttached;
 }
 

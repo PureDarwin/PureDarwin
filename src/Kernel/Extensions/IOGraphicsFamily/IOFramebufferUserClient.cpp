@@ -271,6 +271,9 @@ IOReturn IOFramebufferUserClient::clientMemoryForType( UInt32 type,
 #if defined(__i386__) || defined(__x86_64__)
             // write-combined like the kernel's own mapping, the default is uncached
             *flags |= kIOMapWriteCombineCache;
+#else
+            // vram in dram that the display does not snoop would map cacheable and scan out stale lines
+            if (fOwner->getProperty("pd-vram-write-combine")) *flags |= kIOMapWriteCombineCache;
 #endif
             break;
 
@@ -612,6 +615,8 @@ IOReturn IOFramebufferSharedUserClient::clientMemoryForType( UInt32 type,
                 FB_END(getVRAMRange,0,__LINE__,0);
 #if defined(__i386__) || defined(__x86_64__)
                 *options |= kIOMapWriteCombineCache;
+#else
+                if (fOwner->getProperty("pd-vram-write-combine")) *options |= kIOMapWriteCombineCache;
 #endif
             }
             break;

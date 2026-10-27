@@ -41,6 +41,21 @@
             <key>IOProviderClass</key>
             <string>IOPCIDevice</string>
         </dict>
+        <key>PDDRMnouveauTegra</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>org.puredarwin.driver.PDDRMnouveau</string>
+            <key>IOClass</key>
+            <string>PDDRMnouveau</string>
+            <key>IOMatchCategory</key>
+            <string>PDDRMDevice</string>
+            <key>IONameMatch</key>
+            <string>nvidia,gm20b</string>
+            <key>IOProbeScore</key>
+            <integer>6000</integer>
+            <key>IOProviderClass</key>
+            <string>IOPlatformDevice</string>
+        </dict>
         <key>PDDRMFramebufferNV</key>
         <dict>
             <key>CFBundleIdentifier</key>

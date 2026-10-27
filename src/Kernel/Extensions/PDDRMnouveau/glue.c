@@ -7,6 +7,9 @@ void pd_lkpi_init_hardware(void);
 extern int (*pd_driver_vsnprintf)(char *, size_t, const char *, va_list);
 int pd_drm_vsnprintf(char *, size_t, const char *, va_list);
 void pd_nouveau_mmap_register(void);
+#ifdef __aarch64__
+void pd_tegra210_gpu_init(void);
+#endif
 
 HAIKU_FBSD_DRIVERS_GLUE(nouveau);
 HAIKU_DRIVER_REQUIREMENTS(FBSD_TASKQUEUES);
@@ -22,6 +25,9 @@ HAIKU_CHECK_DISABLE_INTERRUPTS(device_t dev)
 
 int printf(const char *, ...);
 
+// a soc's memory controller report for nouveau's falcon boot, set by the tegra210 glue
+void (*pd_flcn_mc_dump)(const char *);
+
 void
 __haiku_init_hardware()
 {
@@ -31,6 +37,10 @@ __haiku_init_hardware()
 	pd_nouveau_mmap_register();
 	// shows the aux KC got this far, matching comes after
 	printf("PDDRMnouveau: kext loaded, matching nvidia graphics from nv50 on\n");
+#ifdef __aarch64__
+	// gm20b's clocks, reset and supply, before the platform probe asks for them
+	pd_tegra210_gpu_init();
+#endif
 	pd_lkpi_init_hardware();
 }
 

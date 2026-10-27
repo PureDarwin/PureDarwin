@@ -19,9 +19,20 @@ HAIKU_CHECK_DISABLE_INTERRUPTS(device_t dev)
 	return 1;
 }
 
+int pdos_bootarg_int(const char *name, int def);
+extern unsigned int amdgpu_dc_debug_mask;
+
 void
 __haiku_init_hardware()
 {
+	// boot-arg amdgpu_dcdebugmask=N is amdgpu's dcdebugmask, display features to leave off
+	amdgpu_dc_debug_mask = (unsigned int)pdos_bootarg_int("amdgpu_dcdebugmask", (int)amdgpu_dc_debug_mask);
+	// boot-arg drm_debug=N sets drm's debug categories (0x2 driver, 0x4 kms) before amdgpu probes
+	{
+		extern unsigned long __drm_debug;
+
+		__drm_debug = (unsigned long)pdos_bootarg_int("drm_debug", (int)__drm_debug);
+	}
 	// device_printf (dev_err, dev_info) learns %pV and the other linux %p forms
 	pd_driver_vsnprintf = pd_drm_vsnprintf;
 	pd_lkpi_init_hardware();

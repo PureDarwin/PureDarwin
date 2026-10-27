@@ -42,6 +42,8 @@ struct property *of_find_property(const struct device_node *, const char *, int 
 const void *of_get_property(const struct device_node *, const char *, int *);
 bool of_property_read_bool(const struct device_node *, const char *);
 #define	of_property_present(np, name)	of_property_read_bool((np), (name))
+// the match table pointer, device tree support is always built in here
+#define	of_match_ptr(p)	(p)
 int of_property_read_u32_index(const struct device_node *, const char *, u32, u32 *);
 int of_property_read_u32_array(const struct device_node *, const char *, u32 *, size_t);
 int of_property_read_u64(const struct device_node *, const char *, u64 *);
@@ -55,6 +57,7 @@ struct device_node *of_get_parent(const struct device_node *);
 struct device_node *of_get_next_child(const struct device_node *, struct device_node *);
 struct device_node *of_get_child_by_name(const struct device_node *, const char *);
 struct device_node *of_find_node_by_phandle(phandle);
+struct device_node *of_find_compatible_node(struct device_node *from, const char *type, const char *compat);
 struct device_node *of_parse_phandle(const struct device_node *, const char *, int);
 int of_parse_phandle_with_args(const struct device_node *, const char *, const char *, int,
     struct of_phandle_args *);

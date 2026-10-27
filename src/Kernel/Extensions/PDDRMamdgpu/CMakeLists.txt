@@ -57,10 +57,11 @@ _fbsdkpi_objects(PDDRMamdgpu_amd SOURCES ${amd}
     OPTIONS ${lkpiopt})
 # dc's display mode library computes in floating point between kernel_fpu_begin
 # and kernel_fpu_end
+# linux's cc_stack_align4 is 2^4 bytes, the fp code calls into dc code that keeps sse values on the stack
 _fbsdkpi_objects(PDDRMamdgpu_amdfp SOURCES ${amdfp}
     INCLUDES ${lkpiinc} ${coreinc} ${amdinc}
     DEFINITIONS ${amddefs}
-    OPTIONS ${lkpiopt} -msse -msse2 -mstack-alignment=4)
+    OPTIONS ${lkpiopt} -msse -msse2 -mstack-alignment=16)
 
 add_fbsdkpi_driver(PDDRMamdgpu
     CLASS PDDRMamdgpu
@@ -77,7 +78,8 @@ add_fbsdkpi_driver(PDDRMamdgpu
 )
 
 # amdgpu attaches by default, pdamdgpu=0 leaves the gpu to the GOP framebuffer for debugging
-target_compile_definitions(PDDRMamdgpu.kext PRIVATE PDDRM_OPT_OUT_BOOTARG="pdamdgpu")
+# an unclean stop leaves amdgpu's psp ring behind, the device start clears it first
+target_compile_definitions(PDDRMamdgpu.kext PRIVATE PDDRM_OPT_OUT_BOOTARG="pdamdgpu" PDDRM_AMD_PSP)
 
 # the vbios comes out of the VFCT table the acpi platform expert hands out
 target_include_directories(PDDRMamdgpu.kext PRIVATE

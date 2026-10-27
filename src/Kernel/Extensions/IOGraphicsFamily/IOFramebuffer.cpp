@@ -4039,7 +4039,10 @@ IOReturn IOFramebuffer::newUserClient(  task_t          owningTask,
                 err = open();
                 if (kIOReturnSuccess == err)
                     newConnect = IOFramebufferUserClient::withTask(owningTask);
-                if (!newConnect)
+                // open's own error was lost under kIOReturnNoResources
+                if (kIOReturnSuccess != err)
+                    IOLog("%s: open failed 0x%08x\n", thisName, err);
+                else if (!newConnect)
                     err = kIOReturnNoResources;
             }
             break;
@@ -8922,12 +8925,35 @@ IOReturn IOFramebuffer::open( void )
 
         if (!gIOFBServerInit) IOFramebuffer::initialize();
 
+        // a framebuffer that starts before IOHIDSystem is published never got its work loop
+        if (!gIOFBHIDWorkLoop)
+        {
+            OSDictionary * hidMatch = nameMatching("IOHIDSystem");
+            IOService *    hidsystem = hidMatch ? waitForMatchingService(hidMatch, 5ULL * NSEC_PER_SEC) : NULL;
+            if (hidsystem)
+            {
+                gIOFBHIDWorkLoop = hidsystem->getWorkLoop();
+                if (gIOFBHIDWorkLoop) gIOFBHIDWorkLoop->retain();
+                hidsystem->release();
+            }
+            OSSafeReleaseNULL(hidMatch);
+            if (!gIOFBHIDWorkLoop && gIOFBSystemWorkLoop)
+            {
+                IOLog("%s: no IOHIDSystem, using the system work loop\n", thisName);
+                gIOFBHIDWorkLoop = gIOFBSystemWorkLoop;
+                gIOFBHIDWorkLoop->retain();
+            }
+        }
+
         if (!gAllFramebuffers
          || !gIOFBRootNotifier
          || !gIOFBHIDWorkLoop
          || !gIOFBWorkES
          || !IODisplayWrangler::serverStart())
         {
+            IOLog("%s: open missing%s%s%s%s\n", thisName, gAllFramebuffers ? "" : " framebuffers",
+                  gIOFBRootNotifier ? "" : " root-notifier", gIOFBHIDWorkLoop ? "" : " hid-workloop",
+                  gIOFBWorkES ? "" : " work-es");
             err = kIOReturnVMError;
             continue;
         }
