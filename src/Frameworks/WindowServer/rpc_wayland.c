@@ -16,6 +16,7 @@
 #include "linux-dmabuf-v1-client-protocol.h"
 #include "wlr-output-management-unstable-v1-client-protocol.h"
 #include "pd-window-position-v1-client-protocol.h"
+#include "pd-surface-host-v1-client-protocol.h"
 #include <CoreGraphics/CGDirectDisplay_puredarwin.h>
 #include <CoreGraphics/CGWindowLevel.h>
 #include <CoreFoundation/CFBundle.h>
@@ -123,6 +124,7 @@ static struct {
     // modes the compositor lists through wlr-output-management, read from any thread under modesLock
     struct zwlr_output_manager_v1 *outputManager;
     struct pd_window_position_manager_v1 *positionManager;
+    struct pd_surface_host_manager_v1 *surfaceHost;
     struct zwlr_output_head_v1 *head;
     uint32_t outputSerial;
     pthread_mutex_t modesLock;
@@ -441,6 +443,8 @@ static void registryGlobal(void *data, struct wl_registry *registry, uint32_t na
         ws.dataDeviceManager = wl_registry_bind(registry, name, &wl_data_device_manager_interface, version < 3 ? version : 3);
     } else if (strcmp(interface, pd_window_position_manager_v1_interface.name) == 0) {
         ws.positionManager = wl_registry_bind(registry, name, &pd_window_position_manager_v1_interface, 1);
+    } else if (strcmp(interface, pd_surface_host_manager_v1_interface.name) == 0) {
+        ws.surfaceHost = wl_registry_bind(registry, name, &pd_surface_host_manager_v1_interface, 1);
     } else if (strcmp(interface, zwlr_output_manager_v1_interface.name) == 0) {
         ws.outputManager = wl_registry_bind(registry, name, &zwlr_output_manager_v1_interface,
                                             version < 2 ? version : 2);
@@ -2404,27 +2408,95 @@ void *_windowServerWaylandDisplay(void) {
     return ensureConnected() ? ws.display : NULL;
 }
 
-void *_windowServerCreateSubsurface(int windowID, int x, int y, void **subsurfaceOut) {
-    struct wsWindow *window;
+// a child surface not yet placed in any window, for a Vulkan surface made before its view's window is on screen
+void *_windowServerCreateSurface(void) {
     struct wl_surface *surface;
-    struct wl_subsurface *subsurface;
+    struct wl_region *none;
 
-    if (!ensureConnected() || ws.subcompositor == NULL || (window = windowForID(windowID)) == NULL) {
+    if (!ensureConnected()) {
         return NULL;
     }
     surface = wl_compositor_create_surface(ws.compositor);
     // the window takes the input, a child left with the default region would swallow every click over it
-    struct wl_region *none = wl_compositor_create_region(ws.compositor);
-
+    none = wl_compositor_create_region(ws.compositor);
     wl_surface_set_input_region(surface, none);
     wl_region_destroy(none);
+    wl_display_flush(ws.display);
+    return surface;
+}
+
+void *_windowServerAttachSubsurface(int windowID, void *surface, int x, int y) {
+    struct wsWindow *window;
+    struct wl_subsurface *subsurface;
+
+    if (surface == NULL || !ensureConnected() || ws.subcompositor == NULL || (window = windowForID(windowID)) == NULL) {
+        return NULL;
+    }
     subsurface = wl_subcompositor_get_subsurface(ws.subcompositor, surface, window->surface);
     wl_subsurface_set_position(subsurface, x, y);
-    wl_subsurface_place_above(subsurface, window->surface);
     wl_subsurface_set_desync(subsurface);
     wl_surface_commit(window->surface);
     wl_display_flush(ws.display);
-    *subsurfaceOut = subsurface;
+    return subsurface;
+}
+
+static void exportHandle(void *data, struct pd_surface_export_v1 *export, uint32_t handle) {
+    *(uint32_t *)data = handle;
+}
+
+static const struct pd_surface_export_v1_listener exportListener = {
+    .handle = exportHandle,
+};
+
+// CAContext: a handle another process imports to show this surface in its window, 0 without the compositor's support.
+// the export lives as long as the surface
+uint32_t _windowServerExportSurface(void *surface) {
+    struct wl_event_queue *queue;
+    struct pd_surface_host_manager_v1 *host;
+    struct pd_surface_export_v1 *export;
+    uint32_t handle = 0;
+
+    if (surface == NULL || !ensureConnected() || ws.surfaceHost == NULL) {
+        return 0;
+    }
+    // the reply is read here on a private queue, the dispatch thread keeps the default one
+    queue = wl_display_create_queue(ws.display);
+    host = wl_proxy_create_wrapper(ws.surfaceHost);
+    wl_proxy_set_queue((struct wl_proxy *)host, queue);
+    export = pd_surface_host_manager_v1_export_surface(host, surface);
+    pd_surface_export_v1_add_listener(export, &exportListener, &handle);
+    while (handle == 0 && wl_display_roundtrip_queue(ws.display, queue) >= 0) {
+    }
+    wl_proxy_set_queue((struct wl_proxy *)export, NULL);
+    wl_proxy_wrapper_destroy(host);
+    wl_event_queue_destroy(queue);
+    return handle;
+}
+
+// CALayerHost: an exported surface of another process as a subsurface of this window at (x, y)
+void *_windowServerImportSubsurface(int windowID, uint32_t handle, int x, int y) {
+    struct wsWindow *window;
+    struct wl_subsurface *subsurface;
+
+    if (handle == 0 || !ensureConnected() || ws.surfaceHost == NULL || (window = windowForID(windowID)) == NULL) {
+        return NULL;
+    }
+    subsurface = pd_surface_host_manager_v1_import_subsurface(ws.surfaceHost, handle, window->surface);
+    wl_subsurface_set_position(subsurface, x, y);
+    wl_subsurface_set_desync(subsurface);
+    wl_surface_commit(window->surface);
+    wl_display_flush(ws.display);
+    return subsurface;
+}
+
+void *_windowServerCreateSubsurface(int windowID, int x, int y, void **subsurfaceOut) {
+    struct wl_surface *surface;
+
+    if (!ensureConnected() || ws.subcompositor == NULL || windowForID(windowID) == NULL) {
+        return NULL;
+    }
+    surface = _windowServerCreateSurface();
+    *subsurfaceOut = _windowServerAttachSubsurface(windowID, surface, x, y);
     return surface;
 }
 

@@ -74,9 +74,9 @@ static struct {
 	// ARGON_GPU named a render device, which may not be the display's, so frames are read back
 	const char *device;
 	bool separate;
-	// rendering straight into the display's flip pair, and what the last frame changed
+	// rendering straight into the display's flip pair, and what each buffer still lacks
 	bool flip;
-	pixman_region32_t last_damage;
+	pixman_region32_t pending[2];
 } gpu;
 
 static int
@@ -151,8 +151,10 @@ gpu_fall_back(const char *why)
 		return;
 	if (gpu.direct)
 		framebuffer_set_scanout_resource(0, 0, 0);
-	if (gpu.flip)
-		pixman_region32_fini(&gpu.last_damage);
+	if (gpu.flip) {
+		pixman_region32_fini(&gpu.pending[0]);
+		pixman_region32_fini(&gpu.pending[1]);
+	}
 	gpu.flip = false;
 	wld_destroy_renderer(swc_fb.backend.renderer);
 	swc_fb.backend.renderer = pixman;
@@ -221,6 +223,56 @@ fb_finalize(void)
 	framebuffer_finalize(&swc_fb);
 }
 
+// the displays past the first, screens to the right of it with a frame copy of their own
+#define FB_MAX_EXTRA 7
+static struct {
+	struct screen *screen;
+	uint32_t *pixels;
+	size_t pitch;
+	uint32_t width, height;
+} extra[FB_MAX_EXTRA];
+static int nextra;
+
+// screen_new puts each screen to the right of the ones already in the list
+static void
+fb_create_extra_screens(struct wl_list *screens)
+{
+	int count = framebuffer_extra_count();
+
+	for (int i = 0; i < count && nextra < FB_MAX_EXTRA; i++) {
+		struct output *output;
+		struct screen *screen;
+		struct mode mode;
+		char name[32];
+		uint32_t width, height;
+
+		if (!framebuffer_extra_size(i, &width, &height))
+			continue;
+		mode_initialize_simple(&mode, width, height, 60000);
+		snprintf(name, sizeof(name), "ioframebuffer-%d", i + 1);
+		output = output_new_fb_modes(&mode, 1, 0, name);
+		if (!output)
+			continue;
+		screen = screen_new(output);
+		if (!screen) {
+			output_destroy(output);
+			continue;
+		}
+		screen->id = i + 1;
+		output->screen = screen;
+		// after the first display, which the shell takes as the main one
+		wl_list_insert(screens->prev, &screen->link);
+		extra[nextra].screen = screen;
+		extra[nextra].width = width;
+		extra[nextra].height = height;
+		extra[nextra].pitch = (size_t)width * sizeof(uint32_t);
+		extra[nextra].pixels = calloc(height, extra[nextra].pitch);
+		fprintf(stderr, "neuswc: screen %d is %ux%u at x %d\n", i + 1, width, height,
+		        screen->base.geometry.x);
+		nextra++;
+	}
+}
+
 bool
 fb_create_screens(struct wl_list *screens)
 {
@@ -253,6 +305,7 @@ fb_create_screens(struct wl_list *screens)
 	screen->id = 0;
 	output->screen = screen;
 	wl_list_insert(screens, &screen->link);
+	fb_create_extra_screens(screens);
 	return true;
 }
 
@@ -367,11 +420,41 @@ gpu_try_flip_pair(void)
 		return;
 	}
 	gpu.direct_tried = true;
-	pixman_region32_init(&gpu.last_damage);
+	// neither buffer has been drawn yet
+	pixman_region32_init_rect(&gpu.pending[0], 0, 0, swc_fb.width, swc_fb.height);
+	pixman_region32_init_rect(&gpu.pending[1], 0, 0, swc_fb.width, swc_fb.height);
 	fprintf(stderr, "neuswc: compositing straight into the display's flip pair\n");
 }
 
-// the back buffer is two frames old, so it takes this frame's damage and the last one's
+// the driver relit the display by itself (a hotplug) with new scanout buffers, so map and import those
+static bool
+gpu_reattach_flip_pair(void)
+{
+	uint32_t width = swc_fb.width, height = swc_fb.height;
+	uint32_t *pixels;
+
+	if (!framebuffer_reattach(&swc_fb))
+		return false;
+	if (swc_fb.width != width || swc_fb.height != height) {
+		// the cpu path draws from this buffer, it has to match the new size even before a mode switch
+		pixels = calloc(swc_fb.height, (size_t)swc_fb.width * sizeof(*pixels));
+		if (pixels) {
+			free(swc_fb.pixels);
+			swc_fb.pixels = pixels;
+			swc_fb.pitch = (size_t)swc_fb.width * sizeof(*swc_fb.pixels);
+		}
+		fprintf(stderr, "neuswc: the display is now %ux%u, the screen keeps %ux%u until a mode switch\n",
+		        swc_fb.width, swc_fb.height, width, height);
+		return false;
+	}
+	pixman_region32_fini(&gpu.pending[0]);
+	pixman_region32_fini(&gpu.pending[1]);
+	gpu.flip = false;
+	gpu_try_flip_pair();
+	return gpu.flip;
+}
+
+// every frame's damage goes to both buffers, the back one is repainted over what it still lacks
 static bool
 gpu_present_flip(struct wld_buffer *buffer, struct wld_buffer *cursor, int32_t cursor_x, int32_t cursor_y,
                  pixman_region32_t *damage, bool whole, const struct timespec *start)
@@ -385,14 +468,14 @@ gpu_present_flip(struct wld_buffer *buffer, struct wld_buffer *cursor, int32_t c
 		fprintf(stderr, "neuswc: no back buffer to composite into\n");
 		return false;
 	}
-	pixman_region32_init(&both);
-	if (all) {
-		pixman_region32_union_rect(&both, &both, 0, 0, buffer->width, buffer->height);
-		pixman_region32_copy(&gpu.last_damage, &both);
-	} else {
-		pixman_region32_union(&both, damage, &gpu.last_damage);
-		pixman_region32_copy(&gpu.last_damage, damage);
+	for (int i = 0; i < 2; i++) {
+		if (all)
+			pixman_region32_union_rect(&gpu.pending[i], &gpu.pending[i], 0, 0, buffer->width, buffer->height);
+		else
+			pixman_region32_union(&gpu.pending[i], &gpu.pending[i], damage);
 	}
+	pixman_region32_init(&both);
+	pixman_region32_copy(&both, &gpu.pending[back]);
 	if (!pixman_region32_not_empty(&both)) {
 		pixman_region32_fini(&both);
 		fb_stats_add(0, start);
@@ -409,6 +492,7 @@ gpu_present_flip(struct wld_buffer *buffer, struct wld_buffer *cursor, int32_t c
 		fprintf(stderr, "neuswc: the presenter refused a flip to buffer %d\n", back);
 		return false;
 	}
+	pixman_region32_clear(&gpu.pending[back]);
 	fb_stats_add(pixels, start);
 	return true;
 }
@@ -458,6 +542,9 @@ gpu_present(struct wld_buffer *buffer, struct wld_buffer *cursor, int32_t cursor
 		gpu_try_flip_pair();
 	if (gpu.flip) {
 		bool ok = gpu_present_flip(buffer, cursor, cursor_x, cursor_y, &damage, whole, start);
+		// a refused flip usually means the display was relit, the new pair gets the whole frame
+		if (!ok && gpu_reattach_flip_pair())
+			ok = gpu_present_flip(buffer, cursor, cursor_x, cursor_y, &damage, true, start);
 		pixman_region32_fini(&damage);
 		if (!ok)
 			gpu_fall_back("flip");
@@ -514,6 +601,58 @@ gpu_present(struct wld_buffer *buffer, struct wld_buffer *cursor, int32_t cursor
 }
 #endif
 
+// an extra display's frame: read back from the GL target or copied from the pixman one, the cursor blended in
+static bool
+fb_present_extra(int i, struct wld_buffer *buffer, int32_t origin_x, int32_t origin_y)
+{
+	struct pointer *pointer = swc.seat ? swc.seat->pointer : NULL;
+	struct wld_buffer *cursor = NULL;
+	int32_t cursor_x = 0, cursor_y = 0;
+	uint32_t width, height;
+	bool cursor_mapped = false;
+
+	if (!buffer || !extra[i].pixels)
+		return false;
+	if (pointer && pointer->cursor.view.buffer) {
+		cursor = pointer->cursor.buffer;
+		cursor_x = pointer->cursor.view.geometry.x - origin_x;
+		cursor_y = pointer->cursor.view.geometry.y - origin_y;
+	}
+	width = buffer->width < extra[i].width ? buffer->width : extra[i].width;
+	height = buffer->height < extra[i].height ? buffer->height : extra[i].height;
+#ifdef __PUREDARWIN__
+	if (gpu.active) {
+		if (wld_gl_present_damage(swc_fb.backend.renderer, buffer, cursor, cursor_x, cursor_y, NULL,
+		                          extra[i].pixels, extra[i].pitch) == WLD_GL_PRESENT_FAILED)
+			return false;
+		return framebuffer_extra_present(i, extra[i].pixels, extra[i].pitch, width, height);
+	}
+#endif
+	if (!wld_map(buffer))
+		return false;
+	if (cursor)
+		cursor_mapped = wld_map(cursor);
+	for (uint32_t y = 0; y < height; y++) {
+		const uint32_t *source = (const uint32_t *)((uint8_t *)buffer->map + (size_t)y * buffer->pitch);
+		uint32_t *destination = (uint32_t *)((uint8_t *)extra[i].pixels + (size_t)y * extra[i].pitch);
+
+		for (uint32_t x = 0; x < width; x++) {
+			uint32_t pixel = source[x];
+			int32_t cx = (int32_t)x - cursor_x, cy = (int32_t)y - cursor_y;
+
+			if (cursor_mapped && cx >= 0 && cy >= 0 && (uint32_t)cx < cursor->width &&
+			    (uint32_t)cy < cursor->height)
+				pixel = blend(pixel, *(uint32_t *)((uint8_t *)cursor->map + (size_t)cy * cursor->pitch +
+				                                   (size_t)cx * 4));
+			destination[x] = pixel;
+		}
+	}
+	if (cursor_mapped)
+		wld_unmap(cursor);
+	wld_unmap(buffer);
+	return framebuffer_extra_present(i, extra[i].pixels, extra[i].pitch, width, height);
+}
+
 bool
 fb_present(struct wld_buffer *buffer, int32_t origin_x, int32_t origin_y)
 {
@@ -524,6 +663,13 @@ fb_present(struct wld_buffer *buffer, int32_t origin_x, int32_t origin_y)
 	int32_t cursor_x = 0, cursor_y = 0;
 	uint32_t width, height, x, y;
 	bool cursor_mapped = false;
+
+	// the first display sits at the origin, the others are found by where their screen starts
+	for (int i = 0; i < nextra; i++) {
+		if (extra[i].screen && extra[i].screen->base.geometry.x == origin_x &&
+		    extra[i].screen->base.geometry.y == origin_y && (origin_x != 0 || origin_y != 0))
+			return fb_present_extra(i, buffer, origin_x, origin_y);
+	}
 
 	#ifdef __PUREDARWIN__
 	if (gpu.active) {

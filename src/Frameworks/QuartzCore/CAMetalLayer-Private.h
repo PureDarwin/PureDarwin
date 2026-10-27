@@ -6,5 +6,6 @@
 - (void)_pdDetach;
 - (void)_pdSetViewSize:(CGSize)size;
 - (BOOL)_pdIsAttached;
+- (void *)_pdWaylandSurface:(void **)display;
 - (void)_configure;
 @end

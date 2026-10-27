@@ -59,6 +59,11 @@ stdenv.mkDerivation {
     wayland-scanner client-header "$position" pd-window-position-v1-client-protocol.h
     wayland-scanner private-code "$position" pd-window-position-protocol.c
 
+    # surfaces drawn by one process and shown in another's window (CAContext / CALayerHost), neuswc's own protocol
+    host=pd-surface-host-v1.xml
+    wayland-scanner client-header "$host" pd-surface-host-v1-client-protocol.h
+    wayland-scanner private-code "$host" pd-surface-host-protocol.c
+
     # translucent menus and bars ask the compositor to blur what is behind them
     blur=${waylandProtocols}/share/wayland-protocols/staging/ext-background-effect/ext-background-effect-v1.xml
     wayland-scanner client-header "$blur" ext-background-effect-v1-client-protocol.h
@@ -86,6 +91,7 @@ stdenv.mkDerivation {
     $cc $cflags -c ext-background-effect-protocol.c -o ext-background-effect-protocol.o
     $cc $cflags -c wlr-output-management-protocol.c -o wlr-output-management-protocol.o
     $cc $cflags -c pd-window-position-protocol.c -o pd-window-position-protocol.o
+    $cc $cflags -c pd-surface-host-protocol.c -o pd-surface-host-protocol.o
 
     $cc \
       -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \
@@ -103,6 +109,7 @@ stdenv.mkDerivation {
       ext-background-effect-protocol.o \
       wlr-output-management-protocol.o \
       pd-window-position-protocol.o \
+      pd-surface-host-protocol.o \
       -lwayland-client -lwayland-cursor -lxkbcommon -lCoreGraphics -lCoreFoundation -lSystem \
       -o libWindowServer.dylib
 

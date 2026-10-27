@@ -282,7 +282,8 @@ screen_set_mode(struct screen *screen, const struct mode *mode)
 	(void)mode;
 	return false;
 #else
-	if (!fb_set_mode(mode->fb_id))
+	// the displays past the first have the one mode their framebuffer is in
+	if (screen->id != 0 || !fb_set_mode(mode->fb_id))
 		return false;
 	screen->planes.primary.mode = *mode;
 	view_set_size(&screen->planes.primary.view, swc_fb.width, swc_fb.height);

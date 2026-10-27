@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="pd_surface_host_v1">
+  <copyright>
+    Copyright (c) 2026 The PureDarwin Project
+    SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+  </copyright>
+
+  <interface name="pd_surface_host_manager_v1" version="1">
+    <description summary="surfaces placed in another client's windows">
+      Core Animation lets one process draw a layer that another process shows in its own window:
+      the drawing process names its layer by a context id (CAContext), the hosting process puts
+      that id in its layer tree (CALayerHost). This is that across Wayland clients. A client
+      exports a surface and gets a handle, any client imports the handle as a subsurface of its
+      own surface. The subsurface object belongs to the importer, the surface's buffers and
+      commits stay with the exporter.
+    </description>
+
+    <request name="destroy" type="destructor"/>
+
+    <request name="export_surface">
+      <arg name="id" type="new_id" interface="pd_surface_export_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+
+    <request name="import_subsurface">
+      <description summary="make an exported surface a subsurface of one's own surface">
+        The new wl_subsurface behaves as one from wl_subcompositor.get_subsurface, starting
+        synchronized. A handle that names no surface, or one that already has a role, gets a
+        subsurface that never shows anything.
+      </description>
+      <arg name="id" type="new_id" interface="wl_subsurface"/>
+      <arg name="handle" type="uint"/>
+      <arg name="parent" type="object" interface="wl_surface"/>
+    </request>
+  </interface>
+
+  <interface name="pd_surface_export_v1" version="1">
+    <description summary="one exported surface">
+      Sends its handle once, right after creation. Destroying it stops further imports,
+      a surface already imported stays where it is.
+    </description>
+
+    <request name="destroy" type="destructor"/>
+
+    <event name="handle">
+      <arg name="handle" type="uint"/>
+    </event>
+  </interface>
+</protocol>

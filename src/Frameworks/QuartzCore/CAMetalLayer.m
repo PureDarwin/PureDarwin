@@ -2,6 +2,7 @@
 #import <QuartzCore/CAMetalLayer-Private.h>
 #include <dlfcn.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <objc/runtime.h>
 
 // MetalKit's swapchain behind a layer (PDMetalLayerBackend)
@@ -12,6 +13,7 @@
 - (void)setWindowOrigin:(CGPoint)origin;
 - (void)configureDevice:(id)device pixelFormat:(NSUInteger)format size:(CGSize)size;
 - (id<CAMetalDrawable>)nextDrawable;
+- (void *)relinquishWaylandSurface:(void **)subsurface;
 + (id<CAMetalDrawable>)offscreenDrawableForLayer:(CAMetalLayer *)layer;
 @end
 
@@ -34,12 +36,30 @@ static Class backendClass(void) {
     return cls;
 }
 
+// PD_CAMETAL_TRACE: where an externally presented layer's surface goes
+static int traceOn(void) {
+    static int on = -1;
+
+    if (on < 0)
+        on = getenv("PD_CAMETAL_TRACE") != NULL;
+    return on;
+}
+
+// WindowServer's subsurface calls, looked up so QuartzCore does not link it
+static void *ws(const char *name) {
+    return dlsym(RTLD_DEFAULT, name);
+}
+
 @implementation CAMetalLayer {
     id _device;
     NSUInteger _pixelFormat;
     CGSize _drawableSize, _viewSize;
     CGColorSpaceRef _colorspace;
     id _backend;
+    // a Vulkan surface made on this layer (VK_EXT_metal_surface) presents into its own wl_surface, which the layer
+    // keeps across windows: a subsurface of the window while attached
+    void *_extSurface, *_extSubsurface;
+    NSInteger _extWindow;
 }
 
 @synthesize framebufferOnly = _framebufferOnly, maximumDrawableCount = _maximumDrawableCount;
@@ -79,6 +99,10 @@ static Class backendClass(void) {
 }
 
 - (void)dealloc {
+    void (*destroy)(void *, void *) = ws("_windowServerDestroySubsurface");
+
+    if (_extSurface && destroy)
+        destroy(_extSurface, _extSubsurface);
     [_backend release];
     [_device release];
     CGColorSpaceRelease(_colorspace);
@@ -89,9 +113,20 @@ static Class backendClass(void) {
 // until the app sets drawableSize the swapchain takes the view's size, the property stays as the app left it,
 // since apps compare it with their view to know when to remake their own targets
 - (BOOL)_pdAttachToWindowNumber:(NSInteger)window origin:(CGPoint)origin size:(CGSize)size {
+    _viewSize = size;
+    _extWindow = window;
+    if (_extSurface) {
+        void *(*attach)(int, void *, int, int) = ws("_windowServerAttachSubsurface");
+
+        if (!_extSubsurface && attach)
+            _extSubsurface = attach((int)window, _extSurface, (int)origin.x, (int)origin.y);
+        if (traceOn())
+            fprintf(stderr, "CAMetalLayer %p: attach to window %ld at %g,%g %gx%g -> %p\n", (void *)self, (long)window,
+                    origin.x, origin.y, size.width, size.height, _extSubsurface);
+        return _extSubsurface != NULL;
+    }
     [_backend release];
     _backend = nil;
-    _viewSize = size;
     if (!(_backend = [[backendClass() alloc] initWithWindowNumber:window origin:origin size:[self _swapchainSize] layer:self]))
         return NO;
     [self _configure];
@@ -112,12 +147,42 @@ static Class backendClass(void) {
 }
 
 - (void)_pdDetach {
+    if (_extSubsurface) {
+        void (*destroy)(void *, void *) = ws("_windowServerDestroySubsurface");
+
+        if (destroy)
+            destroy(NULL, _extSubsurface);
+        _extSubsurface = NULL;
+    }
     [_backend release];
     _backend = nil;
 }
 
 - (BOOL)_pdIsAttached {
-    return _backend != nil;
+    return _extSurface ? _extSubsurface != NULL : _backend != nil;
+}
+
+// the wl_surface for a Vulkan surface made on this layer directly (VK_EXT_metal_surface). From then on the layer
+// hands out no drawables of its own, and the surface outlives windows: a view not yet in one is placed on attach
+- (void *)_pdWaylandSurface:(void **)display {
+    void *(*wlDisplay)(void) = ws("_windowServerWaylandDisplay");
+    void *(*create)(void) = ws("_windowServerCreateSurface");
+
+    if (!_extSurface) {
+        if (_backend) {
+            _extSurface = [_backend relinquishWaylandSurface:&_extSubsurface];
+            [_backend release];
+            _backend = nil;
+        }
+        if (!_extSurface && create)
+            _extSurface = create();
+    }
+    if (display)
+        *display = wlDisplay ? wlDisplay() : NULL;
+    if (traceOn())
+        fprintf(stderr, "CAMetalLayer %p: wayland surface %p (subsurface %p, window %ld)\n", (void *)self, _extSurface,
+                _extSubsurface, (long)_extWindow);
+    return _extSurface;
 }
 
 - (void)_configure {
@@ -125,6 +190,10 @@ static Class backendClass(void) {
 }
 
 - (void)setWindowOrigin:(CGPoint)origin {
+    void (*move)(int, void *, int, int) = ws("_windowServerMoveSubsurface");
+
+    if (_extSubsurface && move)
+        move((int)_extWindow, _extSubsurface, (int)origin.x, (int)origin.y);
     [_backend setWindowOrigin:origin];
 }
 

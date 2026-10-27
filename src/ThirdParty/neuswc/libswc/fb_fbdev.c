@@ -197,3 +197,7 @@ bool framebuffer_present_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t h
 int framebuffer_scanout_dmabufs(int *fds, uint32_t *width, uint32_t *height, uint32_t *pitch) { (void)fds; (void)width; (void)height; (void)pitch; return 0; }
 int framebuffer_back_index(void) { return -1; }
 bool framebuffer_flip(int index) { (void)index; return false; }
+bool framebuffer_reattach(struct swc_fb *fb) { (void)fb; return false; }
+int framebuffer_extra_count(void) { return 0; }
+bool framebuffer_extra_size(int i, uint32_t *width, uint32_t *height) { (void)i; (void)width; (void)height; return false; }
+bool framebuffer_extra_present(int i, const uint32_t *pixels, size_t pitch, uint32_t width, uint32_t height) { (void)i; (void)pixels; (void)pitch; (void)width; (void)height; return false; }

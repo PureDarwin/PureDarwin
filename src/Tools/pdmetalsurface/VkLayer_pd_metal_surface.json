@@ -1,0 +1,17 @@
+{
+    "file_format_version": "1.2.0",
+    "layer": {
+        "name": "VK_LAYER_PD_metal_surface",
+        "type": "GLOBAL",
+        "library_path": "/usr/lib/libVkLayer_pd_metal_surface.dylib",
+        "api_version": "1.4.341",
+        "implementation_version": "1",
+        "description": "VK_EXT_metal_surface over a CAMetalLayer's Wayland subsurface",
+        "instance_extensions": [
+            { "name": "VK_EXT_metal_surface", "spec_version": "1" }
+        ],
+        "disable_environment": {
+            "PD_DISABLE_METAL_SURFACE_LAYER": "1"
+        }
+    }
+}

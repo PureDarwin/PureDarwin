@@ -22,11 +22,13 @@
  */
 
 #include "subsurface.h"
+#include "surface_host.h"
 #include "compositor.h"
 #include "surface.h"
 #include "util.h"
 #include "view.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <wayland-server.h>
 
@@ -94,12 +96,20 @@ subsurface_update_visibility(struct subsurface *subsurface)
 		return;
 	}
 
-	if (subsurface->added && parent_view->visible &&
+	bool was = view->visible;
+
+	// a subsurface is mapped only while its parent is, which takes the parent's own buffer
+	if (subsurface->added && parent_view->visible && subsurface->parent->state.buffer &&
 	    subsurface->surface->state.buffer) {
 		compositor_view_show(view);
 	} else {
 		compositor_view_hide(view);
 	}
+	if (surface_host_trace_on() && was != view->visible)
+		fprintf(stderr, "subsurface %p of %p: %s (added %d parent visible %d parent buffer %d buffer %d) at %d,%d %ux%u\n",
+		        (void *)subsurface->surface, (void *)subsurface->parent, view->visible ? "shown" : "hidden", subsurface->added,
+		        parent_view->visible, subsurface->parent->state.buffer != NULL, subsurface->surface->state.buffer != NULL,
+		        view->base.geometry.x, view->base.geometry.y, view->base.geometry.width, view->base.geometry.height);
 }
 
 static void
@@ -179,15 +189,17 @@ is_valid_sibling(struct subsurface *subsurface, struct surface *sibling_surface,
 	return true;
 }
 
+static void subsurface_detach(struct subsurface *subsurface);
+
 static void
 handle_surface_destroy(struct wl_listener *listener, void *data)
 {
 	(void)data;
 	struct subsurface *subsurface =
 	    wl_container_of(listener, subsurface, surface_destroy_listener);
-	if (subsurface->resource) {
-		wl_resource_destroy(subsurface->resource);
-	}
+
+	// the resource may belong to another client (an imported surface), it stays as an inert object
+	subsurface_detach(subsurface);
 }
 
 static void
@@ -245,6 +257,9 @@ place_above(struct wl_client *client, struct wl_resource *resource,
 	    wl_resource_get_user_data(sibling_resource);
 	struct subsurface *sibling_subsurface;
 
+	// a subsurface whose surface or parent is gone is inert
+	if (!subsurface->surface || !subsurface->parent)
+		return;
 	if (!is_valid_sibling(subsurface, sibling_surface, &sibling_subsurface)) {
 		wl_resource_post_error(resource, WL_SUBSURFACE_ERROR_BAD_SURFACE,
 		                       "invalid sibling surface");
@@ -272,6 +287,9 @@ place_below(struct wl_client *client, struct wl_resource *resource,
 	    wl_resource_get_user_data(sibling_resource);
 	struct subsurface *sibling_subsurface;
 
+	// a subsurface whose surface or parent is gone is inert
+	if (!subsurface->surface || !subsurface->parent)
+		return;
 	if (!is_valid_sibling(subsurface, sibling_surface, &sibling_subsurface)) {
 		wl_resource_post_error(resource, WL_SUBSURFACE_ERROR_BAD_SURFACE,
 		                       "invalid sibling surface");
@@ -414,10 +432,8 @@ static const struct wl_subsurface_interface subsurface_impl = {
 };
 
 static void
-subsurface_destroy(struct wl_resource *resource)
+subsurface_detach(struct subsurface *subsurface)
 {
-	struct subsurface *subsurface = wl_resource_get_user_data(resource);
-
 	if (subsurface->surface) {
 		if (subsurface->surface->subsurface == subsurface) {
 			subsurface->surface->subsurface = NULL;
@@ -453,7 +469,16 @@ subsurface_destroy(struct wl_resource *resource)
 			compositor_view_destroy(view);
 		}
 	}
+	subsurface->surface = NULL;
+	subsurface->parent = NULL;
+}
 
+static void
+subsurface_destroy(struct wl_resource *resource)
+{
+	struct subsurface *subsurface = wl_resource_get_user_data(resource);
+
+	subsurface_detach(subsurface);
 	free(subsurface);
 }
 

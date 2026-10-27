@@ -46,6 +46,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <QuartzCore/CATransaction.h>
 #import <QuartzCore/CADisplayLink.h>
 #import <QuartzCore/CAMetalLayer-Private.h>
+#import <QuartzCore/CAContext-Private.h>
 
 NSString * const NSViewFrameDidChangeNotification=@"NSViewFrameDidChangeNotification";
 // posted with the frame change, the window position isn't tracked separately for OpenGL surfaces
@@ -225,9 +226,11 @@ static CGAffineTransform concatViewTransform(CGAffineTransform result,NSView *vi
    if(doFrame)
    result=CGAffineTransformTranslate(result,frame.origin.x,frame.origin.y);
 
-    // Apply bounds scaling to fit in the frame
-    CGAffineTransform scale = CGAffineTransformMakeScale(NSWidth(frame)/NSWidth(bounds), NSHeight(frame)/NSHeight(bounds));
-    result=CGAffineTransformConcat(scale,result);
+    // Apply bounds scaling to fit in the frame, an empty bounds or frame scales by nothing rather than NaN
+    if(NSWidth(bounds)>0 && NSHeight(bounds)>0 && NSWidth(frame)>0 && NSHeight(frame)>0){
+     CGAffineTransform scale = CGAffineTransformMakeScale(NSWidth(frame)/NSWidth(bounds), NSHeight(frame)/NSHeight(bounds));
+     result=CGAffineTransformConcat(scale,result);
+    }
 
    if(flip){
     CGAffineTransform flip=CGAffineTransformMake(1,0,0,-1,0,bounds.size.height);
@@ -808,8 +811,13 @@ static CGRect metalLayerRect(NSView *self){
    return CGRectMake(r.origin.x,[[self window] frame].size.height-(r.origin.y+r.size.height),r.size.width,r.size.height);
 }
 
+// layers drawn into a surface of their own: a CAMetalLayer, or a CALayerHost showing another process's
+static BOOL isSurfaceLayer(CALayer *layer){
+   return [layer isKindOfClass:[CAMetalLayer class]] || [layer isKindOfClass:[CALayerHost class]];
+}
+
 static void updateMetalLayer(NSView *self){
-   if(![self->_layer isKindOfClass:[CAMetalLayer class]])
+   if(!isSurfaceLayer(self->_layer))
     return;
 
    CAMetalLayer *layer=(CAMetalLayer *)self->_layer;
@@ -828,6 +836,12 @@ static void updateMetalLayer(NSView *self){
    }
    else
     [layer _pdAttachToWindowNumber:[self->_window windowNumber] origin:r.origin size:r.size];
+}
+
+// a window put on screen: hosted metal layers that found no window surface while it was hidden attach now
+-(void)_pdUpdateMetalLayers {
+   updateMetalLayer(self);
+   [_subviews makeObjectsPerformSelector:_cmd];
 }
 
 -(void)_setFrame:(NSRect)frame {
@@ -865,9 +879,9 @@ static void updateMetalLayer(NSView *self){
 
     [_layerContext setFrame:layerFrame];
 
-    updateMetalLayer(self);
-
    invalidateTransform(self);
+    // hosted layers anywhere below move with this view
+    [self _pdUpdateMetalLayers];
 
    if(_superview!=nil && !NSContainsRect(_frame,oldFrame))
     [_superview setNeedsDisplayInRect:oldFrame];
@@ -969,6 +983,8 @@ static void updateMetalLayer(NSView *self){
 
 -(void)_setSuperview:superview {
    _superview=superview;
+   // the cached transform to the window was built against the old superview
+   invalidateTransform(self);
 
    [_window invalidateCursorRectsForView:self]; // this also invalidates tracking areas
 
@@ -987,6 +1003,8 @@ static void updateMetalLayer(NSView *self){
 
     [view viewWillMoveToSuperview:self];
     [view _setSuperview:self];
+    // _setWindow placed hosted layers before the view had this superview, so place them again
+    [view _pdUpdateMetalLayers];
    }
 
    if(index==NSNotFound)
@@ -1731,7 +1749,7 @@ static CGFloat backingScale(NSView *self){
     // (Firefox adds its tiles under it), so it renders like a hosted layer
     CALayer *layer=_layer==nil ? [self makeBackingLayer] : nil;
 
-    if(layer!=nil && (_wantsLayer || [layer isKindOfClass:[CAMetalLayer class]])){
+    if(layer!=nil && (_wantsLayer || isSurfaceLayer(layer))){
      [self setLayer:layer];
      // the view is its backing layer's delegate, and the layer is sized like the view from the start:
      // Vulkan reads the surface's extent before the window shows
@@ -1772,11 +1790,11 @@ static CGFloat backingScale(NSView *self){
 -(void)setLayer:(CALayer *)value {
    if(getenv("PD_CA_TRACE"))
     fprintf(stderr,"PD-CA view %s %p setLayer: %s %p\n",object_getClassName(self),self,value ? object_getClassName(value) : "nil",value);
-   // a hosted CAMetalLayer goes to its own subsurface, outside the CALayer renderer (which may be off)
-   if([value isKindOfClass:[CAMetalLayer class]] || [_layer isKindOfClass:[CAMetalLayer class]]){
+   // a hosted CAMetalLayer or CALayerHost goes to its own subsurface, outside the CALayer renderer (which may be off)
+   if(isSurfaceLayer(value) || isSurfaceLayer(_layer)){
     if(value==_layer)
      return;
-    if([_layer isKindOfClass:[CAMetalLayer class]])
+    if(isSurfaceLayer(_layer))
      [(CAMetalLayer *)_layer _pdDetach];
     [value retain];
     [_layer release];
@@ -2130,8 +2148,9 @@ static NSGraphicsContext *graphicsContextForView(NSView *view){
    NSGraphicsContext *graphicsContext=[NSGraphicsContext currentContext];
    CGContextRef       context=[graphicsContext graphicsPort];
 
-   // only a backing layer shows what the view drew, a hosted layer belongs to the app
-   if([_layer isKindOfClass:[NSViewBackingLayer class]]){
+   // only a backing layer shows what the view drew, a hosted layer belongs to the app.
+   // an NSOpenGLContext that flushed into the layer owns its contents
+   if([_layer isKindOfClass:[NSViewBackingLayer class]] && objc_getAssociatedObject(_layer,@selector(flushBuffer))==nil){
     CGImageRef image=CGBitmapContextCreateImage(context);
 
     [(id)_layer _setContentsWithoutRender:(id)image];
@@ -2342,10 +2361,16 @@ static NSGraphicsContext *graphicsContextForView(NSView *view){
    if(NSIsEmptyRect(rect))
     return;
 
-   if ([self canDraw] && _layer!=nil && [self wantsUpdateLayer] && ![NSGraphicsContext inQuartzDebugMode]) {
+   // a view answering -displayLayer: fills its layer that way, as CoreAnimation asks the delegate first (Qt does this)
+   BOOL displaysLayer=_layer!=nil && [_layer delegate]==self && [self respondsToSelector:@selector(displayLayer:)];
+
+   if ([self canDraw] && _layer!=nil && (displaysLayer || [self wantsUpdateLayer]) && ![NSGraphicsContext inQuartzDebugMode]) {
       // as on macOS a view that updates its layer itself gets no drawing context: no backing bitmap
       // per display (4 MB at window size), no snapshot into the layer
-      [self updateLayer];
+      if(displaysLayer)
+       [(id)self displayLayer:_layer];
+      else
+       [self updateLayer];
 
        NSEnumerator *viewEnumerator = [self _subviewsInDisplayOrderEnumerator];
        NSView *child = nil;

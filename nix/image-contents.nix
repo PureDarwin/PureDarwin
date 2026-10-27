@@ -37,6 +37,7 @@
 , mpsNoxBuild
 , audiotoolboxBuild
 , pcmplayBuild
+, pdMetalSurfaceBuild
 , coreaudiodBuild
 , carbonBuild
 , iosurfaceBuild
@@ -1295,7 +1296,7 @@ let
           # something full-screen to run in it
           ncursesBuild nanoBuild fastfetchNoxBuild
           # vulkan on the host gpu with PUREDARWIN_VM_VENUS=1 (venus virtio-gpu)
-          vulkanLoaderNoxBuild mesaVenusWaylandBuild libdrmVirtgpuBuild vulkanToolsNoxBuild venusTestsNoxBuild
+          vulkanLoaderNoxBuild mesaVenusWaylandBuild pdMetalSurfaceBuild libdrmVirtgpuBuild vulkanToolsNoxBuild venusTestsNoxBuild
           # the Metal demos: pdmtl and Indium tests (metal-pd), Metal.framework (metal-objc), Apple's samples
           glfwPdBuild metalPdNoxBuild metalObjcPdNoxBuild metalAppleSamplesNoxBuild spirvCrossPdBuild
       ];

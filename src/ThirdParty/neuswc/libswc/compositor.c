@@ -1217,7 +1217,7 @@ attach(struct view *base, struct wld_buffer *buffer)
 	struct compositor_view *view = (void *)base;
 	struct surface *surface = view->surface;
 	pixman_box32_t old_extents;
-	pixman_region32_t old, new, both;
+	pixman_region32_t old, new;
 	uint32_t new_width = buffer ? buffer->width : 0;
 	uint32_t new_height = buffer ? buffer->height : 0;
 	int ret;
@@ -1230,6 +1230,7 @@ attach(struct view *base, struct wld_buffer *buffer)
 	 * visible on. */
 	update(&view->base);
 
+	int32_t old_offset_x = view->buffer_offset_x, old_offset_y = view->buffer_offset_y;
 	view->buffer_offset_x = 0;
 	view->buffer_offset_y = 0;
 	if (surface && surface->has_window_geometry && buffer) {
@@ -1241,23 +1242,23 @@ attach(struct view *base, struct wld_buffer *buffer)
 		}
 	}
 
-	if (view_set_size(&view->base, new_width, new_height)) {
-		/* The view was resized. */
+	bool resized = view_set_size(&view->base, new_width, new_height);
+	if (resized || old_offset_x != view->buffer_offset_x || old_offset_y != view->buffer_offset_y) {
 		old_extents = view->extents;
 		update_extents(view);
 
 		if (view->visible) {
-			/* Damage the region that was newly uncovered or covered. */
+			// borders, decorations and shadow move inside the overlap too, so both extents are repainted
 			pixman_region32_init_with_extents(&old, &old_extents);
 			pixman_region32_init_with_extents(&new, &view->extents);
-			pixman_region32_init(&both);
-			pixman_region32_intersect(&both, &old, &new);
 			pixman_region32_union(&new, &old, &new);
-			pixman_region32_subtract(&new, &new, &both);
 			pixman_region32_union(&compositor.damage, &compositor.damage, &new);
 			pixman_region32_fini(&old);
 			pixman_region32_fini(&new);
-			pixman_region32_fini(&both);
+			view->border.damaged_border1 = true;
+			view->border.damaged_border2 = true;
+			view->decor.damaged = true;
+			pixman_region32_clear(&view->clip);
 
 			view_update_screens(&view->base);
 			update(&view->base);
@@ -1686,7 +1687,8 @@ compositor_view_set_parent(struct compositor_view *view,
 		return;
 	}
 
-	if (parent->visible) {
+	if (parent->visible && (!view->surface || !view->surface->subsurface || !parent->surface ||
+	                        parent->surface->state.buffer)) {
 		compositor_view_show(view);
 	} else {
 		compositor_view_hide(view);

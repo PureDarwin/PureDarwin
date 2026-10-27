@@ -52,6 +52,11 @@ bool framebuffer_present_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t h
 int framebuffer_scanout_dmabufs(int *fds, uint32_t *width, uint32_t *height, uint32_t *pitch);
 int framebuffer_back_index(void);
 bool framebuffer_flip(int index);
+bool framebuffer_reattach(struct swc_fb *fb);
+// the displays past the first, each its own framebuffer, frames copied in on the cpu
+int framebuffer_extra_count(void);
+bool framebuffer_extra_size(int i, uint32_t *width, uint32_t *height);
+bool framebuffer_extra_present(int i, const uint32_t *pixels, size_t pitch, uint32_t width, uint32_t height);
 int framebuffer_modes(struct fb_mode *modes, int max);
 bool framebuffer_set_mode(struct swc_fb *fb, uint32_t mode_id);
 

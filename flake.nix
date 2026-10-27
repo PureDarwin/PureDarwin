@@ -3073,6 +3073,13 @@
               src = ./src/Frameworks/AudioToolbox;
               coreAudioSrc = ./src/Frameworks/CoreAudio;
             };
+          # VK_EXT_metal_surface as an implicit layer over CAMetalLayer's Wayland subsurface
+          pdMetalSurfaceBuild =
+            pkgs.callPackage ./nix/pkgs/gpu/pd-metal-surface.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              vulkanHeaders = pkgs.vulkan-headers;
+            };
           pcmplayBuild =
             pkgs.callPackage ./nix/pkgs/apple/pcmplay.nix {
               inherit darwinCrossToolchain nativeLd appleSdk;
@@ -4831,7 +4838,7 @@
               libX11SharedBuild libxcbSharedBuild libXauSharedBuild libXdmcpSharedBuild
               libXextSharedBuild libXrenderSharedBuild libXfixesSharedBuild libXiSharedBuild
               libXcursorSharedBuild libXrandrSharedBuild libXxf86vmSharedBuild nettleSharedBuild gnutlsSharedBuild glibNetworkingBuild llvmCrossBuild vulkanLoaderBuild libxshmfenceSharedBuild vulkanToolsBuild vulkanLoaderNoxBuild vulkanToolsNoxBuild mesaVenusWaylandBuild venusTestsNoxBuild libdrmVirtgpuBuild glfwPdBuild metalPdNoxBuild metalObjcPdNoxBuild metalAppleSamplesNoxBuild spirvCrossPdBuild
-              fbdoomBuild fbdoomExternalSrc fileBuild flexBuild fontconfigBuild foundationBuild frameworkCompatBuild swiftRuntimeBuild cocoaBuild appFrameworksBuild cgFfTestsBuild frameworksFfTestsBuild mpsNoxBuild audiotoolboxBuild pcmplayBuild coreaudiodBuild carbonBuild iosurfaceBuild iosurfaceTestsBuild
+              fbdoomBuild fbdoomExternalSrc fileBuild flexBuild fontconfigBuild foundationBuild frameworkCompatBuild swiftRuntimeBuild cocoaBuild appFrameworksBuild cgFfTestsBuild frameworksFfTestsBuild mpsNoxBuild audiotoolboxBuild pcmplayBuild coreaudiodBuild pdMetalSurfaceBuild carbonBuild iosurfaceBuild iosurfaceTestsBuild
               freetype2Build fribidiBuild garconBuild gdkPixbufBuild gitBuild glibBuild gnum4Build
               gnumakeBuild gtk3Build gtkLayerShellBuild gtk3NoxBuild gtkLayerShellNoxBuild onyx2dBuild coregraphicsBuild coretextBuild quartzcoreBuild corevideoBuild coredataBuild cgScreenDemoBuild systemFontsBuild cairoNoxBuild dbusNoxBuild pdEpollShimBuild tllistBuild fcftBuild footBuild userlandNoxBuild pangoNoxBuild netsurfNoxBuild libepoxyNoxBuild fastfetchNoxBuild harfbuzzNoxBuild atspi2CoreNoxBuild cairoGobjectNoxBuild xkbcommonNoxBuild mesaNoxBuild openglFrameworkNoxBuild mesaDemosNoxBuild librsvgNoxBuild harfbuzzBuild i3Build i3statusShimBuild iceauthBuild
               cursorThemeBuild iconThemesBuild icuCoreBuild imageExtraPackagesArm64 imageExtraPackagesArm64Nox imageExtraPackagesArm64Sg2002 splitBaseSystemArm64Sg2002 iographicsBuild iokitBuild asmjitTestArm64Build
@@ -5082,6 +5089,7 @@
             cg-ff-tests = cgFfTestsBuild;
             audiotoolbox = audiotoolboxBuild;
             pcmplay = pcmplayBuild;
+            pd-metal-surface = pdMetalSurfaceBuild;
             coreaudiod = coreaudiodBuild;
             carbon = carbonBuild;
             akff-test = akffTestBuild;

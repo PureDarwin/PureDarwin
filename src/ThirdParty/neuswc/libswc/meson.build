@@ -14,6 +14,7 @@ libswc_src = files(
   'output_management.c',
   'background_effect.c',
   'window_position.c',
+  'surface_host.c',
   'launch.c',
   'mode.c',
   'output.c',

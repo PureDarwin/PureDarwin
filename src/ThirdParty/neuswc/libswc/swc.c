@@ -39,6 +39,7 @@
 #include "output_management.h"
 #include "background_effect.h"
 #include "window_position.h"
+#include "surface_host.h"
 #include "pd_decoration.h"
 #include "panel_manager.h"
 #include "pointer.h"
@@ -266,6 +267,10 @@ swc_initialize(struct wl_display *display, struct wl_event_loop *event_loop,
 	// optional, without it AppKit windows only know the position they asked for
 	if (!window_position_create(display))
 		WARNING("Could not create the window position global\n");
+
+	// optional, without it a process can only show surfaces it drew itself
+	if (!surface_host_create(display))
+		WARNING("Could not create the surface host global\n");
 
 	swc.panel_manager = panel_manager_create(display);
 	if (!swc.panel_manager) {

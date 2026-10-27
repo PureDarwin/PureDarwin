@@ -39,6 +39,10 @@ struct gl_renderer {
 	uint64_t upload_serial;
 	GLuint present_texture, present_fbo;
 	uint32_t present_width, present_height;
+	// reads back go through their own copy, so a second display never touches what the first scans out
+	GLuint readback_texture, readback_fbo;
+	uint32_t readback_width, readback_height;
+	bool readback_new;
 	// the pack buffer read backs go through, kept so its storage and cpu mapping outlive a frame
 	GLuint pack_buffer;
 	size_t pack_size;
@@ -110,13 +114,54 @@ static inline struct gl_renderer *gl_renderer(struct wld_renderer *base)
 
 // on a gl 3.1 context the same shaders compile as glsl 1.40, nothing in them needs 1.50
 static bool glsl_140;
+// a gl 2.1 context (nv30 and nv40 under nouveau) takes them rewritten as glsl 1.20
+static bool glsl_120;
+
+// copies src into out with every from replaced by to
+static void replace_all(char *out, size_t size, const char *src, const char *from, const char *to)
+{
+	size_t n = 0, from_len = strlen(from), to_len = strlen(to);
+
+	while (*src && n + 1 < size) {
+		if (!strncmp(src, from, from_len) && n + to_len < size) {
+			memcpy(out + n, to, to_len);
+			n += to_len;
+			src += from_len;
+		} else
+			out[n++] = *src++;
+	}
+	out[n] = 0;
+}
+
+// the 1.50 sources as glsl 1.20: attribute and varying, gl_FragColor and texture2D
+static void glsl_120_source(GLenum kind, const char *source, char *out, size_t size)
+{
+	char a[2048], b[2048];
+	const char *body = source + sizeof("#version 150\n") - 1;
+
+	if (kind == GL_VERTEX_SHADER) {
+		replace_all(a, sizeof(a), body, "in vec2", "attribute vec2");
+		replace_all(b, sizeof(b), a, "out vec2", "varying vec2");
+	} else {
+		replace_all(a, sizeof(a), body, "in vec2", "varying vec2");
+		replace_all(b, sizeof(b), a, " out vec4 pixel;", "");
+	}
+	replace_all(a, sizeof(a), b, "texture(", "texture2D(");
+	snprintf(out, size, "#version 120\n%s%s", kind == GL_FRAGMENT_SHADER ? "#define pixel gl_FragColor\n" : "", a);
+}
 
 static GLuint compile(GLenum kind, const char *source)
 {
 	GLuint shader = glCreateShader(kind);
 	GLint ok = 0;
 	const char *sources[2] = { "#version 140\n", source + sizeof("#version 150\n") - 1 };
-	if (glsl_140)
+	char rewritten[2304];
+	const char *source_120 = rewritten;
+
+	if (glsl_120) {
+		glsl_120_source(kind, source, rewritten, sizeof(rewritten));
+		glShaderSource(shader, 1, &source_120, NULL);
+	} else if (glsl_140)
 		glShaderSource(shader, 2, sources, NULL);
 	else
 		glShaderSource(shader, 1, &source, NULL);
@@ -258,6 +303,14 @@ static bool initialize(struct gl_renderer *r, const char *gpu)
 			EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT, EGL_NONE };
 		r->context = eglCreateContext(r->display, config, EGL_NO_CONTEXT, context_31);
 		glsl_140 = r->context != EGL_NO_CONTEXT;
+	}
+	// no core profile at all: mesa's compatibility context, 2.1 on nv30, with its fbo, blit and vao extensions
+	if (r->context == EGL_NO_CONTEXT) {
+		const EGLint context_21[] = { EGL_CONTEXT_MAJOR_VERSION, 2, EGL_CONTEXT_MINOR_VERSION, 1, EGL_NONE };
+		r->context = eglCreateContext(r->display, config, EGL_NO_CONTEXT, context_21);
+		glsl_120 = r->context != EGL_NO_CONTEXT;
+		if (glsl_120)
+			fprintf(stderr, "neuwld: no gl 3.1, compositing on a gl 2.1 context with glsl 1.20\n");
 	}
 	if (r->surface == EGL_NO_SURFACE || r->context == EGL_NO_CONTEXT ||
 	    !make_current(r)) return false;
@@ -679,7 +732,11 @@ static bool bind_mask(struct gl_renderer *r, pixman_image_t *mask, unsigned gene
 	}
 	if(r->mask_generation!=generation) {
 		glPixelStorei(GL_UNPACK_ROW_LENGTH,pixman_image_get_stride(mask));
-		glTexImage2D(GL_TEXTURE_2D,0,GL_R8,w,h,0,GL_RED,GL_UNSIGNED_BYTE,pixman_image_get_data(mask));
+		// gl 2.1 has no red-only textures, luminance samples as (l,l,l,1) so the shader's .r still reads it
+		if(glsl_120)
+			glTexImage2D(GL_TEXTURE_2D,0,GL_LUMINANCE,w,h,0,GL_LUMINANCE,GL_UNSIGNED_BYTE,pixman_image_get_data(mask));
+		else
+			glTexImage2D(GL_TEXTURE_2D,0,GL_R8,w,h,0,GL_RED,GL_UNSIGNED_BYTE,pixman_image_get_data(mask));
 		glPixelStorei(GL_UNPACK_ROW_LENGTH,0);
 		r->mask_generation=generation;
 	}
@@ -748,6 +805,8 @@ static void destroy(struct wld_renderer *base)
 		}
 		if(r->present_fbo) glDeleteFramebuffers(1,&r->present_fbo);
 		if(r->present_texture) glDeleteTextures(1,&r->present_texture);
+		if(r->readback_fbo) glDeleteFramebuffers(1,&r->readback_fbo);
+		if(r->readback_texture) glDeleteTextures(1,&r->readback_texture);
 		if(r->pack_buffer) glDeleteBuffers(1,&r->pack_buffer);
 		for (int i=0;i<2;i++) {
 			if(r->blur_fbo[i]) glDeleteFramebuffers(1,&r->blur_fbo[i]);
@@ -816,26 +875,32 @@ static enum wld_gl_present_result present_to_scanout(struct wld_renderer *base, 
 	for(unsigned i=0;i<ARRAY_LENGTH(r->targets) && !r->failed;i++) {
 		struct gl_target *t=&r->targets[i];
 		if(t->buffer!=buffer) continue;
-		if(!into && (!r->present_fbo || r->present_width!=buffer->width ||
-		   r->present_height!=buffer->height)) {
-			if(r->present_fbo) glDeleteFramebuffers(1,&r->present_fbo);
-			if(r->present_texture) glDeleteTextures(1,&r->present_texture);
-			glGenTextures(1,&r->present_texture);
-			glBindTexture(GL_TEXTURE_2D,r->present_texture);
+		// a read back lands in its own copy, the present copy is what direct scanout shows
+		bool readback=pixels && !into;
+		GLuint *copy_fbo=readback?&r->readback_fbo:&r->present_fbo;
+		GLuint *copy_texture=readback?&r->readback_texture:&r->present_texture;
+		uint32_t *copy_width=readback?&r->readback_width:&r->present_width;
+		uint32_t *copy_height=readback?&r->readback_height:&r->present_height;
+		bool *copy_new=readback?&r->readback_new:&r->present_new;
+		if(!into && (!*copy_fbo || *copy_width!=buffer->width || *copy_height!=buffer->height)) {
+			if(*copy_fbo) glDeleteFramebuffers(1,copy_fbo);
+			if(*copy_texture) glDeleteTextures(1,copy_texture);
+			glGenTextures(1,copy_texture);
+			glBindTexture(GL_TEXTURE_2D,*copy_texture);
 			glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,buffer->width,buffer->height,
 			             0,GL_BGRA,GL_UNSIGNED_BYTE,NULL);
-			glGenFramebuffers(1,&r->present_fbo);
-			glBindFramebuffer(GL_FRAMEBUFFER,r->present_fbo);
+			glGenFramebuffers(1,copy_fbo);
+			glBindFramebuffer(GL_FRAMEBUFFER,*copy_fbo);
 			glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,
-			                       GL_TEXTURE_2D,r->present_texture,0);
+			                       GL_TEXTURE_2D,*copy_texture,0);
 			if(glCheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE) break;
-			r->present_width=buffer->width; r->present_height=buffer->height;
-			r->present_new=true;
-			r->present_resource=0;
+			*copy_width=buffer->width; *copy_height=buffer->height;
+			*copy_new=true;
+			if(!readback) r->present_resource=0;
 		}
 		int w=(int)buffer->width, h=(int)buffer->height;
 		int x1=0, y1=0, x2=w, y2=h;
-		bool use_damage=damage && (into || !r->present_new);
+		bool use_damage=damage && (into || !*copy_new);
 		if(use_damage) {
 			const pixman_box32_t *e=pixman_region32_extents((pixman_region32_t *)damage);
 			if(!pixman_region32_not_empty((pixman_region32_t *)damage)) x2=y2=0;
@@ -844,8 +909,8 @@ static enum wld_gl_present_result present_to_scanout(struct wld_renderer *base, 
 				x2=e->x2>w?w:e->x2; y2=e->y2>h?h:e->y2;
 			}
 		}
-		if(!into) r->present_new=false;
-		GLuint dst=into?into:r->present_fbo;
+		if(!into) *copy_new=false;
+		GLuint dst=into?into:*copy_fbo;
 		// ARGON_GFX_TRACE: the damage boxes, the box drawn and how long the blit and the read take
 		struct timespec ts0,ts1,ts2;
 		int nboxes=0;
@@ -885,7 +950,7 @@ static enum wld_gl_present_result present_to_scanout(struct wld_renderer *base, 
 			if(gl_trace()) { glFinish(); clock_gettime(CLOCK_MONOTONIC,&ts1); }
 			if(gl_trace()>1) fprintf(stderr,"ARGON-GL blitted, cursor done, reading %d\n",pixels!=NULL);
 			if(pixels) {
-				glBindFramebuffer(GL_READ_FRAMEBUFFER,r->present_fbo);
+				glBindFramebuffer(GL_READ_FRAMEBUFFER,*copy_fbo);
 				glReadBuffer(GL_COLOR_ATTACHMENT0);
 				// each damage box through one pack buffer that lives as long as the renderer: a fresh
 				// staging buffer per read costs a new cpu mapping, which is slow on some drivers

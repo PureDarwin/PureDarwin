@@ -33,6 +33,14 @@ int _windowServerReceiveMessage(PortMessage *msg);
 // (wl_surface, with its wl_subsurface in *subsurfaceOut) for CAMetalLayer to present into with Vulkan. NULL without a wl_subcompositor or window.
 void *_windowServerWaylandDisplay(void);
 void *_windowServerCreateSubsurface(int windowID, int x, int y, void **subsurfaceOut);
+// the same in two steps: a child surface on its own, then made a subsurface of a window (NULL while the window
+// has no surface yet)
+void *_windowServerCreateSurface(void);
+void *_windowServerAttachSubsurface(int windowID, void *surface, int x, int y);
+// across processes (CAContext / CALayerHost): a handle for a surface, and another process's surface by its handle as a
+// subsurface of a window. 0 or NULL where the compositor cannot
+uint32_t _windowServerExportSurface(void *surface);
+void *_windowServerImportSubsurface(int windowID, uint32_t handle, int x, int y);
 void _windowServerMoveSubsurface(int windowID, void *subsurface, int x, int y);
 void _windowServerDestroySubsurface(void *surface, void *subsurface);
 

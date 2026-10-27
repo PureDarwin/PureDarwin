@@ -11,6 +11,7 @@
 #import <Onyx2D/O2Surface.h>
 #import <objc/runtime.h>
 #include <dlfcn.h>
+#include <stdlib.h>
 #include <math.h>
 #include <pthread.h>
 
@@ -259,9 +260,52 @@ void CATexImage2DCGImage(CGImageRef image){
             break;
     }
 
+    size_t bytesPerRow=CGImageGetBytesPerRow(image);
+    BOOL   opaque=(alphaInfo==kCGImageAlphaNone || alphaInfo==kCGImageAlphaNoneSkipFirst || alphaInfo==kCGImageAlphaNoneSkipLast);
+
+    // padding bytes are not alpha, and rows wider than the image need packing, Wine's window surfaces have both
+    if(CGImageGetBitsPerPixel(image)==32 && (opaque || bytesPerRow!=imageWidth*4)){
+        uint8_t *packed=malloc(imageWidth*imageHeight*4);
+        BOOL     first=(alphaInfo==kCGImageAlphaNoneSkipFirst || alphaInfo==kCGImageAlphaPremultipliedFirst || alphaInfo==kCGImageAlphaFirst);
+        BOOL     little=(byteOrder==kCGBitmapByteOrder32Little);
+
+        for(size_t y=0;y<imageHeight;y++){
+            const uint8_t *src=pixelBytes+y*bytesPerRow;
+            uint8_t       *dst=packed+y*imageWidth*4;
+
+            for(size_t x=0;x<imageWidth;x++,src+=4,dst+=4){
+                uint8_t r,g,b,a;
+
+                // memory order: little first is B G R A, big first is A R G B, big last is R G B A, little last is A B G R
+                if(first && little){ b=src[0]; g=src[1]; r=src[2]; a=src[3]; }
+                else if(first){ a=src[0]; r=src[1]; g=src[2]; b=src[3]; }
+                else if(little){ a=src[0]; b=src[1]; g=src[2]; r=src[3]; }
+                else { r=src[0]; g=src[1]; b=src[2]; a=src[3]; }
+                dst[0]=b; dst[1]=g; dst[2]=r; dst[3]=opaque?255:a;
+            }
+        }
+        glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,imageWidth,imageHeight,0,GL_BGRA_EXT,GL_UNSIGNED_BYTE,packed);
+        free(packed);
+        CFRelease(data);
+        return;
+    }
+
     glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,imageWidth,imageHeight,0,glFormat,glType,pixelBytes);
+    CFRelease(data);
 }
 
+
+// OpenGL.framework names a view's GL frame with an IOSurface, binding it samples the frame's texture in place
+static BOOL bindDrawableSurface(CFTypeRef surface) {
+   static int (*bindSurface)(CFTypeRef,int);
+   static BOOL looked;
+
+   if(!looked){
+    bindSurface=(int (*)(CFTypeRef,int))dlsym(RTLD_DEFAULT,"CGLPDBindSurfaceTexture");
+    looked=YES;
+   }
+   return bindSurface!=NULL && bindSurface(surface,1);
+}
 
 // IOSurface is found at run time, so QuartzCore keeps no link dependency on it
 static struct {
@@ -863,10 +907,10 @@ static void drawMaskCoverage(CALayer *mask,float z,GLenum op){
         loadPixelData=GL_TRUE;
 
     if(loadPixelData){
-        if(surface)
-            CATexImage2DSurface((CFTypeRef)contents,texture);
-        else
+        if(!surface)
             CATexImage2DCGImage((CGImageRef)contents);
+        else if(!bindDrawableSurface((CFTypeRef)contents))
+            CATexImage2DSurface((CFTypeRef)contents,texture);
         if(surface)
             noteTexture(texture,contents,seed);
 

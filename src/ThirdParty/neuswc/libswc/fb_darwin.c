@@ -82,8 +82,8 @@ static struct {
 	// a presenter (PDDRMFramebuffer): two scanout buffers flipped at vblank
 	io_connect_t presenter;
 	mach_vm_address_t buffers[2];
-	bool last_damage_valid;
-	uint32_t last_damage_y1, last_damage_y2;
+	// rows each buffer still lacks, empty when y1 >= y2
+	uint32_t pending_y1[2], pending_y2[2];
 	mach_vm_size_t buffer_lengths[2];
 	uint32_t *previous_buffer[2];
 	bool previous_buffer_valid[2];
@@ -127,10 +127,11 @@ open_presenter(struct swc_fb *fb)
 		darwin_fb.previous_buffer[i] = malloc((size_t)fb->width * fb->height * sizeof(uint32_t));
 		if (!darwin_fb.previous_buffer[i]) goto fail;
 		darwin_fb.previous_buffer_valid[i] = false;
+		darwin_fb.pending_y1[i] = 0;
+		darwin_fb.pending_y2[i] = fb->height;
 	}
 	darwin_fb.pitch = (uint32_t)info[2];
 	darwin_fb.front = 0;
-	darwin_fb.last_damage_valid = false;
 	fb_note("neuswc: page flipping through the framebuffer's presenter\n");
 	return;
 fail:
@@ -164,17 +165,25 @@ present_flipped(struct swc_fb *fb)
 	uint8_t *base = (uint8_t *)(uintptr_t)darwin_fb.buffers[back];
 	bool changed = false;
 	uint32_t y;
-	// the back buffer is two frames old, so this frame's damage and the last one's cover it
 	uint32_t first_row = 0, end_row = fb->height;
 	bool damaged = fb->damage_y1 < fb->damage_y2;
-	if (darwin_fb.previous_buffer_valid[back] && damaged && darwin_fb.last_damage_valid) {
-		first_row = fb->damage_y1 < darwin_fb.last_damage_y1 ? fb->damage_y1 : darwin_fb.last_damage_y1;
-		end_row = fb->damage_y2 > darwin_fb.last_damage_y2 ? fb->damage_y2 : darwin_fb.last_damage_y2;
+	int i;
+
+	// this frame's damage is owed to both buffers until each is written and flipped
+	for (i = 0; i < 2 && damaged; i++) {
+		if (darwin_fb.pending_y1[i] >= darwin_fb.pending_y2[i]) {
+			darwin_fb.pending_y1[i] = fb->damage_y1;
+			darwin_fb.pending_y2[i] = fb->damage_y2;
+			continue;
+		}
+		if (fb->damage_y1 < darwin_fb.pending_y1[i]) darwin_fb.pending_y1[i] = fb->damage_y1;
+		if (fb->damage_y2 > darwin_fb.pending_y2[i]) darwin_fb.pending_y2[i] = fb->damage_y2;
+	}
+	if (darwin_fb.previous_buffer_valid[back] && damaged) {
+		first_row = darwin_fb.pending_y1[back];
+		end_row = darwin_fb.pending_y2[back];
 		if (end_row > fb->height) end_row = fb->height;
 	}
-	darwin_fb.last_damage_valid = damaged;
-	darwin_fb.last_damage_y1 = fb->damage_y1;
-	darwin_fb.last_damage_y2 = fb->damage_y2;
 
 	for (y = first_row; y < end_row; ++y) {
 		const uint32_t *src = (const uint32_t *)((uint8_t *)fb->pixels + (size_t)y * fb->pitch);
@@ -202,7 +211,34 @@ present_flipped(struct swc_fb *fb)
 	if (IOConnectCallScalarMethod(darwin_fb.presenter, kPresenterFlip, &in, 1, out, &count) != KERN_SUCCESS)
 		return false;
 	darwin_fb.front = back;
+	darwin_fb.pending_y1[back] = darwin_fb.pending_y2[back] = 0;
 	return true;
+}
+
+#include <CoreFoundation/CoreFoundation.h>
+
+// the firmware framebuffer marks itself once the gpu driver has given up, so waiting longer is pointless
+static bool
+gpu_driver_gave_up(void)
+{
+	io_iterator_t iterator;
+	io_service_t service;
+	CFMutableDictionaryRef matching = IOServiceMatching("IOGOPFramebuffer");
+	bool gave_up = false;
+
+	if (!matching || IOServiceGetMatchingServices(darwin_fb.master_port, matching, &iterator) != KERN_SUCCESS)
+		return false;
+	while ((service = IOIteratorNext(iterator)) != IO_OBJECT_NULL) {
+		CFTypeRef value = IORegistryEntryCreateCFProperty(service, CFSTR("PDDRMGaveUp"), kCFAllocatorDefault, 0);
+
+		if (value == kCFBooleanTrue)
+			gave_up = true;
+		if (value)
+			CFRelease(value);
+		IOObjectRelease(service);
+	}
+	IOObjectRelease(iterator);
+	return gave_up;
 }
 
 // opens the first framebuffer that accepts, one left behind by a replaced driver refuses
@@ -214,42 +250,6 @@ open_framebuffer(io_connect_t *connection)
 	if (!framebuffer_class || !*framebuffer_class)
 		framebuffer_class = "IOFramebuffer";
 
-#ifdef _PD_IOKITLIB_H
-	// a hardware driver's framebuffer wins over the firmware's boot one, which is only the fallback.
-	// SWC_WAIT_HW_FB=N waits up to N seconds for one, a gpu driver in the aux KC comes up late
-	const char *wait = getenv("SWC_WAIT_HW_FB");
-	int wait_left = wait ? atoi(wait) : 0;
-	for (int pass = 0; pass < 2; pass++) {
-		io_iterator_t iterator;
-		char *matching = IOServiceMatching(framebuffer_class);
-
-		if (!matching || IOServiceGetMatchingServices(darwin_fb.master_port, matching, &iterator) != KERN_SUCCESS)
-			return IO_OBJECT_NULL;
-		while ((service = IOIteratorNext(iterator)) != IO_OBJECT_NULL) {
-			io_name_t name = "";
-			IOObjectGetClass(service, name);
-			bool boot = !strcmp(name, "IOGOPFramebuffer") || !strcmp(name, "IOBootFramebuffer");
-
-			if (boot == (pass == 1)) {
-				kern_return_t kr = IOServiceOpen(service, mach_task_self(), 0, connection);
-				fb_note("neuswc: %s %s (0x%x)\n", name, kr == KERN_SUCCESS ? "opened" : "refused", kr);
-				if (kr == KERN_SUCCESS)
-					break;
-			}
-			IOObjectRelease(service);
-		}
-		IOObjectRelease(iterator);
-		if (service != IO_OBJECT_NULL)
-			return service;
-		if (pass == 0 && wait_left-- > 0) {
-			if (wait_left % 5 == 4)
-				fb_note("neuswc: waiting for a gpu driver's framebuffer\n");
-			sleep(1);
-			pass = -1;
-		}
-	}
-	return IO_OBJECT_NULL;
-#else
 	// the same choice with Apple's IOKitLib: a gpu driver's framebuffer before the firmware's
 	const char *wait = getenv("SWC_WAIT_HW_FB");
 	int wait_left = wait ? atoi(wait) : 0;
@@ -275,6 +275,10 @@ open_framebuffer(io_connect_t *connection)
 		IOObjectRelease(iterator);
 		if (service != IO_OBJECT_NULL)
 			return service;
+		if (pass == 0 && wait_left > 0 && gpu_driver_gave_up()) {
+			fb_note("neuswc: the gpu driver gave up, using the firmware framebuffer\n");
+			wait_left = 0;
+		}
 		if (pass == 0 && wait_left-- > 0) {
 			if (wait_left % 5 == 4)
 				fb_note("neuswc: waiting for a gpu driver's framebuffer\n");
@@ -283,7 +287,130 @@ open_framebuffer(io_connect_t *connection)
 		}
 	}
 	return IO_OBJECT_NULL;
+}
+
+// the other displays' framebuffers, a screen each to the right of the first, drawn by copying on the cpu
+#define FB_MAX_EXTRA 7
+static struct {
+	io_service_t service;
+	io_connect_t connection;
+	mach_vm_address_t memory;
+	mach_vm_size_t length;
+	uint32_t width, height, pitch;
+} extra_fb[FB_MAX_EXTRA];
+static int extra_count;
+
+// maps a display's framebuffer at its current mode, 32 bpp only
+static bool
+map_extra(int i)
+{
+	uint64_t mode[2];
+	uint32_t mode_count = 2;
+	uint64_t query[3];
+	struct pixel_information info;
+	size_t info_size = sizeof(info);
+
+	if (IOConnectCallScalarMethod(extra_fb[i].connection, kIOFBGetCurrentDisplayModeSelector,
+	                              NULL, 0, mode, &mode_count) != KERN_SUCCESS || mode_count < 2)
+		return false;
+	query[0] = mode[0];
+	query[1] = mode[1];
+	query[2] = kIOFBSystemAperture;
+	memset(&info, 0, sizeof(info));
+	if (IOConnectCallMethod(extra_fb[i].connection, kIOFBGetPixelInformationSelector, query, 3,
+	                        NULL, 0, NULL, NULL, &info, &info_size) != KERN_SUCCESS ||
+	    info.bits_per_pixel != 32 || !info.active_width || !info.active_height)
+		return false;
+	if (IOConnectMapMemory64(extra_fb[i].connection, kIOFBVRAMMemory, mach_task_self(),
+	                         &extra_fb[i].memory, &extra_fb[i].length, kIOMapAnywhere) != KERN_SUCCESS)
+		return false;
+	if ((size_t)info.active_height * info.bytes_per_row > extra_fb[i].length) {
+		IOConnectUnmapMemory64(extra_fb[i].connection, kIOFBVRAMMemory, mach_task_self(), extra_fb[i].memory);
+		extra_fb[i].memory = 0;
+		return false;
+	}
+	extra_fb[i].width = info.active_width;
+	extra_fb[i].height = info.active_height;
+	extra_fb[i].pitch = info.bytes_per_row;
+	return true;
+}
+
+// every other hardware framebuffer, in the order its driver made them, ARGON_ONE_DISPLAY=1 keeps to the first
+static void
+open_extra_framebuffers(void)
+{
+	io_iterator_t iterator;
+	io_service_t service;
+	io_name_t name = "";
+
+	IOObjectGetClass(darwin_fb.service, name);
+	if (getenv("ARGON_ONE_DISPLAY") || !strcmp(name, "IOGOPFramebuffer") || !strcmp(name, "IOBootFramebuffer"))
+		return;
+	CFMutableDictionaryRef matching = IOServiceMatching("IOFramebuffer");
+	if (!matching || IOServiceGetMatchingServices(darwin_fb.master_port, matching, &iterator) != KERN_SUCCESS)
+		return;
+	while ((service = IOIteratorNext(iterator)) != IO_OBJECT_NULL && extra_count < FB_MAX_EXTRA) {
+		int i = extra_count;
+
+		IOObjectGetClass(service, name);
+		// one kernel object has one port name in a task, so the first display compares equal
+		if (service == darwin_fb.service || !strcmp(name, "IOGOPFramebuffer") ||
+		    !strcmp(name, "IOBootFramebuffer") ||
+		    IOServiceOpen(service, mach_task_self(), 0, &extra_fb[i].connection) != KERN_SUCCESS) {
+			IOObjectRelease(service);
+			continue;
+		}
+		extra_fb[i].service = service;
+		if (!map_extra(i)) {
+			fb_note("neuswc: %s has no usable mode, left out\n", name);
+			IOServiceClose(extra_fb[i].connection);
+			IOObjectRelease(service);
+			memset(&extra_fb[i], 0, sizeof(extra_fb[i]));
+			continue;
+		}
+		fb_note("neuswc: display %d is %s, %ux%u\n", i + 1, name, extra_fb[i].width, extra_fb[i].height);
+		extra_count++;
+	}
+	if (service != IO_OBJECT_NULL)
+		IOObjectRelease(service);
+	IOObjectRelease(iterator);
+}
+
+int
+framebuffer_extra_count(void)
+{
+	return extra_count;
+}
+
+bool
+framebuffer_extra_size(int i, uint32_t *width, uint32_t *height)
+{
+	if (i < 0 || i >= extra_count || !extra_fb[i].memory)
+		return false;
+	*width = extra_fb[i].width;
+	*height = extra_fb[i].height;
+	return true;
+}
+
+// a frame for display i, rows of 32-bit pixels copied into its framebuffer
+bool
+framebuffer_extra_present(int i, const uint32_t *pixels, size_t pitch, uint32_t width, uint32_t height)
+{
+	if (i < 0 || i >= extra_count || !extra_fb[i].memory)
+		return false;
+	if (width > extra_fb[i].width)
+		width = extra_fb[i].width;
+	if (height > extra_fb[i].height)
+		height = extra_fb[i].height;
+	for (uint32_t y = 0; y < height; y++)
+		memcpy((uint8_t *)(uintptr_t)extra_fb[i].memory + (size_t)y * extra_fb[i].pitch,
+		       (const uint8_t *)pixels + (size_t)y * pitch, (size_t)width * 4);
+#if defined(__i386__) || defined(__x86_64__)
+	__asm__ volatile("sfence" ::: "memory");
+#else
+	__sync_synchronize();
 #endif
+	return true;
 }
 
 // the compositor now owns the screen, so the boot bar completes and the kernel stops drawing it
@@ -409,6 +536,7 @@ framebuffer_initialize(struct swc_fb *fb)
 	fprintf(stderr, "IOFramebuffer: %ux%u %u bpp pitch %u%s\n", fb->width, fb->height,
 	        info.bits_per_pixel, info.bytes_per_row,
 	        darwin_fb.presenter ? ", page flipped at vblank" : "");
+	open_extra_framebuffers();
 	boot_progress_done();
 	return true;
 
@@ -450,8 +578,29 @@ framebuffer_present(struct swc_fb *fb)
 	} present = {0, 0, fb->width, fb->height};
 	uint32_t y;
 
-	if (darwin_fb.presenter)
-		return present_flipped(fb);
+	if (darwin_fb.presenter) {
+		uint32_t width = fb->width, height = fb->height;
+
+		if (present_flipped(fb))
+			return true;
+		// a refused flip usually means the driver relit the display with new buffers
+		if (!framebuffer_reattach(fb))
+			return false;
+		if (fb->width != width || fb->height != height) {
+			// the frame is drawn at the old size, so the drawing buffer follows before the next one
+			uint32_t *pixels = calloc(fb->height, (size_t)fb->width * sizeof(*pixels));
+
+			if (pixels) {
+				free(fb->pixels);
+				fb->pixels = pixels;
+				fb->pitch = (size_t)fb->width * sizeof(*pixels);
+			}
+			fprintf(stderr, "neuswc: the display is now %ux%u, the screen keeps %ux%u until a mode switch\n",
+			        fb->width, fb->height, width, height);
+			return false;
+		}
+		return darwin_fb.presenter ? present_flipped(fb) : framebuffer_present(fb);
+	}
 
 	bool changed = false;
 	// fb_present names the rows it touched, the rest still match the previous frame
@@ -539,34 +688,30 @@ framebuffer_modes(struct fb_mode *modes, int max)
 	return found;
 }
 
-// the old mapping goes first, the driver may replace the memory behind it
-bool
-framebuffer_set_mode(struct swc_fb *fb, uint32_t mode_id)
+// maps whatever mode the display is in now, and the presenter's flip pair for it
+static bool
+remap_current(struct swc_fb *fb)
 {
 	struct pixel_information info;
 	size_t info_size = sizeof(info);
-	uint64_t mode[2] = {mode_id, 0};
-	uint64_t query[3] = {mode_id, 0, kIOFBSystemAperture};
+	uint64_t mode[2];
+	uint32_t mode_count = 2;
+	uint64_t query[3];
 	uint32_t *previous;
 
-	if (!darwin_fb.connection)
+	if (IOConnectCallScalarMethod(darwin_fb.connection, kIOFBGetCurrentDisplayModeSelector,
+	                              NULL, 0, mode, &mode_count) != KERN_SUCCESS || mode_count < 2)
 		return false;
-	// the flip pair belongs to the old size, the presenter hands out new ones
-	close_presenter();
-	if (darwin_fb.memory) {
-		IOConnectUnmapMemory64(darwin_fb.connection, kIOFBVRAMMemory, mach_task_self(), darwin_fb.memory);
-		darwin_fb.memory = 0;
-	}
-	if (IOConnectCallScalarMethod(darwin_fb.connection, kIOFBSetDisplayModeSelector,
-	                              mode, 2, NULL, NULL) != KERN_SUCCESS)
-		ERROR("IOFramebuffer refused display mode %u\n", mode_id);
+	query[0] = mode[0];
+	query[1] = mode[1];
+	query[2] = kIOFBSystemAperture;
 	memset(&info, 0, sizeof(info));
 	if (IOConnectCallMethod(darwin_fb.connection, kIOFBGetPixelInformationSelector,
 	                        query, 3, NULL, 0, NULL, NULL, &info, &info_size) != KERN_SUCCESS ||
 	    IOConnectMapMemory64(darwin_fb.connection, kIOFBVRAMMemory, mach_task_self(),
 	                         &darwin_fb.memory, &darwin_fb.memory_length, kIOMapAnywhere) != KERN_SUCCESS ||
 	    (size_t)info.active_height * info.bytes_per_row > darwin_fb.memory_length) {
-		ERROR("Could not remap the IOFramebuffer after a mode change\n");
+		ERROR("Could not remap the IOFramebuffer\n");
 		return false;
 	}
 	previous = malloc((size_t)info.active_width * info.active_height * sizeof(uint32_t));
@@ -584,6 +729,42 @@ framebuffer_set_mode(struct swc_fb *fb, uint32_t mode_id)
 	        info.bits_per_pixel, info.bytes_per_row,
 	        darwin_fb.presenter ? ", page flipped at vblank" : "");
 	return true;
+}
+
+// the flip pair and the mapping belong to the display as it was
+static void
+unmap_display(void)
+{
+	close_presenter();
+	if (darwin_fb.memory) {
+		IOConnectUnmapMemory64(darwin_fb.connection, kIOFBVRAMMemory, mach_task_self(), darwin_fb.memory);
+		darwin_fb.memory = 0;
+	}
+}
+
+// the old mapping goes first, the driver may replace the memory behind it
+bool
+framebuffer_set_mode(struct swc_fb *fb, uint32_t mode_id)
+{
+	uint64_t mode[2] = {mode_id, 0};
+
+	if (!darwin_fb.connection)
+		return false;
+	unmap_display();
+	if (IOConnectCallScalarMethod(darwin_fb.connection, kIOFBSetDisplayModeSelector,
+	                              mode, 2, NULL, NULL) != KERN_SUCCESS)
+		ERROR("IOFramebuffer refused display mode %u\n", mode_id);
+	return remap_current(fb);
+}
+
+// the driver relit the display by itself, after a hotplug, with new scanout buffers
+bool
+framebuffer_reattach(struct swc_fb *fb)
+{
+	if (!darwin_fb.connection)
+		return false;
+	unmap_display();
+	return remap_current(fb);
 }
 
 const char *
@@ -677,6 +858,10 @@ framebuffer_flip(int index)
 	darwin_fb.front = index;
 	// the CPU path's copies of the buffers no longer match them
 	darwin_fb.previous_buffer_valid[0] = darwin_fb.previous_buffer_valid[1] = false;
+	for (int i = 0; i < 2; i++) {
+		darwin_fb.pending_y1[i] = 0;
+		darwin_fb.pending_y2[i] = UINT32_MAX;
+	}
 	return true;
 }
 
