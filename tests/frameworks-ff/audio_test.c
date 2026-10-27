@@ -55,7 +55,7 @@ int main(int argc, char **argv)
         a = (AudioObjectPropertyAddress){ kAudioDevicePropertyStreamConfiguration, kAudioObjectPropertyScopeInput, 0 };
         CHECK(AudioObjectGetPropertyDataSize(dev, &a, 0, NULL, &size) == noErr && size == offsetof(AudioBufferList, mBuffers), "no input streams");
     } else {
-        printf("info no /dev/dsp0, output unit tests expect errors\n");
+        printf("info no output device, output unit tests expect errors\n");
     }
     a = (AudioObjectPropertyAddress){ 'zzzz', kAudioObjectPropertyScopeGlobal, 0 };
     CHECK(AudioObjectGetPropertyData(kAudioObjectSystemObject, &a, 0, NULL, &size, &dev) == kAudioHardwareUnknownPropertyError, "unknown property");
@@ -102,7 +102,7 @@ int main(int argc, char **argv)
     CHECK(AudioOutputUnitStop(unit) == noErr, "stop");
     double expected = 44100 * seconds;
     printf("info rendered %u frames in %u callbacks, expected about %.0f\n", (unsigned)rendered, (unsigned)calls, expected);
-    // dsp0 takes about 1.3 s ahead of real time before writes block
+    // the device buffer lets rendering run up to about 1.3 s ahead of real time
     CHECK(rendered > expected * 0.8 && rendered < expected + 1.6 * 44100, "callback paced at the device rate");
     AudioUnitUninitialize(unit);
     AudioComponentInstanceDispose(unit);

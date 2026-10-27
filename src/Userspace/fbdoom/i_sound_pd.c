@@ -17,9 +17,8 @@
 //	sfx lumps (8-bit unsigned PCM, 11025 Hz mono, an 8-byte header we
 //	skip - see fbDOOM's own getsfx()/W_CacheLumpNum usage in
 //	i_sound_dummy.c for the same access pattern), resampled and
-//	panned to 16-bit/48000 Hz/stereo and streamed to /dev/dsp0 (real
-//	Intel HDAudio via RavynHDAudio - see src/Userspace/pcmplay, the
-//	existing minimal CLI player for the same device/format). Music is
+//	panned to 16-bit/48000 Hz/stereo and played through an AudioQueue
+//	(see src/Userspace/pcmplay for the same format). Music is
 //	real OPL: i_oplmusic.c (fbDOOM's own DMX-style driver + the WAD's
 //	GENMIDI patches) through software OPL3 emulation (see opl/);
 //	I_PD_OPL_Mix() adds its output into each rendered chunk here.
@@ -31,8 +30,8 @@
 #include "w_wad.h"
 #include "z_zone.h"
 
-#include <fcntl.h>
-#include <unistd.h>
+#include <AudioToolbox/AudioToolbox.h>
+#include <pthread.h>
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
@@ -51,7 +50,16 @@ struct pd_channel {
 };
 
 static struct pd_channel channels[MAX_CHANNELS];
-static int dsp_fd = -1;
+
+// the game thread mixes into this fifo, the queue's callback drains it
+#define QUEUE_BUFFERS 3
+#define QUEUE_FRAMES 1024
+#define FIFO_FRAMES 8192
+
+static AudioQueueRef queue;
+static short fifo[FIFO_FRAMES * 2];
+static unsigned fifo_read, fifo_count;
+static pthread_mutex_t fifo_lock = PTHREAD_MUTEX_INITIALIZER;
 
 extern void I_PD_OPL_Mix(short *dest, unsigned int nframes); /* opl/opl_pd.c */
 
@@ -62,18 +70,82 @@ int snd_musicdevice = 0;
  * source rate (that is SRC_RATE, used only by the resampler here). */
 int snd_samplerate = OUT_RATE;
 
+static void fifo_push(const short *src, unsigned frames)
+{
+    pthread_mutex_lock(&fifo_lock);
+    // a full fifo means the device fell behind, so the newest audio is dropped
+    if (frames > FIFO_FRAMES - fifo_count)
+        frames = FIFO_FRAMES - fifo_count;
+    for (unsigned i = 0; i < frames; i++) {
+        unsigned slot = (fifo_read + fifo_count + i) % FIFO_FRAMES;
+        fifo[slot * 2] = src[i * 2];
+        fifo[slot * 2 + 1] = src[i * 2 + 1];
+    }
+    fifo_count += frames;
+    pthread_mutex_unlock(&fifo_lock);
+}
+
+// runs on the queue's thread, an underrun plays silence
+static void queue_refill(void *user, AudioQueueRef q, AudioQueueBufferRef buf)
+{
+    (void)user;
+    short *dst = (short *)buf->mAudioData;
+    unsigned frames = buf->mAudioDataBytesCapacity / 4;
+
+    pthread_mutex_lock(&fifo_lock);
+    unsigned take = fifo_count < frames ? fifo_count : frames;
+    for (unsigned i = 0; i < take; i++) {
+        dst[i * 2] = fifo[fifo_read * 2];
+        dst[i * 2 + 1] = fifo[fifo_read * 2 + 1];
+        fifo_read = (fifo_read + 1) % FIFO_FRAMES;
+    }
+    fifo_count -= take;
+    pthread_mutex_unlock(&fifo_lock);
+
+    memset(dst + take * 2, 0, (frames - take) * 4);
+    buf->mAudioDataByteSize = frames * 4;
+    AudioQueueEnqueueBuffer(q, buf, 0, NULL);
+}
+
 void I_InitSound(boolean use_sfx_prefix)
 {
     (void)use_sfx_prefix;
     memset(channels, 0, sizeof(channels));
-    dsp_fd = open("/dev/dsp0", O_WRONLY);
+
+    AudioStreamBasicDescription fmt;
+    memset(&fmt, 0, sizeof(fmt));
+    fmt.mSampleRate = OUT_RATE;
+    fmt.mFormatID = kAudioFormatLinearPCM;
+    fmt.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked;
+    fmt.mBytesPerPacket = 4;
+    fmt.mFramesPerPacket = 1;
+    fmt.mBytesPerFrame = 4;
+    fmt.mChannelsPerFrame = 2;
+    fmt.mBitsPerChannel = 16;
+
+    if (AudioQueueNewOutput(&fmt, queue_refill, NULL, NULL, NULL, 0, &queue) != noErr) {
+        queue = NULL;
+        return;
+    }
+
+    for (int i = 0; i < QUEUE_BUFFERS; i++) {
+        AudioQueueBufferRef buf;
+        if (AudioQueueAllocateBuffer(queue, QUEUE_FRAMES * 4, &buf) == noErr)
+            queue_refill(NULL, queue, buf);
+    }
+
+    if (AudioQueueStart(queue, NULL) != noErr) {
+        AudioQueueDispose(queue, true);
+        queue = NULL;
+    }
 }
 
 void I_ShutdownSound(void)
 {
-    if (dsp_fd >= 0) {
-        close(dsp_fd);
-        dsp_fd = -1;
+    if (queue) {
+        AudioQueueStop(queue, true);
+        AudioQueueDispose(queue, true);
+        queue = NULL;
     }
 }
 
@@ -150,9 +222,7 @@ void I_UpdateSound(void)
      * after a stall (slow render, scheduling jitter), but S_UpdateSounds()
      * (and so this function) still only fires once per iteration. Assuming
      * a fixed 1/35s of audio per call falls behind real time under any
-     * hitch, starving the HDAudio DMA ring; real hardware then just
-     * replays its last buffer forever (heard as crackling settling into a
-     * frozen, looping sound). Pace by actual elapsed wall-clock time
+     * hitch and starves the audio queue. Pace by actual elapsed wall-clock time
      * instead so we always produce however much audio real time demands,
      * however irregularly we're called. */
     static struct timespec prev;
@@ -182,7 +252,7 @@ void I_UpdateSound(void)
     unsigned frames = accum_milli / 1000u;
     accum_milli -= frames * 1000u;
 
-    if (dsp_fd < 0 || frames == 0)
+    if (!queue || frames == 0)
         return;
 
     short buf[2048]; /* interleaved stereo; 1024 frames per pass */
@@ -233,14 +303,7 @@ void I_UpdateSound(void)
          * sample-accurately and advances its sequencer clock). */
         I_PD_OPL_Mix(buf, chunk);
 
-        ssize_t want = (ssize_t)chunk * 4;
-        ssize_t off = 0;
-        while (off < want) {
-            ssize_t w = write(dsp_fd, (unsigned char *)buf + off, want - off);
-            if (w <= 0)
-                break;
-            off += w;
-        }
+        fifo_push(buf, chunk);
 
         done += chunk;
     }

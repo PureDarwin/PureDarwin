@@ -223,7 +223,7 @@
           userlandBuild = (mkPureDarwinBuild {
             pname = "puredarwin-userland";
             src = userlandSource;
-            buildTargets = [ "sw_vers" "ps" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "pcmplay" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" "pdkext" "drmprobe" "sh" "gpt" ]
+            buildTargets = [ "sw_vers" "ps" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" "pdkext" "drmprobe" "sh" "gpt" ]
               # shell_cmds (+ tsort/uuencode/uudecode)
               ++ [ "basename" "chown" "dirname" "echo" "false" "getopt" "hostname" "jot" "kill" "logname" "mktemp" "nice" "nohup" "passwd" "printenv" "pwd" "renice" "seq" "shlock" "sleep" "tee" "test_cmd" "true" "tsort" "uname" "yes" "uuencode" "uudecode" ]
               # text_cmds
@@ -258,7 +258,7 @@
           userlandNoxBuild = mkPureDarwinBuild {
             pname = "puredarwin-userland-nox";
             src = userlandSource;
-            buildTargets = [ "sw_vers" "ps" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "pcmplay" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" "pdkext" "drmprobe" "sh" "gpt" ]
+            buildTargets = [ "sw_vers" "ps" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" "pdkext" "drmprobe" "sh" "gpt" ]
               ++ [ "basename" "chown" "dirname" "echo" "false" "getopt" "hostname" "jot" "kill" "logname" "mktemp" "nice" "nohup" "passwd" "printenv" "pwd" "renice" "seq" "shlock" "sleep" "tee" "test_cmd" "true" "tsort" "uname" "yes" "uuencode" "uudecode" ]
               ++ [ "banner" "cat" "colrm" "comm" "cut" "expand" "fold" "head" "lam" "look" "nl" "paste" "rev" "split" "tail" "tr" "unexpand" "uniq" "wc" ];
             enableProjects = false;
@@ -3073,6 +3073,21 @@
               src = ./src/Frameworks/AudioToolbox;
               coreAudioSrc = ./src/Frameworks/CoreAudio;
             };
+          pcmplayBuild =
+            pkgs.callPackage ./nix/pkgs/apple/pcmplay.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              corefoundation = coreFoundationBuild;
+              audiotoolbox = audiotoolboxBuild;
+              src = ./src/Userspace/pcmplay;
+            };
+          coreaudiodBuild =
+            pkgs.callPackage ./nix/pkgs/apple/coreaudiod.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              corefoundation = coreFoundationBuild;
+              iokit = iokitBuild;
+            };
           # apple's framework install paths (CoreFoundation re-export shim, Versions/C) for Xcode-built apps
           frameworkCompatBuild =
             pkgs.callPackage ./nix/pkgs/apple/framework-compat.nix {
@@ -4603,7 +4618,9 @@
             installKernel = false;
             extraCmakeFlags = [
               "-DPUREDARWIN_ENABLE_FBDOOM=ON"
+              "-DPUREDARWIN_COREFOUNDATION_PREFIX=${coreFoundationBuild}"
               "-DPUREDARWIN_FBDOOM_SOURCE=${fbdoomExternalSrc}"
+              "-DPUREDARWIN_AUDIOTOOLBOX_PREFIX=${audiotoolboxBuild}"
               "-DPUREDARWIN_CHOCOLATE_DOOM_SOURCE=${chocolateDoomPatchedSrc}"
             ];
           }).overrideAttrs (old: {
@@ -4814,7 +4831,7 @@
               libX11SharedBuild libxcbSharedBuild libXauSharedBuild libXdmcpSharedBuild
               libXextSharedBuild libXrenderSharedBuild libXfixesSharedBuild libXiSharedBuild
               libXcursorSharedBuild libXrandrSharedBuild libXxf86vmSharedBuild nettleSharedBuild gnutlsSharedBuild glibNetworkingBuild llvmCrossBuild vulkanLoaderBuild libxshmfenceSharedBuild vulkanToolsBuild vulkanLoaderNoxBuild vulkanToolsNoxBuild mesaVenusWaylandBuild venusTestsNoxBuild libdrmVirtgpuBuild glfwPdBuild metalPdNoxBuild metalObjcPdNoxBuild metalAppleSamplesNoxBuild spirvCrossPdBuild
-              fbdoomBuild fbdoomExternalSrc fileBuild flexBuild fontconfigBuild foundationBuild frameworkCompatBuild swiftRuntimeBuild cocoaBuild appFrameworksBuild cgFfTestsBuild frameworksFfTestsBuild mpsNoxBuild audiotoolboxBuild carbonBuild iosurfaceBuild iosurfaceTestsBuild
+              fbdoomBuild fbdoomExternalSrc fileBuild flexBuild fontconfigBuild foundationBuild frameworkCompatBuild swiftRuntimeBuild cocoaBuild appFrameworksBuild cgFfTestsBuild frameworksFfTestsBuild mpsNoxBuild audiotoolboxBuild pcmplayBuild coreaudiodBuild carbonBuild iosurfaceBuild iosurfaceTestsBuild
               freetype2Build fribidiBuild garconBuild gdkPixbufBuild gitBuild glibBuild gnum4Build
               gnumakeBuild gtk3Build gtkLayerShellBuild gtk3NoxBuild gtkLayerShellNoxBuild onyx2dBuild coregraphicsBuild coretextBuild quartzcoreBuild corevideoBuild coredataBuild cgScreenDemoBuild systemFontsBuild cairoNoxBuild dbusNoxBuild pdEpollShimBuild tllistBuild fcftBuild footBuild userlandNoxBuild pangoNoxBuild netsurfNoxBuild libepoxyNoxBuild fastfetchNoxBuild harfbuzzNoxBuild atspi2CoreNoxBuild cairoGobjectNoxBuild xkbcommonNoxBuild mesaNoxBuild openglFrameworkNoxBuild mesaDemosNoxBuild librsvgNoxBuild harfbuzzBuild i3Build i3statusShimBuild iceauthBuild
               cursorThemeBuild iconThemesBuild icuCoreBuild imageExtraPackagesArm64 imageExtraPackagesArm64Nox imageExtraPackagesArm64Sg2002 splitBaseSystemArm64Sg2002 iographicsBuild iokitBuild asmjitTestArm64Build
@@ -5064,6 +5081,8 @@
             frameworks-ff-tests = frameworksFfTestsBuild;
             cg-ff-tests = cgFfTestsBuild;
             audiotoolbox = audiotoolboxBuild;
+            pcmplay = pcmplayBuild;
+            coreaudiod = coreaudiodBuild;
             carbon = carbonBuild;
             akff-test = akffTestBuild;
             iosurface = iosurfaceBuild;

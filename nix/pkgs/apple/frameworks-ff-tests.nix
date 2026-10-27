@@ -45,7 +45,7 @@ stdenv.mkDerivation {
     LDFLAGS="-isysroot $SDK -mmacosx-version-min=26.5 -fuse-ld=${nativeLd}/bin/ld -nostdlib \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -Wl,-platform_version,macos,26.5,26.5 -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${libobjc}/usr/lib \
-      -L${foundation}/usr/lib -L${iokit}/usr/lib"
+      -L${foundation}/usr/lib -F${iokit}/System/Library/Frameworks"
     # re-exported and linked frameworks, found by install name
     for m in ${coregraphics}:CoreGraphics ${coretext}:CoreText ${appFrameworks}:ImageIO ${corevideo}:CoreVideo ${appFrameworks}:CoreMedia \
         ${audiotoolbox}:CoreAudio ${audiotoolbox}:AudioToolbox ${iosurface}:IOSurface ${coreservices}:CoreServices; do
@@ -58,7 +58,7 @@ stdenv.mkDerivation {
     $CC $CFLAGS -x objective-c -c $src/as_test.c -o as_test.o
     $CC $LDFLAGS as_test.o $(fw ${appFrameworks} ApplicationServices) -lCoreFoundation -lobjc -lSystem -o as_test
     $CC $CFLAGS -c $src/iokit_test.c -o iokit_test.o
-    $CC $LDFLAGS iokit_test.o -lIOKitCF -lCoreFoundation -lSystem -o iokit_test
+    $CC $LDFLAGS iokit_test.o -framework IOKit -lCoreFoundation -lSystem -o iokit_test
     $CC $CFLAGS -c $src/media_test.c -o media_test.o
     $CC $LDFLAGS media_test.o $(fw ${appFrameworks} CoreMedia) $(fw ${appFrameworks} VideoToolbox) $(fw ${corevideo} CoreVideo) \
       -lCoreFoundation -lSystem -o media_test
@@ -71,15 +71,13 @@ stdenv.mkDerivation {
     $CC $LDFLAGS misc_test.o -lCoreFoundation -lSystem -o misc_test
     $CC $CFLAGS -c $src/audio_test.c -o audio_test.o
     $CC $LDFLAGS audio_test.o $(fw ${audiotoolbox} AudioToolbox) $(fw ${audiotoolbox} CoreAudio) -lCoreFoundation -lSystem -o audio_test
-    $CC $CFLAGS -c $src/dsp_tone.c -o dsp_tone.o
-    $CC $LDFLAGS dsp_tone.o -lSystem -o dsp_tone
     runHook postBuild
   '';
 
   installPhase = ''
     runHook preInstall
     mkdir -p $out/usr/local/libexec/fwtests $out/System/Library/LaunchDaemons
-    install -m755 *_test dsp_tone $src/run.sh $out/usr/local/libexec/fwtests/
+    install -m755 *_test $src/run.sh $out/usr/local/libexec/fwtests/
     install -m644 $src/org.puredarwin.fwtests.plist $out/System/Library/LaunchDaemons/
     runHook postInstall
   '';

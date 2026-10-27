@@ -47,8 +47,7 @@ endif()
 # joystick support glued up) and i_sound.o/i_cdmus.o (replaced by
 # i_sound_pd.c - real fbDOOM's i_sound_dummy.c is, despite the name, a real
 # Linux OSS /dev/dsp driver no longer even prototype-compatible with this
-# revision's i_sound.h. There's a real audio path available on PureDarwin that
-# could replace i_sound_pd.c's silence with real sound as a follow-up).
+# revision's i_sound.h. i_sound_pd.c plays through AudioToolbox's AudioQueue).
 set(_fbdoom_upstream_srcs
     i_main.c dummy.c am_map.c doomdef.c doomstat.c dstrings.c d_event.c
     d_items.c d_iwad.c d_loop.c d_main.c d_mode.c d_net.c f_finale.c
@@ -63,6 +62,18 @@ set(_fbdoom_upstream_srcs
     tables.c v_video.c wi_stuff.c w_checksum.c w_file.c
     w_file_stdc_unbuffered.c w_main.c w_wad.c z_zone.c
 )
+
+if(NOT PUREDARWIN_AUDIOTOOLBOX_PREFIX AND DEFINED ENV{PUREDARWIN_AUDIOTOOLBOX_PREFIX})
+    set(PUREDARWIN_AUDIOTOOLBOX_PREFIX "$ENV{PUREDARWIN_AUDIOTOOLBOX_PREFIX}")
+endif()
+
+if(NOT PUREDARWIN_AUDIOTOOLBOX_PREFIX)
+    message(FATAL_ERROR "PUREDARWIN_AUDIOTOOLBOX_PREFIX must point to the audiotoolbox install prefix (AudioToolbox + CoreAudio frameworks)")
+endif()
+
+if(NOT PUREDARWIN_COREFOUNDATION_PREFIX AND DEFINED ENV{PUREDARWIN_COREFOUNDATION_PREFIX})
+    set(PUREDARWIN_COREFOUNDATION_PREFIX "$ENV{PUREDARWIN_COREFOUNDATION_PREFIX}")
+endif()
 
 add_darwin_executable(fbdoom MACOSX_VERSION_MIN 26.5)
 
@@ -97,16 +108,25 @@ target_include_directories(fbdoom PRIVATE
     "${PUREDARWIN_CHOCOLATE_DOOM_SOURCE}"
     "${PUREDARWIN_CHOCOLATE_DOOM_SOURCE}/opl"
     "${CMAKE_SOURCE_DIR}/src/Libraries/PDGOP/include"
+    "${PUREDARWIN_AUDIOTOOLBOX_PREFIX}/usr/include"
 )
 target_compile_definitions(fbdoom PRIVATE NORMALUNIX)
-target_compile_options(fbdoom PRIVATE -isysroot ${PUREDARWIN_MACOSX_SDK} -Wno-everything)
+target_compile_options(fbdoom PRIVATE -isysroot ${PUREDARWIN_MACOSX_SDK} -Wno-everything
+    -F${PUREDARWIN_COREFOUNDATION_PREFIX}/System/Library/Frameworks)
 target_link_options(fbdoom PRIVATE
     -nostdlib
     -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>
     -Wl,-dylinker_install_name,/usr/lib/dyld
     -Wl,-platform_version,macos,26.5,26.5
     -lSystem)
-target_link_libraries(fbdoom PRIVATE $<TARGET_FILE:PDGOP> $<TARGET_FILE:IOKit>)
+
+# AudioToolbox links CoreAudio by install name, so point the linker at the built copy
+set(_fbdoom_fw "${PUREDARWIN_AUDIOTOOLBOX_PREFIX}/System/Library/Frameworks")
+target_link_options(fbdoom PRIVATE
+    -Wl,-dylib_file,/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio:${_fbdoom_fw}/CoreAudio.framework/Versions/A/CoreAudio)
+target_link_libraries(fbdoom PRIVATE $<TARGET_FILE:PDGOP> $<TARGET_FILE:IOKit>
+    "${_fbdoom_fw}/AudioToolbox.framework/Versions/A/AudioToolbox"
+    "${_fbdoom_fw}/CoreAudio.framework/Versions/A/CoreAudio")
 add_dependencies(fbdoom PDGOP IOKit)
 add_dependencies(fbdoom libSystem_B_stub dyld)
 

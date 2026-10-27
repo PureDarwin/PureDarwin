@@ -15,8 +15,8 @@
 // DESCRIPTION:
 //	Music for PureDarwin: a real MUS-format parser (the lump format
 //	DOOM's music actually ships in) driving a simple square-wave
-//	synthesizer per MIDI channel, mixed into the same /dev/dsp0 stream
-//	i_sound_pd.c's sfx mixer writes. This is not trying to emulate the
+//	synthesizer per MIDI channel, mixed into the same AudioQueue stream
+//	i_sound_pd.c's sfx mixer feeds. This is not trying to emulate the
 //	OPL2/AdLib timbre real DOOM used (that's DBOPL-scale work - see
 //	fbDOOM's own unused i_oplmusic.c for the real thing); it plays the
 //	actual notes/timing/volume from the song at the right pitches, just

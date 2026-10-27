@@ -36,6 +36,8 @@
 , cgFfTestsBuild
 , mpsNoxBuild
 , audiotoolboxBuild
+, pcmplayBuild
+, coreaudiodBuild
 , carbonBuild
 , iosurfaceBuild
 , iosurfaceTestsBuild ? null
@@ -338,7 +340,7 @@ let
   fullBuild = mkPureDarwinBuild {
     pname = "puredarwin";
     src = ../.;
-    buildTargets = [ "xnu" "kexts" "libsystem_kernel" "pcmplay" ];
+    buildTargets = [ "xnu" "kexts" "libsystem_kernel" ];
     installUserland = false;
     installKernel = false;
     installBaseSystem = true;
@@ -626,6 +628,8 @@ let
     cocoa = cocoaBuild;
     app-frameworks = appFrameworksBuild;
     audiotoolbox = audiotoolboxBuild;
+    pcmplay = pcmplayBuild;
+    coreaudiod = coreaudiodBuild;
     carbon = carbonBuild;
     iosurface = iosurfaceBuild;
     iokit = iokitBuild;
@@ -1367,6 +1371,8 @@ let
           # /usr/lib/swift, which framework-compat's Foundation re-exports from
           swiftRuntimeBuild
           audiotoolboxBuild
+          pcmplayBuild
+          coreaudiodBuild
           carbonBuild
           iosurfaceBuild
           securityBuild
@@ -1393,7 +1399,7 @@ let
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-minimal.img";
         espMB = 60;
-        rootMB = 260;
+        rootMB = 320;
         bootArgs = minimalBootArgs;
       };
       # image-minimal with CoreGraphics and what it loads, for the CoreGraphics test run at boot

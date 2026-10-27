@@ -10,8 +10,8 @@
 , targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
-# CoreAudio's HAL objects for /dev/dsp0, and AudioToolbox over it: AudioQueue, the output audio
-# units, PCM converters and format queries. AudioUnit.framework re-exports AudioToolbox
+# CoreAudio's HAL, a client of coreaudiod, and AudioToolbox over it: AudioQueue, the output audio
+# units, graphs, PCM converters and format queries. AudioUnit.framework re-exports AudioToolbox
 stdenv.mkDerivation {
   pname = "puredarwin-audiotoolbox";
   version = "0.2";
@@ -24,9 +24,17 @@ stdenv.mkDerivation {
     CC=${darwinCrossToolchain}/bin/${targetTriple}-clang
     SDK=${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
 
-    mkdir -p include/CoreAudio include/AudioToolbox cf-headers
-    cp ${coreAudioSrc}/*.h include/CoreAudio/
+    mkdir -p include/CoreAudio include/AudioToolbox include/AudioUnit cf-headers
+    # PDAudioServer.h and PDAudioClient.h stay private to the HAL
+    for h in CoreAudio.h CoreAudioTypes.h AudioHardware.h; do cp ${coreAudioSrc}/$h include/CoreAudio/; done
     cp $src/AudioToolbox.h include/AudioToolbox/
+    # the sub-headers Apple splits AudioToolbox and AudioUnit into, each one the whole API here
+    for h in AudioFormat AudioConverter AudioQueue AUGraph MusicDevice AudioComponent; do
+      echo "#include <AudioToolbox/AudioToolbox.h>" > include/AudioToolbox/$h.h
+    done
+    for h in AudioUnit AUComponent AudioOutputUnit AudioUnitProperties AudioUnitParameters MusicDevice AudioComponent; do
+      echo "#include <AudioToolbox/AudioToolbox.h>" > include/AudioUnit/$h.h
+    done
     ln -s ${corefoundation}/include cf-headers/CoreFoundation
 
     CFLAGS="-isysroot $SDK -mmacosx-version-min=26.5 -O2 -Wall -Iinclude -Icf-headers -I${libSystem}/usr/include"
@@ -36,14 +44,15 @@ stdenv.mkDerivation {
       -dynamiclib -compatibility_version 1 -current_version 1"
     fw() { echo "-install_name /System/Library/Frameworks/$1.framework/Versions/A/$1"; }
 
-    $CC $CFLAGS -c ${coreAudioSrc}/AudioHardware.c -o AudioHardware.o
-    $CC $LDFLAGS $(fw CoreAudio) AudioHardware.o -lCoreFoundation -lSystem -o CoreAudio
+    $CC $CFLAGS -I${coreAudioSrc} -c ${coreAudioSrc}/AudioHardware.c -o AudioHardware.o
+    $CC $CFLAGS -I${coreAudioSrc} -c ${coreAudioSrc}/AudioDeviceIO.c -o AudioDeviceIO.o
+    $CC $LDFLAGS $(fw CoreAudio) AudioHardware.o AudioDeviceIO.o -lCoreFoundation -lSystem -o CoreAudio
     ln -s CoreAudio libCoreAudio.dylib
 
-    for f in AudioQueue AudioConverter AudioUnit AudioFormat; do
+    for f in AudioQueue AudioConverter AudioUnit AudioFormat AUGraph; do
       $CC $CFLAGS -c $src/$f.c -o $f.o
     done
-    $CC $LDFLAGS $(fw AudioToolbox) AudioQueue.o AudioConverter.o AudioUnit.o AudioFormat.o \
+    $CC $LDFLAGS $(fw AudioToolbox) AudioQueue.o AudioConverter.o AudioUnit.o AudioFormat.o AUGraph.o \
       -lCoreAudio -lCoreFoundation -lSystem -o AudioToolbox
 
     echo "// re-exports only" > empty.c
@@ -64,9 +73,11 @@ stdenv.mkDerivation {
     done
     cp include/CoreAudio/*.h $out/System/Library/Frameworks/CoreAudio.framework/Versions/A/Headers/
     cp include/AudioToolbox/*.h $out/System/Library/Frameworks/AudioToolbox.framework/Versions/A/Headers/
+    cp include/AudioUnit/*.h $out/System/Library/Frameworks/AudioUnit.framework/Versions/A/Headers/
     mkdir -p $out/usr/include $out/usr/lib
     ln -s ../../System/Library/Frameworks/CoreAudio.framework/Versions/A/Headers $out/usr/include/CoreAudio
     ln -s ../../System/Library/Frameworks/AudioToolbox.framework/Versions/A/Headers $out/usr/include/AudioToolbox
+    ln -s ../../System/Library/Frameworks/AudioUnit.framework/Versions/A/Headers $out/usr/include/AudioUnit
     for f in CoreAudio AudioToolbox; do
       ln -s ../../System/Library/Frameworks/$f.framework/Versions/A/$f $out/usr/lib/lib$f.dylib
     done
@@ -76,7 +87,7 @@ stdenv.mkDerivation {
   dontFixup = true;
 
   meta = {
-    description = "CoreAudio, AudioToolbox and AudioUnit for PureDarwin over /dev/dsp0";
+    description = "CoreAudio, AudioToolbox and AudioUnit for PureDarwin, played through coreaudiod";
     platforms = lib.platforms.unix;
   };
 }

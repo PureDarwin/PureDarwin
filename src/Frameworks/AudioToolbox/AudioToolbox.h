@@ -133,6 +133,62 @@ OSStatus AudioUnitReset(AudioUnit inUnit, AudioUnitScope inScope, AudioUnitEleme
 OSStatus AudioOutputUnitStart(AudioUnit ci);
 OSStatus AudioOutputUnitStop(AudioUnit ci);
 
+// music devices: no software synth is installed, so no component of this type exists yet
+typedef AudioComponentInstance MusicDeviceComponent;
+
+enum {
+    kAudioUnitType_MusicDevice = 'aumu',
+    kAudioUnitType_Mixer = 'aumx',
+    kAudioUnitSubType_DLSSynth = 'dls ',
+    kAudioUnitSubType_MIDISynth = 'msyn',
+    kAudioUnitParameterFlag_Global = 1U << 0,
+    kAudioUnitParameterFlag_Input = 1U << 1,
+    kAudioUnitParameterFlag_Output = 1U << 2,
+};
+
+OSStatus MusicDeviceMIDIEvent(MusicDeviceComponent inUnit, UInt32 inStatus, UInt32 inData1, UInt32 inData2, UInt32 inOffsetSampleFrame);
+OSStatus MusicDeviceSysEx(MusicDeviceComponent inUnit, const UInt8 *inData, UInt32 inLength);
+
+// graphs of audio units, each node an instance opened by AUGraphOpen and connected output to input
+typedef struct OpaqueAUGraph *AUGraph;
+typedef SInt32 AUNode;
+
+typedef struct AudioUnitNodeConnection {
+    AUNode sourceNode;
+    UInt32 sourceOutputNumber;
+    AUNode destNode;
+    UInt32 destInputNumber;
+} AudioUnitNodeConnection;
+
+enum {
+    kAUGraphErr_NodeNotFound = -10860,
+    kAUGraphErr_InvalidConnection = -10861,
+    kAUGraphErr_OutputNodeErr = -10862,
+    kAUGraphErr_CannotDoInCurrentContext = -10863,
+    kAUGraphErr_InvalidAudioUnit = -10864,
+};
+
+OSStatus NewAUGraph(AUGraph *outGraph);
+OSStatus DisposeAUGraph(AUGraph inGraph);
+OSStatus AUGraphAddNode(AUGraph inGraph, const AudioComponentDescription *inDescription, AUNode *outNode);
+OSStatus AUGraphRemoveNode(AUGraph inGraph, AUNode inNode);
+OSStatus AUGraphGetNodeCount(AUGraph inGraph, UInt32 *outNumberOfNodes);
+OSStatus AUGraphGetIndNode(AUGraph inGraph, UInt32 inIndex, AUNode *outNode);
+OSStatus AUGraphNodeInfo(AUGraph inGraph, AUNode inNode, AudioComponentDescription *outDescription, AudioUnit *outAudioUnit);
+OSStatus AUGraphConnectNodeInput(AUGraph inGraph, AUNode inSourceNode, UInt32 inSourceOutputNumber, AUNode inDestNode,
+                                 UInt32 inDestInputNumber);
+OSStatus AUGraphDisconnectNodeInput(AUGraph inGraph, AUNode inDestNode, UInt32 inDestInputNumber);
+OSStatus AUGraphOpen(AUGraph inGraph);
+OSStatus AUGraphClose(AUGraph inGraph);
+OSStatus AUGraphInitialize(AUGraph inGraph);
+OSStatus AUGraphUninitialize(AUGraph inGraph);
+OSStatus AUGraphStart(AUGraph inGraph);
+OSStatus AUGraphStop(AUGraph inGraph);
+OSStatus AUGraphIsOpen(AUGraph inGraph, Boolean *outIsOpen);
+OSStatus AUGraphIsInitialized(AUGraph inGraph, Boolean *outIsInitialized);
+OSStatus AUGraphIsRunning(AUGraph inGraph, Boolean *outIsRunning);
+OSStatus AUGraphUpdate(AUGraph inGraph, Boolean *outIsUpdated);
+
 typedef struct OpaqueAudioConverter *AudioConverterRef;
 typedef UInt32 AudioConverterPropertyID;
 typedef OSStatus (*AudioConverterComplexInputDataProc)(AudioConverterRef inAudioConverter, UInt32 *ioNumberDataPackets,
@@ -183,6 +239,67 @@ OSStatus AudioConverterFillComplexBuffer(AudioConverterRef inAudioConverter, Aud
                                          AudioStreamPacketDescription *outPacketDescription);
 OSStatus AudioConverterConvertBuffer(AudioConverterRef inAudioConverter, UInt32 inInputDataSize, const void *inInputData,
                                      UInt32 *ioOutputDataSize, void *outOutputData);
+
+typedef struct AudioQueueBuffer {
+    const UInt32 mAudioDataBytesCapacity;
+    void *const mAudioData;
+    UInt32 mAudioDataByteSize;
+    void *mUserData;
+    const UInt32 mPacketDescriptionCapacity;
+    AudioStreamPacketDescription *const mPacketDescriptions;
+    UInt32 mPacketDescriptionCount;
+} AudioQueueBuffer;
+typedef AudioQueueBuffer *AudioQueueBufferRef;
+typedef struct OpaqueAudioQueue *AudioQueueRef;
+typedef UInt32 AudioQueuePropertyID;
+typedef UInt32 AudioQueueParameterID;
+typedef Float32 AudioQueueParameterValue;
+typedef void (*AudioQueueOutputCallback)(void *inUserData, AudioQueueRef inAQ, AudioQueueBufferRef inBuffer);
+typedef void (*AudioQueuePropertyListenerProc)(void *inUserData, AudioQueueRef inAQ, AudioQueuePropertyID inID);
+
+enum {
+    kAudioQueueParam_Volume = 1,
+    kAudioQueueProperty_IsRunning = 'aqrn',
+    kAudioQueueDeviceProperty_SampleRate = 'aqsr',
+    kAudioQueueDeviceProperty_NumberChannels = 'aqdc',
+    kAudioQueueProperty_CurrentDevice = 'aqcd',
+    kAudioQueueProperty_StreamDescription = 'aqft',
+    kAudioQueueErr_InvalidBuffer = -66687,
+    kAudioQueueErr_BufferEmpty = -66686,
+    kAudioQueueErr_InvalidProperty = -66683,
+    kAudioQueueErr_InvalidPropertySize = -66682,
+    kAudioQueueErr_InvalidParameter = -66680,
+    kAudioQueueErr_InvalidDevice = -66679,
+    kAudioQueueErr_InvalidRunState = -66671,
+    kAudioQueueErr_EnqueueDuringReset = -66632,
+};
+
+// a queue made with a NULL run loop calls back on a thread of its own, as on macOS
+OSStatus AudioQueueNewOutput(const AudioStreamBasicDescription *inFormat, AudioQueueOutputCallback inCallbackProc, void *inUserData,
+                             CFRunLoopRef inCallbackRunLoop, CFStringRef inCallbackRunLoopMode, UInt32 inFlags,
+                             AudioQueueRef *outAQ);
+OSStatus AudioQueueDispose(AudioQueueRef inAQ, Boolean inImmediate);
+OSStatus AudioQueueAllocateBuffer(AudioQueueRef inAQ, UInt32 inBufferByteSize, AudioQueueBufferRef *outBuffer);
+OSStatus AudioQueueAllocateBufferWithPacketDescriptions(AudioQueueRef inAQ, UInt32 inBufferByteSize, UInt32 inNumberPacketDescriptions,
+                                                       AudioQueueBufferRef *outBuffer);
+OSStatus AudioQueueFreeBuffer(AudioQueueRef inAQ, AudioQueueBufferRef inBuffer);
+OSStatus AudioQueueEnqueueBuffer(AudioQueueRef inAQ, AudioQueueBufferRef inBuffer, UInt32 inNumPacketDescs,
+                                 const AudioStreamPacketDescription *inPacketDescs);
+OSStatus AudioQueueStart(AudioQueueRef inAQ, const AudioTimeStamp *inStartTime);
+OSStatus AudioQueuePrime(AudioQueueRef inAQ, UInt32 inNumberOfFramesToPrepare, UInt32 *outNumberOfFramesPrepared);
+OSStatus AudioQueueStop(AudioQueueRef inAQ, Boolean inImmediate);
+OSStatus AudioQueuePause(AudioQueueRef inAQ);
+OSStatus AudioQueueFlush(AudioQueueRef inAQ);
+OSStatus AudioQueueReset(AudioQueueRef inAQ);
+OSStatus AudioQueueGetParameter(AudioQueueRef inAQ, AudioQueueParameterID inParamID, AudioQueueParameterValue *outValue);
+OSStatus AudioQueueSetParameter(AudioQueueRef inAQ, AudioQueueParameterID inParamID, AudioQueueParameterValue inValue);
+OSStatus AudioQueueGetProperty(AudioQueueRef inAQ, AudioQueuePropertyID inID, void *outData, UInt32 *ioDataSize);
+OSStatus AudioQueueGetPropertySize(AudioQueueRef inAQ, AudioQueuePropertyID inID, UInt32 *outDataSize);
+OSStatus AudioQueueAddPropertyListener(AudioQueueRef inAQ, AudioQueuePropertyID inID, AudioQueuePropertyListenerProc inProc,
+                                       void *inUserData);
+OSStatus AudioQueueRemovePropertyListener(AudioQueueRef inAQ, AudioQueuePropertyID inID, AudioQueuePropertyListenerProc inProc,
+                                          void *inUserData);
+OSStatus AudioQueueGetCurrentTime(AudioQueueRef inAQ, void *inTimeline, AudioTimeStamp *outTimeStamp, Boolean *outTimelineDiscontinuity);
 
 typedef UInt32 AudioFormatPropertyID;
 

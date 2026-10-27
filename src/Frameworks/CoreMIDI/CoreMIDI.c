@@ -1,183 +1,242 @@
-// CoreMIDI.c - MIDI clients and ports in this process, with no MIDI drivers behind them
+// CoreMIDI.c - MIDI clients and ports in this process, with no MIDI drivers installed there are no endpoints yet
 // Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 
-// there are no sources or destinations, so connecting and sending report the object as not found
-
-#include <CoreFoundation/CoreFoundation.h>
+#include <CoreMIDI/CoreMIDI.h>
 #include <pthread.h>
-#include <stdlib.h>
+#include <stddef.h>
 #include <string.h>
 
-typedef UInt32 MIDIObjectRef;
-typedef MIDIObjectRef MIDIClientRef, MIDIPortRef, MIDIEndpointRef;
-typedef UInt64 MIDITimeStamp;
-
-#pragma pack(push, 4)
-typedef struct MIDIPacket {
-    MIDITimeStamp timeStamp;
-    UInt16 length;
-    Byte data[256];
-} MIDIPacket;
-
-typedef struct MIDIPacketList {
-    UInt32 numPackets;
-    MIDIPacket packet[1];
-} MIDIPacketList;
-#pragma pack(pop)
-
-typedef void (*MIDINotifyProc)(const void *message, void *refCon);
-typedef void (*MIDIReadProc)(const MIDIPacketList *pktlist, void *readProcRefCon, void *srcConnRefCon);
-
-enum { paramErr = -50 };
-
-enum {
-    kMIDIInvalidClient = -10830,
-    kMIDIInvalidPort = -10831,
-    kMIDIWrongEndpointType = -10832,
-    kMIDINoConnection = -10833,
-    kMIDIUnknownEndpoint = -10834,
-    kMIDIUnknownProperty = -10835,
-    kMIDIObjectNotFound = -10842,
-};
-
 const CFStringRef kMIDIPropertyName = CFSTR("name");
-const CFStringRef kMIDIPropertyDisplayName = CFSTR("displayName");
 const CFStringRef kMIDIPropertyManufacturer = CFSTR("manufacturer");
 const CFStringRef kMIDIPropertyModel = CFSTR("model");
 const CFStringRef kMIDIPropertyUniqueID = CFSTR("uniqueID");
+const CFStringRef kMIDIPropertyDisplayName = CFSTR("displayName");
 const CFStringRef kMIDIPropertyOffline = CFSTR("offline");
 
-// clients and ports by reference, their kind in the low bits
-enum { kClient = 1, kPort = 2 };
+#define MAX_OBJECTS 256
+
+enum { kClient = 1, kInputPort, kOutputPort };
+
+struct object {
+    UInt32 kind;
+    MIDIObjectRef owner;
+    CFStringRef name;
+    MIDIReadProc readProc;
+    void *refCon;
+};
 
 static pthread_mutex_t sLock = PTHREAD_MUTEX_INITIALIZER;
-static CFMutableDictionaryRef sObjects;
-static MIDIObjectRef sNext = 0x100;
+static struct object sObjects[MAX_OBJECTS];
 
-static MIDIObjectRef addObject(int kind, MIDIObjectRef owner)
+// refs are the slot plus one, so 0 stays the invalid ref
+static MIDIObjectRef newObject(UInt32 kind, MIDIObjectRef owner, CFStringRef name)
 {
+    MIDIObjectRef ref = 0;
+
     pthread_mutex_lock(&sLock);
-    if (sObjects == NULL)
-        sObjects = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
-    MIDIObjectRef ref = (sNext += 4) | kind;
-    CFDictionarySetValue(sObjects, (const void *)(uintptr_t)ref, (const void *)(uintptr_t)(owner + 1));
+    for (UInt32 i = 0; i < MAX_OBJECTS; i++) {
+        if (!sObjects[i].kind) {
+            sObjects[i] = (struct object){ kind, owner, name ? CFRetain(name) : NULL, NULL, NULL };
+            ref = i + 1;
+            break;
+        }
+    }
     pthread_mutex_unlock(&sLock);
     return ref;
 }
 
-static Boolean hasObject(MIDIObjectRef ref, int kind)
+static struct object *lookup(MIDIObjectRef ref, UInt32 kind)
 {
-    pthread_mutex_lock(&sLock);
-    Boolean found = sObjects && (int)(ref & 3) == kind && CFDictionaryContainsKey(sObjects, (const void *)(uintptr_t)ref);
-    pthread_mutex_unlock(&sLock);
-    return found;
+    if (ref == 0 || ref > MAX_OBJECTS || !sObjects[ref - 1].kind)
+        return NULL;
+    if (kind && sObjects[ref - 1].kind != kind)
+        return NULL;
+    return &sObjects[ref - 1];
 }
 
-static void removeObject(MIDIObjectRef ref)
+static void freeObject(struct object *o)
 {
-    pthread_mutex_lock(&sLock);
-    if (sObjects)
-        CFDictionaryRemoveValue(sObjects, (const void *)(uintptr_t)ref);
-    pthread_mutex_unlock(&sLock);
+    if (o->name)
+        CFRelease(o->name);
+    memset(o, 0, sizeof(*o));
 }
 
 OSStatus MIDIClientCreate(CFStringRef name, MIDINotifyProc notifyProc, void *notifyRefCon, MIDIClientRef *outClient)
 {
-    (void)name;
     (void)notifyProc;
     (void)notifyRefCon;
     if (outClient == NULL)
-        return paramErr;
-    *outClient = addObject(kClient, 0);
-    return noErr;
+        return kMIDIInvalidClient;
+    *outClient = newObject(kClient, 0, name);
+    return *outClient ? noErr : kMIDIServerStartErr;
 }
 
+// the notifications a block would get are never sent, so it is not kept
 OSStatus MIDIClientCreateWithBlock(CFStringRef name, MIDIClientRef *outClient, void *notifyBlock)
 {
     (void)notifyBlock;
     return MIDIClientCreate(name, NULL, NULL, outClient);
 }
 
+// a client takes its ports with it
 OSStatus MIDIClientDispose(MIDIClientRef client)
 {
-    if (!hasObject(client, kClient))
+    pthread_mutex_lock(&sLock);
+    struct object *c = lookup(client, kClient);
+    if (c == NULL) {
+        pthread_mutex_unlock(&sLock);
         return kMIDIInvalidClient;
-    removeObject(client);
+    }
+    for (UInt32 i = 0; i < MAX_OBJECTS; i++) {
+        if (sObjects[i].kind && sObjects[i].owner == client)
+            freeObject(&sObjects[i]);
+    }
+    freeObject(c);
+    pthread_mutex_unlock(&sLock);
     return noErr;
 }
 
-static OSStatus createPort(MIDIClientRef client, MIDIPortRef *outPort)
+static OSStatus createPort(MIDIClientRef client, UInt32 kind, CFStringRef name, MIDIReadProc readProc, void *refCon,
+                           MIDIPortRef *outPort)
 {
     if (outPort == NULL)
-        return paramErr;
-    if (!hasObject(client, kClient))
+        return kMIDIInvalidPort;
+    pthread_mutex_lock(&sLock);
+    Boolean valid = lookup(client, kClient) != NULL;
+    pthread_mutex_unlock(&sLock);
+    if (!valid)
         return kMIDIInvalidClient;
-    *outPort = addObject(kPort, client);
+    *outPort = newObject(kind, client, name);
+    if (!*outPort)
+        return kMIDIInvalidPort;
+    pthread_mutex_lock(&sLock);
+    sObjects[*outPort - 1].readProc = readProc;
+    sObjects[*outPort - 1].refCon = refCon;
+    pthread_mutex_unlock(&sLock);
     return noErr;
 }
 
 OSStatus MIDIInputPortCreate(MIDIClientRef client, CFStringRef portName, MIDIReadProc readProc, void *refCon, MIDIPortRef *outPort)
 {
-    (void)portName;
-    (void)readProc;
-    (void)refCon;
-    return createPort(client, outPort);
+    return createPort(client, kInputPort, portName, readProc, refCon, outPort);
 }
 
+// no source can be connected, so the block would never run
 OSStatus MIDIInputPortCreateWithBlock(MIDIClientRef client, CFStringRef portName, MIDIPortRef *outPort, void *readBlock)
 {
-    (void)portName;
     (void)readBlock;
-    return createPort(client, outPort);
+    return createPort(client, kInputPort, portName, NULL, NULL, outPort);
 }
 
 OSStatus MIDIOutputPortCreate(MIDIClientRef client, CFStringRef portName, MIDIPortRef *outPort)
 {
-    (void)portName;
-    return createPort(client, outPort);
+    return createPort(client, kOutputPort, portName, NULL, NULL, outPort);
 }
 
 OSStatus MIDIPortDispose(MIDIPortRef port)
 {
-    if (!hasObject(port, kPort))
-        return kMIDIInvalidPort;
-    removeObject(port);
-    return noErr;
+    pthread_mutex_lock(&sLock);
+    struct object *p = lookup(port, 0);
+    OSStatus err = p && p->kind != kClient ? noErr : kMIDIInvalidPort;
+    if (err == noErr)
+        freeObject(p);
+    pthread_mutex_unlock(&sLock);
+    return err;
 }
 
-ItemCount MIDIGetNumberOfSources(void) { return 0; }
-ItemCount MIDIGetNumberOfDestinations(void) { return 0; }
-ItemCount MIDIGetNumberOfDevices(void) { return 0; }
-MIDIEndpointRef MIDIGetSource(ItemCount sourceIndex0) { (void)sourceIndex0; return 0; }
-MIDIEndpointRef MIDIGetDestination(ItemCount destIndex0) { (void)destIndex0; return 0; }
+// no MIDI driver publishes devices or endpoints, so every endpoint ref is unknown
+ItemCount MIDIGetNumberOfDevices(void)
+{
+    return 0;
+}
+
+MIDIDeviceRef MIDIGetDevice(ItemCount deviceIndex0)
+{
+    (void)deviceIndex0;
+    return 0;
+}
+
+ItemCount MIDIGetNumberOfSources(void)
+{
+    return 0;
+}
+
+MIDIEndpointRef MIDIGetSource(ItemCount sourceIndex0)
+{
+    (void)sourceIndex0;
+    return 0;
+}
+
+ItemCount MIDIGetNumberOfDestinations(void)
+{
+    return 0;
+}
+
+MIDIEndpointRef MIDIGetDestination(ItemCount destIndex0)
+{
+    (void)destIndex0;
+    return 0;
+}
 
 OSStatus MIDIPortConnectSource(MIDIPortRef port, MIDIEndpointRef source, void *connRefCon)
 {
     (void)connRefCon;
-    if (!hasObject(port, kPort))
+    pthread_mutex_lock(&sLock);
+    Boolean valid = lookup(port, kInputPort) != NULL;
+    pthread_mutex_unlock(&sLock);
+    if (!valid)
         return kMIDIInvalidPort;
-    (void)source;
-    return kMIDIObjectNotFound;
+    return source ? kMIDIUnknownEndpoint : kMIDIObjectNotFound;
 }
 
 OSStatus MIDIPortDisconnectSource(MIDIPortRef port, MIDIEndpointRef source)
 {
-    (void)source;
-    return hasObject(port, kPort) ? kMIDINoConnection : kMIDIInvalidPort;
+    return MIDIPortConnectSource(port, source, NULL);
+}
+
+// clients and ports have their own names, endpoints do not exist
+OSStatus MIDIObjectGetStringProperty(MIDIObjectRef obj, CFStringRef propertyID, CFStringRef *str)
+{
+    if (str == NULL)
+        return kMIDIUnknownProperty;
+    pthread_mutex_lock(&sLock);
+    struct object *o = lookup(obj, 0);
+    OSStatus err = o == NULL ? kMIDIObjectNotFound : kMIDIUnknownProperty;
+    if (o && o->name && CFEqual(propertyID, kMIDIPropertyName)) {
+        *str = CFRetain(o->name);
+        err = noErr;
+    }
+    pthread_mutex_unlock(&sLock);
+    return err;
+}
+
+OSStatus MIDIObjectGetIntegerProperty(MIDIObjectRef obj, CFStringRef propertyID, SInt32 *outValue)
+{
+    (void)propertyID;
+    (void)outValue;
+    pthread_mutex_lock(&sLock);
+    OSStatus err = lookup(obj, 0) ? kMIDIUnknownProperty : kMIDIObjectNotFound;
+    pthread_mutex_unlock(&sLock);
+    return err;
 }
 
 OSStatus MIDISend(MIDIPortRef port, MIDIEndpointRef dest, const MIDIPacketList *pktlist)
 {
-    if (!hasObject(port, kPort))
+    pthread_mutex_lock(&sLock);
+    Boolean valid = lookup(port, kOutputPort) != NULL;
+    pthread_mutex_unlock(&sLock);
+    if (!valid)
         return kMIDIInvalidPort;
-    (void)dest;
-    return pktlist ? kMIDIObjectNotFound : paramErr;
+    if (pktlist == NULL)
+        return kMIDIMessageSendErr;
+    return dest ? kMIDIUnknownEndpoint : kMIDIObjectNotFound;
 }
 
+// virtual endpoints are not created here, so there is none to receive on or dispose
 OSStatus MIDIReceived(MIDIEndpointRef src, const MIDIPacketList *pktlist)
 {
     (void)src;
-    return pktlist ? kMIDIObjectNotFound : paramErr;
+    return pktlist ? kMIDIObjectNotFound : kMIDIMessageSendErr;
 }
 
 OSStatus MIDIEndpointDispose(MIDIEndpointRef endpt)
@@ -186,27 +245,21 @@ OSStatus MIDIEndpointDispose(MIDIEndpointRef endpt)
     return kMIDIObjectNotFound;
 }
 
-OSStatus MIDIObjectGetStringProperty(MIDIObjectRef obj, CFStringRef propertyID, CFStringRef *str)
+OSStatus MIDISendSysex(void *request)
 {
-    (void)obj;
-    if (str)
-        *str = NULL;
-    return propertyID && str ? kMIDIObjectNotFound : paramErr;
+    return request ? kMIDIUnknownEndpoint : kMIDIMessageSendErr;
 }
 
-OSStatus MIDIObjectGetIntegerProperty(MIDIObjectRef obj, CFStringRef propertyID, SInt32 *outValue)
+OSStatus MIDIFlushOutput(MIDIEndpointRef dest)
 {
-    (void)obj;
-    return propertyID && outValue ? kMIDIObjectNotFound : paramErr;
+    (void)dest;
+    return noErr;
 }
 
-// packet lists are plain memory layout, packets follow each other at 4-byte alignment on arm64
-// and packed on x86_64
-#if defined(__arm64__) || defined(__aarch64__)
-#define NEXT(p) ((MIDIPacket *)(((uintptr_t)&(p)->data[(p)->length] + 3) & ~(uintptr_t)3))
-#else
-#define NEXT(p) ((MIDIPacket *)&(p)->data[(p)->length])
-#endif
+OSStatus MIDIRestart(void)
+{
+    return noErr;
+}
 
 MIDIPacket *MIDIPacketListInit(MIDIPacketList *pktlist)
 {
@@ -214,27 +267,31 @@ MIDIPacket *MIDIPacketListInit(MIDIPacketList *pktlist)
     return &pktlist->packet[0];
 }
 
-MIDIPacket *MIDIPacketListAdd(MIDIPacketList *pktlist, ByteCount listSize, MIDIPacket *curPacket, MIDITimeStamp time,
-                              ByteCount nData, const Byte *data)
+// appends to the last packet when it shares the time stamp, as Apple's does, NULL once the list is full
+MIDIPacket *MIDIPacketListAdd(MIDIPacketList *pktlist, ByteCount listSize, MIDIPacket *cur, MIDITimeStamp time, ByteCount nData,
+                              const Byte *data)
 {
-    const size_t header = offsetof(MIDIPacket, data);
     Byte *end = (Byte *)pktlist + listSize;
-    MIDIPacket *p = curPacket;
+    MIDIPacket *last = NULL;
 
-    // a non-sysex event at the same time joins the current packet when it fits
-    if (pktlist->numPackets > 0 && curPacket->timeStamp == time && data[0] != 0xF0 && curPacket->data[0] != 0xF0 &&
-        curPacket->length + nData <= sizeof(curPacket->data) && &curPacket->data[curPacket->length] + nData <= end) {
-        memcpy(&curPacket->data[curPacket->length], data, nData);
-        curPacket->length += (UInt16)nData;
-        return curPacket;
+    if (pktlist->numPackets > 0) {
+        last = &pktlist->packet[0];
+        for (UInt32 i = 1; i < pktlist->numPackets; i++)
+            last = MIDIPacketNext(last);
     }
-    if (pktlist->numPackets > 0)
-        p = NEXT(curPacket);
-    if ((Byte *)p + header + nData > end || nData > 0xFFFF)
+    if (last && last == cur && last->timeStamp == time && data[0] < 0xF0 && last->data[0] < 0xF0 &&
+        (Byte *)&last->data[last->length + nData] <= end && last->length + nData <= sizeof(last->data)) {
+        memcpy(&last->data[last->length], data, nData);
+        last->length += (UInt16)nData;
+        return last;
+    }
+
+    MIDIPacket *next = last ? MIDIPacketNext(last) : &pktlist->packet[0];
+    if ((Byte *)&next->data[nData] > end || nData > 65535)
         return NULL;
-    p->timeStamp = time;
-    p->length = (UInt16)nData;
-    memcpy(p->data, data, nData);
+    next->timeStamp = time;
+    next->length = (UInt16)nData;
+    memcpy(next->data, data, nData);
     pktlist->numPackets++;
-    return p;
+    return next;
 }

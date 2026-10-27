@@ -1,12 +1,12 @@
 #include "RavynHDAudio.h"
 #include "RavynHDAudioEngine.h"
 
-#include <miscfs/devfs/devfs.h>
-#include <sys/conf.h>
-#include <sys/errno.h>
-#include <sys/uio.h>
 #include <IOKit/IOLib.h>
 #include <IOKit/IODeviceMemory.h>
+#include <IOKit/audio/IOAudioDefines.h>
+#include <IOKit/audio/IOAudioLevelControl.h>
+#include <IOKit/audio/IOAudioToggleControl.h>
+#include <IOKit/audio/IOAudioTypes.h>
 
 #define super IOAudioDevice
 OSDefineMetaClassAndStructors(RavynHDAudio, IOAudioDevice);
@@ -100,20 +100,17 @@ bool RavynHDAudio::init(OSDictionary *properties)
     fPcmVirt = 0;
     fPcmPhys = 0;
     fOutStreamIndex = 0;
-    fWriteOffset = 0;
-    fTotalWritten = 0;
-    fConsumedBase = 0;
-    fLastLpib = 0;
-    fLock = IOSimpleLockAlloc();
-    return fLock != 0;
+    fEngine = 0;
+    fCodecAddr = 0;
+    fDacNid = 0;
+    fDacAmpCaps = 0;
+    fGain = 0;
+    fMuted = false;
+    return true;
 }
 
 void RavynHDAudio::free()
 {
-    if (fLock) {
-        IOSimpleLockFree(fLock);
-        fLock = 0;
-    }
     super::free();
 }
 
@@ -310,6 +307,76 @@ void RavynHDAudio::unmuteOutAmp(uint8_t codecAddr, uint16_t nid, uint16_t afgNid
         offset = steps;
 
     sendVerb(codecAddr, nid, VERB_SET_AMP_GAIN_MUTE_ID4, 0xB000 | offset);
+    if (nid == fDacNid) {
+        fDacAmpCaps = amp;
+        fGain = (SInt32)offset;
+    }
+}
+
+// both channels of the dac's output amp: bit 15 output, 13 and 12 left and right, 7 mute, 6:0 the step
+void RavynHDAudio::setDacAmp()
+{
+    if (!fDacNid || !fDacAmpCaps)
+        return;
+    sendVerb(fCodecAddr, fDacNid, VERB_SET_AMP_GAIN_MUTE_ID4, 0xB000 | (fMuted ? 0x80 : 0) | (fGain & 0x7F));
+}
+
+IOReturn RavynHDAudio::volumeChanged(OSObject *target, IOAudioControl *control, SInt32 oldValue, SInt32 newValue)
+{
+    RavynHDAudio *self = OSDynamicCast(RavynHDAudio, target);
+
+    if (!self)
+        return kIOReturnBadArgument;
+    self->fGain = newValue;
+    self->setDacAmp();
+    return kIOReturnSuccess;
+}
+
+IOReturn RavynHDAudio::muteChanged(OSObject *target, IOAudioControl *control, SInt32 oldValue, SInt32 newValue)
+{
+    RavynHDAudio *self = OSDynamicCast(RavynHDAudio, target);
+
+    if (!self)
+        return kIOReturnBadArgument;
+    self->fMuted = newValue != 0;
+    self->setDacAmp();
+    return kIOReturnSuccess;
+}
+
+// amp caps (HDA spec 7.3.4.10): 6:0 the 0 dB step, 14:8 the last step, 22:16 the step size in 0.25 dB less one, 31 mute
+void RavynHDAudio::addControls(IOAudioEngine *engine)
+{
+    if (!fDacAmpCaps)
+        return;
+
+    SInt32 offset = fDacAmpCaps & 0x7F;
+    SInt32 steps = (fDacAmpCaps >> 8) & 0x7F;
+    SInt32 quarterDB = ((fDacAmpCaps >> 16) & 0x7F) + 1;
+
+    if (steps > 0) {
+        IOFixed minDB = -(offset * quarterDB) << 14;
+        IOFixed maxDB = ((steps - offset) * quarterDB) << 14;
+        IOAudioLevelControl *volume = IOAudioLevelControl::createVolumeControl(fGain, 0, steps, minDB, maxDB,
+            kIOAudioControlChannelIDAll, kIOAudioControlChannelNameAll, 0, kIOAudioControlUsageOutput);
+
+        if (volume) {
+            volume->setValueChangeHandler(volumeChanged, this);
+            engine->addDefaultAudioControl(volume);
+            volume->release();
+        }
+    }
+    if (fDacAmpCaps & (1u << 31)) {
+        IOAudioToggleControl *mute = IOAudioToggleControl::createMuteControl(false, kIOAudioControlChannelIDAll,
+            kIOAudioControlChannelNameAll, 0, kIOAudioControlUsageOutput);
+
+        if (mute) {
+            mute->setValueChangeHandler(muteChanged, this);
+            engine->addDefaultAudioControl(mute);
+            mute->release();
+        }
+    }
+    IOLog("RavynHDAudio: dac amp %d steps, 0 dB at %d, %d.%02d dB a step%s\n", (int)steps, (int)offset,
+          (int)(quarterDB / 4), (int)(quarterDB % 4) * 25, (fDacAmpCaps & (1u << 31)) ? ", mute" : "");
 }
 
 bool RavynHDAudio::programWidgets(uint8_t codecAddr, uint16_t afgNid)
@@ -357,6 +424,8 @@ bool RavynHDAudio::programWidgets(uint8_t codecAddr, uint16_t afgNid)
     sendVerb(codecAddr, pinNid, VERB_SET_PIN_WIDGET_CTL, 0x40);
     sendVerb(codecAddr, pinNid, VERB_SET_EAPD_BTL, 0x02);
 
+    fCodecAddr = codecAddr;
+    fDacNid = dacNid;
     unmuteOutAmp(codecAddr, dacNid, afgNid);
     unmuteOutAmp(codecAddr, pinNid, afgNid);
 
@@ -416,7 +485,7 @@ bool RavynHDAudio::setupOutputStream()
 
     // PCM ring buffer, split into kHDABDLEntries equal chunks so the
     // controller raises a buffer-completion interrupt (which we don't
-    // currently service - LPIB is polled instead by writePCM) each time
+    // currently service - the engine polls LPIB instead) each time
     // it finishes one chunk.
     fPcmBuf = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
         kernel_task, kIODirectionOut | kIOMemoryPhysicallyContiguous,
@@ -455,8 +524,7 @@ bool RavynHDAudio::setupOutputStream()
     *(volatile uint16_t *)(fRegs + sdBase + SD_FORMAT) = HDA_FORMAT_48K_16BIT_STEREO;
 
     // Set stream number (tag) = 1 in CTL bits[23:20], leave RUN clear -
-    // playback starts once the codec side is programmed and userland
-    // begins writing.
+    // playback starts when IOAudioFamily starts the engine.
     ctl = *(volatile uint32_t *)(fRegs + sdBase + SD_CTL_STS);
     ctl &= ~(0xFu << SD_CTL_STRM_SHIFT);
     ctl |= (1u << SD_CTL_STRM_SHIFT);
@@ -515,10 +583,6 @@ static bool readMemoryBAR(IOPCIDevice *pci, UInt8 reg, uint64_t *outBase, uint64
     return true;
 }
 
-// Defined further down alongside the rest of the /dev/dsp0 cdevsw glue.
-static void dsp0_publish();
-static void dsp0_setDriver(RavynHDAudio *drv);
-
 bool RavynHDAudio::initHardware(IOService *provider)
 {
     if (!super::initHardware(provider))
@@ -529,6 +593,10 @@ bool RavynHDAudio::initHardware(IOService *provider)
         return false;
 
     fPCIDevice->retain();
+    setDeviceName("HD Audio Output");
+    setDeviceShortName("HDA");
+    setManufacturerName("Intel");
+
     if (!fPCIDevice->open(this)) {
         IOLog("RavynHDAudio: failed to open PCI device\n");
         return false;
@@ -587,66 +655,34 @@ bool RavynHDAudio::initHardware(IOService *provider)
     if (!setupOutputStream())
         return false;
 
-    dsp0_setDriver(this);
-    dsp0_publish();
-
-    /* Hand the hardware to IOAudioFamily. The engine borrows the register
-     * mapping and the DMA ring; this object stays their owner. */
+    // the engine borrows the register mapping and the DMA ring, this object stays their owner
     fEngine = new RavynHDAudioEngine;
-    if (fEngine != NULL) {
-        if (fEngine->initWithHDA(this, fRegs, fOutStreamIndex,
-                                 fPcmVirt, kHDARingBufBytes) &&
-            activateAudioEngine(fEngine) == kIOReturnSuccess) {
-            IOLog("RavynHDAudio: IOAudioFamily engine active\n");
-        } else {
-            IOLog("RavynHDAudio: audio engine init failed; /dev/dsp0 only\n");
-            fEngine->release();
-            fEngine = NULL;
-        }
+    if (!fEngine)
+        return false;
+    if (!fEngine->initWithHDA(this, fRegs, fOutStreamIndex, fPcmVirt, kHDARingBufBytes)) {
+        IOLog("RavynHDAudio: audio engine init failed\n");
+        fEngine->release();
+        fEngine = 0;
+        return false;
     }
+    // the engine's unique id carries this location, so two controllers stay two devices
+    if (fPCIDevice->getLocation())
+        fEngine->setLocation(fPCIDevice->getLocation());
+    if (activateAudioEngine(fEngine) != kIOReturnSuccess) {
+        IOLog("RavynHDAudio: audio engine init failed\n");
+        fEngine->release();
+        fEngine = 0;
+        return false;
+    }
+    IOLog("RavynHDAudio: IOAudioFamily engine active\n");
 
     registerService();
     IOLog("RavynHDAudio: ready\n");
     return true;
 }
 
-/*
- * The DMA engine has one output stream, so the legacy /dev/dsp0 path and the
- * IOAudioEngine cannot both run it. First claim wins; the loser gets told.
- */
-bool RavynHDAudio::claimStream(bool forEngine)
-{
-    uint32_t want = forEngine ? 2u : 1u;
-    bool got = false;
-
-    IOSimpleLockLock(fLock);
-    if (fStreamOwner == 0 || fStreamOwner == want) {
-        fStreamOwner = want;
-        got = true;
-    }
-    IOSimpleLockUnlock(fLock);
-
-    if (!got) {
-        IOLog("RavynHDAudio: stream busy (held by %s)\n",
-              fStreamOwner == 1 ? "/dev/dsp0" : "audio engine");
-    }
-    return got;
-}
-
-void RavynHDAudio::releaseStream(bool forEngine)
-{
-    uint32_t want = forEngine ? 2u : 1u;
-
-    IOSimpleLockLock(fLock);
-    if (fStreamOwner == want) {
-        fStreamOwner = 0;
-    }
-    IOSimpleLockUnlock(fLock);
-}
-
 void RavynHDAudio::stop(IOService *provider)
 {
-    dsp0_setDriver(0);
     if (fEngine) { fEngine->release(); fEngine = 0; }
     if (fRegs) {
         uint32_t sdBase = HDA_SD_BASE + fOutStreamIndex * HDA_SD_SIZE;
@@ -667,280 +703,4 @@ void RavynHDAudio::stop(IOService *provider)
         fPCIDevice = 0;
     }
     super::stop(provider);
-}
-
-// wait for the hardware to play what is queued, bounded by one ring of audio
-void RavynHDAudio::drainStream()
-{
-    if (!fRegs)
-        return;
-
-    uint32_t sdBase = HDA_SD_BASE + fOutStreamIndex * HDA_SD_SIZE;
-    // ring length at 48 kHz s16 stereo plus slack, in 5 ms polls
-    int polls = (int)(kHDARingBufBytes / (48000 * 4 / 1000) / 5) + 100;
-
-    while (polls-- > 0) {
-        IOSimpleLockLock(fLock);
-        uint32_t ctl = *(volatile uint32_t *)(fRegs + sdBase + SD_CTL_STS);
-        bool done = !(ctl & SD_CTL_RUN);
-        if (!done) {
-            uint32_t lpib = *(volatile uint32_t *)(fRegs + sdBase + SD_LPIB) % kHDARingBufBytes;
-            if (lpib < fLastLpib)
-                fConsumedBase += kHDARingBufBytes;
-            fLastLpib = lpib;
-            done = fConsumedBase + lpib >= fTotalWritten;
-        }
-        IOSimpleLockUnlock(fLock);
-        if (done)
-            return;
-        IOSleep(5);
-    }
-}
-
-void RavynHDAudio::stopStream()
-{
-    if (!fRegs)
-        return;
-    IOSimpleLockLock(fLock);
-    uint32_t sdBase = HDA_SD_BASE + fOutStreamIndex * HDA_SD_SIZE;
-    uint32_t ctl = *(volatile uint32_t *)(fRegs + sdBase + SD_CTL_STS);
-    *(volatile uint32_t *)(fRegs + sdBase + SD_CTL_STS) = ctl & ~SD_CTL_RUN;
-    fWriteOffset = 0;
-    fTotalWritten = 0;
-    fConsumedBase = 0;
-    fLastLpib = 0;
-    IOSimpleLockUnlock(fLock);
-}
-
-// Copy PCM bytes into the ring buffer at the current producer offset,
-// blocking (polling SD_LPIB - hardware's current read position in the
-// ring) whenever the write pointer would lap the hardware's read
-// position, so producer and consumer stay honestly synchronized instead
-// of relying on the caller guessing the right sleep pace. (on the first
-// write) starts the stream running.
-size_t RavynHDAudio::writePCM(const uint8_t *data, size_t len)
-{
-    if (!fPcmVirt || !fRegs)
-        return 0;
-
-    uint32_t sdBase = HDA_SD_BASE + fOutStreamIndex * HDA_SD_SIZE;
-
-    IOSimpleLockLock(fLock);
-
-    size_t written = 0;
-    while (written < len) {
-        // Free space comes from absolute producer/consumer positions, NOT
-        // from the raw ring-offset distance: with offsets alone, the
-        // moment DMA overtakes the write pointer (one late burst from a
-        // bursty producer is enough) the distance calculation inverts -
-        // the ring looks almost empty, the producer starts writing BEHIND
-        // the hardware read pointer, and the device spends the rest of
-        // the ring replaying stale data while fresh audio lands where it
-        // won't play until the next wrap. Once out of phase it never
-        // recovers, which garbled all tonal audio into ~40ms smear.
-        // Tracking bytes-written vs bytes-consumed (LPIB + wrap count)
-        // makes underrun detectable, and the recovery below resyncs.
-        uint32_t ctl = *(volatile uint32_t *)(fRegs + sdBase + SD_CTL_STS);
-        size_t freeSpace;
-        if (!(ctl & SD_CTL_RUN)) {
-            freeSpace = kHDARingBufBytes - 1;
-        } else {
-            uint32_t lpib = *(volatile uint32_t *)(fRegs + sdBase + SD_LPIB) % kHDARingBufBytes;
-            if (lpib < fLastLpib)
-                fConsumedBase += kHDARingBufBytes;
-            fLastLpib = lpib;
-            uint64_t consumed = fConsumedBase + lpib;
-
-            if (consumed >= fTotalWritten) {
-                // Underrun: DMA ran past everything we wrote and is now
-                // playing stale ring contents. Silence the ring so the
-                // stale data can't be heard again, and restart the
-                // producer a small lead ahead of the hardware so the next
-                // writes play promptly but can't be immediately lapped.
-                const uint32_t lead = 8192; // ~42ms at 48k/16/stereo
-                bzero(fPcmVirt, kHDARingBufBytes);
-                fWriteOffset = (lpib + lead) % kHDARingBufBytes;
-                fTotalWritten = consumed + lead;
-            }
-
-            uint64_t queued = fTotalWritten - consumed;
-            freeSpace = (queued >= kHDARingBufBytes - 1)
-                            ? 0
-                            : (kHDARingBufBytes - 1 - (size_t)queued);
-        }
-        if (freeSpace == 0) {
-            IOSimpleLockUnlock(fLock);
-            IOSleep(5);
-            IOSimpleLockLock(fLock);
-            continue;
-        }
-
-        size_t chunk = kHDARingBufBytes - fWriteOffset;
-        if (chunk > (len - written)) chunk = len - written;
-        if (chunk > freeSpace) chunk = freeSpace;
-        bcopy(data + written, fPcmVirt + fWriteOffset, chunk);
-        fWriteOffset = (fWriteOffset + chunk) % kHDARingBufBytes;
-        fTotalWritten += chunk;
-        written += chunk;
-    }
-
-    uint32_t ctl = *(volatile uint32_t *)(fRegs + sdBase + SD_CTL_STS);
-    if (!(ctl & SD_CTL_RUN)) {
-        fConsumedBase = 0;
-        fLastLpib = 0;
-        fTotalWritten = fWriteOffset; // bytes staged before the stream ran
-        *(volatile uint32_t *)(fRegs + sdBase + SD_CTL_STS) = ctl | SD_CTL_RUN;
-    }
-
-    IOSimpleLockUnlock(fLock);
-    return written;
-}
-
-// ---------------------------------------------------------------------
-// /dev/dsp0 character device, same publish/retry pattern IOGOPFramebuffer
-// uses for /dev/fb0: devfs isn't up yet when kexts start this early in
-// boot, so the first dsp0_publish() call routinely no-ops and needs to be
-// retried once IOResources publishes "IOBSD" (devfs_is_ready() flips
-// true), with a timed fallback in case that notification races us.
-// ---------------------------------------------------------------------
-#include <kern/thread_call.h>
-
-extern "C" int devfs_is_ready(void);
-
-static RavynHDAudio *gDsp0Driver;
-static void *gDsp0Node;
-static int gDsp0Major = -1;
-static thread_call_t gDsp0RetryCall;
-
-static void dsp0_setDriver(RavynHDAudio *drv) { gDsp0Driver = drv; }
-static IONotifier *gDsp0BSDNotifier;
-static unsigned gDsp0RetryCount;
-
-static void dsp0_publish();
-
-static void
-dsp0_schedule_retry()
-{
-    AbsoluteTime deadline;
-
-    if (gDsp0Node || gDsp0RetryCount >= 30)
-        return;
-
-    if (!gDsp0RetryCall) {
-        gDsp0RetryCall = thread_call_allocate(
-            (thread_call_func_t)[](thread_call_param_t, thread_call_param_t) { dsp0_publish(); },
-            NULL);
-        if (!gDsp0RetryCall)
-            return;
-    }
-
-    gDsp0RetryCount++;
-    clock_interval_to_deadline(1, kSecondScale, &deadline);
-    thread_call_enter_delayed(gDsp0RetryCall, deadline);
-}
-
-static bool
-dsp0_iobsd_published(void *, void *, IOService *, IONotifier *notifier)
-{
-    dsp0_publish();
-    if (gDsp0Node && notifier) {
-        notifier->remove();
-        if (gDsp0BSDNotifier == notifier)
-            gDsp0BSDNotifier = 0;
-    }
-    return true;
-}
-
-static int dsp0_open(dev_t, int, int, struct proc *)
-{
-    if (!gDsp0Driver)
-        return ENXIO;
-    /* Refuse if IOAudioFamily is driving the stream. */
-    if (!gDsp0Driver->claimStream(false))
-        return EBUSY;
-    return 0;
-}
-
-static int dsp0_close(dev_t, int, int, struct proc *)
-{
-    if (gDsp0Driver) {
-        gDsp0Driver->drainStream();
-        gDsp0Driver->stopStream();
-        gDsp0Driver->releaseStream(false);
-    }
-    return 0;
-}
-
-static int dsp0_write(dev_t, struct uio *uio, int)
-{
-    if (!gDsp0Driver)
-        return ENXIO;
-
-    uint8_t buf[4096];
-    int total = 0;
-    while (uio_resid(uio) > 0) {
-        user_ssize_t resid = uio_resid(uio);
-        size_t want = sizeof(buf);
-        if ((user_ssize_t)want > resid) want = (size_t)resid;
-        int err = uiomove((char *)buf, (int)want, uio);
-        if (err) return err;
-        size_t wrote = gDsp0Driver->writePCM(buf, want);
-        total += (int)wrote;
-        if (wrote < want) break;
-    }
-    return 0;
-}
-
-static struct cdevsw dsp0_cdevsw =
-{
-    /* d_open     */ dsp0_open,
-    /* d_close    */ dsp0_close,
-    /* d_read     */ eno_rdwrt,
-    /* d_write    */ dsp0_write,
-    /* d_ioctl    */ eno_ioctl,
-    /* d_stop     */ eno_stop,
-    /* d_reset    */ eno_reset,
-    /* d_ttys     */ 0,
-    /* d_select   */ eno_select,
-    /* d_mmap     */ eno_mmap,
-    /* d_strategy */ eno_strat,
-    /* d_getc     */ eno_getc,
-    /* d_putc     */ eno_putc,
-    /* d_type     */ 0
-};
-
-static void dsp0_publish()
-{
-    if (gDsp0Node)
-        return;
-
-    if (!devfs_is_ready()) {
-        if (!gDsp0BSDNotifier) {
-            OSDictionary *matching = IOService::resourceMatching("IOBSD");
-            if (matching) {
-                gDsp0BSDNotifier = IOService::addMatchingNotification(
-                    gIOPublishNotification, matching, dsp0_iobsd_published, NULL, NULL);
-                matching->release();
-            }
-        }
-        dsp0_schedule_retry();
-        return;
-    }
-
-    if (gDsp0Major < 0) {
-        gDsp0Major = cdevsw_add(-1, &dsp0_cdevsw);
-        if (gDsp0Major < 0) {
-            IOLog("RavynHDAudio: cdevsw_add for /dev/dsp0 failed\n");
-            return;
-        }
-    }
-    gDsp0Node = devfs_make_node(makedev(gDsp0Major, 0), DEVFS_CHAR,
-                                 0, 0, 0666, "dsp0");
-    if (gDsp0Node) {
-        gDsp0RetryCount = 0;
-        IOLog("RavynHDAudio: published /dev/dsp0\n");
-    } else {
-        IOLog("RavynHDAudio: devfs_make_node for /dev/dsp0 failed, retry %u\n", gDsp0RetryCount);
-        dsp0_schedule_retry();
-    }
 }

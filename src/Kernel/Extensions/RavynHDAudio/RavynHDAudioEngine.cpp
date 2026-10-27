@@ -26,6 +26,8 @@
 #define kHDABitsPerSample   16
 #define kHDANumChannels     2
 #define kHDABytesPerFrame   ((kHDABitsPerSample / 8) * kHDANumChannels)
+// a ring of 65536 frames lasts 1.36 s, a 10 ms poll sees every wrap
+#define kWrapPollMs         10
 
 #define super IOAudioEngine
 OSDefineMetaClassAndStructors(RavynHDAudioEngine, IOAudioEngine);
@@ -112,6 +114,13 @@ RavynHDAudioEngine::initHardware(IOService *provider)
 
     setSampleRate(&rate);
     setNumSampleFramesPerBuffer(numSampleFrames);
+    fDevice->addControls(this);
+
+    fWrapTimer = IOTimerEventSource::timerEventSource(this, wrapTimerFired);
+    if (fWrapTimer == NULL || getWorkLoop()->addEventSource(fWrapTimer) != kIOReturnSuccess) {
+        IOLog("RavynHDAudioEngine: no timer to follow the DMA ring\n");
+        return false;
+    }
 
     IOLog("RavynHDAudioEngine: %u sample frames, %u Hz, %u ch, %u-bit\n",
           (unsigned)numSampleFrames, (unsigned)kHDASampleRate,
@@ -123,6 +132,13 @@ RavynHDAudioEngine::initHardware(IOService *provider)
 void
 RavynHDAudioEngine::free()
 {
+    if (fWrapTimer != NULL) {
+        fWrapTimer->cancelTimeout();
+        if (getWorkLoop() != NULL)
+            getWorkLoop()->removeEventSource(fWrapTimer);
+        fWrapTimer->release();
+        fWrapTimer = NULL;
+    }
     if (fOutputStream != NULL) {
         fOutputStream->release();
         fOutputStream = NULL;
@@ -138,11 +154,6 @@ RavynHDAudioEngine::performAudioEngineStart()
         return kIOReturnNotReady;
     }
 
-    /* The legacy /dev/dsp0 path may already own the DMA engine. */
-    if (fDevice != NULL && !fDevice->claimStream(true)) {
-        return kIOReturnBusy;
-    }
-
     /* takeTimeStamp() with no argument stamps "now" as the point the engine's
      * sample counter starts from; the family uses it to derive playback
      * position for clients. It has to happen as close to starting the DMA as
@@ -152,22 +163,46 @@ RavynHDAudioEngine::performAudioEngineStart()
     volatile uint32_t *ctl = (volatile uint32_t *)(fRegs + sdBase() + SD_CTL_STS);
     *ctl |= SD_CTL_RUN;
 
+    fLastFrame = 0;
+    if (fWrapTimer != NULL)
+        fWrapTimer->setTimeoutMS(kWrapPollMs);
     return kIOReturnSuccess;
+}
+
+// the family counts loops and derives every client's timing from the time of each wrap, so each one is stamped
+void
+RavynHDAudioEngine::wrapTimerFired(OSObject *owner, IOTimerEventSource *timer)
+{
+    RavynHDAudioEngine *self = OSDynamicCast(RavynHDAudioEngine, owner);
+
+    if (self == NULL || self->getState() != kIOAudioEngineRunning)
+        return;
+
+    UInt32 frame = self->getCurrentSampleFrame();
+    if (frame < self->fLastFrame) {
+        AbsoluteTime now, played;
+
+        // the head is already frame frames past the wrap, so the wrap happened that long ago
+        clock_get_uptime(&now);
+        nanoseconds_to_absolutetime((uint64_t)frame * 1000000000ULL / kHDASampleRate, &played);
+        now -= played;
+        self->takeTimeStamp(true, &now);
+    }
+    self->fLastFrame = frame;
+    timer->setTimeoutMS(kWrapPollMs);
 }
 
 IOReturn
 RavynHDAudioEngine::performAudioEngineStop()
 {
+    if (fWrapTimer != NULL)
+        fWrapTimer->cancelTimeout();
     if (fRegs == NULL) {
         return kIOReturnSuccess;
     }
 
     volatile uint32_t *ctl = (volatile uint32_t *)(fRegs + sdBase() + SD_CTL_STS);
     *ctl &= ~SD_CTL_RUN;
-
-    if (fDevice != NULL) {
-        fDevice->releaseStream(true);
-    }
 
     return kIOReturnSuccess;
 }

@@ -41,6 +41,8 @@ enum {
     kAudioObjectPropertyElementMaster = 0,
     kAudioObjectPropertyElementWildcard = 0xFFFFFFFF,
     kAudioObjectPropertySelectorWildcard = '****',
+    kAudioDevicePropertyScopeInput = kAudioObjectPropertyScopeInput,
+    kAudioDevicePropertyScopeOutput = kAudioObjectPropertyScopeOutput,
 };
 
 enum {
@@ -129,15 +131,29 @@ Float64 AudioGetHostClockFrequency(void);
 UInt64 AudioConvertHostTimeToNanos(UInt64 inHostTime);
 UInt64 AudioConvertNanosToHostTime(UInt64 inNanos);
 
-// the one output device, /dev/dsp0, and its fixed format
+typedef OSStatus (*AudioDeviceIOProc)(AudioObjectID inDevice, const AudioTimeStamp *inNow, const AudioBufferList *inInputData,
+                                      const AudioTimeStamp *inInputTime, AudioBufferList *outOutputData,
+                                      const AudioTimeStamp *inOutputTime, void *inClientData);
+typedef AudioDeviceIOProc AudioDeviceIOProcID;
+
+OSStatus AudioDeviceCreateIOProcID(AudioObjectID inDevice, AudioDeviceIOProc inProc, void *inClientData,
+                                   AudioDeviceIOProcID *outIOProcID);
+OSStatus AudioDeviceDestroyIOProcID(AudioObjectID inDevice, AudioDeviceIOProcID inIOProcID);
+OSStatus AudioDeviceAddIOProc(AudioDeviceID inDevice, AudioDeviceIOProc inProc, void *inClientData);
+OSStatus AudioDeviceRemoveIOProc(AudioDeviceID inDevice, AudioDeviceIOProc inProc);
+OSStatus AudioDeviceStart(AudioObjectID inDevice, AudioDeviceIOProcID inProcID);
+OSStatus AudioDeviceStop(AudioObjectID inDevice, AudioDeviceIOProcID inProcID);
+OSStatus AudioDeviceGetCurrentTime(AudioObjectID inDevice, AudioTimeStamp *outTime);
+
+// the output device coreaudiod plays on, its IOProcs take interleaved float32 at the engine's rate
 enum {
     kPDAudioOutputDevice = 0x40,
     kPDAudioOutputStream = 0x41,
-    kPDAudioDeviceRate = 48000,
-    kPDAudioDeviceChannels = 2,
 };
 Boolean PDAudioOutputDeviceIsPresent(void);
 UInt32 PDAudioOutputBufferFrameSize(void);
+Float64 PDAudioOutputSampleRate(void);
+UInt32 PDAudioOutputChannels(void);
 
 #ifdef __cplusplus
 }

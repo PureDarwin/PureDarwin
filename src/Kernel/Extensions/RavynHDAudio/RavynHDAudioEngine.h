@@ -7,15 +7,16 @@
  * clipOutputSamples() to convert that into the hardware's format inside the DMA
  * buffer, and uses getCurrentSampleFrame() to know where the hardware is reading.
  *
- * That is what replaces the old /dev/dsp0 write path: instead of one process
- * writing 16-bit/48kHz/stereo into the ring by hand, any number of clients get
- * their own buffers, mixed and rate-converted by the family.
+ * This engine is the only user of the output stream. Userland reaches it through
+ * coreaudiod and IOAudioEngineUserClient, each client mixed and rate-converted
+ * by the family.
  */
 
 #ifndef _RAVYNHDAUDIOENGINE_H
 #define _RAVYNHDAUDIOENGINE_H
 
 #include <IOKit/audio/IOAudioEngine.h>
+#include <IOKit/IOTimerEventSource.h>
 
 class IOAudioStream;
 class RavynHDAudio;
@@ -62,8 +63,12 @@ private:
     void               *fPcmBuffer;
     uint32_t            fPcmBytes;
     IOAudioStream      *fOutputStream;
+    // the controller has no interrupt here, so a poll of LPIB catches each wrap of the ring
+    IOTimerEventSource *fWrapTimer;
+    UInt32              fLastFrame;
 
     uint32_t sdBase() const;
+    static void wrapTimerFired(OSObject *owner, IOTimerEventSource *timer);
 };
 
 #endif /* _RAVYNHDAUDIOENGINE_H */

@@ -98,6 +98,8 @@ enum {
 
 enum {
     kAudioFormatLinearPCM = 'lpcm',
+    kAudioFormatULaw = 'ulaw',
+    kAudioFormatALaw = 'alaw',
     kAudioFormatMPEG4AAC = 'aac ',
     kAudioFormatMPEGLayer3 = '.mp3',
     kAudioFormatOpus = 'opus',
@@ -140,6 +142,21 @@ enum {
     kAudioChannelLabel_Left = 1,
     kAudioChannelLabel_Right = 2,
     kAudioChannelLabel_Center = 3,
+    kAudioChannelLabel_LFEScreen = 4,
+    kAudioChannelLabel_LeftSurround = 5,
+    kAudioChannelLabel_RightSurround = 6,
+    kAudioChannelLabel_LeftCenter = 7,
+    kAudioChannelLabel_RightCenter = 8,
+    kAudioChannelLabel_CenterSurround = 9,
+    kAudioChannelLabel_LeftSurroundDirect = 10,
+    kAudioChannelLabel_RightSurroundDirect = 11,
+    kAudioChannelLabel_TopCenterSurround = 12,
+    kAudioChannelLabel_VerticalHeightLeft = 13,
+    kAudioChannelLabel_VerticalHeightCenter = 14,
+    kAudioChannelLabel_VerticalHeightRight = 15,
+    kAudioChannelLabel_TopBackLeft = 16,
+    kAudioChannelLabel_TopBackCenter = 17,
+    kAudioChannelLabel_TopBackRight = 18,
     kAudioChannelLabel_Mono = 42,
 };
 

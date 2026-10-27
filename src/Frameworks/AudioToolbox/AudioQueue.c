@@ -1,242 +1,304 @@
-// AudioQueue output over /dev/dsp0 (48 kHz, s16, stereo). Buffers play in order on a worker thread, then go back
-// to the client's callback. Without a device they are paced in real time, so clients see the same timing
-#include <errno.h>
-#include <fcntl.h>
+// AudioQueue.c - output queues on the HAL's output device: an IOProc converts queued buffers to the device format
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
+// buffers play in order and go back to the client from a callback thread, so a slow callback never stalls the IOProc
+
+#include <AudioToolbox/AudioToolbox.h>
 #include <pthread.h>
-#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-#include <unistd.h>
-
-typedef int32_t OSStatus;
-typedef unsigned char Boolean;
-
-typedef struct AudioStreamBasicDescription {
-    double mSampleRate;
-    uint32_t mFormatID;
-    uint32_t mFormatFlags;
-    uint32_t mBytesPerPacket;
-    uint32_t mFramesPerPacket;
-    uint32_t mBytesPerFrame;
-    uint32_t mChannelsPerFrame;
-    uint32_t mBitsPerChannel;
-    uint32_t mReserved;
-} AudioStreamBasicDescription;
-
-typedef struct AudioStreamPacketDescription {
-    int64_t mStartOffset;
-    uint32_t mVariableFramesInPacket;
-    uint32_t mDataByteSize;
-} AudioStreamPacketDescription;
-
-typedef struct AudioQueueBuffer {
-    uint32_t mAudioDataBytesCapacity;
-    void *mAudioData;
-    uint32_t mAudioDataByteSize;
-    void *mUserData;
-    uint32_t mPacketDescriptionCapacity;
-    AudioStreamPacketDescription *mPacketDescriptions;
-    uint32_t mPacketDescriptionCount;
-} AudioQueueBuffer, *AudioQueueBufferRef;
-
-typedef struct OpaqueAudioQueue *AudioQueueRef;
-typedef void (*AudioQueueOutputCallback)(void *userData, AudioQueueRef queue, AudioQueueBufferRef buffer);
-
-enum {
-    kAudioFormatLinearPCM = 0x6c70636d, // 'lpcm'
-    kAudioFormatFlagIsFloat = 1u << 0,
-    kAudioFormatFlagIsBigEndian = 1u << 1,
-    kAudioFormatFlagIsSignedInteger = 1u << 2,
-    kAudioFormatFlagIsNonInterleaved = 1u << 5,
-};
-
-enum {
-    kAudioQueueErr_InvalidBuffer = -66687,
-    kAudioQueueErr_InvalidQueueType = -66682,
-    kAudioQueueErr_InvalidParameter = -66671,
-    kAudioFormatUnsupportedDataFormatError = 0x666d743f, // 'fmt?'
-};
-
-#define DEVICE_RATE 48000
 
 struct entry {
     AudioQueueBufferRef buffer;
     struct entry *next;
 };
 
+struct listener {
+    AudioQueuePropertyID id;
+    AudioQueuePropertyListenerProc proc;
+    void *data;
+    struct listener *next;
+};
+
 struct OpaqueAudioQueue {
-    AudioStreamBasicDescription format;
+    AudioStreamBasicDescription format, device;
     AudioQueueOutputCallback callback;
     void *userData;
     pthread_mutex_t lock;
-    pthread_cond_t cond;
-    struct entry *head, *tail;
-    pthread_t thread;
-    int running;
-    int fd;
-    double phase; // source frames consumed, for resampling to the device rate
-    AudioQueueBufferRef *buffers; // owned, freed with the queue
-    size_t bufferCount;
+    pthread_cond_t changed;
+    // queued buffers play from head, played ones wait in done for the callback thread
+    struct entry *head, *tail, *done, *doneTail;
+    UInt32 headOffset;
+    AudioConverterRef converter;
+    AudioDeviceIOProcID ioProc;
+    pthread_t callbackThread;
+    Boolean running, stopping, disposing;
+    Float32 volume;
+    Float64 sampleTime;
+    struct listener *listeners;
+    AudioQueueBufferRef *buffers;
+    UInt32 bufferCount;
 };
 
-static int formatSupported(const AudioStreamBasicDescription *f) {
-    if (f->mFormatID != kAudioFormatLinearPCM || f->mSampleRate <= 0)
-        return 0;
-    if (f->mChannelsPerFrame < 1 || f->mChannelsPerFrame > 2)
-        return 0;
-    if (f->mFormatFlags & (kAudioFormatFlagIsBigEndian | kAudioFormatFlagIsNonInterleaved))
-        return 0;
-    if (f->mFormatFlags & kAudioFormatFlagIsFloat)
-        return f->mBitsPerChannel == 32;
-    return f->mBitsPerChannel == 16;
+static Boolean formatSupported(const AudioStreamBasicDescription *f)
+{
+    if (f->mFormatID != kAudioFormatLinearPCM || f->mSampleRate <= 0 || f->mChannelsPerFrame < 1 || f->mBytesPerFrame == 0)
+        return false;
+    return (f->mFormatFlags & kAudioFormatFlagIsNonInterleaved) == 0;
 }
 
-static float sampleAt(const AudioQueueRef q, const uint8_t *data, uint32_t frame, uint32_t channel) {
-    uint32_t c = channel < q->format.mChannelsPerFrame ? channel : 0;
-
-    if (q->format.mFormatFlags & kAudioFormatFlagIsFloat)
-        return ((const float *)data)[frame * q->format.mChannelsPerFrame + c];
-    return ((const int16_t *)data)[frame * q->format.mChannelsPerFrame + c] / 32768.0f;
-}
-
-static void play(AudioQueueRef q, AudioQueueBufferRef b) {
-    uint32_t frames = q->format.mBytesPerFrame ? b->mAudioDataByteSize / q->format.mBytesPerFrame : 0;
-
-    if (frames == 0)
-        return;
-    if (q->fd < 0) {
-        double seconds = frames / q->format.mSampleRate;
-        struct timespec ts = { (time_t)seconds, (long)((seconds - (time_t)seconds) * 1e9) };
-        nanosleep(&ts, NULL);
-        return;
-    }
-
-    double step = q->format.mSampleRate / DEVICE_RATE;
-    size_t outFrames = (size_t)((frames - q->phase) / step) + 1;
-    int16_t *out = malloc(outFrames * 2 * sizeof(int16_t));
-    size_t n = 0;
-
-    if (out == NULL)
-        return;
-    for (; q->phase < frames; q->phase += step, n++) {
-        for (uint32_t c = 0; c < 2; c++) {
-            float s = sampleAt(q, b->mAudioData, (uint32_t)q->phase, c);
-            s = s > 1.0f ? 1.0f : s < -1.0f ? -1.0f : s;
-            out[n * 2 + c] = (int16_t)(s * 32767.0f);
-        }
-    }
-    q->phase -= frames;
-
-    // a blocking write paces playback at the device rate
-    size_t bytes = n * 2 * sizeof(int16_t), done = 0;
-    while (done < bytes) {
-        ssize_t w = write(q->fd, (uint8_t *)out + done, bytes - done);
-        if (w < 0 && errno == EINTR)
-            continue;
-        if (w <= 0)
-            break;
-        done += (size_t)w;
-    }
-    free(out);
-}
-
-static void *worker(void *arg) {
-    AudioQueueRef q = arg;
+static void notifyRunning(AudioQueueRef q)
+{
+    struct listener copies[8];
+    int n = 0;
 
     pthread_mutex_lock(&q->lock);
-    while (q->running) {
-        if (q->head == NULL) {
-            pthread_cond_wait(&q->cond, &q->lock);
+    for (struct listener *l = q->listeners; l && n < 8; l = l->next) {
+        if (l->id == kAudioQueueProperty_IsRunning)
+            copies[n++] = *l;
+    }
+    pthread_mutex_unlock(&q->lock);
+    for (int i = 0; i < n; i++)
+        copies[i].proc(copies[i].data, q, kAudioQueueProperty_IsRunning);
+}
+
+// moves the head buffer to the done list, with the lock held
+static void retireHead(AudioQueueRef q)
+{
+    struct entry *e = q->head;
+
+    q->head = e->next;
+    if (!q->head)
+        q->tail = NULL;
+    q->headOffset = 0;
+    e->next = NULL;
+    if (q->doneTail)
+        q->doneTail->next = e;
+    else
+        q->done = e;
+    q->doneTail = e;
+    pthread_cond_broadcast(&q->changed);
+}
+
+// the converter's input: what is left of the head buffer, none when the queue has run dry
+static OSStatus queueInput(AudioConverterRef converter, UInt32 *packets, AudioBufferList *ioData,
+                           AudioStreamPacketDescription **descriptions, void *userData)
+{
+    AudioQueueRef q = userData;
+    UInt32 bpf = q->format.mBytesPerFrame;
+
+    (void)converter;
+    (void)descriptions;
+    pthread_mutex_lock(&q->lock);
+    while (q->head && q->headOffset >= q->head->buffer->mAudioDataByteSize)
+        retireHead(q);
+    if (!q->head) {
+        pthread_mutex_unlock(&q->lock);
+        *packets = 0;
+        return kAudioQueueErr_BufferEmpty;
+    }
+    AudioQueueBufferRef b = q->head->buffer;
+    UInt32 frames = (b->mAudioDataByteSize - q->headOffset) / bpf;
+    if (frames > *packets)
+        frames = *packets;
+    ioData->mNumberBuffers = 1;
+    ioData->mBuffers[0] = (AudioBuffer){ q->format.mChannelsPerFrame, frames * bpf, (uint8_t *)b->mAudioData + q->headOffset };
+    q->headOffset += frames * bpf;
+    if (frames == 0)
+        retireHead(q);
+    pthread_mutex_unlock(&q->lock);
+    *packets = frames;
+    return noErr;
+}
+
+static OSStatus ioProc(AudioObjectID device, const AudioTimeStamp *now, const AudioBufferList *input, const AudioTimeStamp *inputTime,
+                       AudioBufferList *output, const AudioTimeStamp *outputTime, void *data)
+{
+    AudioQueueRef q = data;
+    AudioBuffer *out = &output->mBuffers[0];
+    UInt32 frames = out->mDataByteSize / q->device.mBytesPerFrame;
+    UInt32 n = frames;
+
+    (void)device;
+    (void)now;
+    (void)input;
+    (void)inputTime;
+    (void)outputTime;
+    OSStatus err = AudioConverterFillComplexBuffer(q->converter, queueInput, q, &n, output, NULL);
+    if (err != noErr && err != kAudioQueueErr_BufferEmpty)
+        n = 0;
+    out->mDataByteSize = frames * q->device.mBytesPerFrame;
+
+    float *samples = out->mData;
+    UInt32 ch = q->device.mChannelsPerFrame;
+    if (q->volume != 1.0f) {
+        for (UInt32 i = 0; i < n * ch; i++)
+            samples[i] *= q->volume;
+    }
+    memset(samples + n * ch, 0, (size_t)(frames - n) * ch * sizeof(float));
+    q->sampleTime += n;
+
+    // a stop that is not immediate ends once everything queued has played
+    pthread_mutex_lock(&q->lock);
+    if (q->stopping && !q->head) {
+        q->stopping = false;
+        q->running = false;
+        pthread_cond_broadcast(&q->changed);
+    }
+    pthread_mutex_unlock(&q->lock);
+    return noErr;
+}
+
+static void *callbackThread(void *arg)
+{
+    AudioQueueRef q = arg;
+    Boolean wasRunning = false;
+
+    pthread_mutex_lock(&q->lock);
+    for (;;) {
+        while (!q->done && !q->disposing && wasRunning == q->running)
+            pthread_cond_wait(&q->changed, &q->lock);
+        if (q->done) {
+            struct entry *e = q->done;
+
+            q->done = e->next;
+            if (!q->done)
+                q->doneTail = NULL;
+            pthread_mutex_unlock(&q->lock);
+            q->callback(q->userData, q, e->buffer);
+            free(e);
+            pthread_mutex_lock(&q->lock);
             continue;
         }
-        struct entry *e = q->head;
-        q->head = e->next;
-        if (q->head == NULL)
-            q->tail = NULL;
-        pthread_mutex_unlock(&q->lock);
-
-        AudioQueueBufferRef b = e->buffer;
-        free(e);
-        play(q, b);
-        q->callback(q->userData, q, b);
-
-        pthread_mutex_lock(&q->lock);
+        if (q->disposing)
+            break;
+        if (wasRunning != q->running) {
+            wasRunning = q->running;
+            pthread_mutex_unlock(&q->lock);
+            // an ended stop leaves the device to whoever else plays, the IOProc takes the queue lock
+            if (!wasRunning)
+                AudioDeviceStop(kPDAudioOutputDevice, q->ioProc);
+            notifyRunning(q);
+            pthread_mutex_lock(&q->lock);
+        }
     }
     pthread_mutex_unlock(&q->lock);
     return NULL;
 }
 
-// the callback runs on the queue's own thread even when a run loop is given
-OSStatus AudioQueueNewOutput(const AudioStreamBasicDescription *format, AudioQueueOutputCallback callback,
-                             void *userData, void *callbackRunLoop, void *callbackRunLoopMode, uint32_t flags,
-                             AudioQueueRef *outQueue) {
-    (void)callbackRunLoop;
-    (void)callbackRunLoopMode;
+OSStatus AudioQueueNewOutput(const AudioStreamBasicDescription *format, AudioQueueOutputCallback callback, void *userData,
+                             CFRunLoopRef runLoop, CFStringRef runLoopMode, UInt32 flags, AudioQueueRef *outQ)
+{
+    (void)runLoop;
+    (void)runLoopMode;
     (void)flags;
-    if (format == NULL || callback == NULL || outQueue == NULL)
-        return kAudioQueueErr_InvalidParameter;
+    if (format == NULL || callback == NULL || outQ == NULL)
+        return kAudio_ParamError;
     if (!formatSupported(format))
         return kAudioFormatUnsupportedDataFormatError;
+    if (!PDAudioOutputDeviceIsPresent())
+        return kAudioQueueErr_InvalidDevice;
 
     AudioQueueRef q = calloc(1, sizeof(*q));
     if (q == NULL)
-        return kAudioQueueErr_InvalidParameter;
+        return kAudio_MemFullError;
+    UInt32 size = sizeof(q->device);
+    AudioObjectPropertyAddress a = { kAudioDevicePropertyStreamFormat, kAudioObjectPropertyScopeOutput, kAudioObjectPropertyElementMain };
+    AudioObjectGetPropertyData(kPDAudioOutputDevice, &a, 0, NULL, &size, &q->device);
     q->format = *format;
-    if (q->format.mBytesPerFrame == 0)
-        q->format.mBytesPerFrame = q->format.mChannelsPerFrame * q->format.mBitsPerChannel / 8;
     q->callback = callback;
     q->userData = userData;
-    q->fd = -1;
+    q->volume = 1.0f;
     pthread_mutex_init(&q->lock, NULL);
-    pthread_cond_init(&q->cond, NULL);
-    *outQueue = q;
-    return 0;
-}
+    pthread_cond_init(&q->changed, NULL);
 
-OSStatus AudioQueueAllocateBuffer(AudioQueueRef q, uint32_t size, AudioQueueBufferRef *outBuffer) {
-    if (q == NULL || outBuffer == NULL)
-        return kAudioQueueErr_InvalidParameter;
-
-    AudioQueueBufferRef b = calloc(1, sizeof(*b) + size);
-    if (b == NULL)
-        return kAudioQueueErr_InvalidParameter;
-    AudioQueueBufferRef *list = realloc(q->buffers, (q->bufferCount + 1) * sizeof(*list));
-    if (list == NULL) {
-        free(b);
-        return kAudioQueueErr_InvalidParameter;
+    OSStatus err = AudioConverterNew(&q->format, &q->device, &q->converter);
+    if (err == noErr)
+        err = AudioDeviceCreateIOProcID(kPDAudioOutputDevice, ioProc, q, &q->ioProc);
+    if (err == noErr && pthread_create(&q->callbackThread, NULL, callbackThread, q) != 0)
+        err = kAudio_MemFullError;
+    if (err != noErr) {
+        if (q->ioProc)
+            AudioDeviceDestroyIOProcID(kPDAudioOutputDevice, q->ioProc);
+        if (q->converter)
+            AudioConverterDispose(q->converter);
+        free(q);
+        return err;
     }
-    q->buffers = list;
-    q->buffers[q->bufferCount++] = b;
-    b->mAudioDataBytesCapacity = size;
-    b->mAudioData = b + 1;
-    *outBuffer = b;
-    return 0;
+    *outQ = q;
+    return noErr;
 }
 
-OSStatus AudioQueueFreeBuffer(AudioQueueRef q, AudioQueueBufferRef b) {
+OSStatus AudioQueueAllocateBufferWithPacketDescriptions(AudioQueueRef q, UInt32 size, UInt32 descriptions, AudioQueueBufferRef *outBuffer)
+{
+    if (q == NULL || outBuffer == NULL || size == 0)
+        return kAudio_ParamError;
+    // the header, its packet descriptions and the data in one block
+    size_t header = (sizeof(AudioQueueBuffer) + 15) & ~(size_t)15;
+    size_t packets = ((size_t)descriptions * sizeof(AudioStreamPacketDescription) + 15) & ~(size_t)15;
+    uint8_t *block = calloc(1, header + packets + size);
+    AudioQueueBufferRef *list = realloc(q->buffers, (q->bufferCount + 1) * sizeof(*list));
+    if (block == NULL || list == NULL) {
+        free(block);
+        if (list)
+            q->buffers = list;
+        return kAudio_MemFullError;
+    }
+    AudioQueueBuffer init = { size, block + header + packets, 0, NULL, descriptions,
+                              descriptions ? (AudioStreamPacketDescription *)(block + header) : NULL, 0 };
+    memcpy(block, &init, sizeof(init));
+    q->buffers = list;
+    q->buffers[q->bufferCount++] = (AudioQueueBufferRef)block;
+    *outBuffer = (AudioQueueBufferRef)block;
+    return noErr;
+}
+
+OSStatus AudioQueueAllocateBuffer(AudioQueueRef q, UInt32 size, AudioQueueBufferRef *outBuffer)
+{
+    return AudioQueueAllocateBufferWithPacketDescriptions(q, size, 0, outBuffer);
+}
+
+static Boolean isQueued(AudioQueueRef q, AudioQueueBufferRef b)
+{
+    for (struct entry *e = q->head; e; e = e->next) {
+        if (e->buffer == b)
+            return true;
+    }
+    return false;
+}
+
+OSStatus AudioQueueFreeBuffer(AudioQueueRef q, AudioQueueBufferRef b)
+{
     if (q == NULL || b == NULL)
+        return kAudio_ParamError;
+    pthread_mutex_lock(&q->lock);
+    if (isQueued(q, b)) {
+        pthread_mutex_unlock(&q->lock);
         return kAudioQueueErr_InvalidBuffer;
-    for (size_t i = 0; i < q->bufferCount; i++) {
+    }
+    for (UInt32 i = 0; i < q->bufferCount; i++) {
         if (q->buffers[i] == b) {
             q->buffers[i] = q->buffers[--q->bufferCount];
+            pthread_mutex_unlock(&q->lock);
             free(b);
-            return 0;
+            return noErr;
         }
     }
+    pthread_mutex_unlock(&q->lock);
     return kAudioQueueErr_InvalidBuffer;
 }
 
-OSStatus AudioQueueEnqueueBuffer(AudioQueueRef q, AudioQueueBufferRef b, uint32_t numPacketDescs,
-                                 const AudioStreamPacketDescription *packetDescs) {
+OSStatus AudioQueueEnqueueBuffer(AudioQueueRef q, AudioQueueBufferRef b, UInt32 numPacketDescs, const AudioStreamPacketDescription *descs)
+{
     (void)numPacketDescs;
-    (void)packetDescs;
+    (void)descs;
     if (q == NULL || b == NULL)
+        return kAudio_ParamError;
+    if (b->mAudioDataByteSize > b->mAudioDataBytesCapacity)
         return kAudioQueueErr_InvalidBuffer;
-
     struct entry *e = calloc(1, sizeof(*e));
     if (e == NULL)
-        return kAudioQueueErr_InvalidBuffer;
+        return kAudio_MemFullError;
     e->buffer = b;
     pthread_mutex_lock(&q->lock);
     if (q->tail)
@@ -244,66 +306,248 @@ OSStatus AudioQueueEnqueueBuffer(AudioQueueRef q, AudioQueueBufferRef b, uint32_
     else
         q->head = e;
     q->tail = e;
-    pthread_cond_signal(&q->cond);
     pthread_mutex_unlock(&q->lock);
-    return 0;
+    return noErr;
 }
 
-OSStatus AudioQueueStart(AudioQueueRef q, const void *startTime) {
+OSStatus AudioQueueStart(AudioQueueRef q, const AudioTimeStamp *startTime)
+{
     (void)startTime;
     if (q == NULL)
-        return kAudioQueueErr_InvalidParameter;
-
+        return kAudio_ParamError;
     pthread_mutex_lock(&q->lock);
+    q->stopping = false;
     if (q->running) {
         pthread_mutex_unlock(&q->lock);
-        return 0;
+        return noErr;
     }
-    q->running = 1;
+    q->running = true;
+    pthread_cond_broadcast(&q->changed);
     pthread_mutex_unlock(&q->lock);
-    if (q->fd < 0)
-        q->fd = open("/dev/dsp0", O_WRONLY | O_CLOEXEC);
-    if (pthread_create(&q->thread, NULL, worker, q) != 0) {
-        q->running = 0;
-        return kAudioQueueErr_InvalidParameter;
-    }
-    return 0;
+    return AudioDeviceStart(kPDAudioOutputDevice, q->ioProc);
 }
 
-// immediate or not, buffers still queued are dropped without being played out
-OSStatus AudioQueueStop(AudioQueueRef q, Boolean immediate) {
+// conversion happens in the IOProc, so there is nothing to prepare ahead
+OSStatus AudioQueuePrime(AudioQueueRef q, UInt32 frames, UInt32 *outPrepared)
+{
+    if (q == NULL)
+        return kAudio_ParamError;
+    if (outPrepared)
+        *outPrepared = frames;
+    return noErr;
+}
+
+// everything still queued goes back to the client, as on macOS
+static void returnQueued(AudioQueueRef q)
+{
+    pthread_mutex_lock(&q->lock);
+    while (q->head)
+        retireHead(q);
+    pthread_mutex_unlock(&q->lock);
+    AudioConverterReset(q->converter);
+}
+
+OSStatus AudioQueueStop(AudioQueueRef q, Boolean immediate)
+{
+    if (q == NULL)
+        return kAudio_ParamError;
+    if (!immediate) {
+        pthread_mutex_lock(&q->lock);
+        if (q->running)
+            q->stopping = true;
+        pthread_mutex_unlock(&q->lock);
+        return noErr;
+    }
+    AudioDeviceStop(kPDAudioOutputDevice, q->ioProc);
+    pthread_mutex_lock(&q->lock);
+    q->running = false;
+    q->stopping = false;
+    pthread_cond_broadcast(&q->changed);
+    pthread_mutex_unlock(&q->lock);
+    returnQueued(q);
+    return noErr;
+}
+
+OSStatus AudioQueuePause(AudioQueueRef q)
+{
+    if (q == NULL)
+        return kAudio_ParamError;
+    AudioDeviceStop(kPDAudioOutputDevice, q->ioProc);
+    pthread_mutex_lock(&q->lock);
+    q->running = false;
+    pthread_cond_broadcast(&q->changed);
+    pthread_mutex_unlock(&q->lock);
+    return noErr;
+}
+
+// what is queued already plays out, the converter keeps no partial frames
+OSStatus AudioQueueFlush(AudioQueueRef q)
+{
+    return q ? noErr : kAudio_ParamError;
+}
+
+OSStatus AudioQueueReset(AudioQueueRef q)
+{
+    if (q == NULL)
+        return kAudio_ParamError;
+    AudioDeviceStop(kPDAudioOutputDevice, q->ioProc);
+    returnQueued(q);
+    pthread_mutex_lock(&q->lock);
+    Boolean running = q->running;
+    pthread_mutex_unlock(&q->lock);
+    return running ? AudioDeviceStart(kPDAudioOutputDevice, q->ioProc) : noErr;
+}
+
+OSStatus AudioQueueDispose(AudioQueueRef q, Boolean immediate)
+{
     (void)immediate;
     if (q == NULL)
-        return kAudioQueueErr_InvalidParameter;
-
+        return kAudio_ParamError;
+    AudioDeviceStop(kPDAudioOutputDevice, q->ioProc);
+    AudioDeviceDestroyIOProcID(kPDAudioOutputDevice, q->ioProc);
+    returnQueued(q);
     pthread_mutex_lock(&q->lock);
-    int wasRunning = q->running;
-    q->running = 0;
-    pthread_cond_broadcast(&q->cond);
+    q->running = false;
+    q->disposing = true;
+    pthread_cond_broadcast(&q->changed);
     pthread_mutex_unlock(&q->lock);
-    if (wasRunning && !pthread_equal(pthread_self(), q->thread))
-        pthread_join(q->thread, NULL);
-    if (q->fd >= 0) {
-        close(q->fd);
-        q->fd = -1;
-    }
-    return 0;
-}
-
-OSStatus AudioQueueDispose(AudioQueueRef q, Boolean immediate) {
-    if (q == NULL)
-        return kAudioQueueErr_InvalidParameter;
-
-    AudioQueueStop(q, immediate);
-    for (struct entry *e = q->head, *next; e; e = next) {
-        next = e->next;
-        free(e);
-    }
-    for (size_t i = 0; i < q->bufferCount; i++)
+    if (!pthread_equal(pthread_self(), q->callbackThread))
+        pthread_join(q->callbackThread, NULL);
+    else
+        pthread_detach(q->callbackThread);
+    AudioConverterDispose(q->converter);
+    for (UInt32 i = 0; i < q->bufferCount; i++)
         free(q->buffers[i]);
     free(q->buffers);
+    for (struct listener *l = q->listeners, *next; l; l = next) {
+        next = l->next;
+        free(l);
+    }
     pthread_mutex_destroy(&q->lock);
-    pthread_cond_destroy(&q->cond);
+    pthread_cond_destroy(&q->changed);
     free(q);
-    return 0;
+    return noErr;
+}
+
+OSStatus AudioQueueGetParameter(AudioQueueRef q, AudioQueueParameterID id, AudioQueueParameterValue *outValue)
+{
+    if (q == NULL || outValue == NULL)
+        return kAudio_ParamError;
+    if (id != kAudioQueueParam_Volume)
+        return kAudioQueueErr_InvalidParameter;
+    *outValue = q->volume;
+    return noErr;
+}
+
+OSStatus AudioQueueSetParameter(AudioQueueRef q, AudioQueueParameterID id, AudioQueueParameterValue value)
+{
+    if (q == NULL)
+        return kAudio_ParamError;
+    if (id != kAudioQueueParam_Volume)
+        return kAudioQueueErr_InvalidParameter;
+    q->volume = value < 0 ? 0 : value > 1 ? 1 : value;
+    return noErr;
+}
+
+static OSStatus property(AudioQueueRef q, AudioQueuePropertyID id, void *out, UInt32 *size)
+{
+    switch (id) {
+    case kAudioQueueProperty_IsRunning:
+        *size = sizeof(UInt32);
+        if (out)
+            *(UInt32 *)out = q->running;
+        return noErr;
+    case kAudioQueueDeviceProperty_SampleRate:
+        *size = sizeof(Float64);
+        if (out)
+            *(Float64 *)out = q->device.mSampleRate;
+        return noErr;
+    case kAudioQueueDeviceProperty_NumberChannels:
+        *size = sizeof(UInt32);
+        if (out)
+            *(UInt32 *)out = q->device.mChannelsPerFrame;
+        return noErr;
+    case kAudioQueueProperty_StreamDescription:
+        *size = sizeof(AudioStreamBasicDescription);
+        if (out)
+            *(AudioStreamBasicDescription *)out = q->format;
+        return noErr;
+    case kAudioQueueProperty_CurrentDevice:
+        *size = sizeof(CFStringRef);
+        if (out)
+            *(CFStringRef *)out = NULL;
+        return noErr;
+    }
+    return kAudioQueueErr_InvalidProperty;
+}
+
+OSStatus AudioQueueGetPropertySize(AudioQueueRef q, AudioQueuePropertyID id, UInt32 *outSize)
+{
+    if (q == NULL || outSize == NULL)
+        return kAudio_ParamError;
+    return property(q, id, NULL, outSize);
+}
+
+OSStatus AudioQueueGetProperty(AudioQueueRef q, AudioQueuePropertyID id, void *out, UInt32 *ioSize)
+{
+    UInt32 size = 0;
+
+    if (q == NULL || out == NULL || ioSize == NULL)
+        return kAudio_ParamError;
+    OSStatus err = property(q, id, NULL, &size);
+    if (err != noErr)
+        return err;
+    if (*ioSize < size)
+        return kAudioQueueErr_InvalidPropertySize;
+    *ioSize = size;
+    return property(q, id, out, &size);
+}
+
+OSStatus AudioQueueAddPropertyListener(AudioQueueRef q, AudioQueuePropertyID id, AudioQueuePropertyListenerProc proc, void *data)
+{
+    if (q == NULL || proc == NULL)
+        return kAudio_ParamError;
+    struct listener *l = calloc(1, sizeof(*l));
+    if (l == NULL)
+        return kAudio_MemFullError;
+    *l = (struct listener){ id, proc, data, NULL };
+    pthread_mutex_lock(&q->lock);
+    l->next = q->listeners;
+    q->listeners = l;
+    pthread_mutex_unlock(&q->lock);
+    return noErr;
+}
+
+OSStatus AudioQueueRemovePropertyListener(AudioQueueRef q, AudioQueuePropertyID id, AudioQueuePropertyListenerProc proc, void *data)
+{
+    OSStatus result = kAudio_ParamError;
+
+    if (q == NULL)
+        return kAudio_ParamError;
+    pthread_mutex_lock(&q->lock);
+    for (struct listener **p = &q->listeners; *p; p = &(*p)->next) {
+        if ((*p)->id == id && (*p)->proc == proc && (*p)->data == data) {
+            struct listener *l = *p;
+            *p = l->next;
+            free(l);
+            result = noErr;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&q->lock);
+    return result;
+}
+
+OSStatus AudioQueueGetCurrentTime(AudioQueueRef q, void *timeline, AudioTimeStamp *outTime, Boolean *outDiscontinuity)
+{
+    (void)timeline;
+    if (q == NULL || outTime == NULL)
+        return kAudio_ParamError;
+    memset(outTime, 0, sizeof(*outTime));
+    outTime->mSampleTime = q->sampleTime;
+    outTime->mHostTime = AudioGetCurrentHostTime();
+    outTime->mFlags = kAudioTimeStampSampleHostTimeValid;
+    if (outDiscontinuity)
+        *outDiscontinuity = false;
+    return noErr;
 }

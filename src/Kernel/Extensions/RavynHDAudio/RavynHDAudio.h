@@ -9,15 +9,9 @@
  * the codec and the DMA ring, and hands those to RavynHDAudioEngine, which is
  * where IOAudioFamily does per-client mixing, format conversion and timing.
  *
- * The raw /dev/dsp0 write path is still here. It predates the family and is
- * what fbdoom and pcmplay use, and there is no userland audio API on top of
- * IOAudioFamily yet, so removing it would leave the system with no usable audio
- * path at all. The two cannot both drive the DMA engine, so they are mutually
- * exclusive: whichever starts first holds the stream until it stops.
- *
  * The hardware is programmed for 48000 Hz / 16-bit / stereo (the one format
  * every HDA codec's default DAC is guaranteed to support). The family
- * rate-converts and mixes clients into that; /dev/dsp0 writers must match it.
+ * rate-converts and mixes clients into that.
  */
 
 #ifndef _RAVYNHDAUDIO_H
@@ -25,7 +19,6 @@
 
 #include <IOKit/audio/IOAudioDevice.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
-#include <IOKit/IOLocks.h>
 #include <IOKit/pci/IOPCIDevice.h>
 
 class RavynHDAudioEngine;
@@ -46,21 +39,8 @@ public:
     bool initHardware(IOService *provider) override;
     void stop(IOService *provider) override;
 
-    /* Claim/release the DMA stream. Returns false if the other path already
-     * holds it; see the header comment for why both exist. */
-    bool claimStream(bool forEngine);
-    void releaseStream(bool forEngine);
-
-    // Called from the /dev/dsp0 cdevsw write path.
-    size_t writePCM(const uint8_t *data, size_t len);
-
-    // Stops the output stream (clears SD_CTL.RUN) so a closed /dev/dsp0
-    // fd doesn't leave the DMA engine looping over stale ring-buffer
-    // contents forever.
-    void stopStream();
-
-    // Blocks until the queued PCM has played, so close() doesn't cut it off.
-    void drainStream();
+    // the engine asks for these before it is registered, so coreaudiod finds them with it
+    void addControls(IOAudioEngine *engine);
 
 private:
     IOPCIDevice        *fPCIDevice;
@@ -80,14 +60,7 @@ private:
     uint8_t             *fPcmVirt;
     uint64_t             fPcmPhys;
     uint32_t             fOutStreamIndex;  // which SDn register block is our output stream
-    uint32_t             fWriteOffset;     // producer position in fPcmVirt, bytes
-    uint64_t             fTotalWritten;    // producer bytes since stream start
-    uint64_t             fConsumedBase;    // LPIB wrap accumulator (bytes)
-    uint32_t             fLastLpib;        // last LPIB sample, for wrap detection
-    IOSimpleLock         *fLock;
     RavynHDAudioEngine   *fEngine;
-    /* 0 = free, 1 = held by /dev/dsp0, 2 = held by the IOAudioEngine. */
-    volatile uint32_t     fStreamOwner;
 
     bool  resetController();
     bool  setupCorbRirb();
@@ -96,6 +69,16 @@ private:
     bool  enumerateCodec(uint8_t codecAddr);
     bool  programWidgets(uint8_t codecAddr, uint16_t afgNid);
     void  unmuteOutAmp(uint8_t codecAddr, uint16_t nid, uint16_t afgNid);
+    void  setDacAmp();
+    static IOReturn volumeChanged(OSObject *target, IOAudioControl *control, SInt32 oldValue, SInt32 newValue);
+    static IOReturn muteChanged(OSObject *target, IOAudioControl *control, SInt32 oldValue, SInt32 newValue);
+
+    // the dac's output amp carries the device's volume and mute
+    uint8_t             fCodecAddr;
+    uint16_t            fDacNid;
+    uint32_t            fDacAmpCaps;
+    SInt32              fGain;
+    bool                fMuted;
 
     inline uint8_t  reg8(uint32_t off)  { return fRegs[off]; }
     inline uint16_t reg16(uint32_t off) { return *(volatile uint16_t *)(fRegs + off); }

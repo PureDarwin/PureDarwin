@@ -1,19 +1,14 @@
-// AudioUnit.c - the HAL, default and system output units, all on /dev/dsp0
+// AudioUnit.c - the HAL, default and system output units, all on the HAL's output device
 // Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 
-// a render thread converts the client's callback into the device's 48 kHz s16 stereo
-// the blocking write paces it at the device rate, there is no input device
+// an IOProc converts the client's callback into the device's float format, there is no input device
 
 #include <AudioToolbox/AudioToolbox.h>
-#include <errno.h>
-#include <fcntl.h>
 #include <mach/mach_time.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
-#define DEVICE_NODE "/dev/dsp0"
 #define MAX_SLICE 4096
 #define MAX_CHANNELS 16
 
@@ -92,8 +87,8 @@ struct ComponentInstanceRecord {
     volatile Boolean running;
     OSStatus lastError;
     struct propertyListener *listeners;
-    pthread_t thread;
-    int fd;
+    AudioDeviceIOProcID ioProc;
+    AudioStreamBasicDescription device;
     AudioConverterRef converter;
     uint8_t *clientMemory;
     union {
@@ -110,7 +105,12 @@ static AudioStreamBasicDescription floatStereo(Float64 rate)
 
 static AudioStreamBasicDescription deviceFormat(void)
 {
-    return floatStereo(kPDAudioDeviceRate);
+    AudioStreamBasicDescription f = floatStereo(PDAudioOutputSampleRate());
+    AudioObjectPropertyAddress a = { kAudioDevicePropertyStreamFormat, kAudioObjectPropertyScopeOutput, kAudioObjectPropertyElementMain };
+    UInt32 size = sizeof(f);
+
+    AudioObjectGetPropertyData(kPDAudioOutputDevice, &a, 0, NULL, &size, &f);
+    return f;
 }
 
 OSStatus AudioComponentInstanceNew(AudioComponent component, AudioComponentInstance *outInstance)
@@ -122,12 +122,11 @@ OSStatus AudioComponentInstanceNew(AudioComponent component, AudioComponentInsta
         return kAudio_MemFullError;
     u->component = component;
     pthread_mutex_init(&u->lock, NULL);
-    u->client = floatStereo(kPDAudioDeviceRate);
+    u->client = floatStereo(PDAudioOutputSampleRate());
     u->maxFrames = 1156;
     u->bufferFrames = PDAudioOutputBufferFrameSize();
     u->outputEnabled = 1;
     u->volume = 1.0f;
-    u->fd = -1;
     *outInstance = u;
     return noErr;
 }
@@ -178,8 +177,8 @@ OSStatus AudioUnitInitialize(AudioUnit u)
         return noErr;
     if (!PDAudioOutputDeviceIsPresent())
         return kAudioUnitErr_NoConnection;
-    AudioStreamBasicDescription device = deviceFormat();
-    OSStatus err = AudioConverterNew(&u->client, &device, &u->converter);
+    u->device = deviceFormat();
+    OSStatus err = AudioConverterNew(&u->client, &u->device, &u->converter);
     if (err != noErr)
         return kAudioUnitErr_FormatNotSupported;
     if ((err = allocateClientBuffers(u)) != noErr) {
@@ -198,6 +197,9 @@ OSStatus AudioUnitUninitialize(AudioUnit u)
     if (u == NULL)
         return kAudio_ParamError;
     AudioOutputUnitStop(u);
+    if (u->ioProc)
+        AudioDeviceDestroyIOProcID(kPDAudioOutputDevice, u->ioProc);
+    u->ioProc = NULL;
     if (u->converter)
         AudioConverterDispose(u->converter);
     u->converter = NULL;
@@ -322,12 +324,12 @@ OSStatus AudioUnitGetProperty(AudioUnit u, AudioUnitPropertyID id, AudioUnitScop
         break;
     }
     case kAudioUnitProperty_SampleRate: {
-        Float64 rate = scope == kAudioUnitScope_Input ? u->client.mSampleRate : kPDAudioDeviceRate;
+        Float64 rate = scope == kAudioUnitScope_Input ? u->client.mSampleRate : PDAudioOutputSampleRate();
         memcpy(out, &rate, sizeof(rate));
         break;
     }
     case kAudioUnitProperty_Latency: {
-        Float64 latency = (Float64)u->bufferFrames / kPDAudioDeviceRate;
+        Float64 latency = (Float64)u->bufferFrames / PDAudioOutputSampleRate();
         memcpy(out, &latency, sizeof(latency));
         break;
     }
@@ -611,50 +613,36 @@ static OSStatus renderInput(AudioConverterRef converter, UInt32 *packets, AudioB
     return noErr;
 }
 
-static void writeAll(int fd, const void *data, size_t bytes)
+// the device's IOProc: one cycle of client frames, converted into the device buffer
+static OSStatus outputProc(AudioObjectID device, const AudioTimeStamp *now, const AudioBufferList *input, const AudioTimeStamp *inputTime,
+                           AudioBufferList *output, const AudioTimeStamp *outputTime, void *data)
 {
-    size_t done = 0;
-    while (done < bytes) {
-        ssize_t w = write(fd, (const uint8_t *)data + done, bytes - done);
-        if (w < 0 && errno == EINTR)
-            continue;
-        if (w <= 0)
-            break;
-        done += (size_t)w;
-    }
-}
+    AudioUnit u = data;
+    AudioBuffer *out = &output->mBuffers[0];
+    UInt32 bpf = u->device.mBytesPerFrame;
+    UInt32 frames = out->mDataByteSize / bpf;
+    UInt32 n = frames;
 
-static void *renderThread(void *arg)
-{
-    AudioUnit u = arg;
-    UInt32 frames = u->bufferFrames;
-    float *mix = malloc((size_t)frames * 2 * sizeof(float));
-    int16_t *pcm = malloc((size_t)frames * 2 * sizeof(int16_t));
+    (void)device;
+    (void)now;
+    (void)input;
+    (void)inputTime;
+    (void)outputTime;
+    OSStatus err = AudioConverterFillComplexBuffer(u->converter, renderInput, u, &n, output, NULL);
+    // a failing callback gets silence for this cycle, as the HAL does
+    if (err != noErr)
+        n = 0;
+    out->mDataByteSize = frames * bpf;
 
-    while (u->running && mix && pcm) {
-        AudioBufferList out = { 1, { { 2, frames * 2 * sizeof(float), mix } } };
-        UInt32 n = frames;
-        OSStatus err = AudioConverterFillComplexBuffer(u->converter, renderInput, u, &n, &out, NULL);
-        if (err != noErr && n == 0) {
-            // a failing callback gets silence for this cycle, as the HAL does
-            memset(mix, 0, (size_t)frames * 2 * sizeof(float));
-            n = frames;
-        }
-        float volume = u->volume;
-        for (UInt32 i = 0; i < n * 2; i++) {
-            float s = mix[i] * volume;
-            s = s > 1.0f ? 1.0f : s < -1.0f ? -1.0f : s;
-            pcm[i] = (int16_t)(s * 32767.0f);
-        }
-        // the blocking write is the clock
-        writeAll(u->fd, pcm, (size_t)n * 2 * sizeof(int16_t));
+    float *samples = out->mData;
+    UInt32 count = n * u->device.mChannelsPerFrame;
+    float volume = u->volume;
+    if (volume != 1.0f) {
+        for (UInt32 i = 0; i < count; i++)
+            samples[i] *= volume;
     }
-    free(mix);
-    free(pcm);
-    // the thread owns the open device until it leaves
-    close(u->fd);
-    u->fd = -1;
-    return NULL;
+    memset(samples + count, 0, (size_t)(frames - n) * bpf);
+    return noErr;
 }
 
 OSStatus AudioOutputUnitStart(AudioUnit u)
@@ -670,25 +658,18 @@ OSStatus AudioOutputUnitStart(AudioUnit u)
         pthread_mutex_unlock(&u->lock);
         return noErr;
     }
-    u->fd = open(DEVICE_NODE, O_WRONLY | O_CLOEXEC);
-    if (u->fd < 0) {
-        pthread_mutex_unlock(&u->lock);
-        return errno == EBUSY ? kAudioHardwareIllegalOperationError : kAudioHardwareBadDeviceError;
-    }
-    u->running = true;
-    if (pthread_create(&u->thread, NULL, renderThread, u) != 0) {
-        u->running = false;
-        close(u->fd);
-        u->fd = -1;
-        pthread_mutex_unlock(&u->lock);
-        return kAudioHardwareUnspecifiedError;
-    }
+    OSStatus err = u->ioProc ? noErr : AudioDeviceCreateIOProcID(kPDAudioOutputDevice, outputProc, u, &u->ioProc);
+    if (err == noErr)
+        err = AudioDeviceStart(kPDAudioOutputDevice, u->ioProc);
+    u->running = err == noErr;
     pthread_mutex_unlock(&u->lock);
+    if (err != noErr)
+        return err;
     notifyListeners(u, kAudioOutputUnitProperty_IsRunning, kAudioUnitScope_Global, 0);
     return noErr;
 }
 
-// a stop from the render callback itself lets the thread finish on its own
+// a stop from the render callback itself returns at once, from elsewhere it waits out the cycle
 OSStatus AudioOutputUnitStop(AudioUnit u)
 {
     if (u == NULL)
@@ -699,12 +680,9 @@ OSStatus AudioOutputUnitStop(AudioUnit u)
         return noErr;
     }
     u->running = false;
-    pthread_t thread = u->thread;
+    AudioDeviceIOProcID proc = u->ioProc;
     pthread_mutex_unlock(&u->lock);
-    if (pthread_equal(thread, pthread_self()))
-        pthread_detach(thread);
-    else
-        pthread_join(thread, NULL);
+    AudioDeviceStop(kPDAudioOutputDevice, proc);
     notifyListeners(u, kAudioOutputUnitProperty_IsRunning, kAudioUnitScope_Global, 0);
     return noErr;
 }
