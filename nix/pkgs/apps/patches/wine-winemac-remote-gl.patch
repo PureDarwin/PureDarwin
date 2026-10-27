@@ -1,0 +1,452 @@
+diff -ru a/dlls/winemac.drv/cocoa_window.m b/dlls/winemac.drv/cocoa_window.m
+--- a/dlls/winemac.drv/cocoa_window.m
++++ b/dlls/winemac.drv/cocoa_window.m
+@@ -3887,6 +3887,28 @@
+ }
+ 
+ /***********************************************************************
++ *              macdrv_set_view_image
++ *
++ * Show an image as a view's content, the way a frame rendered in another
++ * place reaches the screen.
++ */
++void macdrv_set_view_image(macdrv_view v, CGImageRef image)
++{
++@autoreleasepool
++{
++    NSView* view = (NSView*)v;
++
++    CGImageRetain(image);
++    OnMainThreadAsync(^{
++        [view setWantsLayer:YES];
++        view.layer.contents = (id)image;
++        [view setNeedsDisplay:YES];
++        CGImageRelease(image);
++    });
++}
++}
++
++/***********************************************************************
+  *              macdrv_add_view_opengl_context
+  *
+  * Add an OpenGL context to the list being tracked for each view.
+diff -ru a/dlls/winemac.drv/macdrv_cocoa.h b/dlls/winemac.drv/macdrv_cocoa.h
+--- a/dlls/winemac.drv/macdrv_cocoa.h
++++ b/dlls/winemac.drv/macdrv_cocoa.h
+@@ -520,6 +520,7 @@
+ extern void macdrv_set_view_frame(macdrv_view v, CGRect rect);
+ extern void macdrv_set_view_superview(macdrv_view v, macdrv_view s, macdrv_window w, macdrv_view p, macdrv_view n);
+ extern void macdrv_set_view_hidden(macdrv_view v, bool hidden);
++extern void macdrv_set_view_image(macdrv_view v, CGImageRef image);
+ extern void macdrv_add_view_opengl_context(macdrv_view v, macdrv_opengl_context c);
+ extern void macdrv_remove_view_opengl_context(macdrv_view v, macdrv_opengl_context c);
+ extern macdrv_metal_device macdrv_create_metal_device(void);
+diff -ru a/dlls/winemac.drv/macdrv.h b/dlls/winemac.drv/macdrv.h
+--- a/dlls/winemac.drv/macdrv.h
++++ b/dlls/winemac.drv/macdrv.h
+@@ -97,6 +97,7 @@
+ {
+     WM_MACDRV_SET_WIN_REGION = WM_WINE_FIRST_DRIVER_MSG,
+     WM_MACDRV_ACTIVATE_ON_FOLLOWING_FOCUS,
++    WM_MACDRV_PRESENT_REMOTE_FRAME,
+ };
+ 
+ struct macdrv_thread_data
+@@ -254,6 +255,15 @@
+ extern BOOL query_pasteboard_data(HWND hwnd, CFStringRef type);
+ extern void macdrv_lost_pasteboard_ownership(HWND hwnd);
+ 
++/* a GL frame another process rendered for one of our windows, shared through posix shm */
++struct macdrv_remote_frame
++{
++    UINT width;
++    UINT height;
++    LONG pending;
++};
++
++extern void macdrv_present_remote_frame(HWND hwnd);
+ extern UINT macdrv_OpenGLInit(UINT version, const struct opengl_funcs *opengl_funcs, const struct opengl_driver_funcs **driver_funcs);
+ extern UINT macdrv_VulkanInit(UINT version, void *vulkan_handle, const struct vulkan_driver_funcs **driver_funcs);
+ 
+diff -ru a/dlls/winemac.drv/opengl.c b/dlls/winemac.drv/opengl.c
+--- a/dlls/winemac.drv/opengl.c
++++ b/dlls/winemac.drv/opengl.c
+@@ -40,6 +40,11 @@
+ #include <OpenGL/glu.h>
+ #include <OpenGL/CGLRenderers.h>
+ #include <dlfcn.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <sys/mman.h>
++#include <sys/stat.h>
++#include <unistd.h>
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(wgl);
+ 
+@@ -70,6 +75,7 @@
+     HWND                    read_hwnd;
+     macdrv_view             read_view;
+     CGLPBufferObj           read_pbuffer;
++    struct gl_drawable     *draw_remote;
+     int                     swap_interval;
+ };
+ 
+@@ -77,6 +83,11 @@
+ {
+     struct opengl_drawable  base;
+     CGLPBufferObj           pbuffer;
++    /* for a window of another process: the size rendered at and the frame shared with its owner */
++    UINT                    width;
++    UINT                    height;
++    struct macdrv_remote_frame *frame;
++    size_t                  frame_size;
+ };
+ 
+ static struct gl_drawable *impl_from_opengl_drawable(struct opengl_drawable *base)
+@@ -89,12 +100,15 @@
+ static const struct opengl_driver_funcs macdrv_driver_funcs;
+ static const struct opengl_drawable_funcs macdrv_surface_funcs;
+ static const struct opengl_drawable_funcs macdrv_pbuffer_funcs;
++static const struct opengl_drawable_funcs macdrv_remote_funcs;
+ 
+ static void (*pglCopyColorTable)(GLenum target, GLenum internalformat, GLint x, GLint y,
+                                  GLsizei width);
+ static void (*pglCopyPixels)(GLint x, GLint y, GLsizei width, GLsizei height, GLenum type);
+ static const GLubyte *(*pglGetString)(GLenum name);
+ static PFN_glGetIntegerv pglGetIntegerv;
++static void (*pglBindFramebuffer)(GLenum target, GLuint framebuffer);
++static void (*pglReadBuffer)(GLenum mode);
+ static void (*pglReadPixels)(GLint x, GLint y, GLsizei width, GLsizei height,
+                              GLenum format, GLenum type, void *pixels);
+ 
+@@ -1457,6 +1471,240 @@
+     return TRUE;
+ }
+ 
++static void make_context_current(struct macdrv_context *context, BOOL read);
++
++static void remote_client_destroy(struct client_surface *client)
++{
++}
++
++static void remote_client_detach(struct client_surface *client)
++{
++}
++
++static void remote_client_update(struct client_surface *client)
++{
++}
++
++static void remote_client_present(struct client_surface *client, HDC hdc)
++{
++}
++
++/* a window of another process has no cocoa view here, its owner shows what we render, as it does for its own windows */
++static const struct client_surface_funcs remote_client_funcs =
++{
++    .destroy = remote_client_destroy,
++    .detach = remote_client_detach,
++    .update = remote_client_update,
++    .present = remote_client_present,
++};
++
++static void remote_frame_name(HWND hwnd, char *name, size_t size)
++{
++    snprintf(name, size, "/winemacgl.%u.%lx", getuid(), (unsigned long)(ULONG_PTR)hwnd);
++}
++
++static void remote_update_size(struct gl_drawable *gl)
++{
++    HWND hwnd = gl->base.client->hwnd;
++    RECT rect;
++
++    NtUserGetClientRect(hwnd, &rect, NtUserGetDpiForWindow(hwnd));
++    gl->width = max(rect.right - rect.left, 1);
++    gl->height = max(rect.bottom - rect.top, 1);
++}
++
++static void remote_unmap_frame(struct gl_drawable *gl)
++{
++    if (gl->frame) munmap(gl->frame, gl->frame_size);
++    gl->frame = NULL;
++    gl->frame_size = 0;
++}
++
++/* a fresh object per size, darwin sizes a shm object only once */
++static BOOL remote_map_frame(struct gl_drawable *gl, size_t size)
++{
++    char name[64];
++    void *map;
++    int fd;
++
++    if (gl->frame && gl->frame_size == size) return TRUE;
++    remote_unmap_frame(gl);
++
++    remote_frame_name(gl->base.client->hwnd, name, sizeof(name));
++    shm_unlink(name);
++    if ((fd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600)) < 0)
++    {
++        WARN("shm_open %s failed, errno %d\n", name, errno);
++        return FALSE;
++    }
++    if (ftruncate(fd, size) || (map = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)) == MAP_FAILED)
++    {
++        WARN("sizing %s to %zu failed, errno %d\n", name, size, errno);
++        close(fd);
++        shm_unlink(name);
++        return FALSE;
++    }
++    close(fd);
++
++    gl->frame = map;
++    gl->frame_size = size;
++    return TRUE;
++}
++
++static BOOL remote_surface_create(HWND hwnd, int format, struct opengl_drawable **drawable)
++{
++    struct client_surface *client;
++    struct gl_drawable *gl;
++
++    TRACE("offscreen drawable for hwnd %p, format %d\n", hwnd, format);
++
++    if (!(client = client_surface_create(sizeof(*client), &remote_client_funcs, hwnd))) return FALSE;
++    gl = opengl_drawable_create(sizeof(*gl), &macdrv_remote_funcs, format, client);
++    client_surface_release(client);
++    if (!gl) return FALSE;
++
++    remote_update_size(gl);
++    *drawable = &gl->base;
++    return TRUE;
++}
++
++static void remote_surface_destroy(struct opengl_drawable *base)
++{
++    struct gl_drawable *gl = impl_from_opengl_drawable(base);
++    char name[64];
++
++    TRACE("drawable %s\n", debugstr_opengl_drawable(base));
++
++    if (!gl->frame) return;
++    remote_unmap_frame(gl);
++    remote_frame_name(base->client->hwnd, name, sizeof(name));
++    shm_unlink(name);
++}
++
++static void remote_surface_flush(struct opengl_drawable *base, UINT flags)
++{
++    struct macdrv_context *context = NtCurrentTeb()->glReserved2;
++
++    TRACE("%s flags %#x\n", debugstr_opengl_drawable(base), flags);
++
++    if (context && (flags & GL_FLUSH_UPDATED)) make_context_current(context, FALSE);
++}
++
++/* read the frame back into shared memory and tell the window's owner to draw it */
++static BOOL remote_surface_swap(struct opengl_drawable *base)
++{
++    struct gl_drawable *gl = impl_from_opengl_drawable(base);
++    struct macdrv_context *context = NtCurrentTeb()->glReserved2;
++    HWND hwnd = base->client->hwnd;
++    GLint read_fbo = 0, read_buffer = GL_BACK;
++
++    TRACE("%s context %p\n", debugstr_opengl_drawable(base), context);
++
++    if (!context) return FALSE;
++    if (!remote_map_frame(gl, sizeof(*gl->frame) + (size_t)gl->width * gl->height * 4)) return FALSE;
++
++    pglGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read_fbo);
++    if (read_fbo) pglBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
++    pglGetIntegerv(GL_READ_BUFFER, &read_buffer);
++    pglReadBuffer(GL_BACK);
++    pglReadPixels(0, 0, gl->width, gl->height, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, gl->frame + 1);
++    pglReadBuffer(read_buffer);
++    if (read_fbo) pglBindFramebuffer(GL_READ_FRAMEBUFFER, read_fbo);
++
++    gl->frame->width = gl->width;
++    gl->frame->height = gl->height;
++    if (!InterlockedExchange(&gl->frame->pending, 1))
++        NtUserPostMessage(hwnd, WM_MACDRV_PRESENT_REMOTE_FRAME, 0, 0);
++
++    remote_update_size(gl);
++    if (context->draw_remote == gl) make_context_current(context, FALSE);
++    return TRUE;
++}
++
++/* the owner side shows a frame in a view over the client area, where a gl view would sit,
++   gdi drawing there is clipped away once the window has a pixel format */
++static struct
++{
++    HWND hwnd;
++    struct macdrv_client_surface *client;
++} remote_views[32];
++static pthread_mutex_t remote_views_lock = PTHREAD_MUTEX_INITIALIZER;
++
++static struct macdrv_client_surface *remote_view_for(HWND hwnd)
++{
++    struct macdrv_client_surface *client = NULL;
++    int i, free_slot = -1;
++
++    pthread_mutex_lock(&remote_views_lock);
++    for (i = 0; i < ARRAY_SIZE(remote_views); i++)
++    {
++        if (remote_views[i].hwnd == hwnd) client = remote_views[i].client;
++        else if (!remote_views[i].hwnd && free_slot < 0) free_slot = i;
++    }
++    if (!client && free_slot >= 0 && (client = macdrv_client_surface_create(hwnd)))
++    {
++        remote_views[free_slot].hwnd = hwnd;
++        remote_views[free_slot].client = client;
++    }
++    pthread_mutex_unlock(&remote_views_lock);
++    return client;
++}
++
++void macdrv_present_remote_frame(HWND hwnd)
++{
++    struct macdrv_remote_frame *frame;
++    struct macdrv_client_surface *client;
++    CGColorSpaceRef space;
++    CGDataProviderRef provider;
++    CFMutableDataRef pixels;
++    CGImageRef image;
++    char name[64];
++    struct stat st;
++    size_t row, y;
++    UINT8 *dst;
++    void *map;
++    int fd;
++
++    remote_frame_name(hwnd, name, sizeof(name));
++    if ((fd = shm_open(name, O_RDWR)) < 0) return;
++    if (fstat(fd, &st) || st.st_size < sizeof(*frame) ||
++        (map = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)) == MAP_FAILED)
++    {
++        close(fd);
++        return;
++    }
++    close(fd);
++
++    frame = map;
++    InterlockedExchange(&frame->pending, 0);
++    row = (size_t)frame->width * 4;
++    if (!frame->width || sizeof(*frame) + row * frame->height > st.st_size || !(client = remote_view_for(hwnd)))
++    {
++        munmap(map, st.st_size);
++        return;
++    }
++
++    /* glReadPixels rows are bottom-up, images are top-down */
++    pixels = CFDataCreateMutable(NULL, row * frame->height);
++    CFDataSetLength(pixels, row * frame->height);
++    dst = CFDataGetMutableBytePtr(pixels);
++    for (y = 0; y < frame->height; y++)
++        memcpy(dst + y * row, (UINT8 *)(frame + 1) + (frame->height - 1 - y) * row, row);
++
++    provider = CGDataProviderCreateWithCFData(pixels);
++    space = CGColorSpaceCreateDeviceRGB();
++    image = CGImageCreate(frame->width, frame->height, 8, 32, row, space,
++                          kCGBitmapByteOrder32Little | kCGImageAlphaNoneSkipFirst, provider, NULL, FALSE,
++                          kCGRenderingIntentDefault);
++    munmap(map, st.st_size);
++
++    if (image) macdrv_set_view_image(client->cocoa_view, image);
++    CGImageRelease(image);
++    CGColorSpaceRelease(space);
++    CGDataProviderRelease(provider);
++    CFRelease(pixels);
++}
++
+ static BOOL macdrv_surface_create(HWND hwnd, int format, struct opengl_drawable **drawable)
+ {
+     struct macdrv_client_surface *client;
+@@ -1465,10 +1713,14 @@
+ 
+     TRACE("hwnd %p, format %d, drawable %p\n", hwnd, format, drawable);
+ 
+-    if (!(data = get_win_data(hwnd)))
++    if (!(data = get_win_data(hwnd))) return remote_surface_create(hwnd, format, drawable);
++
++    /* without WINEMAC_GL_VIEW frames reach the window as gdi drawing, the cocoa gl view stays unused */
++    if (!getenv("WINEMAC_GL_VIEW"))
+     {
+-        FIXME("DC for window %p of other process: not implemented\n", hwnd);
+-        return FALSE;
++        data->pixel_format = format;
++        release_win_data(data);
++        return remote_surface_create(hwnd, format, drawable);
+     }
+ 
+     data->pixel_format = format;
+@@ -1505,6 +1757,14 @@
+     }
+     else
+     {
++        if (context->draw_remote)
++        {
++            GLint size[2] = { context->draw_remote->width, context->draw_remote->height };
++
++            CGLSetParameter(context->cglcontext, kCGLCPSurfaceBackingSize, size);
++            CGLSetCurrentContext(context->cglcontext);
++            return;
++        }
+         if (context->draw_hwnd) NtUserGetClientRect(context->draw_hwnd, &view_rect, NtUserGetDpiForWindow(context->draw_hwnd));
+         view = context->draw_view;
+         pbuffer = context->draw_pbuffer;
+@@ -2273,8 +2533,13 @@
+     context->read_hwnd = context->draw_hwnd = NULL;
+     context->read_view = context->draw_view = NULL;
+     context->read_pbuffer = context->draw_pbuffer = NULL;
++    context->draw_remote = NULL;
+ 
+-    if (draw->base.client)
++    if (draw->base.funcs == &macdrv_remote_funcs)
++    {
++        context->draw_remote = draw;
++    }
++    else if (draw->base.client)
+     {
+         struct macdrv_client_surface *client = impl_from_client_surface(draw->base.client);
+         context->draw_hwnd = draw->base.client->hwnd;
+@@ -2285,7 +2550,7 @@
+         context->draw_pbuffer = draw->pbuffer;
+     }
+ 
+-    if (read != draw)
++    if (read != draw && read->base.funcs != &macdrv_remote_funcs)
+     {
+         if (read->base.client)
+         {
+@@ -2624,6 +2889,8 @@
+     LOAD_FUNCPTR(glGetIntegerv);
+     LOAD_FUNCPTR(glGetString);
+     LOAD_FUNCPTR(glReadPixels);
++    LOAD_FUNCPTR(glReadBuffer);
++    LOAD_FUNCPTR(glBindFramebuffer);
+     LOAD_FUNCPTR(glCopyColorTable);
+ 
+     if (!init_gl_info())
+@@ -2790,3 +3057,10 @@
+ {
+     .destroy = macdrv_pbuffer_destroy,
+ };
++
++static const struct opengl_drawable_funcs macdrv_remote_funcs =
++{
++    .destroy = remote_surface_destroy,
++    .flush = remote_surface_flush,
++    .swap = remote_surface_swap,
++};
+diff -ru a/dlls/winemac.drv/window.c b/dlls/winemac.drv/window.c
+--- a/dlls/winemac.drv/window.c
++++ b/dlls/winemac.drv/window.c
+@@ -1530,6 +1530,9 @@
+         activate_on_following_focus();
+         TRACE("WM_MACDRV_ACTIVATE_ON_FOLLOWING_FOCUS time %u\n", activate_on_focus_time);
+         return 0;
++    case WM_MACDRV_PRESENT_REMOTE_FRAME:
++        macdrv_present_remote_frame(hwnd);
++        return 0;
+     }
+ 
+     FIXME("unrecognized window msg %x hwnd %p wp %lx lp %lx\n", msg, hwnd, (unsigned long)wp, lp);

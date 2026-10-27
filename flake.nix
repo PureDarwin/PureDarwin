@@ -3397,6 +3397,15 @@
               nano = pkgs.nano;
               ncurses = ncursesBuild;
             };
+          dxvkBuild = pkgs.callPackage ./nix/pkgs/apps/dxvk.nix { dxvk = pkgs.dxvk; };
+          winetricksBuild =
+            pkgs.callPackage ./nix/pkgs/apps/winetricks.nix { winetricks = pkgs.winetricks; };
+          cabextractBuild =
+            pkgs.callPackage ./nix/pkgs/base/cabextract.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              cabextract = pkgs.cabextract;
+            };
           xxdBuild =
             pkgs.callPackage ./nix/pkgs/toolchain/xxd.nix {
               inherit darwinCrossToolchain nativeLd;
@@ -4835,7 +4844,7 @@
               nixPortPackages
               atspi2CoreBuild autoconfBuild automakeBuild bisonBuild bmakeBuild cairoBuild
               cairoGobjectBuild cctoolsBuild coreFoundationBuild curlBuild darwinCrossToolchain
-              coreServicesBuild dbusBuild dilloBuild diskArbitrationBuild wineBuild dmenuBuild exoBuild expatBuild fastfetchBuild
+              coreServicesBuild dbusBuild dilloBuild diskArbitrationBuild wineBuild cabextractBuild winetricksBuild dxvkBuild dmenuBuild exoBuild expatBuild fastfetchBuild
               libX11SharedBuild libxcbSharedBuild libXauSharedBuild libXdmcpSharedBuild
               libXextSharedBuild libXrenderSharedBuild libXfixesSharedBuild libXiSharedBuild
               libXcursorSharedBuild libXrandrSharedBuild libXxf86vmSharedBuild nettleSharedBuild gnutlsSharedBuild glibNetworkingBuild llvmCrossBuild vulkanLoaderBuild libxshmfenceSharedBuild vulkanToolsBuild vulkanLoaderNoxBuild vulkanToolsNoxBuild mesaVenusWaylandBuild venusTestsNoxBuild libdrmVirtgpuBuild glfwPdBuild metalPdNoxBuild metalObjcPdNoxBuild metalAppleSamplesNoxBuild spirvCrossPdBuild
@@ -4941,6 +4950,7 @@
             icucore = icuCoreBuild;
             coreservices = coreServicesBuild;
             wine-tools = wineToolsBuild;
+            wine-macos = wineBuild.override { stockMac = true; };
             libX11-shared = libX11SharedBuild;
             libxcb-shared = libxcbSharedBuild;
             libXau-shared = libXauSharedBuild;
@@ -5091,6 +5101,9 @@
             audiotoolbox = audiotoolboxBuild;
             pcmplay = pcmplayBuild;
             pd-metal-surface = pdMetalSurfaceBuild;
+            cabextract = cabextractBuild;
+            winetricks = winetricksBuild;
+            dxvk = dxvkBuild;
             coreaudiod = coreaudiodBuild;
             carbon = carbonBuild;
             akff-test = akffTestBuild;

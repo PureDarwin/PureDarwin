@@ -1,0 +1,258 @@
+diff -ru a/dlls/winemac.drv/cocoa_window.m b/dlls/winemac.drv/cocoa_window.m
+--- a/dlls/winemac.drv/cocoa_window.m
++++ b/dlls/winemac.drv/cocoa_window.m
+@@ -3985,6 +3985,53 @@
+     return (macdrv_metal_layer)layer;
+ }
+ 
++/* a layer drawn here and shown in another process's window: its CAContext id, 0 where Core Animation cannot */
++unsigned int macdrv_metal_layer_export(macdrv_metal_layer l, void **context)
++{
++    CALayer* layer = (CALayer*)l;
++    __block unsigned int context_id = 0;
++    __block id ctx = nil;
++
++    OnMainThread(^{
++        Class cls = NSClassFromString(@"CAContext");
++
++        if (cls && (ctx = [cls performSelector:@selector(remoteContext)]))
++        {
++            [ctx retain];
++            [ctx setValue:layer forKey:@"layer"];
++            context_id = [[ctx valueForKey:@"contextId"] unsignedIntValue];
++        }
++    });
++    *context = ctx;
++    return context_id;
++}
++
++void macdrv_release_layer_context(void *context)
++{
++    id ctx = (id)context;
++
++    OnMainThread(^{
++        [ctx release];
++    });
++}
++
++/* the owner side: the view shows another process's layer by its context id */
++void macdrv_view_host_layer(macdrv_view v, unsigned int context_id)
++{
++    NSView* view = (NSView*)v;
++
++    OnMainThread(^{
++        Class cls = NSClassFromString(@"CALayerHost");
++        CALayer* host = [[cls alloc] init];
++
++        if (!host) return;
++        [host setValue:[NSNumber numberWithUnsignedInt:context_id] forKey:@"contextId"];
++        view.layer = host;
++        view.wantsLayer = YES;
++        [host release];
++    });
++}
++
+ void macdrv_view_release_metal_view(macdrv_metal_view v)
+ {
+     WineMetalView* view = (WineMetalView*)v;
+diff -ru a/dlls/winemac.drv/macdrv_cocoa.h b/dlls/winemac.drv/macdrv_cocoa.h
+--- a/dlls/winemac.drv/macdrv_cocoa.h
++++ b/dlls/winemac.drv/macdrv_cocoa.h
+@@ -528,6 +528,9 @@
+ extern macdrv_metal_view macdrv_view_create_metal_view(macdrv_view v, macdrv_metal_device d);
+ extern macdrv_metal_layer macdrv_view_get_metal_layer(macdrv_metal_view v);
+ extern void macdrv_view_release_metal_view(macdrv_metal_view v);
++extern unsigned int macdrv_metal_layer_export(macdrv_metal_layer l, void **context);
++extern void macdrv_release_layer_context(void *context);
++extern void macdrv_view_host_layer(macdrv_view v, unsigned int context_id);
+ extern bool macdrv_get_view_backing_size(macdrv_view v, int backing_size[2]);
+ extern void macdrv_set_view_backing_size(macdrv_view v, const int backing_size[2]);
+ extern uint32_t macdrv_window_background_color(void);
+diff -ru a/dlls/winemac.drv/macdrv.h b/dlls/winemac.drv/macdrv.h
+--- a/dlls/winemac.drv/macdrv.h
++++ b/dlls/winemac.drv/macdrv.h
+@@ -98,6 +98,7 @@
+     WM_MACDRV_SET_WIN_REGION = WM_WINE_FIRST_DRIVER_MSG,
+     WM_MACDRV_ACTIVATE_ON_FOLLOWING_FOCUS,
+     WM_MACDRV_PRESENT_REMOTE_FRAME,
++    WM_MACDRV_HOST_REMOTE_LAYER,
+ };
+ 
+ struct macdrv_thread_data
+@@ -198,6 +199,8 @@
+     macdrv_view           cocoa_view;
+     macdrv_metal_device   metal_device;
+     macdrv_metal_view     metal_view;
++    /* a window of another process: the context its owner hosts our layer through */
++    void                 *remote_context;
+ };
+ 
+ static inline struct macdrv_client_surface *impl_from_client_surface(struct client_surface *client)
+@@ -264,6 +267,7 @@
+ };
+ 
+ extern void macdrv_present_remote_frame(HWND hwnd);
++extern void macdrv_host_remote_layer(HWND hwnd, UINT context_id);
+ extern UINT macdrv_OpenGLInit(UINT version, const struct opengl_funcs *opengl_funcs, const struct opengl_driver_funcs **driver_funcs);
+ extern UINT macdrv_VulkanInit(UINT version, void *vulkan_handle, const struct vulkan_driver_funcs **driver_funcs);
+ 
+diff -ru a/dlls/winemac.drv/vulkan.c b/dlls/winemac.drv/vulkan.c
+--- a/dlls/winemac.drv/vulkan.c
++++ b/dlls/winemac.drv/vulkan.c
+@@ -53,10 +53,15 @@
+ {
+     VkResult res;
+     struct macdrv_client_surface *surface;
++    struct macdrv_win_data *data;
++    unsigned int context_id;
++    BOOL remote;
+ 
+     TRACE("%p %p %p %p\n", hwnd, instance, handle, client);
+ 
+     if (!(surface = macdrv_client_surface_create(hwnd))) return VK_ERROR_OUT_OF_HOST_MEMORY;
++    remote = !(data = get_win_data(NtUserGetAncestor(hwnd, GA_ROOT)));
++    if (data) release_win_data(data);
+     // no metal surface: a headless one renders without presenting, as win32u's fallback driver does
+     if (!use_VK_EXT_metal_surface && !use_VK_MVK_macos_surface)
+     {
+@@ -95,6 +100,14 @@
+         goto err;
+     }
+ 
++    /* a window of another process: its owner shows our layer, the way Core Animation hosts layers across processes */
++    if (remote && (context_id = macdrv_metal_layer_export(macdrv_view_get_metal_layer(surface->metal_view),
++                                                           &surface->remote_context)))
++    {
++        TRACE("hwnd %p of another process, layer context %u\n", hwnd, context_id);
++        NtUserPostMessage(hwnd, WM_MACDRV_HOST_REMOTE_LAYER, context_id, 0);
++    }
++
+     *client = &surface->client;
+     TRACE("Created surface=0x%s, client=%p\n", wine_dbgstr_longlong(*handle), *client);
+     return VK_SUCCESS;
+diff -ru a/dlls/winemac.drv/window.c b/dlls/winemac.drv/window.c
+--- a/dlls/winemac.drv/window.c
++++ b/dlls/winemac.drv/window.c
+@@ -1076,6 +1076,7 @@
+ 
+     TRACE("%s\n", debugstr_client_surface(client));
+ 
++    if (surface->remote_context) macdrv_release_layer_context(surface->remote_context);
+     if (surface->metal_view) macdrv_view_release_metal_view(surface->metal_view);
+     if (surface->metal_device) macdrv_release_metal_device(surface->metal_device);
+ }
+@@ -1145,6 +1146,85 @@
+     .present = macdrv_client_surface_present,
+ };
+ 
++/* views showing layers other processes draw into our child windows, kept to follow those windows as they move */
++struct remote_host
++{
++    HWND        hwnd;
++    HWND        toplevel;
++    macdrv_view view;
++};
++static struct remote_host remote_hosts[64];
++static pthread_mutex_t remote_hosts_mutex = PTHREAD_MUTEX_INITIALIZER;
++
++/* the hosted window's client area in the toplevel's content view */
++static BOOL remote_host_rect(HWND hwnd, HWND toplevel, struct macdrv_win_data *data, RECT *rect)
++{
++    if (!NtUserGetClientRect(hwnd, rect, NtUserGetWinMonitorDpi(hwnd, MDT_RAW_DPI))) return FALSE;
++    NtUserMapWindowPoints(hwnd, toplevel, (POINT *)rect, 2, NtUserGetWinMonitorDpi(toplevel, MDT_RAW_DPI));
++    OffsetRect(rect, data->rects.client.left - data->rects.visible.left, data->rects.client.top - data->rects.visible.top);
++    return TRUE;
++}
++
++/* a layer another process draws for one of our windows: a view at the window's client area hosts it */
++void macdrv_host_remote_layer(HWND hwnd, UINT context_id)
++{
++    HWND toplevel = NtUserGetAncestor(hwnd, GA_ROOT);
++    struct macdrv_win_data *data;
++    macdrv_view view, old = NULL;
++    RECT rect;
++    int i, slot = -1;
++
++    TRACE("hwnd %p context %u\n", hwnd, context_id);
++
++    if (!(data = get_win_data(toplevel))) return;
++    if (!remote_host_rect(hwnd, toplevel, data, &rect))
++    {
++        release_win_data(data);
++        return;
++    }
++    view = macdrv_create_view(cgrect_from_rect(rect));
++    macdrv_view_host_layer(view, context_id);
++    macdrv_set_view_superview(view, toplevel == hwnd ? NULL : data->client_view, data->cocoa_window, NULL, NULL);
++    release_win_data(data);
++
++    /* a new context for the same window, after its GPU process started over, takes the old view's place */
++    pthread_mutex_lock(&remote_hosts_mutex);
++    for (i = 0; i < ARRAY_SIZE(remote_hosts); i++)
++    {
++        if (remote_hosts[i].hwnd == hwnd) { slot = i; old = remote_hosts[i].view; break; }
++        if (!remote_hosts[i].hwnd && slot < 0) slot = i;
++    }
++    if (slot >= 0) remote_hosts[slot] = (struct remote_host){ hwnd, toplevel, view };
++    pthread_mutex_unlock(&remote_hosts_mutex);
++    if (old) macdrv_dispose_view(old);
++}
++
++/* the hosted views under a toplevel, moved to where their windows are now */
++static void update_remote_hosts(HWND toplevel)
++{
++    struct macdrv_win_data *data;
++    RECT rect;
++    int i;
++
++    if (!(data = get_win_data(toplevel))) return;
++    pthread_mutex_lock(&remote_hosts_mutex);
++    for (i = 0; i < ARRAY_SIZE(remote_hosts); i++)
++    {
++        struct remote_host *host = &remote_hosts[i];
++
++        if (!host->hwnd || host->toplevel != toplevel) continue;
++        if (!NtUserIsWindow(host->hwnd))
++        {
++            macdrv_dispose_view(host->view);
++            memset(host, 0, sizeof(*host));
++        }
++        else if (remote_host_rect(host->hwnd, toplevel, data, &rect))
++            macdrv_set_view_frame(host->view, cgrect_from_rect(rect));
++    }
++    pthread_mutex_unlock(&remote_hosts_mutex);
++    release_win_data(data);
++}
++
+ struct macdrv_client_surface *macdrv_client_surface_create(HWND hwnd)
+ {
+     HWND toplevel = NtUserGetAncestor(hwnd, GA_ROOT);
+@@ -1533,6 +1613,9 @@
+     case WM_MACDRV_PRESENT_REMOTE_FRAME:
+         macdrv_present_remote_frame(hwnd);
+         return 0;
++    case WM_MACDRV_HOST_REMOTE_LAYER:
++        macdrv_host_remote_layer(hwnd, wp);
++        return 0;
+     }
+ 
+     FIXME("unrecognized window msg %x hwnd %p wp %lx lp %lx\n", msg, hwnd, (unsigned long)wp, lp);
+@@ -1594,7 +1677,10 @@
+     struct macdrv_win_data *data;
+     unsigned int new_style = NtUserGetWindowLongW(hwnd, GWL_STYLE);
+     struct window_rects old_rects;
++    HWND toplevel = NtUserGetAncestor(hwnd, GA_ROOT);
+ 
++    /* a moved child carries the views hosting other processes' layers with it */
++    if (toplevel && toplevel != hwnd) update_remote_hosts(toplevel);
+     if (!(data = get_win_data(hwnd))) return;
+ 
+     thread_data = macdrv_thread_data();
+@@ -1647,6 +1733,7 @@
+ 
+ done:
+     release_win_data(data);
++    if (toplevel == hwnd) update_remote_hosts(hwnd);
+ }
+ 
+ 

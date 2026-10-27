@@ -98,6 +98,9 @@
 , coreServicesBuild
 , jsoncBuild
 , wineBuild
+, cabextractBuild
+, winetricksBuild
+, dxvkBuild
 , libX11SharedBuild
 , libxcbSharedBuild
 , libXauSharedBuild
@@ -492,6 +495,11 @@ let
     # Multi-user Nix; image.nix adds its build users when this is present.
     nix = nixPortPackages.nix;
     wine = wineBuild;
+    # winetricks and the cabextract it unpacks Microsoft's redistributables with (corefonts and the like)
+    cabextract = cabextractBuild;
+    winetricks = winetricksBuild;
+    # Direct3D over Vulkan for Wine prefixes, set up with pd-dxvk
+    dxvk = dxvkBuild;
     libX11-shared = libX11SharedBuild;
     libxcb-shared = libxcbSharedBuild;
     libXau-shared = libXauSharedBuild;

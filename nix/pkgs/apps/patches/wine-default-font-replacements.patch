@@ -1,0 +1,24 @@
+--- a/loader/wine.inf.in
++++ b/loader/wine.inf.in
+@@ -496,6 +496,21 @@
+ HKLM,%Control%\Session Manager\Memory Management\PrefetchParameters,BootId,0x10003,1
+ 
+ [Fonts]
++HKCU,Software\Wine\Fonts\Replacements,"Arial",0x2,"DejaVu Sans"
++HKCU,Software\Wine\Fonts\Replacements,"Helvetica",0x2,"DejaVu Sans"
++HKCU,Software\Wine\Fonts\Replacements,"Segoe UI",0x2,"DejaVu Sans"
++HKCU,Software\Wine\Fonts\Replacements,"Verdana",0x2,"DejaVu Sans"
++HKCU,Software\Wine\Fonts\Replacements,"Tahoma",0x2,"DejaVu Sans"
++HKCU,Software\Wine\Fonts\Replacements,"MS Shell Dlg",0x2,"DejaVu Sans"
++HKCU,Software\Wine\Fonts\Replacements,"MS Shell Dlg 2",0x2,"DejaVu Sans"
++HKCU,Software\Wine\Fonts\Replacements,"MS Sans Serif",0x2,"DejaVu Sans"
++HKCU,Software\Wine\Fonts\Replacements,"Motiva Sans",0x2,"DejaVu Sans"
++HKCU,Software\Wine\Fonts\Replacements,"Times New Roman",0x2,"DejaVu Serif"
++HKCU,Software\Wine\Fonts\Replacements,"Times",0x2,"DejaVu Serif"
++HKCU,Software\Wine\Fonts\Replacements,"MS Serif",0x2,"DejaVu Serif"
++HKCU,Software\Wine\Fonts\Replacements,"Courier New",0x2,"DejaVu Sans Mono"
++HKCU,Software\Wine\Fonts\Replacements,"Courier",0x2,"DejaVu Sans Mono"
++HKCU,Software\Wine\Fonts\Replacements,"Consolas",0x2,"DejaVu Sans Mono"
+ HKLM,%FontSubStr%,"Arial Baltic,186",,"Arial,186"
+ HKLM,%FontSubStr%,"Arial CE,238",,"Arial,238"
+ HKLM,%FontSubStr%,"Arial CYR,204",,"Arial,204"

@@ -1,0 +1,102 @@
+--- a/dlls/winemac.drv/vulkan.c
++++ b/dlls/winemac.drv/vulkan.c
+@@ -29,6 +29,8 @@
+ 
+ #include <stdarg.h>
+ #include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
+ #include <dlfcn.h>
+ 
+ #include "ntstatus.h"
+@@ -43,6 +45,9 @@
+ 
+ static const struct vulkan_driver_funcs macdrv_vulkan_driver_funcs;
+ 
++static BOOL use_VK_EXT_metal_surface;
++static BOOL use_VK_MVK_macos_surface;
++
+ static VkResult macdrv_vulkan_surface_create(HWND hwnd, const struct vulkan_instance *instance, VkSurfaceKHR *handle,
+                                              struct client_surface **client)
+ {
+@@ -52,6 +57,15 @@
+     TRACE("%p %p %p %p\n", hwnd, instance, handle, client);
+ 
+     if (!(surface = macdrv_client_surface_create(hwnd))) return VK_ERROR_OUT_OF_HOST_MEMORY;
++    // no metal surface: a headless one renders without presenting, as win32u's fallback driver does
++    if (!use_VK_EXT_metal_surface && !use_VK_MVK_macos_surface)
++    {
++        VkHeadlessSurfaceCreateInfoEXT create_info_host = {.sType = VK_STRUCTURE_TYPE_HEADLESS_SURFACE_CREATE_INFO_EXT};
++
++        if (instance->p_vkCreateHeadlessSurfaceEXT(instance->host.instance, &create_info_host, NULL, handle)) goto err;
++        *client = &surface->client;
++        return VK_SUCCESS;
++    }
+     if (!(surface->metal_device = macdrv_create_metal_device())) goto err;
+     if (!(surface->metal_view = macdrv_view_create_metal_view(surface->cocoa_view, surface->metal_device))) goto err;
+ 
+@@ -98,7 +112,23 @@
+     return VK_TRUE;
+ }
+ 
+-static BOOL use_VK_EXT_metal_surface;
++
++// the loader exports every surface entry point, so ask it which surface extensions an icd provides
++static BOOL host_has_instance_extension(void *vulkan_handle, const char *name)
++{
++    PFN_vkEnumerateInstanceExtensionProperties enumerate = dlsym(vulkan_handle, "vkEnumerateInstanceExtensionProperties");
++    VkExtensionProperties *props;
++    uint32_t i, count = 0;
++    BOOL found = FALSE;
++
++    if (!enumerate || enumerate(NULL, &count, NULL) || !(props = malloc(count * sizeof(*props)))) return FALSE;
++    if (!enumerate(NULL, &count, props))
++    {
++        for (i = 0; i < count; i++) if (!strcmp(props[i].extensionName, name)) found = TRUE;
++    }
++    free(props);
++    return found;
++}
+ 
+ static void macdrv_map_instance_extensions(struct vulkan_instance_extensions *extensions)
+ {
+@@ -107,15 +137,28 @@
+         if (extensions->has_VK_KHR_win32_surface) extensions->has_VK_EXT_metal_surface = 1;
+         if (extensions->has_VK_EXT_metal_surface) extensions->has_VK_KHR_win32_surface = 1;
+     }
+-    else
++    else if (use_VK_MVK_macos_surface)
+     {
+         if (extensions->has_VK_KHR_win32_surface) extensions->has_VK_MVK_macos_surface = 1;
+         if (extensions->has_VK_MVK_macos_surface) extensions->has_VK_KHR_win32_surface = 1;
+     }
++    // without a metal surface win32 surfaces map to headless ones
++    else
++    {
++        if (extensions->has_VK_KHR_win32_surface) extensions->has_VK_EXT_headless_surface = 1;
++        if (extensions->has_VK_EXT_headless_surface) extensions->has_VK_KHR_win32_surface = 1;
++    }
+ }
+ 
+ static void macdrv_map_device_extensions(struct vulkan_device_extensions *extensions)
+ {
++    // a driver with fd handles (not MoltenVK) shares memory and semaphores the way win32u's fallback driver does
++    if (extensions->has_VK_KHR_external_memory_win32) extensions->has_VK_KHR_external_memory_fd = 1;
++    if (extensions->has_VK_KHR_external_memory_fd) extensions->has_VK_KHR_external_memory_win32 = 1;
++    if (extensions->has_VK_KHR_external_semaphore_win32) extensions->has_VK_KHR_external_semaphore_fd = 1;
++    if (extensions->has_VK_KHR_external_semaphore_fd) extensions->has_VK_KHR_external_semaphore_win32 = 1;
++    if (extensions->has_VK_KHR_external_fence_win32) extensions->has_VK_KHR_external_fence_fd = 1;
++    if (extensions->has_VK_KHR_external_fence_fd) extensions->has_VK_KHR_external_fence_win32 = 1;
+ }
+ 
+ static const struct vulkan_driver_funcs macdrv_vulkan_driver_funcs =
+@@ -134,7 +177,8 @@
+         return STATUS_INVALID_PARAMETER;
+     }
+ 
+-    use_VK_EXT_metal_surface = !!dlsym(vulkan_handle, "vkCreateMetalSurfaceEXT");
++    use_VK_EXT_metal_surface = host_has_instance_extension(vulkan_handle, "VK_EXT_metal_surface");
++    use_VK_MVK_macos_surface = host_has_instance_extension(vulkan_handle, "VK_MVK_macos_surface");
+ 
+     *driver_funcs = &macdrv_vulkan_driver_funcs;
+     return STATUS_SUCCESS;

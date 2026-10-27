@@ -73,6 +73,9 @@
   # FEX's ARM64 WoW64 CPU backend, installed beside Wine's ARM64 PE modules.
 , fexWow64 ? null
 , appleSdk
+  # Build Wine the way it is built for stock macOS: no preloader, a 13.0 minimum and Apple's
+  # framework install names, so the same binaries run on a Mac and on PureDarwin.
+, stockMac ? false
 }:
 
 assert targetArch == "arm64" -> mingwAarch64Cc != null;
@@ -158,6 +161,12 @@ stdenv.mkDerivation {
     ./patches/wine-arm64ec-darwin-asm-section.patch
     ./patches/wine-arm64ec-vccorlib-rtti-naked.patch
     ./patches/wine-arm64-import-section-align.patch
+    ./patches/wine-winemac-remote-gl.patch
+    ./patches/wine-winemac-vulkan-no-metal.patch
+    ./patches/wine-winemac-remote-layer.patch
+  ] ++ lib.optionals (!stockMac) [
+    # PureDarwin ships DejaVu only: CEF and other DirectWrite users find Arial, Segoe UI and friends through it
+    ./patches/wine-default-font-replacements.patch
   ] ++ lib.optionals isArm64 [
     ./patches/wine-arm64ec-rtti-msvcp90.patch
   ];
@@ -198,13 +207,15 @@ stdenv.mkDerivation {
     ${lib.optionalString enableMac ''cp ${../../../src/Libraries/libSystem/libplatform/include/libkern}/*.h "$TMPDIR/pd-libkern/libkern/"''}
     export CPPFLAGS="-I$TMPDIR/pd-libkern -F$pdfw ${lib.concatStringsSep " " pdHeaderDirs} -F${coreservices}/System/Library/Frameworks -F${security}/System/Library/Frameworks -F${diskArbitration}/System/Library/Frameworks -F${systemConfiguration}/System/Library/Frameworks -I${mesa}/usr/include -I${libSystem}/usr/include -I${../wayland/pd-compat-include} ${lib.concatMapStringsSep " " (dep: "-I${lib.getDev dep}/include") (xDeps ++ waylandDeps)}"
     export CFLAGS="-isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector"
-    # OpenGL.framework re-exports libGL and libGLU by their /usr/lib install names, which ld has to find
-    glReexports="${lib.optionalString enableMac "-Wl,-dylib_file,/usr/lib/libGL.1.dylib:${mesa}/usr/lib/libGL.1.dylib -Wl,-dylib_file,/usr/lib/libGLU.1.dylib:${glu}/usr/lib/libGLU.1.dylib"}"
+    # OpenGL.framework re-exports libGL and libGLU by their /usr/lib install names, which ld has to find,
+    # and Carbon re-exports its HIToolbox subframework the same way
+    hitoolbox=/System/Library/Frameworks/Carbon.framework/Versions/A/Frameworks/HIToolbox.framework/Versions/A/HIToolbox
+    glReexports="${lib.optionalString enableMac "-Wl,-dylib_file,/usr/lib/libGL.1.dylib:${mesa}/usr/lib/libGL.1.dylib -Wl,-dylib_file,/usr/lib/libGLU.1.dylib:${glu}/usr/lib/libGLU.1.dylib -Wl,-dylib_file,$hitoolbox:${carbon}$hitoolbox"}"
     # clang adds -lobjc for Objective-C links by itself, -nostdlib takes that away
     # and the SDK's tbds don't record that Carbon re-exports ApplicationServices and CoreServices re-exports
     # CoreFoundation, so ld can't follow them the way it does against Apple's SDK
     objcLib="${lib.optionalString enableMac "-L${libobjc}/usr/lib -lobjc -framework ApplicationServices -framework CoreFoundation"}"
-    export LDFLAGS="$glReexports $objcLib -F$pdfw -isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${mesa}/usr/lib ${lib.concatMapStringsSep " " (dep: "-L${dep}/lib") (xDeps ++ waylandDeps)} -Wl,-platform_version,macos,26.5,26.5 -F${coreservices}/System/Library/Frameworks -framework CoreServices -F${security}/System/Library/Frameworks -framework Security -F${diskArbitration}/System/Library/Frameworks -framework DiskArbitration -F${systemConfiguration}/System/Library/Frameworks -framework SystemConfiguration -F${iokit}/System/Library/Frameworks -F${corefoundation}/System/Library/Frameworks -lSystem"
+    export LDFLAGS="$glReexports $objcLib -F$pdfw -isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${mesa}/usr/lib ${lib.concatMapStringsSep " " (dep: "-L${dep}/lib") (xDeps ++ waylandDeps)} -Wl,-platform_version,macos,${if stockMac then "13.0" else "26.5"},26.5${lib.optionalString stockMac " -Wl,-headerpad_max_install_names"} -F${coreservices}/System/Library/Frameworks -framework CoreServices -F${security}/System/Library/Frameworks -framework Security -F${diskArbitration}/System/Library/Frameworks -framework DiskArbitration -F${systemConfiguration}/System/Library/Frameworks -framework SystemConfiguration -F${iokit}/System/Library/Frameworks -F${corefoundation}/System/Library/Frameworks -lSystem"
 
     # The cross build invokes widl for IDLs that import stdole2.tlb. The
     # native-tools derivation deliberately builds only the host tools, so its
@@ -261,8 +272,11 @@ stdenv.mkDerivation {
     # freetype.c includes CoreText unconditionally, but its only user
     # (load_mac_fonts) sits behind #ifdef SONAME_LIBFREETYPE/#elif __APPLE__ and
     # we build with freetype, so that branch is dead. Drop the include.
+    # The stock Mac build has no fontconfig, so its font list comes from CoreText as on a Mac.
+    ${lib.optionalString (!stockMac) ''
     perl -0777 -i -pe "s{\#ifdef __APPLE__\n\#include <CoreText/CoreText\.h>\n\#endif /\* __APPLE__ \*/}{/* PureDarwin: no CoreText; load_mac_fonts is behind !SONAME_LIBFREETYPE */}s" \
       dlls/win32u/freetype.c
+    ''}
 
     # ip.c hand-copies struct ip6stat because "Mac OS doesn't export
     # <netinet6/ip6_var.h> to user-space". Ours does, from the same xnu the
@@ -279,6 +293,39 @@ stdenv.mkDerivation {
     # emits LC_MAIN from 10.8 on, so this link keeps a 10.7 minimum
     sed -i 's| -ldylib1\.o| -fuse-ld=${nativeLd}/bin/ld -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,10.7,26.5 -lSystem|' configure
 
+${lib.optionalString stockMac ''
+    # The loader reserves Wine's low and top-down ranges as zerofill segments, as upstream does
+    # when ld knows -no_huge. Our ld64 lays those out as written and emits no chained fixups,
+    # so the check is seeded and the two flags it does not know are dropped.
+    export ac_cv_cflags__Wl__no_huge=yes
+    sed -i 's|-no_huge,-no_fixup_chains,||' configure
+    # A Mac keeps the resolver in libresolv.9.dylib, PD links it into libSystem. dnsapi links the Mac way,
+    # against a stub with Apple's install name
+    mkdir -p "$TMPDIR/pd-resolv"
+    cat > "$TMPDIR/pd-resolv/libresolv.tbd" <<'TBD'
+--- !tapi-tbd
+tbd-version: 4
+targets: [ x86_64-macos ]
+install-name: '/usr/lib/libresolv.9.dylib'
+current-version: 1
+compatibility-version: 1
+exports:
+  - targets: [ x86_64-macos ]
+    symbols: [ ___res_9_state, _res_9_dn_expand, _res_9_init, _res_9_ndestroy, _res_9_ninit,
+               _res_9_nquery, _res_9_ns_get16, _res_9_ns_get32, _res_9_ns_initparse,
+               _res_9_ns_name_ntop, _res_9_ns_name_uncompress, _res_9_ns_parserr, _res_9_query,
+               _res_9_search ]
+...
+TBD
+    export LDFLAGS="$LDFLAGS -L$TMPDIR/pd-resolv"
+    export ac_cv_have_resolv=-lresolv
+    # A Mac has no FreeType, so it ships in the tree next to Wine and win32u loads it from there
+    export ac_cv_lib_soname_freetype=@loader_path/../../libfreetype.6.dylib
+''}
+${lib.optionalString (!stockMac) ''
+    # winevulkan loads the image's Vulkan loader at run time, Wine carries its own headers
+    export ac_cv_lib_soname_vulkan=/usr/lib/libvulkan.1.dylib
+''}
 ${lib.optionalString isArm64 ''
     export CROSSCFLAGS="-g -O1 -fno-unwind-tables"
     export aarch64_CFLAGS="-g -O1 -fno-unwind-tables -mno-unaligned-access"
@@ -292,10 +339,10 @@ ${lib.optionalString isArm64 ''
       --with-wine-tools="$wine_tools_build" \
       --enable-win64 \
       --with-x \
-      ${if enableMac then "--disable-winecoreaudio.drv" else "--disable-winemac.drv --disable-winecoreaudio.drv"} \
+      ${lib.optionalString (!enableMac) "--disable-winemac.drv --disable-winecoreaudio.drv"} \
       --with-mingw \
       --enable-archs=${peArchs} \
-      --with-fontconfig \
+      ${if stockMac then "--without-fontconfig" else "--with-fontconfig"} \
       --without-alsa \
       --without-capi \
       --without-cups \
@@ -314,7 +361,7 @@ ${lib.optionalString isArm64 ''
       --without-unwind \
       --without-usb \
       --without-v4l2 \
-      --without-vulkan \
+      ${if stockMac then "--without-vulkan" else "--with-vulkan"} \
       --with-wayland
     configureStatus=''${PIPESTATUS[0]}
     set -e
@@ -380,6 +427,37 @@ ${lib.optionalString isArm64 ''
           -change "@rpath/$base" "/lib/$base" "$so" 2>/dev/null || true
       done
     done
+
+    ${lib.optionalString stockMac ''
+    # PD installs a few frameworks under /usr/lib names and every framework at Versions/A, a Mac has
+    # the framework paths and keeps AppKit at Versions/C. The header padding in LDFLAGS makes room for the longer names
+    find "$out/usr" -type f \( -name '*.so' -o -perm -u+x \) | while read -r f; do
+      ${darwinCrossToolchain}/bin/${targetTriple}-install_name_tool \
+        -change /usr/lib/libFoundation.dylib /System/Library/Frameworks/Foundation.framework/Versions/C/Foundation \
+        -change /usr/lib/libCoreFoundation.dylib /System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation \
+        -change /usr/lib/libGLU.1.dylib /System/Library/Frameworks/OpenGL.framework/Versions/A/Libraries/libGLU.dylib \
+        -change /System/Library/Frameworks/AppKit.framework/Versions/A/AppKit /System/Library/Frameworks/AppKit.framework/Versions/C/AppKit \
+        "$f" 2>/dev/null || true
+    done
+    # the FreeType win32u opens through @loader_path, with a minimum a Mac accepts
+    cp ${freetype}/lib/libfreetype.6.dylib "$out/usr/lib/libfreetype.6.dylib"
+    chmod u+w "$out/usr/lib/libfreetype.6.dylib"
+    ${darwinCrossToolchain}/bin/${targetTriple}-install_name_tool -id @loader_path/libfreetype.6.dylib "$out/usr/lib/libfreetype.6.dylib"
+    # there is no vtool here, LC_BUILD_VERSION's minos is one word to rewrite
+    python3 - "$out/usr/lib/libfreetype.6.dylib" <<'PY'
+import struct, sys
+path = sys.argv[1]
+data = bytearray(open(path, "rb").read())
+ncmds = struct.unpack_from("<I", data, 16)[0]
+off = 32
+for _ in range(ncmds):
+    cmd, size = struct.unpack_from("<II", data, off)
+    if cmd == 0x32:
+        struct.pack_into("<I", data, off + 12, 13 << 16)
+    off += size
+open(path, "wb").write(data)
+PY
+    ''}
 
     # The PE modules carry mingw DWARF debug info - mshtml.dll alone is 30MB of
     # it, ~765MB across the tree. Each PE architecture needs its own strip; a
