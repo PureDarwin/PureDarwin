@@ -1,15 +1,11 @@
 /*
- * IOVirtIOGPU: minimal virtio-gpu 2D scanout driver for QEMU's
- * -device virtio-gpu-pci. Uses IOVirtIOFamily's IOVirtIOTransport for
- * the virtio-1.0 PCI transport (capability walking, handshake, split
- * virtqueues; completions reaped on the legacy intx line or polled), and layers
- * the virtio-gpu 2D control protocol on top:
- *   GET_DISPLAY_INFO -> RESOURCE_CREATE_2D -> RESOURCE_ATTACH_BACKING ->
- *   SET_SCANOUT, then TRANSFER_TO_HOST_2D + RESOURCE_FLUSH on a timer.
- * Register/protocol layout from the public VIRTIO 1.1 spec (PCI
- * transport, section 4.1; virtio-gpu device, section 5.7)
+ * IOVirtIOGPU.cpp - virtio-gpu scanout, virgl and Venus over IOVirtIOTransport
+ * (VIRTIO 1.1, section 5.7).
+ *
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
  */
-
 #include "IOVirtIOGPU.h"
 #include "IOVirtIOGPUSurfaceClient.h"
 #include "IOVirtIOGPU3DShared.h"

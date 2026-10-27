@@ -1,3 +1,11 @@
+/*
+ * IOVirtIOGPUSurfaceClient.cpp - IOVirtIOGPU's implementation of the PDSurface
+ * protocol.
+ *
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+ */
 #include "IOVirtIOGPUSurfaceClient.h"
 #include "IOVirtIOGPU.h"
 

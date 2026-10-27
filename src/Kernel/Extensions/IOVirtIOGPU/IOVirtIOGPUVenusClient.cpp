@@ -1,3 +1,11 @@
+/*
+ * IOVirtIOGPUVenusClient.cpp - the Venus user client: contexts, blob resources
+ * and ring submission for Vulkan.
+ *
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+ */
 #include "IOVirtIOGPUVenusClient.h"
 #include "IOVirtIOGPU.h"
 #include "IOVirtIOGPU3DShared.h"

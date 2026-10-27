@@ -1,3 +1,11 @@
+/*
+ * IOVirtIONet.h - virtio-net Ethernet over IOVirtIOTransport (VIRTIO 1.1,
+ * section 5.1).
+ *
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+ */
 #pragma once
 
 #include <IOKit/IOService.h>

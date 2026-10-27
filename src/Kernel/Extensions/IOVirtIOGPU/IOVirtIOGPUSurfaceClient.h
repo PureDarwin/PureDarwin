@@ -1,9 +1,10 @@
 /*
- * IOVirtIOGPU's implementation of the PDSurface protocol.
+ * IOVirtIOGPUSurfaceClient.h - IOVirtIOGPU's implementation of the PDSurface
+ * protocol.
  *
- * Kept separate from IOVirtIOGPUUserClient so the protocol stays independent
- * of anything virgl-shaped: a native driver implements the same selectors
- * against its own allocator and libPDSurface cannot tell the difference.
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
  */
 #pragma once
 

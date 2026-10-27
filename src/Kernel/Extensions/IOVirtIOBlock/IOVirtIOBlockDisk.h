@@ -1,3 +1,11 @@
+/*
+ * IOVirtIOBlockDisk.h - the IOBlockStorageDevice IOVirtIOBlock publishes for
+ * its disk.
+ *
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+ */
 #ifndef _PD_IOVIRTIO_BLOCK_DISK_H
 #define _PD_IOVIRTIO_BLOCK_DISK_H
 

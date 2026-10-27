@@ -1,3 +1,11 @@
+/*
+ * IOVirtIOGPUVenusClient.h - the Venus user client: contexts, blob resources
+ * and ring submission for Vulkan.
+ *
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+ */
 #pragma once
 
 #include <IOKit/IOUserClient.h>

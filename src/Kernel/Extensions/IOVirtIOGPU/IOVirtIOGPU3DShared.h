@@ -1,3 +1,11 @@
+/*
+ * IOVirtIOGPU3DShared.h - the virgl user client's connect type and selectors,
+ * shared with userland.
+ *
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+ */
 #ifndef IOVIRTIOGPU_3D_SHARED_H
 #define IOVIRTIOGPU_3D_SHARED_H
 

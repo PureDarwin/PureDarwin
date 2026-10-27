@@ -1,10 +1,10 @@
 /*
- * IOVirtIOGPU: minimal virtio-gpu 2D scanout driver. See IOVirtIOGPU.cpp
- * for scope notes. Transport (capability walking, virtqueues, handshake)
- * lives in IOVirtIOFamily's IOVirtIOTransport, shared with the other
- * virtio drivers. Register/protocol layout from the public VIRTIO 1.1
- * spec (PCI transport, section 4.1) and the virtio-gpu device spec
- * (section 5.7) - no Apple source exists for this device class.
+ * IOVirtIOGPU.h - virtio-gpu scanout, virgl and Venus over IOVirtIOTransport
+ * (VIRTIO 1.1, section 5.7).
+ *
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
  */
 #pragma once
 

@@ -1,3 +1,11 @@
+/*
+ * IOVirtIOTransport.cpp - the virtio 1.0 modern PCI transport the virtio
+ * drivers share (VIRTIO 1.1, section 4.1).
+ *
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+ */
 #include "IOVirtIOTransport.h"
 #include <IOKit/IOLib.h>
 #include <kern/clock.h>

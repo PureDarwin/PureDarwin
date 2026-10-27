@@ -1,3 +1,11 @@
+/*
+ * IOVirtIOBlock.h - virtio-blk block storage over IOVirtIOTransport (VIRTIO
+ * 1.1, section 5.2).
+ *
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+ */
 #ifndef _PD_IOVIRTIO_BLOCK_H
 #define _PD_IOVIRTIO_BLOCK_H
 
