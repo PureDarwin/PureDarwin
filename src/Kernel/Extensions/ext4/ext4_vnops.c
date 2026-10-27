@@ -916,6 +916,9 @@ ext4_finish_free_inode(struct ext4node *ep)
 	error = ext4_free_inode(ep->e_mount, ep->e_ino, ep->e_vtype);
 	if (error)
 		return error;
+	// dirty pages of a deleted file can still be pushed out after this, they must land nowhere
+	ep->e_freed = 1;
+	ep->e_size = 0;
 	if (ep->e_vp) {
 		IOLock *hlock = (IOLock *)ep->e_mount->em_hash_lock;
 		IOLockLock(hlock);
@@ -1084,6 +1087,8 @@ ext4_ensure_block_alloc(struct ext4node *ep, uint32_t lblk, uint64_t *pblk_out,
 		ep->e_dbg_last_lblk = lblk;
 	}
 
+	if (ep->e_freed)
+		return ENOENT;
 	error = ext4_bmap(emp, ep->e_ino, &ep->e_raw, lblk, &pblk);
 	if (error)
 		return error;
@@ -2168,7 +2173,7 @@ ext4_vnop_pageout_impl(struct vnop_pageout_args *ap)
 		if (chunk > size - done)
 			chunk = size - done;
 
-		if (foff >= (off_t)ep->e_size) {
+		if (ep->e_freed || foff >= (off_t)ep->e_size) {
 			done += chunk;
 			continue;   /* beyond EOF: nothing to write back */
 		}

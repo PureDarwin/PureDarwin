@@ -347,6 +347,8 @@ struct ext4node {
 	int               e_alloc_wip;  /* vnode_create in progress; sleep on &e_vp */
 	int               e_unhashed;   /* already LIST_REMOVE'd from em_node_hash */
 	int               e_pending_free; /* unlinked while still open; free at reclaim */
+	// extents and inode released, a late pageout must not allocate into it again
+	int               e_freed;
 	uint32_t          e_xflags;     // BSD flags ext4 has no inode bit for, kept in trusted.bsdflags
 	uint32_t          e_dbg_last_lblk; /* diagnostic: last logical block logged */
 	void             *e_lock;       /* IOLock*: guards e_raw/e_size/e_vtype against
