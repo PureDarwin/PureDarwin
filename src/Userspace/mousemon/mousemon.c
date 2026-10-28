@@ -12,7 +12,8 @@ struct USBHIDMouseEvent {
 	int8_t dx;
 	int8_t dy;
 	int8_t wheel;
-	uint8_t reserved[3];
+	uint8_t flags;	// 0x01: absolute, dx/dy hold the x fraction
+	uint16_t absY;
 };
 
 int
@@ -37,6 +38,15 @@ main(int argc, char **argv)
 		struct USBHIDMouseEvent event;
 		ssize_t n = read(fd, &event, sizeof(event));
 
+		if (n == (ssize_t)sizeof(event) && (event.flags & 0x01)) {
+			uint16_t absX;
+
+			memcpy(&absX, &event.dx, sizeof(absX));
+			printf("seq=%u mouse=%u buttons=%02x abs x=%04x y=%04x wheel=%d\n",
+			    event.sequence, event.mouseIndex, event.buttons,
+			    absX, event.absY, event.wheel);
+			continue;
+		}
 		if (n == (ssize_t)sizeof(event)) {
 			printf("seq=%u mouse=%u buttons=%02x dx=%d dy=%d wheel=%d\n",
 			    event.sequence, event.mouseIndex, event.buttons,

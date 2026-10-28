@@ -561,10 +561,9 @@ PDHIDPushKeyboardEvent(UInt8 usage, bool down)
     if (kick) thread_call_enter(gConsoleCall);
 }
 
-void
-PDHIDPushMouseEvent(UInt8 mouseIndex, UInt8 buttons, SInt8 dx, SInt8 dy, SInt8 wheel)
+static void
+pd_hid_mouse_enqueue(PDHIDMouseEvent &event)
 {
-    PDHIDMouseEvent event;
     UInt32 slot;
 
     if (!gMouseLock) {
@@ -572,19 +571,41 @@ PDHIDPushMouseEvent(UInt8 mouseIndex, UInt8 buttons, SInt8 dx, SInt8 dy, SInt8 w
         if (!gMouseLock) return;
     }
 
-    event.sequence = ++gMouseSequence;
-    event.mouseIndex = mouseIndex;
-    event.buttons = buttons;
-    event.dx = dx;
-    event.dy = dy;
-    event.wheel = wheel;
-    bzero(event.reserved, sizeof(event.reserved));
-
     IOLockLock(gMouseLock);
+    event.sequence = ++gMouseSequence;
     slot = gMouseWriteIndex % (UInt32)(sizeof(gMouseEvents) / sizeof(gMouseEvents[0]));
     gMouseEvents[slot] = event;
     gMouseWriteIndex++;
     if (gMouseWriteIndex - gMouseReadIndex > (UInt32)(sizeof(gMouseEvents) / sizeof(gMouseEvents[0])))
         gMouseReadIndex = gMouseWriteIndex - (UInt32)(sizeof(gMouseEvents) / sizeof(gMouseEvents[0]));
     IOLockUnlock(gMouseLock);
+}
+
+void
+PDHIDPushMouseEvent(UInt8 mouseIndex, UInt8 buttons, SInt8 dx, SInt8 dy, SInt8 wheel)
+{
+    PDHIDMouseEvent event;
+
+    bzero(&event, sizeof(event));
+    event.mouseIndex = mouseIndex;
+    event.buttons = buttons;
+    event.dx = dx;
+    event.dy = dy;
+    event.wheel = wheel;
+    pd_hid_mouse_enqueue(event);
+}
+
+void
+PDHIDPushAbsoluteMouseEvent(UInt8 mouseIndex, UInt8 buttons, UInt16 x, UInt16 y, SInt8 wheel)
+{
+    PDHIDMouseEvent event;
+
+    bzero(&event, sizeof(event));
+    event.mouseIndex = mouseIndex;
+    event.buttons = buttons;
+    bcopy(&x, &event.dx, sizeof(x));
+    event.wheel = wheel;
+    event.flags = kPDHIDMouseAbsolute;
+    event.absY = y;
+    pd_hid_mouse_enqueue(event);
 }

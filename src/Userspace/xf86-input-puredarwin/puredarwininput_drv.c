@@ -25,7 +25,8 @@ struct USBHIDMouseEvent {
     int8_t   dx;
     int8_t   dy;
     int8_t   wheel;
-    uint8_t  reserved[3];
+    uint8_t  flags;     // 0x01: absolute, dx/dy hold the x fraction
+    uint16_t absY;
 };
 
 struct USBHIDKbdEvent {
@@ -103,7 +104,8 @@ PDReadInput(InputInfoPtr pInfo)
             uint8_t changed = ev.buttons ^ priv->lastButtons;
             int rel[2] = { ev.dx, ev.dy };
 
-            if (ev.dx || ev.dy)
+            // absolute tablet positions are not mapped here yet, keep their buttons
+            if (!(ev.flags & 0x01) && (ev.dx || ev.dy))
                 xf86PostMotionEventP(pInfo->dev, 0 /*relative*/, 0, 2, rel);
 
             /* HID boot: bit0 left, bit1 right, bit2 middle -> X 1,3,2 */

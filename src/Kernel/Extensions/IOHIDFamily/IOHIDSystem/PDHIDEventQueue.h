@@ -23,8 +23,13 @@ struct PDHIDMouseEvent {
     SInt8  dx;
     SInt8  dy;
     SInt8  wheel;
-    UInt8  reserved[3];
+    UInt8  flags;
+    UInt16 absY;
 };
+
+// an absolute record holds 0..0xffff screen fractions, absY above and absX in the dx/dy bytes
+#define kPDHIDMouseAbsolute 0x01
+
 
 void PDHIDPublishKeyboardDevice(void);
 void PDHIDPublishMouseDevice(void);
@@ -39,6 +44,9 @@ void PDHIDPushKeyboardEvent(UInt8 usage, bool down);
 bool PDHIDKeyboardIsGrabbed(void);
 
 void PDHIDPushMouseEvent(UInt8 mouseIndex, UInt8 buttons, SInt8 dx, SInt8 dy, SInt8 wheel);
+
+// for tablets and other absolute pointers, x and y run 0 to 0xffff across the screen
+void PDHIDPushAbsoluteMouseEvent(UInt8 mouseIndex, UInt8 buttons, UInt16 x, UInt16 y, SInt8 wheel);
 
 /* Claims the next mouseIndex. Shared so a PS/2 and a USB mouse cannot both
  * report as device 0. */

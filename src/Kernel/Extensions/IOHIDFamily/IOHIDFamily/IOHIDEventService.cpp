@@ -85,6 +85,24 @@ static void pdHIDPushMotion(UInt32 buttons, SInt32 dx, SInt32 dy, SInt32 wheel)
         wheel -= sw;
     } while (dx || dy || wheel);
 }
+
+// scales a position within bounds to the queue's 0 to 0xffff screen fraction
+static UInt16 pdHIDScaleAxis(SInt32 v, SInt32 min, SInt32 max)
+{
+    if (max <= min || v <= min)
+        return 0;
+    if (v >= max)
+        return 0xffff;
+    return (UInt16)(((SInt64)(v - min) * 0xffff) / (max - min));
+}
+
+static void pdHIDPushPosition(UInt32 buttons, SInt32 x, SInt32 y, const IOGBounds *bounds)
+{
+    UInt16 sx = pdHIDScaleAxis(x, bounds->minx, bounds->maxx);
+    UInt16 sy = pdHIDScaleAxis(y, bounds->miny, bounds->maxy);
+
+    PDHIDPushAbsoluteMouseEvent(pdHIDMouseIndex(), (UInt8)(buttons & 7), sx, sy, 0);
+}
 #include "IOHIDEventServiceFastPathUserClient.h"
 
 extern "C" int  kern_stack_snapshot_with_reason(char *reason);
@@ -1908,6 +1926,8 @@ void IOHIDEventService::dispatchAbsolutePointerEvent(
 #else
     IOHID_DEBUG(kIOHIDDebugCode_DispatchAbsolutePointer, x, y, buttonState, options);
 
+    pdHIDPushPosition(buttonState, x, y, bounds);
+
     // Built-in like the virtual digitizer Apple's VMs expose, whose events WindowServer places on screen
     IOHIDEvent *event = IOHIDEvent::absolutePointerEvent(timeStamp, __ScaleToFixed(x, bounds->minx, bounds->maxx), __ScaleToFixed(y, bounds->miny, bounds->maxy), 0, buttonState, _absolutePointer.buttonState, kIOHIDEventOptionIsBuiltIn);
     
@@ -2970,7 +2990,7 @@ void IOHIDEventService::dispatchScrollWheelEventWithFixed(
         return;
 
     if (deltaAxis1 >> 16)
-        pdHIDPushMotion(_relativePointer.buttonState, 0, 0, deltaAxis1 >> 16);
+        pdHIDPushMotion(_relativePointer.buttonState | _absolutePointer.buttonState, 0, 0, deltaAxis1 >> 16);
 
     IOHIDEvent *event = IOHIDEvent::scrollEventWithFixed(timeStamp, deltaAxis2, deltaAxis1, deltaAxis3); //yxz should be xyz
     if ( event ) {

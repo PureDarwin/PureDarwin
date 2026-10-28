@@ -58,7 +58,8 @@ struct USBHIDMouseEvent {
     signed char dx;
     signed char dy;
     signed char wheel;
-    unsigned char reserved[3];
+    unsigned char flags;    // 0x01: absolute, dx/dy hold the x fraction
+    unsigned short absY;
 };
 
 static int mouse_fd = -1;
@@ -157,6 +158,9 @@ PollMouse(void)
         if (n != (ssize_t)sizeof(m))
             break;
 
+        // doom turns on relative motion only, so a tablet contributes its buttons
+        if (m.flags & 0x01)
+            m.dx = m.dy = 0;
         if (m.dx == 0 && m.dy == 0 && m.wheel == 0 && m.buttons == 0)
             continue;
 

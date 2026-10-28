@@ -27,8 +27,12 @@ struct pd_hid_mouse_event {
 	uint8_t mouse_index;
 	uint8_t buttons;
 	int8_t dx, dy, wheel;
-	uint8_t reserved[3];
+	uint8_t flags;
+	uint16_t abs_y;
 };
+
+// an absolute record carries 0..0xffff screen fractions, abs_x in the dx/dy bytes
+#define PD_HID_MOUSE_ABSOLUTE 0x01
 
 static const uint16_t usb_to_evdev[256] = {
 	[0x04] = 30, [0x05] = 48, [0x06] = 46, [0x07] = 32,
@@ -85,7 +89,17 @@ static int mouse_readable(int fd, uint32_t mask, void *data) {
 	(void)mask;
 	while (read(backend->mouse_fd, &event, sizeof(event)) == sizeof(event)) {
 		uint32_t time = get_current_time_msec();
-		if (event.dx || event.dy) {
+		if (event.flags & PD_HID_MOUSE_ABSOLUTE) {
+			uint16_t abs_x;
+			memcpy(&abs_x, &event.dx, sizeof(abs_x));
+			struct wlr_pointer_motion_absolute_event motion = {
+				.pointer = &backend->pointer,
+				.time_msec = time,
+				.x = abs_x / 65535.0,
+				.y = event.abs_y / 65535.0,
+			};
+			wl_signal_emit_mutable(&backend->pointer.events.motion_absolute, &motion);
+		} else if (event.dx || event.dy) {
 			struct wlr_pointer_motion_event motion = {
 				.pointer = &backend->pointer,
 				.time_msec = time,

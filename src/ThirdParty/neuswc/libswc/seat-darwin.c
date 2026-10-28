@@ -98,8 +98,18 @@ struct pd_hid_mouse_event {
 	int8_t dx;
 	int8_t dy;
 	int8_t wheel;
-	uint8_t reserved[3];
+	uint8_t flags;
+	uint16_t abs_y;
 };
+
+// an absolute record (tablets) carries 0..0xffff screen fractions, abs_x in the dx/dy bytes
+#define PD_HID_MOUSE_ABSOLUTE 0x01
+
+static wl_fixed_t
+pd_hid_scale_axis(uint16_t v, int32_t lo, int32_t hi)
+{
+	return wl_fixed_from_double(lo + (double)v * (hi - lo - 1) / 0xffff);
+}
 #endif
 
 /* USB HID keyboard usages translated to Linux input keycodes, as expected by
@@ -528,7 +538,15 @@ dispatch_run_loop_body(struct seat *seat)
 		uint8_t changed = mouse_event.buttons ^ seat->mouse_buttons;
 		unsigned bit;
 
-		if (mouse_event.dx || mouse_event.dy) {
+		if (mouse_event.flags & PD_HID_MOUSE_ABSOLUTE) {
+			pixman_box32_t *box = pixman_region32_extents(&seat->base.pointer->region);
+			uint16_t abs_x;
+
+			memcpy(&abs_x, &mouse_event.dx, sizeof(abs_x));
+			pointer_handle_absolute_motion(seat->base.pointer, time,
+			                               pd_hid_scale_axis(abs_x, box->x1, box->x2),
+			                               pd_hid_scale_axis(mouse_event.abs_y, box->y1, box->y2));
+		} else if (mouse_event.dx || mouse_event.dy) {
 			pointer_handle_relative_motion(seat->base.pointer, time,
 			                               wl_fixed_from_int(mouse_event.dx),
 			                               wl_fixed_from_int(mouse_event.dy));
