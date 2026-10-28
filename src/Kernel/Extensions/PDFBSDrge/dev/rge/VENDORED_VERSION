@@ -1,0 +1,6 @@
+freebsd-src da04cf02c96b97c587580b336fa527392467f689 (main, 2026-10-22)
+https://github.com/freebsd/freebsd-src/tree/da04cf02c96b97c587580b336fa527392467f689/sys/dev/rge
+files: sys/dev/rge/if_rge.c if_rge_debug.h if_rge_hw.c if_rge_hw.h
+  if_rge_microcode.h if_rge_stats.c if_rge_stats.h if_rge_sysctl.c
+  if_rge_sysctl.h if_rge_vendor.h if_rgereg.h if_rgevar.h
+last commit touching sys/dev/rge at that point: 686323c1820cc4b2ef5434c0b6fa0ac38466fe5e

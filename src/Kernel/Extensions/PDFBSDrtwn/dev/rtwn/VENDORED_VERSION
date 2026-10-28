@@ -1,0 +1,5 @@
+freebsd-src da04cf02c96b97c587580b336fa527392467f689 (main, 2026-10-22)
+https://github.com/freebsd/freebsd-src/tree/da04cf02c96b97c587580b336fa527392467f689/sys/dev/rtwn
+files: sys/dev/rtwn without the pci/ directories (162 files)
+last commit touching sys/dev/rtwn at that point: 2e01f5bf9813d67d33e8ca095e22952c0193e3b7
+../usb/usbdevs: sys/dev/usb/usbdevs at the same commit, usbdevs.h is generated from it at build time

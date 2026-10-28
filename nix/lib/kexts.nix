@@ -98,6 +98,10 @@ in
   { name = "PDE1000.kext"; dir = "PDE1000"; headers = [ "IONetworkingFamily" "IOPCIFamily" ]; arches = x86arm; kc = x86; }
   { name = "PDFBSDem.kext"; dir = "PDFBSDem"; headers = [ "IONetworkingFamily" "IOPCIFamily" ]; extra = fbsdkpi;
     arches = x86arm; kc = x86; }
+  { name = "PDFBSDigc.kext"; dir = "PDFBSDigc"; headers = [ "IONetworkingFamily" "IOPCIFamily" ]; extra = fbsdkpi;
+    arches = x86arm; kc = x86; }
+  { name = "PDFBSDrge.kext"; dir = "PDFBSDrge"; headers = [ "IONetworkingFamily" "IOPCIFamily" ]; extra = fbsdkpi;
+    arches = x86arm; kc = x86; }
   { name = "PDRealtek8111.kext"; dir = "PDRealtek8111"; headers = [ "IONetworkingFamily" "IOPCIFamily" ];
     arches = x86arm; kc = x86; }
   { name = "IO80211Family.kext"; dir = "IO80211Family"; headerTargets = true; headers = [ "IONetworkingFamily" ]; arches = x86arm; kc = x86; }
@@ -105,7 +109,11 @@ in
   { name = "PDFBSDrtw89.kext"; dir = "PDFBSDrtw89"; headers = [ "IO80211Family" "IOPCIFamily" ]; extra = fbsdkpi;
     arches = x86; kc = x86; }
   # loaded from the gpu images' aux KC, with net80211 and linuxkpi it would push the boot KC past the loader's limit
+  { name = "PDFBSDrtwn.kext"; dir = "PDFBSDrtwn"; headers = [ "IO80211Family" "IOPCIFamily" "IOUSBFamily" ]; extra = fbsdkpi;
+    arches = x86; kc = [ ]; }
   # freebsd run for the ralink usb dongles, aux KC like rtwn
+  { name = "PDFBSDrun.kext"; dir = "PDFBSDrun"; headers = [ "IO80211Family" "IOPCIFamily" "IOUSBFamily" ]; extra = fbsdkpi;
+    arches = x86; kc = [ ]; }
   { name = "PDRalinkUSB.kext"; dir = "PDRalinkUSB"; headers = [ "IO80211Family" "IOUSBFamily" ]; arches = x86; kc = x86; }
   { name = "PDQwx.kext"; dir = "PDQwx"; headers = [ "IO80211Family" "IOPCIFamily" ]; arches = x86arm; kc = x86; }
   { name = "PDUSBNCM.kext"; dir = "PDUSBNCM"; headers = [ "IONetworkingFamily" "IOUSBFamily" ]; arches = x86; kc = x86; }

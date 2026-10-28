@@ -3084,6 +3084,7 @@ let
       "IOGraphicsFamily.kext" "IOGOPFramebuffer.kext" "PDVirtualFramebuffer.kext"
       "IONVMEFamily.kext"
       "RavynHDAudio.kext" "PDE1000.kext" "PDRealtek8111.kext"
+      "PDFBSDem.kext" "PDFBSDigc.kext" "PDFBSDrge.kext"
       "IO80211Family.kext" "PDQwx.kext"
       "PDBcm2835SD.kext" "PDSun50iMMC.kext" "PDSg2002SD.kext" "PDSg2002Eth.kext"
       "PDI2CFamily.kext" "PDQcomTLMM.kext" "PDQcomGeniI2C.kext" "PDI2CHID.kext"
@@ -3113,6 +3114,7 @@ let
       "IOGraphicsFamily.kext" "IOGOPFramebuffer.kext" "PDVirtualFramebuffer.kext"
       "IONVMEFamily.kext"
       "RavynHDAudio.kext" "PDE1000.kext" "PDRealtek8111.kext"
+      "PDFBSDem.kext" "PDFBSDigc.kext" "PDFBSDrge.kext"
       "IO80211Family.kext" "PDQwx.kext"
     ];
     enableIOGraphicsFamily = true;

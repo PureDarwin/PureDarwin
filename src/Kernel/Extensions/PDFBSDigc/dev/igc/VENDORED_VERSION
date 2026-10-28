@@ -1,0 +1,8 @@
+freebsd-src da04cf02c96b97c587580b336fa527392467f689 (main, 2026-10-22)
+https://github.com/freebsd/freebsd-src/tree/da04cf02c96b97c587580b336fa527392467f689/sys/dev/igc
+files: sys/dev/igc/if_igc.c if_igc.h igc_api.c igc_api.h igc_base.c igc_base.h igc_defines.h igc_hw.h igc_i225.c igc_i225.h igc_mac.c igc_mac.h igc_nvm.c igc_nvm.h igc_osdep.h igc_phy.c igc_phy.h igc_regs.h igc_txrx.c 
+last commit touching sys/dev/igc at that point: 68386f6b551e64c956c9623b9973be9e462ce1de
+local changes:
+  if_igc.h: the kernel option headers sit under #ifndef __HAIKU__, as in PDFBSDem's if_em.h
+  if_igc.c, igc_txrx.c: machine/_inttypes.h and the rss headers sit under #ifndef __HAIKU__, pd_igc_compat.h stands in for them
+  if_igc.c: sysctl handlers that read oidp are stubbed under __HAIKU__ and D3_HOT is D3, igc_txrx.c: the SCTP checksum case is left out, both as in PDFBSDem

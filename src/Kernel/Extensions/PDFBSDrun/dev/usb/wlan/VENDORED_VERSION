@@ -1,0 +1,7 @@
+freebsd-src da04cf02c96b97c587580b336fa527392467f689 (main, 2026-10-22)
+https://github.com/freebsd/freebsd-src/tree/da04cf02c96b97c587580b336fa527392467f689/sys/dev/usb/wlan
+files: sys/dev/usb/wlan/if_run.c if_runreg.h if_runvar.h
+last commit touching if_run.c at that point: f064d44badfa9eee3e62d2d7dacd77a968f0a6dd
+../usbdevs: sys/dev/usb/usbdevs at the same commit, usbdevs.h is generated from it at build time
+local changes: if_run.c run_autoinst body under #ifndef __HAIKU__, the cd-rom eject of mode-switching dongles needs usb interface internals the haiku layer does not expose
+PureDarwin additions: ../usb_msctest.h and ../../../pd_run_compat.h
