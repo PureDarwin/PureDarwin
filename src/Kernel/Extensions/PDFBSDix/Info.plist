@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>English</string>
+    <key>CFBundleExecutable</key>
+    <string>PDFBSDix</string>
+    <key>CFBundleGetInfoString</key>
+    <string>1.0.0, Copyright (C) 2026 PureDarwin Project. All rights reserved.</string>
+    <key>CFBundleIdentifier</key>
+    <string>org.puredarwin.driver.PDFBSDix</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>PDFBSDix</string>
+    <key>CFBundlePackageType</key>
+    <string>KEXT</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>CFBundleVersion</key>
+    <string>1.0.0</string>
+    <key>IOKitPersonalities</key>
+    <dict>
+        <key>PDFBSDix</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>org.puredarwin.driver.PDFBSDix</string>
+            <key>IOClass</key>
+            <string>PDFBSDix</string>
+            <key>IOPCIPrimaryMatch</key>
+            <string>0x10C68086 0x10C78086 0x10DD8086 0x10C88086 0x150B8086 0x10B68086 0x10F18086 0x10EC8086 0x10F48086 0x10E18086 0x10DB8086 0x15088086 0x10F78086 0x15148086 0x10FB8086 0x15178086 0x15078086 0x10FC8086 0x10F98086 0x151C8086 0x154F8086 0x10F88086 0x152A8086 0x154D8086 0x15298086 0x15578086 0x154A8086 0x15588086 0x15288086 0x15608086 0x15638086 0x15D18086 0x15AB8086 0x15AA8086 0x15AD8086 0x15AE8086 0x15AC8086 0x15B08086 0x15C28086 0x15C38086 0x15CE8086 0x15C48086 0x15CA8086 0x15CC8086 0x15C68086 0x15C78086 0x15C88086 0x15E48086 0x15E58086 0x155C8086 0x155D8086 0x57AE8086 0x57AF8086 0x57B18086 0x57B08086 0x57B28086</string>
+            <key>IOProbeScore</key>
+            <integer>6000</integer>
+            <key>IOProviderClass</key>
+            <string>IOPCIDevice</string>
+        </dict>
+    </dict>
+    <key>OSBundleLibraries</key>
+    <dict>
+        <key>com.apple.iokit.IONetworkingFamily</key>
+        <string>3.4</string>
+        <key>com.apple.iokit.IOPCIFamily</key>
+        <string>2.9</string>
+        <key>com.apple.kpi.iokit</key>
+        <string>10.0.0d1</string>
+        <key>com.apple.kpi.libkern</key>
+        <string>10.0.0d1</string>
+        <key>com.apple.kpi.mach</key>
+        <string>10.0.0d1</string>
+        <key>com.apple.kpi.unsupported</key>
+        <string>10.0.0d1</string>
+        <key>com.apple.kpi.bsd</key>
+        <string>10.0.0d1</string>
+    </dict>
+    <key>OSBundleCompatibleVersion</key>
+    <string>1.0.0</string>
+    <key>OSBundleRequired</key>
+    <string>Local-Root</string>
+</dict>
+</plist>

@@ -5797,7 +5797,7 @@
             inherit kernelSource;
             kexts = drmGpuKexts;
             kcTools = kc-tools.packages.${system}.default;
-            auxKexts = [ "PDDRMamdgpu.kext" "PDDRMi915.kext" "PDDRMnouveau.kext" "PDFBSDrtwn.kext" "PDFBSDrun.kext" ];
+            auxKexts = [ "PDDRMamdgpu.kext" "PDDRMi915.kext" "PDDRMnouveau.kext" "PDFBSDrtwn.kext" "PDFBSDrun.kext" "PDFBSDix.kext" ];
             excludeKexts = [ "PDAmdGPU.kext" ];
           };
           # what every desktop image carries for the drm drivers: the combined aux KC and firmware

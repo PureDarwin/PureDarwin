@@ -1,0 +1,9 @@
+freebsd-src da04cf02c96b97c587580b336fa527392467f689 (main, 2026-10-22)
+https://github.com/freebsd/freebsd-src/tree/da04cf02c96b97c587580b336fa527392467f689/sys/dev/ixgbe
+files: every file in sys/dev/ixgbe except if_ixv.c, built as sys/modules/ix lists them less if_ix_mdio.c and if_ix_mdio_hw.c
+last commit touching sys/dev/ixgbe at that point: 32b8381d711cb668791ff307de1df1ca333b39ba
+local changes:
+  if_ix.c, ix_txrx.c: the kernel option headers sit under #ifndef __HAIKU__, ixgbe_rss.h: the rss headers too, pd_ix_compat.h stands in for them
+  if_ix.c: netmap and the mdio bus (includes, methods, DRIVER_MODULE, MODULE_DEPEND, ixgbe_mdio_attach) sit under #ifndef __HAIKU__, as do bus_add_child and ifdi_power_prepare with ixgbe_if_power_prepare
+  if_ix.c: sysctl handlers that read oidp or req->oldptr are stubbed under __HAIKU__ and D3_HOT is D3, ix_txrx.c: the SCTP checksum case is left out, all as in PDFBSDigc
+  ixgbe.h: includes pd_ix_shims.h under __HAIKU__, for the atomics, sized sysctls, pme and newer iflib calls the haiku layer lacks

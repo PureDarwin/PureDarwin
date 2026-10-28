@@ -1314,12 +1314,13 @@ let
         baseSystem = splitBaseSystemWayland;
         # the same desktop session as image-wayland-minimal, over the full userland
         extraPackages = lib.unique (lib.attrValues waylandOnlyExtraPackageSet ++ waylandDesktopPackages
-          ++ gpuDefaultPackages);
+          ++ gpuDefaultPackages ++ [ pdkextFiles ]);
         kc = kcGpuBuild;
         xnuLoader = xnuLoaderDefault;
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-wayland.img";
-        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1 ahci_debug=1";
+        # the aux KC is not SIP protected on ext4, allow unrestricted fs and untrusted kexts
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1 ahci_debug=1 csr-active-config=0x3";
       };
       # wifi firmware the drivers load from /Library/Firmware/<driver>, kept out
       # of the kernel collection and the kext bundles
@@ -1579,10 +1580,16 @@ let
         mkdir -p $out/bin
         ln -s zsh $out/bin/sh
       '';
+      # pdkext alone from the userland, it loads the aux KC at boot for PDFBSDix and the drm kexts
+      pdkextFiles = pkgs.runCommand "puredarwin-pdkext" { } ''
+        mkdir -p $out/usr/sbin $out/System/Library/LaunchDaemons
+        cp ${userlandBuild}/usr/sbin/pdkext $out/usr/sbin/pdkext
+        cp ${userlandBuild}/System/Library/LaunchDaemons/org.puredarwin.pdkext.plist $out/System/Library/LaunchDaemons/
+      '';
       imageWaylandMinimalBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemStripped;
         extraPackages = lib.unique (strippedExtraPackages ++ waylandDesktopPackages ++ [ binShBuild ]
-          ++ gpuDefaultPackages);
+          ++ gpuDefaultPackages ++ [ pdkextFiles ]);
         kc = kcGpuBuild;
         xnuLoader = xnuLoaderDefault;
         apfsprogs = pkgs.apfsprogs;
@@ -1590,7 +1597,8 @@ let
         espMB = 60;
         rootMB = 1200;
         # a graphical boot: the progress bar instead of the verbose log, which -v brings back
-        bootArgs = "debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopprogress=1";
+        # csr-active-config=0x3 lets the unprotected aux KC load
+        bootArgs = "debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopprogress=1 csr-active-config=0x3";
       };
       # the install and rescue drive: the desktop with the disk tools, pdinstall and Install PureDarwin
       imageInstallerBuild = imageWaylandMinimalBuild.override (old: {

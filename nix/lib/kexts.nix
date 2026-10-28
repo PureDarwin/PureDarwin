@@ -100,6 +100,9 @@ in
     arches = x86arm; kc = x86; }
   { name = "PDFBSDigc.kext"; dir = "PDFBSDigc"; headers = [ "IONetworkingFamily" "IOPCIFamily" ]; extra = fbsdkpi;
     arches = x86arm; kc = x86; }
+  # freebsd ix for the intel 10g nics, loaded from the gpu images' aux KC like rtwn
+  { name = "PDFBSDix.kext"; dir = "PDFBSDix"; headers = [ "IONetworkingFamily" "IOPCIFamily" ]; extra = fbsdkpi;
+    arches = x86; kc = [ ]; }
   { name = "PDFBSDrge.kext"; dir = "PDFBSDrge"; headers = [ "IONetworkingFamily" "IOPCIFamily" ]; extra = fbsdkpi;
     arches = x86arm; kc = x86; }
   { name = "PDRealtek8111.kext"; dir = "PDRealtek8111"; headers = [ "IONetworkingFamily" "IOPCIFamily" ];

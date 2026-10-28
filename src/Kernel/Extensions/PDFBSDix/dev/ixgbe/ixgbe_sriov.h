@@ -1,0 +1,133 @@
+/******************************************************************************
+
+  Copyright (c) 2001-2020, Intel Corporation
+  All rights reserved.
+
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions are met:
+
+   1. Redistributions of source code must retain the above copyright notice,
+      this list of conditions and the following disclaimer.
+
+   2. Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+
+   3. Neither the name of the Intel Corporation nor the names of its
+      contributors may be used to endorse or promote products derived from
+      this software without specific prior written permission.
+
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+  ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+  LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+  CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+  SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+  INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+  POSSIBILITY OF SUCH DAMAGE.
+
+******************************************************************************/
+
+
+#ifndef _IXGBE_SRIOV_H_
+#define _IXGBE_SRIOV_H_
+
+#ifdef PCI_IOV
+
+#include <sys/nv.h>
+#include <sys/iov_schema.h>
+#include <dev/pci/pci_iov.h>
+#include <net/iflib.h>
+#include "ixgbe_mbx.h"
+
+#define IXGBE_VF_CTS            (1U << 0) /* VF is clear to send. */
+#define IXGBE_VF_CAP_MAC        (1U << 1) /* VF is permitted to change MAC. */
+#define IXGBE_VF_CAP_VLAN       (1U << 2) /* VF is permitted to join vlans. */
+#define IXGBE_VF_ACTIVE         (1U << 3) /* VF is active. */
+#define IXGBE_VF_ANTI_SPOOF     (1U << 4) /* Enforce source identity. */
+#define IXGBE_VF_ALLOW_PROMISC  (1U << 5) /* VF may request promiscuity. */
+#define IXGBE_VF_MBX_CLEANUP    (1U << 6) /* Reset cleanup pending. */
+#define IXGBE_VF_INIT_DONE      (1U << 7) /* Hardware state is ready. */
+#define IXGBE_VF_DMA_ABORT_PENDING (1U << 8) /* VF awaits a forced FLR. */
+#define IXGBE_VF_PCI_STATE_SAVED (1U << 9) /* Preserve state for retry. */
+#define IXGBE_VF_QUARANTINED    (1U << 10) /* VF exceeded fault limit. */
+#define IXGBE_VF_MDD_BLOCKED    (1U << 11) /* VF is gated after MDD. */
+#define IXGBE_VF_MDD_NOTIFY_PENDING (1U << 12) /* Retry reset notice. */
+#define IXGBE_VF_IO_DISABLED    \
+	(IXGBE_VF_DMA_ABORT_PENDING | IXGBE_VF_QUARANTINED)
+#define IXGBE_VF_TRAFFIC_DISABLED \
+	(IXGBE_VF_IO_DISABLED | IXGBE_VF_MDD_BLOCKED)
+#define IXGBE_VF_INDEX(vmdq)    ((vmdq) / 32)
+#define IXGBE_VF_BIT(vmdq)      (1U << ((vmdq) % 32))
+
+#define IXGBE_VT_MSG_MASK	0xFFFF
+
+#define IXGBE_VT_MSGINFO(msg)	\
+	(((msg) & IXGBE_VT_MSGINFO_MASK) >> IXGBE_VT_MSGINFO_SHIFT)
+
+#define IXGBE_VF_GET_QUEUES_RESP_LEN	5
+
+#define IXGBE_API_VER_1_0	0
+#define IXGBE_API_VER_2_0	1	/* Solaris API.  Not supported. */
+#define IXGBE_API_VER_1_1	2
+#define IXGBE_API_VER_1_2	3
+#define IXGBE_API_VER_1_3	4
+#define IXGBE_API_VER_1_6	ixgbe_mbox_api_16
+#define IXGBE_API_VER_UNKNOWN	UINT16_MAX
+
+#define IXGBE_NO_VM             0
+#define IXGBE_32_VM             32
+#define IXGBE_64_VM             64
+#define IXGBE_MAX_PF_MAC_FILTERS 15
+#define IXGBE_MAX_VF_MAC_FILTERS 3
+
+int  ixgbe_if_iov_vf_add(if_ctx_t, u16, const nvlist_t *);
+int  ixgbe_if_iov_init(if_ctx_t, u16, const nvlist_t *);
+struct if_vf_status;
+int  ixgbe_if_vf_status(if_ctx_t, struct if_vf_status **);
+int  ixgbe_iov_validate(struct ixgbe_softc *, u16);
+void ixgbe_if_iov_uninit(if_ctx_t);
+void ixgbe_initialize_iov(struct ixgbe_softc *);
+void ixgbe_activate_vfs(struct ixgbe_softc *);
+void ixgbe_quiesce_vfs(struct ixgbe_softc *);
+void ixgbe_recalculate_max_frame(struct ixgbe_softc *);
+void ixgbe_ping_all_vfs(struct ixgbe_softc *);
+void ixgbe_init_iov_recovery(struct ixgbe_softc *);
+void ixgbe_schedule_iov_recovery(struct ixgbe_softc *);
+u_int ixgbe_iov_rebuild_mta(struct ixgbe_softc *);
+void ixgbe_define_iov_schemas(struct ixgbe_softc *, int *);
+void ixgbe_align_all_queue_indices(struct ixgbe_softc *);
+int  ixgbe_vf_que_index(int, int, int);
+u32  ixgbe_get_mtqc(int);
+u32  ixgbe_get_mrqc(int);
+
+/******************************************************************************/
+#else  /* PCI_IOV */
+/******************************************************************************/
+
+#define ixgbe_add_vf(_a,_b,_c)
+#define ixgbe_init_iov(_a,_b,_c)
+#define ixgbe_uninit_iov(_a)
+#define ixgbe_initialize_iov(_a)
+#define ixgbe_activate_vfs(_a)
+#define ixgbe_quiesce_vfs(_a)
+#define ixgbe_recalculate_max_frame(_a)
+#define ixgbe_ping_all_vfs(_a)
+#define ixgbe_init_iov_recovery(_a)
+#define ixgbe_schedule_iov_recovery(_a)
+#define ixgbe_define_iov_schemas(_a,_b)
+#define ixgbe_align_all_queue_indices(_a)
+#define ixgbe_vf_que_index(_a, _b, _c) (_c)
+#define ixgbe_get_mtqc(_a) IXGBE_MTQC_64Q_1PB
+#define ixgbe_get_mrqc(_a) IXGBE_MRQC_RSSEN
+
+#endif /* PCI_IOV */
+
+void ixgbe_if_init(if_ctx_t ctx);
+void ixgbe_handle_mbx(void *);
+bool ixgbe_mbx_pending(struct ixgbe_softc *);
+
+#endif
