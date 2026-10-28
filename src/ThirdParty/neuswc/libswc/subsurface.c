@@ -330,8 +330,9 @@ set_desync(struct wl_client *client, struct wl_resource *resource)
 	}
 }
 
+// the parent's subsurfaces go back around it in their committed order
 void
-subsurface_parent_commit(struct surface *parent)
+subsurface_restack(struct surface *parent)
 {
 	struct subsurface *child;
 	struct compositor_view *parent_view;
@@ -341,22 +342,6 @@ subsurface_parent_commit(struct surface *parent)
 	if (!parent) {
 		return;
 	}
-
-	wl_list_for_each(child, &parent->subsurfaces, link)
-	    list_remove_if_linked(&child->current_link);
-
-	wl_list_init(&parent->state.subsurfaces_below);
-	wl_list_init(&parent->state.subsurfaces_above);
-
-	wl_list_for_each(child, &parent->pending.state.subsurfaces_below,
-	                 pending_link)
-	    wl_list_insert(parent->state.subsurfaces_below.prev,
-	                   &child->current_link);
-
-	wl_list_for_each(child, &parent->pending.state.subsurfaces_above,
-	                 pending_link)
-	    wl_list_insert(parent->state.subsurfaces_above.prev,
-	                   &child->current_link);
 
 	parent_view = parent->view ? compositor_view(parent->view) : NULL;
 	if (parent_view) {
@@ -393,6 +378,34 @@ subsurface_parent_commit(struct surface *parent)
 			reference = child_view;
 		}
 	}
+}
+
+void
+subsurface_parent_commit(struct surface *parent)
+{
+	struct subsurface *child;
+
+	if (!parent) {
+		return;
+	}
+
+	wl_list_for_each(child, &parent->subsurfaces, link)
+	    list_remove_if_linked(&child->current_link);
+
+	wl_list_init(&parent->state.subsurfaces_below);
+	wl_list_init(&parent->state.subsurfaces_above);
+
+	wl_list_for_each(child, &parent->pending.state.subsurfaces_below,
+	                 pending_link)
+	    wl_list_insert(parent->state.subsurfaces_below.prev,
+	                   &child->current_link);
+
+	wl_list_for_each(child, &parent->pending.state.subsurfaces_above,
+	                 pending_link)
+	    wl_list_insert(parent->state.subsurfaces_above.prev,
+	                   &child->current_link);
+
+	subsurface_restack(parent);
 
 	wl_list_for_each(child, &parent->subsurfaces, link)
 	{

@@ -1346,6 +1346,7 @@ restack_view_for_layer(struct compositor_view *view, bool raise)
 
 	wl_list_remove(&view->link);
 	wl_list_insert(insert_after, &view->link);
+	subsurface_restack(view->surface);
 }
 
 static struct compositor_view *
@@ -1454,6 +1455,8 @@ raise_window(struct compositor_view *view)
 
 	wl_list_remove(&view->link);
 	wl_list_insert(insert_after, &view->link);
+	// the window's subsurfaces come along, left behind they would be drawn under it
+	subsurface_restack(view->surface);
 
 	view->border.damaged_border1 = true;
 	pixman_region32_union_rect(&compositor.damage, &compositor.damage,
