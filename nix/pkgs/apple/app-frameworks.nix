@@ -18,6 +18,8 @@
 , openglFramework
 , mesa
 , corevideo
+, libz
+, zlibHeaders
 # the framework source directories by name, e.g. CoreMedia = ./src/Frameworks/CoreMedia
 , srcs
 , targetTriple ? "x86_64-apple-darwin20.4"
@@ -28,7 +30,7 @@
 let
   frameworks = [ "CoreMedia" "UniformTypeIdentifiers" "ImageIO" "UserNotifications" "ScreenCaptureKit" "GameKit" "ModelIO"
     "VideoToolbox" "AVFoundation" "MediaPlayer" "CoreMIDI" "AuthenticationServices" "LocalAuthentication" "CoreLocation"
-    "Vision" "ServiceManagement" "IOBluetooth" "Accessibility" "AddressBook" ];
+    "Vision" "ServiceManagement" "IOBluetooth" "Accessibility" "AddressBook" "CFNetwork" "GSS" "ColorSync" "WebKit" ];
 in
 stdenv.mkDerivation {
   pname = "puredarwin-app-frameworks";
@@ -104,6 +106,16 @@ stdenv.mkDerivation {
       -lCoreFoundation -lobjc -lSystem -o AVFoundation
     $CC $CFLAGS -x objective-c -c ${srcs.MediaPlayer}/MediaPlayer.m -o MediaPlayer.o
     $CC $LDFLAGS $(fw MediaPlayer) MediaPlayer.o -lFoundation -lCoreFoundation -lobjc -lSystem -o MediaPlayer
+    # CFNetwork: the proxy API, over SystemConfiguration's proxy settings
+    $CC $CFLAGS -c ${srcs.CFNetwork}/CFProxySupport.c -o CFProxySupport.o
+    $CC $LDFLAGS $(fw CFNetwork) CFProxySupport.o -lCoreFoundation -lSystem -o CFNetwork
+    # GSS: no security mechanisms, ColorSync: display UUIDs, WebKit: views that load nothing
+    $CC $CFLAGS -c ${srcs.GSS}/GSS.c -o GSS.o
+    $CC $LDFLAGS $(fw GSS) GSS.o -lSystem -o GSS
+    $CC $CFLAGS -c ${srcs.ColorSync}/ColorSync.c -o ColorSync.o
+    $CC $LDFLAGS $(fw ColorSync) ColorSync.o -lCoreGraphics -lCoreFoundation -lSystem -o ColorSync
+    $CC $CFLAGS -x objective-c -c ${srcs.WebKit}/WebKit.m -o WebKit.o
+    $CC $LDFLAGS $(fw WebKit) WebKit.o -lAppKit -lFoundation -lCoreFoundation -lobjc -lSystem -o WebKit
     $CC $CFLAGS -c ${srcs.CoreMIDI}/CoreMIDI.c -o CoreMIDI.o
     $CC $LDFLAGS $(fw CoreMIDI) CoreMIDI.o -lCoreFoundation -lSystem -o CoreMIDI
     ${lib.concatMapStringsSep "\n" (f: ''
@@ -134,6 +146,8 @@ stdenv.mkDerivation {
       -lCoreFoundation -lobjc -lSystem -o ApplicationServices
 
     # libraries apps link by path: a CUPS client with no server, and libbsm's calls from libSystem
+    $CC $CFLAGS -I${zlibHeaders}/include -c ${srcs.libcompression}/compression.c -o compression.o
+    $CC $LDFLAGS -install_name /usr/lib/libcompression.dylib compression.o -L${libz}/usr/lib -lz -lSystem -o libcompression.dylib
     $CC $CFLAGS -c ${srcs.libcups}/libcups.c -o libcups.o
     $CC $LDFLAGS -install_name /usr/lib/libcups.2.dylib -compatibility_version 3 -current_version 3 libcups.o -lSystem -o libcups.2.dylib
     echo "// re-exports only" > empty.c
@@ -175,6 +189,8 @@ EOF
     install -Dm755 ApplicationServices $F/Versions/A/ApplicationServices
     ln -s A $F/Versions/Current
     ln -s Versions/Current/ApplicationServices $F/ApplicationServices
+    install -Dm755 libcompression.dylib $out/usr/lib/libcompression.dylib
+    install -Dm644 ${srcs.libcompression}/compression.h $out/usr/include/compression.h
     install -Dm755 libcups.2.dylib $out/usr/lib/libcups.2.dylib
     ln -s libcups.2.dylib $out/usr/lib/libcups.dylib
     install -Dm755 libbsm.0.dylib $out/usr/lib/libbsm.0.dylib

@@ -3137,9 +3137,16 @@
               openglFramework = openglFrameworkNoxBuild;
               mesa = mesaNoxBuild;
               corevideo = corevideoBuild;
+              libz = libzDylibBuild;
+              zlibHeaders = pkgs.zlib.dev;
               srcs = {
                 CoreMedia = ./src/Frameworks/CoreMedia;
                 UniformTypeIdentifiers = ./src/Frameworks/UniformTypeIdentifiers;
+                CFNetwork = ./src/Frameworks/CFNetwork;
+                GSS = ./src/Frameworks/GSS;
+                ColorSync = ./src/Frameworks/ColorSync;
+                WebKit = ./src/Frameworks/WebKit;
+                libcompression = ./src/Libraries/libcompression;
                 ImageIO = ./src/Frameworks/ImageIO;
                 UserNotifications = ./src/Frameworks/UserNotifications;
                 ScreenCaptureKit = ./src/Frameworks/ScreenCaptureKit;
