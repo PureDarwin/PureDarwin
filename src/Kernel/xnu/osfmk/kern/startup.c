@@ -487,16 +487,9 @@ kernel_startup_initialize_upto(startup_subsystem_id_t upto)
 			continue;
 		}
 #endif /* __BUILDING_XNU_LIB_UNITTEST__ */
-	startup_phase = cur->subsystem - 1;
-	if (cur->subsystem == STARTUP_SUB_ZALLOC) {
-		kprintf("PD-STARTUP: zalloc hook begin func=%p rank=%u\n",
-		    cur->func, cur->rank);
-	}
+		startup_phase = cur->subsystem - 1;
 		kernel_startup_log(cur->subsystem);
 		cur->func(cur->arg);
-		if (cur->subsystem == STARTUP_SUB_ZALLOC) {
-			kprintf("PD-STARTUP: zalloc hook end\n");
-		}
 		startup_entry_cur = ++cur;
 	}
 	kernel_startup_log(upto);
@@ -546,20 +539,15 @@ kernel_bootstrap(void)
 	code_signing_config_t cs_config;
 
 	printf("%s\n", version); /* log kernel version */
-	kprintf("PD-BOOT: kernel_bootstrap entry\n");
 
 #if HAS_UPSI_FAILURE_INJECTION
 	check_for_failure_injection(XNU_STAGE_BOOTSTRAP_START);
 #endif
 
-	kprintf("PD-BOOT: scale_setup begin\n");
 	scale_setup();
-	kprintf("PD-BOOT: scale_setup end\n");
 
 	kernel_bootstrap_log("vm_mem_bootstrap");
-	kprintf("PD-BOOT: vm_mem_bootstrap begin\n");
 	vm_mem_bootstrap();
-	kprintf("PD-BOOT: vm_mem_bootstrap end\n");
 
 	machine_info.memory_size = (uint32_t)mem_size;
 #if XNU_TARGET_OS_OSX

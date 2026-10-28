@@ -382,7 +382,8 @@ bool PDACPIPlatformExpert::start(IOService *provider) {
 	if (bootCPU == 0) return false;
 
 	bootCPU->init();
-	bootCPU->attach(0);
+	// attach(0) would make the cpu the IOService root and unbalance the root busy count
+	bootCPU->attach(this);
 	if (!bootCPU->startCommon(fCPUCount)) return false;
 
 	if (fCPUCount > 1) registerProcessors();
@@ -1138,7 +1139,7 @@ void PDACPIPlatformExpert::registerProcessors(void) {
 	cpus[0] = bootCPU;
 	for (unsigned i = 1; i < fCPUCount; i++) {
 		cpus[i] = new AppleI386CPU;
-		if (cpus[i] == 0 || !cpus[i]->prepareSecondary(i)) {
+		if (cpus[i] == 0 || !cpus[i]->prepareSecondary(this, i)) {
 			kprintf("PDACPIPlatform: no IOCPU for LAPIC %u; capping at %u CPUs\n",
 			        fLapicIds[i], i);
 			fCPUCount = i;

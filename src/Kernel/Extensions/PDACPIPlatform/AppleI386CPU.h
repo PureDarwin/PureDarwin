@@ -49,7 +49,7 @@ public:
 	bool startCommon(unsigned numCPUs);
 
 	// A non-boot CPU: just the IOCPU the kernel gets back as cpu_id.
-	bool prepareSecondary(UInt32 cpuNumber);
+	bool prepareSecondary(IOService *provider, UInt32 cpuNumber);
 };
 
 // IOPCIBridge's messaged interrupt controller owns vectors from here up

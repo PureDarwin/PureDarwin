@@ -7471,6 +7471,9 @@ new_power_notification_init(void)
     ret = IOPMConnectionCreate(CFSTR("IPConfiguration"),
 			       POWER_INTEREST,
 			       &connection);
+    // kIOReturnUnsupported means the system has no sleep/wake to watch
+    if (ret == kIOReturnUnsupported)
+	goto failed;
     if (ret != kIOReturnSuccess) {
 	my_log(LOG_NOTICE,
 	       "IPConfiguration: IOPMConnectionCreate failed, 0x%08x", ret);
@@ -8909,34 +8912,18 @@ start(const char *bundleName, const char *bundleDir)
     SCPreferencesRef 		prefs = NULL;
 
 	my_log(LOG_INFO, "IPConfiguration starting");
-	fprintf(stderr, "PD-IPCONFIG: start begin\n");
-	fflush(stderr);
 
     /* register for prefs changes, check current state */
 	check_prefs(IPConfigurationControlPrefsInit(CFRunLoopGetCurrent(),
 						check_prefs));
-	fprintf(stderr, "PD-IPCONFIG: prefs initialized\n");
-	fflush(stderr);
     /* create paths */
 	ipconfigd_create_paths();
-	fprintf(stderr, "PD-IPCONFIG: paths initialized\n");
-	fflush(stderr);
 
     /* initialize CGA */
-	fprintf(stderr, "PD-IPCONFIG: CGA init begin\n");
-	fflush(stderr);
     CGAInit();
-	fprintf(stderr, "PD-IPCONFIG: CGA init end\n");
-	fflush(stderr);
 
     /* set globals */
-	fprintf(stderr, "PD-IPCONFIG: set globals begin\n");
-	fflush(stderr);
     S_set_globals();
-	fprintf(stderr, "PD-IPCONFIG: set globals end\n");
-	fflush(stderr);
-	fprintf(stderr, "PD-IPCONFIG: preferences create begin\n");
-	fflush(stderr);
     prefs = SCPreferencesCreate(NULL, CFSTR("IPConfiguration.DHCPClient"),
 				kDHCPClientPreferencesID);
 	if (prefs == NULL) {
@@ -8945,8 +8932,6 @@ start(const char *bundleName, const char *bundleDir)
 	       SCErrorString(SCError()));
 	return;
     }
-	fprintf(stderr, "PD-IPCONFIG: preferences opened\n");
-	fflush(stderr);
     if (SCPreferencesSetCallback(prefs,
 				 dhcp_preferences_changed,
 				 NULL) == FALSE
@@ -8969,12 +8954,8 @@ start(const char *bundleName, const char *bundleDir)
 	my_log(LOG_NOTICE, "SCDynamicStoreCreate failed: %s",
 	       SCErrorString(SCError()));
 	}
-	fprintf(stderr, "PD-IPCONFIG: dynamic store initialized\n");
-	fflush(stderr);
 
 	G_bootp_session = bootp_session_init(G_client_port);
-	fprintf(stderr, "PD-IPCONFIG: bootp_session_init returned %p\n", G_bootp_session);
-	fflush(stderr);
     if (G_bootp_session == NULL) {
 	my_log(LOG_NOTICE, "bootp_session_init() failed");
 	return;
@@ -8995,28 +8976,19 @@ start(const char *bundleName, const char *bundleDir)
 	my_log(LOG_NOTICE, "arp_session_init() failed");
 	return;
     }
-	fprintf(stderr, "PD-IPCONFIG: arp session initialized\n");
-	fflush(stderr);
     dynarray_init(&S_ifstate_list, IFState_free, NULL);
 
     CleanupWakeEvents();
 
     /* set the loopback interface address */
 	set_loopback();
-	fprintf(stderr, "PD-IPCONFIG: start end\n");
-	fflush(stderr);
     return;
 }
 
 void
 prime()
 {
-	fprintf(stderr, "PD-IPCONFIG: prime begin bootp=%p scd=%p\n",
-	    G_bootp_session, S_scd_session);
-	fflush(stderr);
 	if (G_bootp_session == NULL) {
-		fprintf(stderr, "PD-IPCONFIG: prime skipped, no bootp session\n");
-		fflush(stderr);
 	return;
     }
     if (S_scd_session == NULL) {
@@ -9024,17 +8996,11 @@ prime()
     }
 	else {
 	/* begin interface initialization */
-	fprintf(stderr, "PD-IPCONFIG: start_initialization begin\n");
-	fflush(stderr);
 	start_initialization(S_scd_session);
-	fprintf(stderr, "PD-IPCONFIG: start_initialization end\n");
-	fflush(stderr);
     }
 
     /* initialize the MiG server */
 	server_init();
-	fprintf(stderr, "PD-IPCONFIG: prime end\n");
-	fflush(stderr);
 }
 
 void

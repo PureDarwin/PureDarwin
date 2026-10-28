@@ -885,8 +885,6 @@ void
 plugin_exec(void *arg)
 {
 	CFIndex		nLoaded		= 0;
-	fprintf(stderr, "PD-CONFIGD: plugin_exec begin\n");
-	fflush(stderr);
 
 	/* keep track of bundles */
 	allBundles = CFArrayCreateMutable(NULL, 0, NULL);
@@ -1022,8 +1020,6 @@ plugin_exec(void *arg)
 	 * load each bundle.
 	 */
 	SC_log(LOG_DEBUG, "loading bundles");
-	fprintf(stderr, "PD-CONFIGD: loading bundles\n");
-	fflush(stderr);
 	CFArrayApplyFunction(allBundles,
 			     CFRangeMake(0, CFArrayGetCount(allBundles)),
 			     loadBundle,
@@ -1041,14 +1037,10 @@ plugin_exec(void *arg)
 	 *       notification handler.
 	 */
 	SC_log(LOG_DEBUG, "calling bundle load() functions");
-	fprintf(stderr, "PD-CONFIGD: bundle load begin\n");
-	fflush(stderr);
 	CFArrayApplyFunction(allBundles,
 			     CFRangeMake(0, CFArrayGetCount(allBundles)),
 			     callLoadFunction,
 			     NULL);
-	fprintf(stderr, "PD-CONFIGD: bundle load end nLoaded=%ld\n", (long)nLoaded);
-	fflush(stderr);
 
 	if (nLoaded == 0) {
 		// if no bundles loaded
@@ -1068,14 +1060,10 @@ plugin_exec(void *arg)
 	 *       notification handler.
 	 */
 	SC_log(LOG_DEBUG, "calling bundle start() functions");
-	fprintf(stderr, "PD-CONFIGD: bundle start begin\n");
-	fflush(stderr);
 	CFArrayApplyFunction(allBundles,
 			     CFRangeMake(0, CFArrayGetCount(allBundles)),
 			     callStartFunction,
 			     NULL);
-	fprintf(stderr, "PD-CONFIGD: bundle start end\n");
-	fflush(stderr);
 
 	/*
 	 * If defined, call each bundles prime() function.  This function is
@@ -1084,14 +1072,10 @@ plugin_exec(void *arg)
 	 * information and/or state in the store.
 	 */
 	SC_log(LOG_DEBUG, "calling bundle prime() functions");
-	fprintf(stderr, "PD-CONFIGD: bundle prime begin\n");
-	fflush(stderr);
 	CFArrayApplyFunction(allBundles,
 			     CFRangeMake(0, CFArrayGetCount(allBundles)),
 			     callPrimeFunction,
 			     NULL);
-	fprintf(stderr, "PD-CONFIGD: bundle prime end\n");
-	fflush(stderr);
 
 	/*
 	 * At this point, the assumption is that each loaded plugin will have

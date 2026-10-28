@@ -79,8 +79,9 @@ static int send_request(const char *predicate, const char *key, const char *valu
 	}
 	if (log && log_len)
 		fprintf(stderr, "%.*s\n", (int)log_len, (const char *)log);
-	if (response && response_len)
-		printf("%.*s\n", (int)response_len, (const char *)response);
+	// the response is a serialized result, only worth showing when the request failed
+	if (op_result != KERN_SUCCESS && response && response_len)
+		fprintf(stderr, "%.*s\n", (int)response_len, (const char *)response);
 	if (response)
 		vm_deallocate(mach_task_self(), response, response_len);
 	if (log)

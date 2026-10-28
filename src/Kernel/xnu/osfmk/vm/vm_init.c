@@ -114,7 +114,6 @@ vm_mem_bootstrap(void)
 	 */
 	vm_mem_bootstrap_log("vm_page_bootstrap");
 	vm_page_bootstrap(&start, &end);
-	kprintf("PD-VM: vm_page_bootstrap done start=%p end=%p\n", (void *)start, (void *)end);
 
 	/*
 	 *	Initialize other VM packages
@@ -122,34 +121,24 @@ vm_mem_bootstrap(void)
 
 	vm_mem_bootstrap_log("zone_bootstrap");
 	zone_bootstrap();
-	kprintf("PD-VM: zone_bootstrap done\n");
 
 	vm_mem_bootstrap_log("vm_object_bootstrap");
 	vm_object_bootstrap();
-	kprintf("PD-VM: vm_object_bootstrap done\n");
 
 	vm_retire_boot_pages();
-	kprintf("PD-VM: vm_retire_boot_pages done\n");
 
 	vm_mem_bootstrap_log("vm_map_init");
 	vm_map_init();
-	kprintf("PD-VM: vm_map_init done\n");
 
 	vm_mem_bootstrap_log("kmem_init");
 	kmem_init(start, end);
-	kprintf("PD-VM: kmem_init done\n");
 
-	kprintf("PD-VM: startup KMEM begin\n");
 	kernel_startup_initialize_upto(STARTUP_SUB_KMEM);
-	kprintf("PD-VM: startup KMEM done\n");
 
 	vm_mem_bootstrap_log("vm_fault_init");
 	vm_fault_init();
-	kprintf("PD-VM: vm_fault_init done\n");
 
-	kprintf("PD-VM: startup ZALLOC begin\n");
 	kernel_startup_initialize_upto(STARTUP_SUB_ZALLOC);
-	kprintf("PD-VM: startup ZALLOC done\n");
 
 	if (iokit_iomd_setownership_enabled) {
 		kprintf("IOKit IOMD setownership ENABLED\n");

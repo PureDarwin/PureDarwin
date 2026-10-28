@@ -332,7 +332,8 @@ bool AppleI386PlatformExpert::start(IOService *provider) {
 	if (bootCPU == 0) return false;
 
 	bootCPU->init();
-	bootCPU->attach(0);
+	// attach(0) would make the cpu the IOService root and unbalance the root busy count
+	bootCPU->attach(this);
 	if (!bootCPU->startCommon()) return false;
 
 	return true;

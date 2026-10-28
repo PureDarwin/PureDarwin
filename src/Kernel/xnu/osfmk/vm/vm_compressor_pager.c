@@ -700,7 +700,6 @@ __startup_func
 static void
 vm_compressor_slots_init(void)
 {
-	kprintf("PD-ZALLOC: vm_compressor_slots_init begin\n");
 	for (unsigned int idx = 0; idx < NUM_SLOTS_ZONES; idx++) {
 		compressor_slots_zones[idx] = zone_create(
 			compressor_slots_zones_names[idx],

@@ -105,7 +105,8 @@ PDArmPlatformExpert::start(IOService *provider)
 
 			if (cpu == NULL) return false;
 			cpu->init();
-			cpu->attach(0);
+			// attach(0) would make a cpu the IOService root and unbalance the root busy count
+			cpu->attach(this);
 			if (!cpu->startForCPU(i, phys_id, i == 0)) return false;
 			if (i == 0) bootCPU = cpu;
 		}

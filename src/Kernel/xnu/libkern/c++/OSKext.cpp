@@ -1564,6 +1564,11 @@ OSKext::pingIOKitDaemon(void)
 	}
 
 	result = host_get_kextd_port(host_priv_self(), &kextd_port);
+	// pdkext loads the aux KC and exits, so on PureDarwin no daemon registers this port
+	if (result == KERN_SUCCESS && !IPC_PORT_VALID(kextd_port)) {
+		result = kOSKextReturnDisabled;
+		goto finish;
+	}
 	if (result != KERN_SUCCESS || !IPC_PORT_VALID(kextd_port)) {
 		OSKextLog(/* kext */ NULL,
 		    kOSKextLogErrorLevel |

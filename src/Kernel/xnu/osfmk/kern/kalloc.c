@@ -1867,17 +1867,13 @@ __startup_func
 static void
 kalloc_type_view_init_fixed(void)
 {
-	kprintf("PD-KALLOC: view_init_fixed begin\n");
 	kalloc_type_hash_seed = (uint32_t) early_random();
-	kprintf("PD-KALLOC: view_init_fixed random done\n");
 	kalloc_type_build_dlut();
-	kprintf("PD-KALLOC: view_init_fixed dlut done\n");
 	/*
 	 * Parse __kalloc_type sections and build array of pointers to
 	 * all kalloc type views in kt_buffer.
 	 */
 	kt_count = kalloc_type_view_parse(KTV_FIXED);
-	kprintf("PD-KALLOC: fixed parse done count=%u\n", kt_count);
 	assert(kt_count < KALLOC_TYPE_SIZE_MASK);
 
 	/*
@@ -1900,7 +1896,6 @@ kalloc_type_view_init_fixed(void)
 	 */
 	qsort(kt_buffer, (size_t) kt_count, sizeof(kalloc_type_view_t),
 	    kalloc_type_cmp_fixed);
-	kprintf("PD-KALLOC: fixed sort done\n");
 
 	/*
 	 * Build a skip list that holds starts of unique signatures and a
@@ -1910,13 +1905,11 @@ kalloc_type_view_init_fixed(void)
 	uint16_t *kt_skip_list_start = (uint16_t *)(kt_buffer + kt_count);
 	uint16_t *kt_shuffle_buf = kalloc_type_create_iterators_fixed(
 	    kt_skip_list_start, kt_count);
-	kprintf("PD-KALLOC: fixed iterators done\n");
 
 	/*
 	 * Create zones based on signatures
 	 */
 	kalloc_type_create_zones_fixed(kt_skip_list_start, kt_shuffle_buf);
-	kprintf("PD-KALLOC: fixed zones done\n");
 }
 
 __startup_func
@@ -1993,13 +1986,10 @@ kalloc_type_view_init_var(void)
 	uint16_t *shuffle_buf;
 	uint16_t fixed_heaps = KT_VAR__FIRST_FLEXIBLE_HEAP - 1;
 	uint16_t flex_heap_count = kt_var_heaps - fixed_heaps - 1;
-	kprintf("PD-KALLOC: var counts heaps=%u fixed=%u flex=%u\n",
-	    kt_var_heaps, fixed_heaps, flex_heap_count);
 	/*
 	 * Pick a random heap to split
 	 */
 	uint16_t split_heap = kmem_get_random16(flex_heap_count - 1);
-	kprintf("PD-KALLOC: var random done split=%u\n", split_heap);
 
 	/*
 	 * Zones are created prior to parsing the views as zone budget is fixed
@@ -2007,14 +1997,12 @@ kalloc_type_view_init_var(void)
 	 * as they are discovered.
 	 */
 	kalloc_type_heap_init();
-	kprintf("PD-KALLOC: var heaps done\n");
 
 	/*
 	 * Parse __kalloc_var sections and build array of pointers to views that
 	 * aren't rediected in kt_buffer.
 	 */
 	kt_count = kalloc_type_view_parse(KTV_VAR);
-	kprintf("PD-KALLOC: var parse done count=%u\n", kt_count);
 	assert(kt_count < UINT32_MAX);
 	if (kt_count == 0) {
 		return;
@@ -2078,7 +2066,6 @@ __startup_func
 static void
 kalloc_init(void)
 {
-	kprintf("PD-KALLOC: init begin\n");
 	/*
 	 * Allocate scratch space to parse kalloc_type_views and create
 	 * other structures necessary to process them.
@@ -2087,36 +2074,29 @@ kalloc_init(void)
 
 	static_assert(KHEAP_MAX_SIZE >= KALLOC_SAFE_ALLOC_SIZE);
 	kalloc_zsize_compute();
-	kprintf("PD-KALLOC: zsize done\n");
 
 	kalloc_heap_init(KHEAP_DATA_PRIVATE);
 	kalloc_heap_init(KHEAP_DATA_SHARED);
 	kalloc_heap_init(KHEAP_EARLY);
-	kprintf("PD-KALLOC: heaps done\n");
 
 	kmem_alloc(kernel_map, (vm_offset_t *)&kt_buffer, kt_scratch_size,
 	    KMA_NOFAIL | KMA_ZERO | KMA_KOBJECT, VM_KERN_MEMORY_KALLOC);
-	kprintf("PD-KALLOC: scratch done\n");
 
 	/*
 	 * Handle fixed size views
 	 */
 	kalloc_type_view_init_fixed();
-	kprintf("PD-KALLOC: fixed init done\n");
 
 	/*
 	 * Reset
 	 */
 	bzero(kt_buffer, kt_scratch_size);
 	kt_count = max_count;
-	kprintf("PD-KALLOC: scratch reset done\n");
 
 	/*
 	 * Handle variable size views
 	 */
-	kprintf("PD-KALLOC: var init begin\n");
 	kalloc_type_view_init_var();
-	kprintf("PD-KALLOC: var init done\n");
 
 	/*
 	 * Free resources used

@@ -1277,7 +1277,10 @@ shared_region_check_np(
 		} else {
 			/* retrieve address of its first mapping... */
 			kr = vm_shared_region_start_address(shared_region, &start_address);
-			if (kr != KERN_SUCCESS) {
+			if (kr == KERN_INVALID_ADDRESS) {
+				// an empty region has no shared cache mapped yet
+				error = ENOMEM;
+			} else if (kr != KERN_SUCCESS) {
 				SHARED_REGION_TRACE_ERROR(("shared_region: %p [%d(%s)] "
 				    "check_np(0x%llx) "
 				    "vm_shared_region_start_address() returned 0x%x\n",

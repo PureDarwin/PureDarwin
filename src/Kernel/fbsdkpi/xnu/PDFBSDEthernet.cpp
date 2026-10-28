@@ -93,6 +93,8 @@ PDFBSD_CLASS::start(IOService *provider)
 
 	if (!publishMedia())
 		return false;
+	// report a valid inactive link until the driver says otherwise, so nothing transmits early
+	setLinkStatus(kIONetworkLinkValid, NULL);
 	if (!attachInterface((IONetworkInterface **)&fInterface, true)) {
 		IOLog(PDFBSD_STR(PDFBSD_CLASS) ": attachInterface failed\n");
 		return false;

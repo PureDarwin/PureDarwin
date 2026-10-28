@@ -338,9 +338,6 @@ register_and_init_prng(struct cckprng_ctx *ctx, const struct cckprng_funcs *func
 
 	prng_ctx = ctx;
 	prng_funcs = *funcs;
-	printf("PD-PRNG: registered ctx=%p init=%p initgen=%p reseed=%p refresh=%p generate=%p\n",
-	    prng_ctx, prng_funcs.init, prng_funcs.initgen, prng_funcs.reseed,
-	    prng_funcs.refresh, prng_funcs.generate);
 
 	uint64_t nonce = ml_get_timebase();
 	prng_funcs.init_with_getentropy(prng_ctx, MAX_CPUS, sizeof(kprngseed), kprngseed, sizeof(nonce), &nonce, entropy_provide, NULL);

@@ -72,9 +72,9 @@ void AppleI386CPU::initCPU(bool boot) {
 	setCPUState(kIOCPUStateRunning);
 }
 
-bool AppleI386CPU::prepareSecondary(UInt32 cpuNumber) {
+bool AppleI386CPU::prepareSecondary(IOService *provider, UInt32 cpuNumber) {
 	if (!init()) return false;
-	if (!attach(0)) return false;
+	if (!attach(provider)) return false;
 
 	setCPUNumber(cpuNumber);
 	setCPUState(kIOCPUStateUninitalized);

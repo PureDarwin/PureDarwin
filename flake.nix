@@ -4439,6 +4439,9 @@
                 mkdir -p "$fw/Versions/A/Resources"
                 cp src/Libraries/SystemConfiguration/SystemConfiguration.fproj/NetworkConfiguration.plist \
                   "$fw/Versions/A/Resources/"
+                # CFBundleGetBundleWithIdentifier needs the identifier from Info.plist
+                cp src/Libraries/SystemConfiguration/SystemConfiguration.fproj/Info.plist \
+                  "$fw/Versions/A/Resources/"
                 cp -a src/Libraries/SystemConfiguration/SystemConfiguration.fproj/en.lproj \
                   "$fw/Versions/A/Resources/"
                 ln -s A "$fw/Versions/Current"

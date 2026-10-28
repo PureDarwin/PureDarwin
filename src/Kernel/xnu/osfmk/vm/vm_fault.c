@@ -371,7 +371,6 @@ __startup_func
 static void
 vm_rtfault_record_init(void)
 {
-	kprintf("PD-ZALLOC: vm_rtfault_record_init begin\n");
 	size_t size;
 
 	vmrtf_num_records = MAX(vmrtf_num_records, 1);

@@ -11,7 +11,6 @@ void cckprng_init(struct cckprng_ctx *ctx, unsigned max_ngens, size_t entropybuf
 				  const uint32_t *entropybuf_nsamples, size_t seed_nbytes, const void *seed, size_t nonce_nbytes,
 				  const void *nonce) {
 	prng_error_status status = prngInitialize(&ctx->prng);
-	printf("PD-CCPRNG: init ctx=0x%llx prng=0x%llx status=%d\n", (unsigned long long)(uintptr_t)ctx, (unsigned long long)(uintptr_t)ctx->prng, status);
 	if (status != PRNG_SUCCESS || ctx->prng == NULL) {
 		printf("PD-CCPRNG: init failed, refusing to seed null PRNG\n");
 		return;
@@ -57,9 +56,6 @@ void cckprng_reseed(struct cckprng_ctx *ctx, size_t nbytes, const void *seed) {
 			(unsigned long)nbytes);
 		return;
 	}
-	printf("PD-CCPRNG: reseed ctx=0x%llx prng=0x%llx nbytes=%lu\n",
-		(unsigned long long)(uintptr_t)ctx,
-		(unsigned long long)(uintptr_t)ctx->prng, (unsigned long)nbytes);
 
 	prngInput(ctx->prng, (BYTE *)seed, (UINT)nbytes, 0, 0);
 	prngAllowReseed(ctx->prng, 5000);

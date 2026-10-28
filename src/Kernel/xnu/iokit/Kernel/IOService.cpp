@@ -1214,7 +1214,7 @@ IOService::startDeferredMatches(void)
 	IOLockUnlock(gJobsLock);
 
 	if (array) {
-		IOLog("deferred rematching count %d\n", array->getCount());
+		if (array->getCount()) IOLog("deferred rematching count %d\n", array->getCount());
 		array->iterateObjects(^bool (OSObject * obj)
 		{
 			((IOService *)obj)->startMatching(kIOServiceAsynchronous);
