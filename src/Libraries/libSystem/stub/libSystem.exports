@@ -407,6 +407,8 @@ _mach_port_type
 _mach_vm_allocate
 _mach_vm_deallocate
 _mach_vm_map
+_mach_vm_remap
+_mach_vm_remap_new
 _mach_make_memory_entry
 _mach_make_memory_entry_64
 _mach_ports_lookup
@@ -422,6 +424,7 @@ _mach_timebase_info
 _mach_thread_self
 _proc_pidinfo
 _proc_pidpath
+_proc_listpids
 _socketpair
 _gethostuuid
 _mach_error_string
@@ -851,6 +854,7 @@ _sendmsg
 _strerror_r
 _mlock
 _connectx
+_disconnectx
 _tzname
 __dyld_find_unwind_sections
 __dyld_is_memory_immutable
