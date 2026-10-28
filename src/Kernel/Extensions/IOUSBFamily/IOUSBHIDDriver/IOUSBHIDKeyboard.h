@@ -30,12 +30,14 @@ private:
     void dispatchUSBUsage(UInt8 usage, bool down);
     void dispatchModifier(UInt8 bit, bool down);
     bool setBootProtocol();
+    static void setLEDs(void *target, UInt8 leds);
 
     IOUSBInterface *fInterface;
     IOUSBPipe *fInterruptPipe;
     IOBufferMemoryDescriptor *fReportMem;
     volatile bool fRunning;
     bool fConsoleGrabbed;
+    bool fLEDHandler;
     UInt8 fLastReport[8];
 };
 

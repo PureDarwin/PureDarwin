@@ -10,6 +10,7 @@
 #define _IOUSB_MASS_STORAGE_CLASS_H
 
 #include <IOKit/IOService.h>
+#include <IOKit/IOLocks.h>
 #include <IOKit/usb/IOUSBInterface.h>
 #include <IOKit/usb/IOUSBPipe.h>
 #include "IOUSBBOTTransport.h"
@@ -35,8 +36,11 @@ private:
     IOUSBPipe            *fBulkOut;
     IOUSBMassStorageDisk *fDisk;
     UInt32                fTag;
+    IOLock               *fBOTLock;
 
     bool findBulkPipes(void);
+    IOReturn botTransferLocked(const void *cb, UInt8 cbLen, UInt32 dataLen, bool dataIn,
+                               IOMemoryDescriptor *buffer, UInt64 bufOff);
     IOReturn sendCBW(const void *cb, UInt8 cbLen, UInt32 dataLen, bool dataIn);
     IOReturn readCSW(UInt32 *residueOut, UInt8 *statusOut);
 };

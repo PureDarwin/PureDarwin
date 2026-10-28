@@ -34,6 +34,7 @@ private:
 	static void pollThread(void *arg, wait_result_t wr);
 	void pollLoop(void);
 	IOReturn classRequest(bool in, UInt8 request, UInt16 value, void *data, UInt16 length, UInt32 *done);
+	static void setLEDs(void *target, UInt8 leds);
 
 	IOUSBInterface *fInterface;
 	IOUSBPipe *fInPipe;
@@ -41,6 +42,7 @@ private:
 	IOBufferMemoryDescriptor *fReadBuffer;
 	UInt16 fMaxPacket;
 	volatile bool fRunning, fPolling;
+	bool fLEDHandler;
 };
 
 #endif

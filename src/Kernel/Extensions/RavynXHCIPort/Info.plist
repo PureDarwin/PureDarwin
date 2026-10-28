@@ -50,6 +50,19 @@
             <key>IOProviderClass</key>
             <string>IOPCIDevice</string>
         </dict>
+        <key>Tegra210 XUSB</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>com.ravynos.driver.RavynXHCIPort</string>
+            <key>IOClass</key>
+            <string>RavynXHCIPort</string>
+            <key>IONameMatch</key>
+            <string>pd,tegra210-xhci</string>
+            <key>IOProbeScore</key>
+            <integer>4000</integer>
+            <key>IOProviderClass</key>
+            <string>IOService</string>
+        </dict>
         <key>DWC3</key>
         <dict>
             <key>CFBundleIdentifier</key>

@@ -1,4 +1,5 @@
 #include "PDUSBHIDDevice.h"
+#include "PDHIDEventQueue.h"
 
 #include <IOKit/IOLib.h>
 #include <IOKit/usb/IOUSBDevice.h>
@@ -43,6 +44,25 @@ pdUSBHIDReportDescriptorLength(const uint8_t *bytes, size_t length)
     return 0;
 }
 
+// walks the short items of a report descriptor (HID 1.11 section 6.2.2.2) for a Report ID tag
+static bool
+pdReportDescriptorHasIDs(const UInt8 *d, size_t len)
+{
+	size_t i = 0;
+
+	while (i < len) {
+		UInt8 prefix = d[i];
+
+		if (prefix == 0xfe) {
+			if (i + 1 >= len) break;
+			i += 3 + d[i + 1];
+			continue;
+		}
+		if ((prefix & 0xfc) == 0x84) return true;
+		i += 1 + ((prefix & 3) == 3 ? 4 : (prefix & 3));
+	}
+	return false;
+}
 
 IOReturn
 PDUSBHIDDevice::classRequest(bool in, UInt8 request, UInt16 value, void *data, UInt16 length, UInt32 *done)
@@ -147,6 +167,12 @@ PDUSBHIDDevice::handleStart(IOService *provider)
     if (!fReadBuffer) goto fail;
 
     classRequest(false, kHIDRequestSetIdle, 0, NULL, 0, NULL);
+
+    // a boot keyboard without report IDs takes the one-byte LED output report of HID 1.11 appendix B.1
+    if (pdNumberProperty(fInterface, "bInterfaceSubClass") == 1 &&
+        pdNumberProperty(fInterface, "bInterfaceProtocol") == 1 &&
+        !pdReportDescriptorHasIDs((const UInt8 *)fDescriptor->getBytesNoCopy(), fDescriptor->getLength()))
+        fLEDHandler = PDHIDRegisterLEDHandler(&PDUSBHIDDevice::setLEDs, this);
     fRunning = true;
     fPolling = true;
     retain();
@@ -165,6 +191,8 @@ PDUSBHIDDevice::handleStart(IOService *provider)
 fail:
     if (buf) IOFree(buf, requested);
     fRunning = false;
+    if (fLEDHandler) PDHIDUnregisterLEDHandler(&PDUSBHIDDevice::setLEDs, this);
+    fLEDHandler = false;
     fInterface->close(this);
     return false;
 }
@@ -173,6 +201,10 @@ void
 PDUSBHIDDevice::handleStop(IOService *provider)
 {
 	fRunning = false;
+	if (fLEDHandler) {
+		PDHIDUnregisterLEDHandler(&PDUSBHIDDevice::setLEDs, this);
+		fLEDHandler = false;
+	}
 	// reads poll for at most 20 ms. Let the reader drop its buffer access before
 	// aborting the controller's persistent TD and closing the provider.
 	while (fPolling)
@@ -232,6 +264,21 @@ PDUSBHIDDevice::pollLoop(void)
 			IOSleep(10);
 		}
 	}
+}
+
+// SET_REPORT (HID 1.11 section 7.2.2) of output report 0 carrying the lock LED bits
+void
+PDUSBHIDDevice::setLEDs(void *target, UInt8 leds)
+{
+	PDUSBHIDDevice *self = (PDUSBHIDDevice *)target;
+	IOReturn kr;
+
+	if (!self->fRunning) return;
+	kr = self->classRequest(false, kHIDRequestSetReport, 0x0200, &leds, 1, NULL);
+	if (kr != kIOReturnSuccess)
+		IOLog("PDUSBHIDDevice: SET_REPORT LEDs 0x%02x failed 0x%x\n", leds, kr);
+	else
+		IOLog("PDUSBHIDDevice: SET_REPORT LEDs 0x%02x\n", leds);
 }
 
 IOReturn

@@ -140,11 +140,11 @@ extern "C" {
 //#warning REMOVE cons_cinput DECLARATION FROM HERE
 
 void IOBSDConsole::keyboardEvent(OSObject * target,
-          /* eventType */        unsigned   eventType,
-          /* flags */            unsigned   flags,
+          /* eventType */        unsigned   /* eventType */,
+          /* flags */            unsigned   /* flags */,
           /* keyCode */          unsigned   /* key */,
-          /* charCode */         unsigned   charCode,
-          /* charSet */          unsigned   charSet,
+          /* charCode */         unsigned   /* charCode */,
+          /* charSet */          unsigned   /* charSet */,
           /* originalCharCode */ unsigned   /* origCharCode */,
           /* originalCharSet */  unsigned   /* origCharSet */,
           /* keyboardType */ 	 unsigned   /* keyboardType */,
@@ -153,22 +153,11 @@ void IOBSDConsole::keyboardEvent(OSObject * target,
                                  OSObject * sender,
                                  void *     refcon)
 {
-    static const char cursorCodes[] = { 'D', 'A', 'C', 'B' };
-
     if ( ((IOBSDConsole *)target)->displayManager != NULL ) {
         // if there is a display manager, tell it there is user activity
         ((IOBSDConsole *)target)->displayManager->activityTickle(kIOPMSuperclassPolicy1);
     }
-
-    if( (eventType == NX_KEYDOWN) && ((flags & NX_ALTERNATEMASK) != NX_ALTERNATEMASK)) {
-        if( (charSet == NX_SYMBOLSET)
-            && (charCode >= 0xac) && (charCode <= 0xaf)) {
-            cons_cinput( '\033');
-            cons_cinput( 'O');
-            charCode = cursorCodes[ charCode - 0xac ];
-        }
-        cons_cinput( charCode);
-    }
+    // the console gets its keys from PDHIDEventQueue, feeding them here as well would double them
 }
 
 void IOBSDConsole::updateEventFlags(OSObject * /*target*/, 

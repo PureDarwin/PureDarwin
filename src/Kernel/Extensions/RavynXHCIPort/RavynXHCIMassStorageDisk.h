@@ -72,8 +72,8 @@ public:
     IOReturn reportWriteProtection(bool * isWriteProtected) override;
 
 private:
-    RavynXHCIPort * fParent;   /* weak ref: parent outlives us */
-    UInt32          fMscIndex; /* index into fParent's fMSC[]/slot table */
+    RavynXHCIPort * fParent;   // weak ref, parent outlives us
+    UInt32          fMscIndex; // index into fParent's fMSC[]/slot table
     UInt32          fSlotId;
 
     UInt64  fCapacityBlocks;
@@ -92,4 +92,4 @@ private:
                          UInt64 bufOff, bool write);
 };
 
-#endif /* _RAVYN_XHCI_MASS_STORAGE_DISK_H */
+#endif // _RAVYN_XHCI_MASS_STORAGE_DISK_H

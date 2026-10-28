@@ -31,7 +31,7 @@
 #define super IOBlockStorageDevice
 OSDefineMetaClassAndStructors(RavynXHCIMassStorageDisk, IOBlockStorageDevice);
 
-/* SCSI opcodes we need */
+// SCSI opcodes we need
 #define SCSI_TEST_UNIT_READY  0x00
 #define SCSI_REQUEST_SENSE    0x03
 #define SCSI_INQUIRY          0x12
@@ -112,7 +112,7 @@ RavynXHCIMassStorageDisk::scsiInquiry()
         const UInt8 *data = (const UInt8 *)buf->getBytesNoCopy();
         char vendor[9]; bcopy(data + 8, vendor, 8); vendor[8] = 0;
         char product[17]; bcopy(data + 16, product, 16); product[16] = 0;
-        /* Trim trailing spaces SCSI pads with. */
+        // trim trailing spaces SCSI pads with
         for (int i = 7; i >= 0 && vendor[i] == ' '; i--) vendor[i] = 0;
         for (int i = 15; i >= 0 && product[i] == ' '; i--) product[i] = 0;
         if (vendor[0]) strlcpy(fVendorStr, vendor, sizeof(fVendorStr));
@@ -206,11 +206,8 @@ RavynXHCIMassStorageDisk::scsiReadWrite10(UInt64 block, UInt32 nblks,
     cdb[8] = (UInt8)(nblks);
 
     UInt32 dataLen = nblks * fBlockSize;
-    /* Real hardware intermittently strands a single BOT transfer (a lost
-     * doorbell the periodic re-ring couldn't recover, or a transient NAK
-     * storm). Retry the whole CBW/data/CSW command a few times before
-     * surfacing an I/O error - one clean retry almost always succeeds, and
-     * this keeps a single flaky block from failing the root mount. */
+    // real hardware sometimes strands one BOT transfer, so retry the whole CBW/data/CSW a few times
+    // before an I/O error, which keeps one flaky block from failing the root mount
     for (int attempt = 0; attempt < 4; attempt++) {
         IOReturn ret = fParent->botTransfer(fSlotId, cdb, sizeof(cdb), dataLen, !write, buffer, bufOff);
         if (ret == kIOReturnSuccess) return true;
@@ -228,15 +225,8 @@ RavynXHCIMassStorageDisk::doAsyncReadWrite(IOMemoryDescriptor  * buffer,
                                            IOStorageAttributes * attributes,
                                            IOStorageCompletion * completion)
 {
-    /* IOBlockStorageDevice contract: the return value reports only whether
-     * the request was *accepted for asynchronous completion*. The actual I/O
-     * result is delivered through IOStorage::complete(). Once we've called
-     * complete() (which wakes and lets the synchronous caller tear down its
-     * completion/synchronizer context), returning a non-success code makes
-     * the caller believe the completion will never fire and touch that
-     * already-freed context - the null deref (CR2=0x28) seen panicking in
-     * IOGUIDPartitionScheme::scan on the first failed read. So every path
-     * that calls complete() must return kIOReturnSuccess. */
+    // once complete() has run, return kIOReturnSuccess: an error makes the caller touch its freed
+    // completion context (CR2=0x28 panic in IOGUIDPartitionScheme::scan)
     if (!fParent || nblks == 0 || !buffer) {
         IOStorage::complete(completion, kIOReturnBadArgument, 0);
         return kIOReturnSuccess;
@@ -270,8 +260,7 @@ IOReturn
 RavynXHCIMassStorageDisk::doSynchronize(UInt64 block, UInt64 nblks,
                                         IOStorageSynchronizeOptions options)
 {
-    /* No SYNCHRONIZE CACHE support yet - bulk-only writes complete before
-     * CSW, which is good enough for a read-mostly boot/install stick. */
+    // no SYNCHRONIZE CACHE yet, bulk-only writes complete before the CSW
     return kIOReturnSuccess;
 }
 

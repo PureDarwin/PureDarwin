@@ -154,6 +154,9 @@ in
   { name = "PDSg2002Eth.kext"; dir = "PDSg2002Eth"; headers = [ "IONetworkingFamily" ]; arches = arm; }
   { name = "PDQcomTLMM.kext"; dir = "PDQcomTLMM"; arches = arm; }
   { name = "PDQcomGeniI2C.kext"; dir = "PDQcomGeniI2C"; headers = [ "PDI2CFamily" ]; arches = arm; }
+  { name = "PDGadgetFamily.kext"; dir = "PDGadgetFamily"; arches = arm; }
+  { name = "PDQcomUSB.kext"; dir = "PDQcomUSB"; headers = [ "PDGadgetFamily" ]; arches = arm; }
+  { name = "PDTegraUSB.kext"; dir = "PDTegraUSB"; headers = [ "PDGadgetFamily" ]; arches = arm; }
   { name = "PDPowerVR.kext"; dir = "PDPowerVR"; headers = [ "PDSun60iDisplay" ]; arches = arm; }
   { name = "PDSun60iDisplay.kext"; dir = "PDSun60iDisplay"; arches = arm; }
 ]

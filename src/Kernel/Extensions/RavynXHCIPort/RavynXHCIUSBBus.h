@@ -1,17 +1,5 @@
-/*
- * RavynXHCIUSBBus: concrete IOUSBController backed directly by
- * RavynXHCIPort's existing, already-working per-slot transfer primitives
- * (controlTransfer/bulkTransfer/configureBulkEndpoints/
- * configureInterruptInEndpoint). Lets IOUSBFamily's IOUSBDevice/
- * IOUSBInterface/IOUSBPipe - and anything that matches on them, like
- * IOUSBCompositeDriver - work against xHCI devices RavynXHCIPort doesn't
- * already special-case as hub/mass-storage/keyboard.
- *
- * Every bulk endpoint gets its own ring with queued async transfers, and
- * every interrupt IN endpoint its own ring. Isochronous and interrupt OUT
- * are not supported. USBDeviceAddress == the device's xHCI slot ID directly (no
- * separate bus-address abstraction - we own both ends).
- */
+// RavynXHCIUSBBus: IOUSBController over RavynXHCIPort's slot primitives for devices it doesn't special-case.
+// bulk and interrupt IN endpoints get a ring each (no isoc or interrupt OUT), USBDeviceAddress is the slot ID
 
 #ifndef _RAVYN_XHCI_USB_BUS_H
 #define _RAVYN_XHCI_USB_BUS_H
@@ -57,4 +45,4 @@ private:
                     IOUSBCompletion *completion, UInt32 timeoutMs, IOByteCount reqCount, bool in);
 };
 
-#endif /* !_RAVYN_XHCI_USB_BUS_H */
+#endif // !_RAVYN_XHCI_USB_BUS_H

@@ -147,6 +147,9 @@ protected:
     // Bulk IN and OUT with the same endpoint number are distinct endpoints with
     // independent toggles, so the direction is part of the key.
     UInt8 _bulkDataToggle[128][16][2];
+    // pdehcitrace=1 logs every bulk transfer
+    UInt32 _bulkTrace;
+    IOLock *_transferLock;
     UInt8 _nextAddress;
     bool _enumRunning;
 

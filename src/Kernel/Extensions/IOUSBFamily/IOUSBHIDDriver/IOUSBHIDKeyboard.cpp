@@ -15,6 +15,7 @@ OSDefineMetaClassAndStructors(IOUSBHIDKeyboard, IOHIKeyboard);
 
 enum {
     kUSBHIDReqTypeSet = 0x21,
+    kUSBHIDReqSetReport = 0x09,
     kUSBHIDReqSetIdle = 0x0A,
     kUSBHIDReqSetProtocol = 0x0B,
     kUSBHIDProtocolBoot = 0
@@ -28,6 +29,7 @@ bool IOUSBHIDKeyboard::init(OSDictionary *dict)
     fReportMem = NULL;
     fRunning = false;
     fConsoleGrabbed = false;
+    fLEDHandler = false;
     bzero(fLastReport, sizeof(fLastReport));
     setName("IOUSBHIDKeyboard");
     setProperty("HIDKeyboardKeysDefined", kOSBooleanTrue);
@@ -83,6 +85,7 @@ bool IOUSBHIDKeyboard::start(IOService *provider)
         return false;
     }
     thread_deallocate(thread);
+    fLEDHandler = PDHIDRegisterLEDHandler(&IOUSBHIDKeyboard::setLEDs, this);
     IOLog("IOUSBHIDKeyboard: started\n");
     return true;
 }
@@ -90,6 +93,10 @@ bool IOUSBHIDKeyboard::start(IOService *provider)
 void IOUSBHIDKeyboard::stop(IOService *provider)
 {
     fRunning = false;
+    if (fLEDHandler) {
+        PDHIDUnregisterLEDHandler(&IOUSBHIDKeyboard::setLEDs, this);
+        fLEDHandler = false;
+    }
     if (fInterruptPipe) fInterruptPipe->Abort();
     if (fInterface && fInterface->isOpen(this)) fInterface->close(this);
     super::stop(provider);
@@ -122,6 +129,27 @@ bool IOUSBHIDKeyboard::setBootProtocol()
     req.wLength = 0;
     fInterface->DeviceRequest(&req);
     return true;
+}
+
+// SET_REPORT (HID 1.11 section 7.2.2) of the boot keyboard's one-byte LED output report, appendix B.1
+void IOUSBHIDKeyboard::setLEDs(void *target, UInt8 leds)
+{
+    IOUSBHIDKeyboard *self = (IOUSBHIDKeyboard *)target;
+    OSNumber *ifnum;
+    IOUSBDevRequest req;
+
+    if (!self->fRunning || !self->fInterface) return;
+    ifnum = OSDynamicCast(OSNumber, self->fInterface->getProperty("bInterfaceNumber"));
+
+    bzero(&req, sizeof(req));
+    req.bmRequestType = kUSBHIDReqTypeSet;
+    req.bRequest = kUSBHIDReqSetReport;
+    req.wValue = 0x0200;
+    req.wIndex = ifnum ? (UInt16)ifnum->unsigned32BitValue() : 0;
+    req.wLength = 1;
+    req.pData = &leds;
+    if (self->fInterface->DeviceRequest(&req) != kIOReturnSuccess)
+        IOLog("IOUSBHIDKeyboard: SET_REPORT LEDs 0x%02x failed\n", leds);
 }
 
 void IOUSBHIDKeyboard::pollThread(void *arg, wait_result_t)

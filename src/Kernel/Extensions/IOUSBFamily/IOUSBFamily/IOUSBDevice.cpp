@@ -275,6 +275,12 @@ IOReturn IOUSBDevice::SetConfiguration(IOService *forClient, UInt8 configValue, 
     const IOUSBConfigurationDescriptor *cd = FindConfig(configValue, &configIndex);
     if (!cd) return kIOReturnBadArgument;
 
+    // the composite driver and the host controller both configure a new device, publish its interfaces once
+    UInt8 was = 0;
+    if (!__atomic_compare_exchange_n(&_currentConfigValue, &was, configValue, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE) &&
+        was == configValue)
+        return kIOReturnSuccess;
+
     IOUSBDevRequest req;
     req.bmRequestType = 0x00;
     req.bRequest = kUSBRqSetConfig;
@@ -283,7 +289,10 @@ IOReturn IOUSBDevice::SetConfiguration(IOService *forClient, UInt8 configValue, 
     req.wLength = 0;
     req.pData = NULL;
     IOReturn ret = _controller->DeviceRequest(&req, _address);
-    if (ret != kIOReturnSuccess) return ret;
+    if (ret != kIOReturnSuccess) {
+        _currentConfigValue = 0;
+        return ret;
+    }
 
     _currentConfigValue = configValue;
 

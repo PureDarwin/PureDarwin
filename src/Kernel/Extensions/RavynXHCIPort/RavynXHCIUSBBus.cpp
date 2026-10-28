@@ -21,8 +21,7 @@ IOReturn RavynXHCIUSBBus::UIMOpenPipe(USBDeviceAddress address, UInt8 speed, End
 
     switch (endpoint->transferType) {
         case kUSBControl:
-            /* Endpoint 0 is already set up by addressDevice() at slot
-             * address time - nothing to do. */
+            // endpoint 0 is set up by addressDevice() at slot address time
             return kIOReturnSuccess;
 
         case kUSBBulk:
@@ -31,22 +30,20 @@ IOReturn RavynXHCIUSBBus::UIMOpenPipe(USBDeviceAddress address, UInt8 speed, End
 
         case kUSBInterrupt:
             if (endpoint->direction != kUSBIn)
-                return kIOReturnUnsupported; /* no interrupt-OUT support in the UIM */
+                return kIOReturnUnsupported; // no interrupt-OUT support in the UIM
             if (!fPort->configureInterruptInEndpoint(slotId, endpoint->number,
                                                        endpoint->maxPacketSize, endpoint->interval))
                 return kIOReturnError;
             return kIOReturnSuccess;
 
         default:
-            return kIOReturnUnsupported; /* isoc: no UIM support */
+            return kIOReturnUnsupported; // isoc: no UIM support
     }
 }
 
 IOReturn RavynXHCIUSBBus::UIMClosePipe(USBDeviceAddress address, Endpoint *endpoint)
 {
-    /* No per-endpoint teardown primitive in RavynXHCIPort short of tearing
-     * down the whole slot - treat as a no-op rather than disturb sibling
-     * endpoints sharing the slot's single bulk/interrupt ring pair. */
+    // no per-endpoint teardown short of tearing down the slot, so this is a no-op that leaves sibling endpoints alone
     return kIOReturnSuccess;
 }
 

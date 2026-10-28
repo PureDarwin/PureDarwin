@@ -53,4 +53,20 @@ UInt8 PDHIDAllocateMouseIndex(void);
  */
 UInt8 PDHIDUsageToADB(UInt8 usage);
 
+// lock LED bits in the HID 1.11 appendix B.1 boot keyboard output report order
+#define kPDHIDLEDNumLock    0x01
+#define kPDHIDLEDCapsLock   0x02
+#define kPDHIDLEDScrollLock 0x04
+
+// called from a thread call with the current lock LED bits, so it may block
+typedef void (*PDHIDLEDHandler)(void *target, UInt8 leds);
+
+// a keyboard driver registers to have its LEDs follow the kernel's lock state
+bool PDHIDRegisterLEDHandler(PDHIDLEDHandler handler, void *target);
+
+// waits for a running handler call to finish before returning
+void PDHIDUnregisterLEDHandler(PDHIDLEDHandler handler, void *target);
+
+UInt8 PDHIDKeyboardLEDState(void);
+
 #endif

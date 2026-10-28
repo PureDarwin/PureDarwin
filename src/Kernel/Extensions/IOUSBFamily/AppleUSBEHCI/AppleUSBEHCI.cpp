@@ -27,6 +27,7 @@ bool AppleUSBEHCI::init(OSDictionary *propTable)
         return false;
 
     _device = NULL;
+    _transferLock = NULL;
     _barDesc = NULL;
     _deviceBase = NULL;
     _dmaCoherent = true;
@@ -69,6 +70,10 @@ bool AppleUSBEHCI::start(IOService *provider)
 {
     if (!super::start(provider))
         return false;
+
+    _transferLock = IOLockAlloc();
+    _bulkTrace = 0;
+    PE_parse_boot_argn("pdehcitrace", &_bulkTrace, sizeof(_bulkTrace));
 
     _device = OSDynamicCast(IOPCIDevice, provider);
     if (_device) {
@@ -189,6 +194,10 @@ void AppleUSBEHCI::stop(IOService *provider)
 
 void AppleUSBEHCI::free()
 {
+    if (_transferLock) {
+        IOLockFree(_transferLock);
+        _transferLock = NULL;
+    }
     releaseHardwareResources();
     super::free();
 }
@@ -648,6 +657,15 @@ void AppleUSBEHCI::fillQTD(EHCIGeneralTransferDescriptorSharedPtr qtd,
     qtd->flags = HostToUSBLong(token);
 }
 
+// every transfer reprograms the one async queue head, so callers take turns
+namespace {
+struct EHCITransferGuard {
+    IOLock *lock;
+    explicit EHCITransferGuard(IOLock *l) : lock(l) { if (lock) IOLockLock(lock); }
+    ~EHCITransferGuard() { if (lock) IOLockUnlock(lock); }
+};
+}
+
 IOReturn AppleUSBEHCI::waitForQTD(EHCIGeneralTransferDescriptorSharedPtr qtd,
                                   UInt32 timeoutMs)
 {
@@ -666,6 +684,7 @@ IOReturn AppleUSBEHCI::waitForQTD(EHCIGeneralTransferDescriptorSharedPtr qtd,
 IOReturn AppleUSBEHCI::controlTransfer(USBDeviceAddress address,
                                        IOUSBDevRequest *request)
 {
+    EHCITransferGuard guard(_transferLock);
     if (!_asyncQH || !_qTDPool || !request)
         return kIOReturnNotReady;
     if (request->wLength && !request->pData)
@@ -808,6 +827,7 @@ IOReturn AppleUSBEHCI::interruptTransfer(IOMemoryDescriptor *buffer,
                                          USBDeviceAddress address,
                                          Endpoint *endpoint)
 {
+    EHCITransferGuard guard(_transferLock);
     if (!_intrQH || !_intrTDPool || !buffer || !endpoint)
         return kIOReturnBadArgument;
     if (endpoint->direction != kUSBIn || endpoint->transferType != kUSBInterrupt)
@@ -950,6 +970,7 @@ IOReturn AppleUSBEHCI::waitForBulkChain(const UInt32 *tdIndex, const UInt32 *tdL
 IOReturn AppleUSBEHCI::bulkTransfer(IOMemoryDescriptor *buffer, USBDeviceAddress address,
                                     Endpoint *endpoint, bool isWrite)
 {
+    EHCITransferGuard guard(_transferLock);
     if (!_asyncQH || !_qTDPool || !buffer || !endpoint)
         return kIOReturnBadArgument;
     if (endpoint->transferType != kUSBBulk)
@@ -1037,7 +1058,8 @@ IOReturn AppleUSBEHCI::bulkTransfer(IOMemoryDescriptor *buffer, USBDeviceAddress
     opWrite32(kEHCIConfigFlag, 1);
 
     UInt32 moved = 0;
-    UInt32 timeoutMs = 1000 + length / 64;
+    // slow sticks NAK or PING for seconds while they program flash, aborting mid-command desyncs them
+    UInt32 timeoutMs = 20000 + length / 64;
     IOReturn ret = enableAsyncSchedule(true)
                        ? waitForBulkChain(tdIndex, tdLength, tdCount, timeoutMs, &moved)
                        : kIOReturnTimeout;
@@ -1050,9 +1072,10 @@ IOReturn AppleUSBEHCI::bulkTransfer(IOMemoryDescriptor *buffer, USBDeviceAddress
             usbDMASync(dataMem, _dmaCoherent);
             buffer->writeBytes(0, data, moved);
         }
-        //EHCI_Log("bulk ok addr=%u ep=%u %s len=%u moved=%u toggle=%u->%u",
-        //         address, epNum, isWrite ? "OUT" : "IN", length, moved, toggle,
-        //         _bulkDataToggle[address & 0x7fU][epNum][dirIndex]);
+        if (_bulkTrace)
+            EHCI_Log("bulk ok addr=%u ep=%u %s len=%u moved=%u toggle=%u->%u",
+                     address, epNum, isWrite ? "OUT" : "IN", length, moved, toggle,
+                     _bulkDataToggle[address & 0x7fU][epNum][dirIndex]);
     } else if (ret == kIOUSBPipeStalled) {
         _bulkDataToggle[address & 0x7fU][epNum][dirIndex] = 0;
         EHCI_Log("bulk STALL addr=%u ep=%u %s len=%u moved=%u qhFlags=%08x",
@@ -1062,10 +1085,13 @@ IOReturn AppleUSBEHCI::bulkTransfer(IOMemoryDescriptor *buffer, USBDeviceAddress
         UInt32 qhFlags = USBToHostLong(_asyncQH->qTDFlags);
         UInt32 td0     = USBToHostLong(qTDAt(0)->flags);
         EHCI_Log("bulk timeout addr=%u ep=%u %s len=%u maxpkt=%u toggle=%u "
-                 "qhFlags=%08x td0=%08x qhCaps=%08x",
+                 "qhFlags=%08x td0=%08x qhCaps=%08x cur=%08x td0phys=%08x sts=%08x",
                  address, epNum, isWrite ? "OUT" : "IN", length,
                  (unsigned)maxPacket, toggle, qhFlags, td0,
-                 USBToHostLong(_asyncQH->endpointCaps));
+                 USBToHostLong(_asyncQH->endpointCaps),
+                 USBToHostLong(_asyncQH->currentqTDPtr), qTDPhys(0), opRead32(kEHCIUSBSts));
+        // packets already sent moved the device's toggle, keep ours in step
+        _bulkDataToggle[address & 0x7fU][epNum][dirIndex] = (qhFlags & kEHCIqTDDataToggle) ? 1 : 0;
         ret = kIOUSBTransactionTimeout;
     }
 

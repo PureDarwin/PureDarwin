@@ -56,7 +56,7 @@ public:
     void free() override;
     IOReturn message(UInt32 type, IOService *provider, void *argument = NULL) override;
 
-    /* Called by RavynXHCIMassStorageDisk to move data via bulk-only transport. */
+    // called by RavynXHCIMassStorageDisk to move data via bulk-only transport
     IOReturn botTransfer(UInt32 slotId,
                          const void *cbwCB, UInt8 cbwLen,
                          UInt32 dataLen, bool dataIn,
@@ -64,33 +64,32 @@ public:
                          bool allowShort = false);
 
 private:
-    /* One tracked USB device slot that turned out to be Mass Storage. */
+    // one tracked USB device slot that turned out to be mass storage
     struct MSCDevice {
         bool     valid;
         UInt32   slotId;
-        UInt8    portNum;        /* 0-based root hub port */
-        UInt8    bulkInEp;       /* endpoint number, 1-15 */
+        UInt8    portNum;        // 0-based root hub port
+        UInt8    bulkInEp;       // endpoint number, 1-15
         UInt8    bulkOutEp;
         UInt16   bulkMaxPacket;
         UInt64   capacityBlocks;
         UInt32   blockSize;
         char     vendor[9];
         char     product[17];
-        UInt8    iface;          /* bInterfaceNumber, for the bulk-only reset */
+        UInt8    iface;          // bInterfaceNumber, for the bulk-only reset
+        UInt8    cfgValue;       // bConfigurationValue, set again after a port reset
+        UInt16   bulkOutMaxPacket;
     };
 
-    /* One tracked interrupt-IN endpoint. A boot HID device often leaves an
-     * interrupt transfer pending until the next state change, so the generic
-     * IOUSB synchronous read path needs a persistent TD/buffer across idle
-     * poll calls rather than stack-allocating a bounce buffer and freeing it
-     * after every timeout. */
+    // one tracked interrupt-IN endpoint. a boot HID device can leave a transfer pending until
+    // its next state change, so the TD and buffer persist across idle polls
     struct InterruptInEndpoint {
         bool                       valid;
         UInt32                     slotId;
-        UInt8                      rootPort;     /* 0-based root hub port */
-        UInt8                      intrEp;       /* interrupt IN endpoint number */
+        UInt8                      rootPort;     // 0-based root hub port
+        UInt8                      intrEp;       // interrupt IN endpoint number
         UInt16                     intrMaxPkt;
-        bool                       tdOutstanding; /* an interrupt-IN TD is armed */
+        bool                       tdOutstanding; // an interrupt-IN TD is armed
         bool                       loggedPollArm;
         bool                       loggedFirstCompletion;
         UInt32                     transactionErrors;
@@ -144,14 +143,11 @@ private:
     volatile UInt8      * fDBRegs;
     UInt32                fMaxSlots;
     UInt32                fMaxPorts;
-    UInt32                fContextSize; /* 32 or 64 bytes/context */
+    UInt32                fContextSize; // 32 or 64 bytes/context
     IOLock              * fCmdLock;
 
-    /* Interrupt-driven event ring servicing (MSI, or a device tree interrupt
-     * on the sc8280xp). doCommand()/waitTransferEvent() drain the ring
-     * themselves and then sleep on fEventWaitChannel until serviceEventRing()
-     * files something (fEventGeneration moves), their deadline, or a 2 ms
-     * backstop. Without an interrupt they fall back to 1 ms polling. */
+    // interrupt-driven event ring (MSI or a device tree interrupt). waiters drain the ring, then sleep
+    // until fEventGeneration moves, their deadline or a 2 ms backstop, without an interrupt 1 ms polling
     IOWorkLoop            * fWorkLoop;
     IOInterruptEventSource * fInterruptSource;
     bool                   fInterruptsEnabled;
@@ -166,29 +162,17 @@ private:
     UInt32                 fTornEvents;
     uint64_t               fLastIntrTime;
 
-    /* IOUSBController-shaped view of this port, backing IOUSBDevice/
-     * IOUSBInterface for any slot enumerateSlotDevice() doesn't already
-     * special-case as hub/mass-storage - see RavynXHCIUSBBus. */
+    // IOUSBController-shaped view of this port, backing IOUSBDevice/IOUSBInterface for slots
+    // enumerateSlotDevice() doesn't handle as hub or mass storage (see RavynXHCIUSBBus)
     RavynXHCIUSBBus      * fUSBBus;
 
-    /* USB2/USB3 root hub port pairing, from the xHCI Extended Capabilities'
-     * Supported Protocol structures (index by 0-based port number). A
-     * combo connector typically shows up as two distinct xHCI port
-     * numbers, one per protocol major revision; a device negotiating
-     * SuperSpeed must be enumerated via its USB3-view port number, not the
-     * USB2 companion, or real bus transactions to it fail (observed as
-     * USB Transaction Error on every control transfer despite the USB2
-     * view's link successfully training). 0xFF = no pairing found. */
-    UInt8                  fPortMajorRev[64];   /* 2, 3, or 0 if unknown */
-    UInt8                  fPairedPort[64];     /* 0xFF if none */
+    // USB2/USB3 root port pairing from the Supported Protocol caps, by 0-based port. a SuperSpeed
+    // device must be enumerated through its USB3-view port or every transfer fails. 0xFF = no pairing
+    UInt8                  fPortMajorRev[64];   // 2, 3, or 0 if unknown
+    UInt8                  fPairedPort[64];     // 0xFF if none
 
-    /* Hotplug: true once a root port has an enumerated (or enumeration-
-     * attempted) device on it, so the background poll thread doesn't keep
-     * re-issuing Enable Slot/Address Device for the same connect event on
-     * every pass. Cleared when CCS drops so a later replug on that port is
-     * picked up again. Note: this only detects *new* connects; a device
-     * physically removed tears down the controller-owned transfer state;
-     * higher-level nubs are owned by IOUSBFamily or the mass-storage path. */
+    // hotplug: set once a root port has had enumeration attempted, so the poll thread doesn't repeat
+    // Enable Slot/Address Device for one connect. cleared when CCS drops
     bool                   fPortOccupied[64];
     UInt8                  fResetTries[64];
     uint64_t               fVbusOnAt;
@@ -205,38 +189,30 @@ private:
     void disconnectUSBDevices(UInt32 rootPort, UInt32 route, UInt32 mask);
     void handleRootPortDisconnect(UInt32 port0based, UInt32 portsc);
 
-    /* DCBAA: array of 64-bit device-context pointers, index by slot ID (0 unused). */
+    // DCBAA: 64-bit device context pointers indexed by slot ID (0 unused)
     IOBufferMemoryDescriptor * fDCBAAMem;
     volatile UInt64           * fDCBAA;
 
-    /* Scratchpad buffers (HCSPARAMS2.Max Scratchpad Buffers): controller-
-     * owned working memory required by real hardware, referenced via
-     * DCBAA[0]. Unused (all NULL) if the controller doesn't need any. */
+    // scratchpad buffers (HCSPARAMS2), controller-owned memory referenced via DCBAA[0], all NULL if none needed
     IOBufferMemoryDescriptor * fScratchpadArrayMem;
     IOBufferMemoryDescriptor ** fScratchpadBufMem;
     UInt32                      fScratchpadCount;
 
-    /* Command ring: single segment, ring-linked to itself via a LINK TRB. */
+    // command ring: single segment, linked to itself via a LINK TRB
     IOBufferMemoryDescriptor * fCmdRingMem;
     volatile XHCITRB          * fCmdRing;
     UInt32                      fCmdRingEnqueue;
     UInt8                       fCmdRingCycle;
 
-    /* Primary event ring: single segment + one-entry segment table. */
+    // primary event ring: single segment + one-entry segment table
     IOBufferMemoryDescriptor * fEventRingMem;
     volatile XHCITRB          * fEventRing;
     IOBufferMemoryDescriptor * fERSTMem;
     UInt32                      fEventRingDequeue;
     UInt8                       fEventRingCycle;
 
-    /* Single-consumer event-ring dispatch. With a background keyboard poll
-     * thread running concurrently with disk I/O, multiple waiters share one
-     * event ring; letting each waiter consume the ring head directly would
-     * make one waiter discard another's completion (they matched by slot and
-     * dropped the rest). Instead serviceEventRing() is the sole consumer
-     * (under fEventLock) and records each completion here for the specific
-     * waiter to pick up. This is also the shape a real interrupt handler
-     * would take. */
+    // serviceEventRing() is the sole event ring consumer (under fEventLock) and files each completion
+    // here for its waiter, so concurrent waiters never discard each other's events
     IOLock              * fEventLock;
     struct XferCompletion {
         volatile bool pending;
@@ -252,14 +228,14 @@ private:
         UInt32        matchStart;
         UInt32        matchCount;
     };
-    XferCompletion fXferDone[64][32]; /* [slotId][DCI] */
-    /* Last command completion (commands are serialized under fCmdLock). */
+    XferCompletion fXferDone[64][32]; // [slotId][DCI]
+    // last command completion (commands are serialized under fCmdLock)
     volatile UInt64 fCmdDoneParam;
     volatile bool   fCmdDonePending;
     UInt8           fCmdDoneCC;
     UInt32          fCmdDoneSlot;
 
-    /* Per-slot device context + input context + transfer rings (EP0, bulk IN/OUT). */
+    // per-slot device context, input context and transfer rings (EP0, bulk IN/OUT)
     struct SlotResources {
         IOBufferMemoryDescriptor * deviceCtxMem;
         IOBufferMemoryDescriptor * inputCtxMem;
@@ -276,8 +252,8 @@ private:
         UInt32                      bulkOutEnqueue;
         UInt8                       bulkOutCycle;
     };
-    SlotResources fSlots[64]; /* index by slot ID, 0 unused */
-    UInt8 fSlotRootPort[64];  /* 0-based root hub port for each slot */
+    SlotResources fSlots[64]; // index by slot ID, 0 unused
+    UInt8 fSlotRootPort[64];  // 0-based root hub port for each slot
     IOUSBDevice *fUSBDeviceNubs[64];
     UInt32 fSlotRoute[64];
     struct HubDevice {
@@ -293,7 +269,7 @@ private:
     // one bulk-only command at a time, and unplug takes it to retire an fMSC entry
     IOLock                   * fMSCLock;
 
-    InterruptInEndpoint fIntrIn[64][16]; /* [slotId][endpoint number] */
+    InterruptInEndpoint fIntrIn[64][16]; // [slotId][endpoint number]
 
     BulkEndpoint * fBulk[64][32]; // [slotId][dci], guarded by fEventLock
     volatile bool  fBulkThreadStarted;
@@ -302,15 +278,8 @@ private:
     void deliverBulkCompletions();
     bool recordBulkEvent(UInt32 slot, UInt32 dci, UInt64 param, UInt32 status);
 
-    /*
-     * Context array addressing. HCCPARAMS1.CSZ picks 32- or 64-byte contexts,
-     * and with 64-byte contexts every entry is simply spaced twice as far
-     * apart - the fields themselves are unchanged, the upper half is reserved.
-     * So nothing here indexes a C array of context structs; everything is a
-     * byte offset scaled by fContextSize. An Input Context is the control
-     * context, the slot context, then endpoint contexts addressed by DCI
-     * (1..31); a Device Context is the same without the control context.
-     */
+    // context addressing is byte offsets scaled by fContextSize (HCCPARAMS1.CSZ, 32 or 64 bytes).
+    // input context = control, slot, then endpoints by DCI 1..31, a device context lacks the control
     inline UInt32 inputCtxBytes(void) const  { return 33 * fContextSize; }
     inline UInt32 deviceCtxBytes(void) const { return 32 * fContextSize; }
     inline XHCIInputControlContext *inputCtl(void *ic) const
@@ -330,16 +299,8 @@ private:
         { return *(volatile UInt32 *)(fOpRegs + off); }
     inline void opWrite32(UInt32 off, UInt32 v) const
         { *(volatile UInt32 *)(fOpRegs + off) = v; }
-    /* 64-bit xHCI registers (DCBAAP, CRCR, ERSTBA, ERDP) must be written and
-     * read as two separate, ordered 32-bit accesses (low DWORD first), not
-     * one 64-bit store/load. A single 64-bit MMIO write compiles to one
-     * atomic CPU instruction, but the PCIe root complex can still split it
-     * into two 32-bit TLPs the far end doesn't commit atomically; real
-     * hardware was observed to silently drop such writes entirely (CRCR
-     * read back as all-zero immediately after being written), while QEMU's
-     * software MMIO emulation never exposed the difference. Every real
-     * xHCI driver (e.g. Linux xhci-hcd's lo_hi_writeq) does the split for
-     * exactly this reason. */
+    // 64-bit registers (DCBAAP, CRCR, ERSTBA, ERDP) go as two ordered 32-bit accesses, low first.
+    // real hardware dropped single 64-bit writes (CRCR read back zero), as in linux lo_hi_writeq
     inline UInt64 opRead64(UInt32 off) const
         { UInt32 lo = opRead32(off); UInt32 hi = opRead32(off + 4); return ((UInt64)hi << 32) | lo; }
     inline void opWrite64(UInt32 off, UInt64 v) const
@@ -358,18 +319,15 @@ private:
         { opWrite32(XHCI_PORTREGS_BASE + port0based * XHCI_PORTREGS_SIZE + reg, v); }
     inline void ringDoorbell(UInt32 slot, UInt32 target) const
         {
-            /* Ensure the Transfer/Command TRB stores (with their cycle bits)
-             * are globally visible before the doorbell MMIO write that tells
-             * the controller to sample the ring - otherwise the controller
-             * can read a stale (empty) ring, go idle, and never look again
-             * (no second doorbell), stranding a Running endpoint with a
-             * queued TD and no completion event. */
+            // make the TRB stores visible before the doorbell write, or the controller can sample a stale
+            // ring, go idle and strand the queued TD
             __sync_synchronize();
             *(volatile UInt32 *)(fDBRegs + slot * 4) = target;
         }
 
     bool startA733(IOService *provider);
     bool startDWC3(IOService *provider);
+    bool startTegra(IOService *provider);
     void quiesce(const char *why);
     static IOReturn restartHandler(void *target, void *refCon, UInt32 messageType,
                                    IOService *provider, void *messageArgument, vm_size_t argSize);
@@ -391,18 +349,16 @@ private:
     void pushTRB(volatile XHCITRB *ring, UInt32 &enqueue, UInt8 &cycle, UInt32 ringSizeTRBs,
                 UInt64 param, UInt32 status, UInt32 control);
 
-    /* Ring a command TRB and poll the event ring for its completion event.
-     * Returns true and fills outCC/outSlotId on success. */
+    // ring a command TRB and poll for its completion, returns true and fills outCC/outSlotId on success
     bool doCommand(UInt64 param, UInt32 status, UInt32 controlNoCycle,
                    UInt8 *outCC, UInt32 *outSlotId, UInt64 timeoutMs = 500);
 
-    /* Poll the event ring for a Transfer Event on the given slot/endpoint. */
+    // poll the event ring for a transfer event on the given slot/endpoint
     bool waitTransferEvent(UInt32 slotId, UInt32 epDCI, UInt8 *outCC, UInt32 timeoutMs = 1000,
                            UInt32 *outResidual = NULL, UInt64 *outTRB = NULL);
 
-    /* Sole consumer of the event ring: drain all currently-available events
-     * under fEventLock, recording each into fXferDone[][]/fCmdDone* for the
-     * waiter that's looking for it. Safe to call from multiple threads. */
+    // sole event ring consumer: drains available events under fEventLock into fXferDone[][]/fCmdDone*
+    // for their waiters. safe from multiple threads
     void serviceEventRing(bool fromInterrupt = false);
     void logInterruptState(const char *why);
     bool eventInTD(UInt32 slot, UInt32 dci, UInt64 trb) const;
@@ -443,6 +399,8 @@ private:
     bool abortFailedTD(UInt32 slotId, UInt8 epNum, bool in);
     // bulk-only mass storage reset recovery (bot 5.3.4)
     void botResetRecovery(UInt32 mscIndex);
+    bool botPortReset(UInt32 mscIndex);
+    void abortCommandRing(unsigned type);
     IOReturn botTransferLocked(UInt32 slotId, const void *cbwCB, UInt8 cbwLen,
                                UInt32 dataLen, bool dataIn,
                                IOMemoryDescriptor *buffer, UInt64 bufOff, bool allowShort);
@@ -457,30 +415,25 @@ public:
     IOReturn abortBulk(UInt32 slotId, UInt8 epNum, bool in, bool reset);
 private:
 
-    /* Slot Context Hub/NumberOfPorts/TTT update via Configure Endpoint (only
-     * the A0 slot-context flag set, no endpoints touched) so the xHC treats
-     * this slot as a hub and will accept downstream devices' route strings. */
+    // set the slot context Hub/NumberOfPorts/TTT via Configure Endpoint (only the A0 flag) so the xHC
+    // accepts route strings for downstream devices
     bool markSlotAsHub(UInt32 slotId, UInt8 numPorts, bool multiTT,
                        UInt8 intrEp, UInt16 intrMaxPkt, UInt8 intrInterval);
 
-    /* Hub class control requests (recipient = other/port). */
+    // hub class control requests (recipient = other/port)
     bool hubGetDescriptor(UInt32 slotId, bool superSpeed, void *buf, UInt16 len);
     bool hubSetDepth(UInt32 slotId, UInt16 depth);
     bool hubSetPortFeature(UInt32 slotId, UInt8 port1based, UInt16 feature);
     bool hubClearPortFeature(UInt32 slotId, UInt8 port1based, UInt16 feature);
     bool hubGetPortStatus(UInt32 slotId, UInt8 port1based, UInt32 *outStatus);
 
-    /* Reset + enable one hub downstream port and enumerate whatever's
-     * attached to it (recursing into enumerateSlotDevice with a hub-relative
-     * route string), depth-limited to guard against a mis-parsed hub
-     * descriptor turning into an infinite/absurd recursion. */
+    // reset and enable one hub downstream port and enumerate its device with a hub-relative route,
+    // depth-limited against a mis-parsed hub descriptor
     bool enumerateHubPort(UInt32 hubSlotId, UInt32 rootPort0based, UInt32 hubRouteString,
                           UInt8 port1based, bool superSpeedHub, int depth);
 
-    /* Given an already-Address-Device'd slot (device, not yet known to be a
-     * hub or a mass-storage device), fetch its device descriptor and either
-     * recurse into hub downstream enumeration or search its configuration
-     * for a bulk-only mass storage interface and publish a disk nub. */
+    // for an addressed slot, fetch the device descriptor, then recurse into hub ports or look for a
+    // bulk-only mass storage interface and publish a disk nub
     bool enumerateSlotDevice(UInt32 slotId, UInt32 rootPort0based, UInt32 routeString,
                              UInt32 speed, int depth, UInt16 maxPkt0);
     bool evaluateEP0MaxPacket(UInt32 slotId, UInt16 maxPkt);
@@ -488,4 +441,4 @@ private:
     bool tryEnumerateMassStorage(UInt32 port0based, UInt32 speed);
 };
 
-#endif /* _RAVYN_XHCI_PORT_H */
+#endif // _RAVYN_XHCI_PORT_H

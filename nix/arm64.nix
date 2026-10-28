@@ -3087,7 +3087,7 @@ let
       "PDFBSDem.kext" "PDFBSDigc.kext" "PDFBSDrge.kext"
       "IO80211Family.kext" "PDQwx.kext"
       "PDBcm2835SD.kext" "PDSun50iMMC.kext" "PDSg2002SD.kext" "PDSg2002Eth.kext"
-      "PDI2CFamily.kext" "PDQcomTLMM.kext" "PDQcomGeniI2C.kext" "PDI2CHID.kext"
+      "PDI2CFamily.kext" "PDQcomTLMM.kext" "PDQcomGeniI2C.kext" "PDGadgetFamily.kext" "PDQcomUSB.kext" "PDTegraUSB.kext" "PDI2CHID.kext"
       "PDPowerVR.kext" "PDSun60iDisplay.kext"
     ];
     enableUserspace = false;
@@ -3096,7 +3096,7 @@ let
     installKexts = true;
     installKextNames = [
       "PDBcm2835SD.kext" "PDSun50iMMC.kext" "PDSg2002SD.kext" "PDSg2002Eth.kext"
-      "PDI2CFamily.kext" "PDQcomTLMM.kext" "PDQcomGeniI2C.kext" "PDI2CHID.kext"
+      "PDI2CFamily.kext" "PDQcomTLMM.kext" "PDQcomGeniI2C.kext" "PDGadgetFamily.kext" "PDQcomUSB.kext" "PDTegraUSB.kext" "PDI2CHID.kext"
       "PDPowerVR.kext" "PDSun60iDisplay.kext"
       "IOPCIFamily.kext" "IOStorageFamily.kext" "IOCDStorageFamily.kext"
       "IODVDStorageFamily.kext" "IOBDStorageFamily.kext" "IOVirtIOFamily.kext"

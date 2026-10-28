@@ -16,6 +16,7 @@ private:
     UInt8                    _pauseCountdown;/* bytes left of an E1 sequence */
     bool                     _interruptInstalled;
     bool                     _consoleGrabbed;
+    bool                     _ledHandler;
     /* Usages currently held, so a repeated make code is not a second press. */
     UInt8                    _usageDown[256 / 8];
 
@@ -24,6 +25,7 @@ private:
     bool isUsageDown(UInt8 usage);
     void setUsageDown(UInt8 usage, bool down);
     void setLEDs(UInt8 ledState);
+    static void lockLEDsChanged(void * target, UInt8 leds);
     void setKeyboardEnable(bool enable);
 
 public:

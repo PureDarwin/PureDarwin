@@ -77,6 +77,7 @@ IOUSBMassStorageClass::start(IOService *provider)
     }
 
     fTag = 1;
+    fBOTLock = IOLockAlloc();
 
     fDisk = new IOUSBMassStorageDisk;
     if (!fDisk || !fDisk->initWithTransport(this, 0)) {
@@ -118,6 +119,10 @@ IOUSBMassStorageClass::free()
     fBulkIn = NULL;
     fBulkOut = NULL;
     fInterface = NULL;
+    if (fBOTLock) {
+        IOLockFree(fBOTLock);
+        fBOTLock = NULL;
+    }
     super::free();
 }
 
@@ -213,6 +218,20 @@ IOReturn
 IOUSBMassStorageClass::botTransfer(const void *cb, UInt8 cbLen,
                                    UInt32 dataLen, bool dataIn,
                                    IOMemoryDescriptor *buffer, UInt64 bufOff)
+{
+    // command, data and status of one command must not interleave with another's
+    if (fBOTLock)
+        IOLockLock(fBOTLock);
+    IOReturn ret = botTransferLocked(cb, cbLen, dataLen, dataIn, buffer, bufOff);
+    if (fBOTLock)
+        IOLockUnlock(fBOTLock);
+    return ret;
+}
+
+IOReturn
+IOUSBMassStorageClass::botTransferLocked(const void *cb, UInt8 cbLen,
+                                         UInt32 dataLen, bool dataIn,
+                                         IOMemoryDescriptor *buffer, UInt64 bufOff)
 {
     if (!fBulkIn || !fBulkOut || !cb || !cbLen)
         return kIOReturnBadArgument;

@@ -1,0 +1,145 @@
+ChipIdea core at usb@78d9000 on the UZ801 stick, observed 2026-10-20
+
+Linux register state
+
+The stick's Debian (kernel 6.7.0-rc4-msm8916) had ci_hdrc.0 running as a high speed device. The core's first 0x200 bytes were read through /dev/mem with a Python mmap, read only. Offset 0x000 was lost in capture. The registers of interest are SBUSCFG 0x090 = 0x00000000, AHBMODE 0x098 = 0x00000008, GENCONFIG 0x09c = 0x035b0820 (bit 4 clear), GENCONFIG2 0x0a0 = 0x0030ffe0 (bit 7 set), PORTSC 0x184 = 0x88000205 (PTS ULPI, high speed), USBMODE 0x1a8 = 0x0000001a (device, SLOM, SDIS).
+
+PureDarwin state after its own controller reset
+
+PDQcomCIUDC read these right after USBCMD.RST cleared, through a temporary IORegistry property: PORTSC 0x8c000004 (PTS already ULPI), AHBMODE 0x00000008, GENCONFIG 0x035b0830 (bit 4 set), GENCONFIG2 0x0038ff60, SBUSCFG 0x00000000, USBMODE 0x00000000.
+
+Which writes matter
+
+PDQcomCIUDC used to write PORTSC.PTS = ULPI, AHBMODE = 0x8, and clear GENCONFIG bit 4 after the reset. The first two match the reset values, so they changed nothing. A temporary boot-arg gated all three, with a raw bulk read of 256 MB from the pdfb pipe through pyusb on the host as the test. All three on gave 23.3 to 24.5 and 20.5 to 23.7 MB/s on two boots, all off gave 20.9 to 23.7 MB/s, and only the GENCONFIG write left off gave 20.8 to 23.9 MB/s. Enumeration at high speed, adb and the pdfb stream worked in every case. All three writes were dropped.
+
+USBMODE.SDIS stays set. Leaving it clear (pdusbsdis=0) measured about 10 MB/s earlier on this core.
+
+Raw dump under Linux (offset, value)
+
+004 000005c2
+008 10020001
+00c 00000011
+010 80070a08
+014 00000808
+018 00000000
+01c 00000000
+020 00000000
+024 00000000
+028 00000000
+02c 00000000
+030 00000000
+034 00000000
+038 00000000
+03c 00000000
+040 5b959d13
+044 127ac002
+048 59098bea
+04c 302ccba2
+050 2120f297
+054 f6b4e3fa
+058 c41c724b
+05c d1b493d8
+060 320a2f93
+064 524ec5b7
+068 8ea18f8a
+06c 64d6ab11
+070 a4813918
+074 a6356521
+078 24bf0fc9
+07c 55f435e1
+080 00000000
+084 00000000
+088 00000000
+08c 00000000
+090 00000000
+094 00000000
+098 00000008
+09c 035b0820
+0a0 0030ffe0
+0a4 00000000
+0a8 00000000
+0ac 00000000
+0b0 00000000
+0b4 00000000
+0b8 00000000
+0bc 00000000
+0c0 00000000
+0c4 00000000
+0c8 00000000
+0cc 00000000
+0d0 00000000
+0d4 00000000
+0d8 00000000
+0dc 00000000
+0e0 00000000
+0e4 00000000
+0e8 00000000
+0ec 00000000
+0f0 00000000
+0f4 00000000
+0f8 00000000
+0fc 00000000
+100 01000040
+104 00010011
+108 00000006
+10c 00000000
+110 00000000
+114 00000000
+118 00000000
+11c 00000000
+120 00000001
+124 00000188
+128 00000000
+12c 00000000
+130 00000000
+134 00003000
+138 00000000
+13c 00000000
+140 02010001
+144 00000480
+148 00000147
+14c 00000342
+150 00000000
+154 0c000000
+158 834f5000
+15c 00000000
+160 00001010
+164 00000000
+168 00000000
+16c 00000000
+170 28970002
+174 00000000
+178 00070002
+17c 00000000
+180 00000001
+184 88000205
+188 00000000
+18c 00000000
+190 00000000
+194 00000000
+198 00000000
+19c 00000000
+1a0 00000000
+1a4 00201120
+1a8 0000001a
+1ac 00000000
+1b0 00000000
+1b4 00000000
+1b8 00000002
+1bc 00000000
+1c0 00800080
+1c4 00880088
+1c8 008c0000
+1cc 00000000
+1d0 00000000
+1d4 00000000
+1d8 00000000
+1dc 00000000
+1e0 00000000
+1e4 00000000
+1e8 00000000
+1ec 00000000
+1f0 00000000
+1f4 00000000
+1f8 00000000
+1fc 00000000

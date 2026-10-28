@@ -208,7 +208,9 @@ IOUSBDevice *IOUSBController::CreateAndConfigureDevice(USBDeviceAddress address,
 
     IOUSBDevice *dev = IOUSBDevice::NewDevice();
     if (!dev) return NULL;
-    if (!dev->init(address, 0 /* busPowerAvailable, unknown */, speed, maxPacketSize0)) {
+    // a root port gives 500 mA (usb 2.0 spec 7.2.1), 900 mA at superspeed (usb 3.2 spec 11.4.1)
+    UInt32 power = speed >= kUSBDeviceSpeedSuper ? kUSB900mAAvailable : kUSB500mAAvailable;
+    if (!dev->init(address, power, speed, maxPacketSize0)) {
         dev->release();
         return NULL;
     }

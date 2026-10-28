@@ -109,6 +109,7 @@ bool ApplePS2Keyboard::init(OSDictionary * dict)
     _pauseCountdown     = 0;
     _interruptInstalled = false;
     _consoleGrabbed     = false;
+    _ledHandler         = false;
     bzero(_usageDown, sizeof(_usageDown));
     return true;
 }
@@ -145,6 +146,7 @@ bool ApplePS2Keyboard::start(IOService * provider)
 
     /* Shared with the USB HID keyboard: whichever starts first makes the node. */
     PDHIDPublishPS2KeyboardDevice();
+    _ledHandler = PDHIDRegisterLEDHandler(&ApplePS2Keyboard::lockLEDsChanged, this);
 
     IOLog("ApplePS2Keyboard: started (set-1 scancodes -> HID usages)\n");
     return true;
@@ -152,6 +154,10 @@ bool ApplePS2Keyboard::start(IOService * provider)
 
 void ApplePS2Keyboard::stop(IOService * provider)
 {
+    if (_ledHandler) {
+        PDHIDUnregisterLEDHandler(&ApplePS2Keyboard::lockLEDsChanged, this);
+        _ledHandler = false;
+    }
     setKeyboardEnable(false);
     if (_interruptInstalled) {
         _device->uninstallInterruptAction();
@@ -285,6 +291,29 @@ void ApplePS2Keyboard::dispatchUsage(UInt8 usage, bool down)
     dispatchKeyboardEvent(adb, down, *(AbsoluteTime *)&now);
 }
 
+// IBM PS/2 keyboard command 0xED (Set/Reset Mode Indicators) orders its argument
+// bit 0 Scroll Lock, bit 1 Num Lock, bit 2 Caps Lock
+void ApplePS2Keyboard::lockLEDsChanged(void * target, UInt8 leds)
+{
+    ApplePS2Keyboard * self = (ApplePS2Keyboard *)target;
+    UInt8 ps2 = 0;
+
+    if (self->_device == NULL) {
+        return;
+    }
+    if (leds & kPDHIDLEDScrollLock) {
+        ps2 |= 0x01;
+    }
+    if (leds & kPDHIDLEDNumLock) {
+        ps2 |= 0x02;
+    }
+    if (leds & kPDHIDLEDCapsLock) {
+        ps2 |= 0x04;
+    }
+    self->setLEDs(ps2);
+    IOLog("ApplePS2Keyboard: set LEDs 0x%02x\n", ps2);
+}
+
 void ApplePS2Keyboard::setLEDs(UInt8 ledState)
 {
     PS2Request * request = _device->allocateRequest();
@@ -321,10 +350,9 @@ void ApplePS2Keyboard::setKeyboardEnable(bool enable)
     _device->submitRequest(request);
 }
 
-void ApplePS2Keyboard::setAlphaLockFeedback(bool locked)
+void ApplePS2Keyboard::setAlphaLockFeedback(bool)
 {
-    /* caps lock LED = bit 2 */
-    setLEDs(locked ? 0x04 : 0x00);
+    // the LEDs follow the lock state kept in PDHIDEventQueue
 }
 
 const unsigned char * ApplePS2Keyboard::defaultKeymapOfLength(UInt32 * length)
