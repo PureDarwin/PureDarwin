@@ -33,6 +33,7 @@
 #import <Onyx2D/O2Surface.h>
 #import <Onyx2D/O2GraphicsState.h>
 #import <AppKit/NSWindow.h>
+#import <AppKit/NSDockTile.h>
 #import <AppKit/NSColorSpace.h>
 #import <AppKit/NSTextField.h>
 #import <objc/runtime.h>
@@ -414,6 +415,7 @@ static BOOL _allowsAutomaticWindowTabbing=YES;
     [_title release];
     [_miniwindowTitle release];
     [_miniwindowImage release];
+    [_dockTile release];
     [_backgroundView _setWindow:nil];
     [_backgroundView release];
     [_menu release];
@@ -752,9 +754,11 @@ static BOOL _allowsAutomaticWindowTabbing=YES;
    return _miniwindowTitle;
 }
 
+// a window's tile shows when it is miniaturized, made on first use
 -(NSDockTile *)dockTile {
-   NSUnimplementedMethod();
-   return nil;
+   if(_dockTile==nil)
+    _dockTile=[[NSDockTile alloc] initWithOwner:self];
+   return _dockTile;
 }
 
 -(NSColor *)backgroundColor {

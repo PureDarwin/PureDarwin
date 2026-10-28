@@ -197,6 +197,7 @@ APPKIT_EXPORT NSString *const NSWindowDidEndLiveResizeNotification;
     NSString *_representedFilename;
     NSString *_title;
     NSString *_miniwindowTitle;
+    NSDockTile *_dockTile;
     NSImage *_miniwindowImage;
 
     NSThemeFrame *_backgroundView;
