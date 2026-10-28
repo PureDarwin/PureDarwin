@@ -19,6 +19,7 @@
 -(void)_setContext:(CALayerContext *)context;
 -(void)_setTextureId:(NSNumber *)value;
 -(NSNumber *)_textureId;
+-(uint32_t)_contentsSeed;
 @end
 
 @implementation CARenderer
@@ -900,10 +901,10 @@ static void drawMaskCoverage(CALayer *mask,float z,GLenum op){
    }
 
     BOOL surface=contentsIsSurface(contents);
-    uint32_t seed=surface ? surfaceAPI.seed((CFTypeRef)contents) : 0;
+    uint32_t seed=surface ? surfaceAPI.seed((CFTypeRef)contents) : [layer _contentsSeed];
 
-    // a surface's pixels change under the same object, so its seed decides whether to upload again
-    if(!loadPixelData && surface && !textureIsCurrent(texture,contents,seed))
+    // a surface's pixels change under the same object, an image is replaced, either seed asks for a new upload
+    if(!loadPixelData && contents!=nil && !textureIsCurrent(texture,contents,seed))
         loadPixelData=GL_TRUE;
 
     if(loadPixelData){
@@ -911,8 +912,7 @@ static void drawMaskCoverage(CALayer *mask,float z,GLenum op){
             CATexImage2DCGImage((CGImageRef)contents);
         else if(!bindDrawableSurface((CFTypeRef)contents))
             CATexImage2DSurface((CFTypeRef)contents,texture);
-        if(surface)
-            noteTexture(texture,contents,seed);
+        noteTexture(texture,contents,seed);
 
         GLint minFilter=interpolationFromName(layer.minificationFilter);
         GLint magFilter=interpolationFromName(layer.magnificationFilter);

@@ -243,6 +243,7 @@ static id lockedRead(id *slot) {
    if(caTrace())
     fprintf(stderr,"PD-CA %p setContents: %s %p from %s\n",self,value ? object_getClassName(value) : "nil",value,caCaller(__builtin_return_address(0)));
    [lockedSwap(&_contents,[value retain]) release];
+   __atomic_add_fetch(&_contentsSeed,1,__ATOMIC_RELEASE);
    [self _setNeedsRender];
 }
 
@@ -728,6 +729,10 @@ static id lockedRead(id *slot) {
 
 -(NSNumber *)_textureId {
    return _textureId;
+}
+
+-(uint32_t)_contentsSeed {
+   return __atomic_load_n(&_contentsSeed,__ATOMIC_ACQUIRE);
 }
 
 -(void)_setTextureId:(NSNumber *)value {

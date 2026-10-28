@@ -73,6 +73,8 @@ CA_EXPORT NSString *const kCAGravityResizeAspectFill;
     BOOL _needsDisplay;
     NSMutableDictionary *_animations;
     NSNumber *_textureId;
+    // bumped on each contents change, so the renderer uploads a new image
+    uint32_t _contentsSeed;
     CGFloat _contentsScale;
     BOOL _shouldRasterize;
     CGFloat _rasterizationScale;
