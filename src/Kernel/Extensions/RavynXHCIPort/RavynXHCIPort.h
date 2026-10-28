@@ -150,7 +150,7 @@ private:
     /* Interrupt-driven event ring servicing (MSI, or a device tree interrupt
      * on the sc8280xp). doCommand()/waitTransferEvent() drain the ring
      * themselves and then sleep on fEventWaitChannel until serviceEventRing()
-     * files something (fEventGeneration moves), their deadline, or a 20 ms
+     * files something (fEventGeneration moves), their deadline, or a 2 ms
      * backstop. Without an interrupt they fall back to 1 ms polling. */
     IOWorkLoop            * fWorkLoop;
     IOInterruptEventSource * fInterruptSource;
@@ -159,6 +159,12 @@ private:
     IOLock               * fEventWaitLock;
     UInt32                 fEventWaitChannel;
     UInt32                 fEventGeneration;    // under fEventWaitLock, bumped when events are filed
+    // under fEventLock: interrupts taken, events drained by them and by polling, and torn event reads
+    UInt32                 fIntrCount;
+    UInt32                 fIntrEvents;
+    UInt32                 fPolledEvents;
+    UInt32                 fTornEvents;
+    uint64_t               fLastIntrTime;
 
     /* IOUSBController-shaped view of this port, backing IOUSBDevice/
      * IOUSBInterface for any slot enumerateSlotDevice() doesn't already
@@ -397,7 +403,8 @@ private:
     /* Sole consumer of the event ring: drain all currently-available events
      * under fEventLock, recording each into fXferDone[][]/fCmdDone* for the
      * waiter that's looking for it. Safe to call from multiple threads. */
-    void serviceEventRing();
+    void serviceEventRing(bool fromInterrupt = false);
+    void logInterruptState(const char *why);
     bool eventInTD(UInt32 slot, UInt32 dci, UInt64 trb) const;
     UInt32 eventGeneration();
     void sleepForEvent(UInt32 generation, uint64_t until);

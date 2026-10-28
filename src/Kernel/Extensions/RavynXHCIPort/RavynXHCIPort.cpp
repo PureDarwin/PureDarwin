@@ -1176,7 +1176,23 @@ void RavynXHCIPort::interruptOccurred(IOInterruptEventSource *sender, int count)
     UInt32 iman = rtRead32(XHCI_RT_IR0 + XHCI_IR_IMAN);
     rtWrite32(XHCI_RT_IR0 + XHCI_IR_IMAN, iman);
 
-    serviceEventRing();
+    serviceEventRing(true);
+}
+
+// tells a dead msi (interrupts stop counting) from a slow device (interrupts and events keep coming)
+void RavynXHCIPort::logInterruptState(const char *why)
+{
+    IOLockLock(fEventLock);
+    UInt32 intr = fIntrCount, intrEv = fIntrEvents, polled = fPolledEvents, torn = fTornEvents;
+    uint64_t last = fLastIntrTime;
+    IOLockUnlock(fEventLock);
+    uint64_t ns = 0;
+    if (last) absolutetime_to_nanoseconds(mach_absolute_time() - last, &ns);
+    XHCI_Log("%s: msi=%d interrupts=%u (events %u) polled events=%u torn reads=%u last interrupt %llu ms ago "
+             "IMAN=%08x ERDP=%016llx USBSTS=%08x",
+             why, fInterruptsEnabled, intr, intrEv, polled, torn, last ? ns / 1000000ULL : 0ULL,
+             rtRead32(XHCI_RT_IR0 + XHCI_IR_IMAN), (unsigned long long)rtRead64(XHCI_RT_IR0 + XHCI_IR_ERDP),
+             opRead32(XHCI_USBSTS));
 }
 
 // whether an event's trb pointer falls in the td registered for this endpoint
@@ -1189,22 +1205,37 @@ bool RavynXHCIPort::eventInTD(UInt32 slot, UInt32 dci, UInt64 trb) const
     return ((idx + kRingTRBs - x.matchStart) % kRingTRBs) < x.matchCount;
 }
 
-void RavynXHCIPort::serviceEventRing()
+void RavynXHCIPort::serviceEventRing(bool fromInterrupt)
 {
     /* Sole consumer of the event ring. Drains every currently-available
      * event and files each completion into the per-(slot,DCI) transfer table
      * or the command-completion slot, so concurrent waiters (disk I/O + the
      * keyboard poll thread) never consume and discard each other's events. */
     bool portChange = false, filed = false;
+    UInt32 consumed = 0;
 
     IOLockLock(fEventLock);
+    if (fromInterrupt) {
+        fIntrCount++;
+        fLastIntrTime = mach_absolute_time();
+    }
     for (;;) {
         dmaFlush(&fEventRing[fEventRingDequeue], sizeof(XHCITRB));
-        UInt64 evParam   = fEventRing[fEventRingDequeue].param;
+        // the cycle bit first, the rest only after it: the controller's write can land between two
+        // loads, and a param read before it is the previous lap's trb pointer
+        UInt64 earlyParam = fEventRing[fEventRingDequeue].param;
         UInt32 evControl = fEventRing[fEventRingDequeue].control;
-        UInt32 evStatus  = fEventRing[fEventRingDequeue].status;
         if ((evControl & TRB_CYCLE) != (fEventRingCycle ? TRB_CYCLE : 0))
             break; /* ring empty (cycle bit doesn't match producer) */
+        __atomic_thread_fence(__ATOMIC_SEQ_CST);
+        UInt64 evParam   = fEventRing[fEventRingDequeue].param;
+        UInt32 evStatus  = fEventRing[fEventRingDequeue].status;
+        if (earlyParam != evParam) {
+            fTornEvents++;
+            XHCI_Log("event %u read while the controller wrote it, trb %016llx was %016llx",
+                     fEventRingDequeue, (unsigned long long)evParam, (unsigned long long)earlyParam);
+        }
+        consumed++;
 
         UInt32 type = TRB_TYPE(evControl);
         if (type == TRB_TYPE_CMD_COMPLETION) {
@@ -1248,6 +1279,14 @@ void RavynXHCIPort::serviceEventRing()
         UInt64 newErdp = fEventRingMem->getPhysicalAddress() + fEventRingDequeue * sizeof(XHCITRB);
         rtWrite64(XHCI_RT_IR0 + XHCI_IR_ERDP, (newErdp & ~0xFULL) | XHCI_ERDP_EHB);
     }
+    if (fromInterrupt) fIntrEvents += consumed;
+    else fPolledEvents += consumed;
+    // a poll can drain the event an interrupt was raised for before the controller sets EHB, and
+    // with EHB left set the interrupter never fires again, so an empty pass clears it too
+    if (!consumed && (rtRead32(XHCI_RT_IR0 + XHCI_IR_ERDP) & XHCI_ERDP_EHB)) {
+        UInt64 erdp = fEventRingMem->getPhysicalAddress() + fEventRingDequeue * sizeof(XHCITRB);
+        rtWrite64(XHCI_RT_IR0 + XHCI_IR_ERDP, (erdp & ~0xFULL) | XHCI_ERDP_EHB);
+    }
     IOLockUnlock(fEventLock);
 
     // every waiter wakes: a completion this thread filed may belong to any of them
@@ -1274,7 +1313,8 @@ UInt32 RavynXHCIPort::eventGeneration()
     return generation;
 }
 
-#define kEventWaitBackstopMs 20
+// a missed interrupt then costs a few ms
+#define kEventWaitBackstopMs 2
 
 // read the generation before draining the ring: if anything is filed after that, the generation
 // has moved and this returns at once, so a wakeup between the check and the sleep isn't lost
@@ -2399,6 +2439,7 @@ bool RavynXHCIPort::bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
                 (unsigned)(deviceEp(dc, dci)->dword0 & 0x7),
                 (unsigned long long)deviceEp(dc, dci)->trDequeuePtr,
                 (unsigned long long)ringBase, enqueue, opRead32(XHCI_USBSTS));
+        logInterruptState("bulk timeout");
         UInt32 sts = opRead32(XHCI_USBSTS);
         if (sts & XHCI_USBSTS_HCH) {
             // a halted controller does no dma, so the caller may free the buffer
@@ -3028,6 +3069,9 @@ IOReturn RavynXHCIPort::botTransfer(UInt32 slotId,
     return ret;
 }
 
+// flash sticks can take seconds to commit a write before they send the csw
+#define kBOTDataTimeoutMs 20000
+
 IOReturn RavynXHCIPort::botTransferLocked(UInt32 slotId,
                                           const void *cbwCB, UInt8 cbwLen,
                                           UInt32 dataLen, bool dataIn,
@@ -3078,7 +3122,7 @@ IOReturn RavynXHCIPort::botTransferLocked(UInt32 slotId,
         if (!dataIn && buffer) buffer->readBytes(bufOff, xferMem->getBytesNoCopy(), dataLen);
         else bzero(xferMem->getBytesNoCopy(), dataLen);
 
-        ok = bulkTransfer(slotId, dataIn ? m.bulkInEp : m.bulkOutEp, dataIn, xferMem, dataLen, 5000, &moved, &cc);
+        ok = bulkTransfer(slotId, dataIn ? m.bulkInEp : m.bulkOutEp, dataIn, xferMem, dataLen, kBOTDataTimeoutMs, &moved, &cc);
         if (!ok && cc != TRB_CC_STALL) {
             XHCI_Log("BOT tag=%u data %s failed cc=%u", tag, dataIn ? "in" : "out", cc);
             xferMem->release();
@@ -3100,8 +3144,15 @@ IOReturn RavynXHCIPort::botTransferLocked(UInt32 slotId,
         bool got = false;
         for (int attempt = 0; attempt < 2 && !got; attempt++) {
             bzero(csw, sizeof(*csw));
-            got = bulkTransfer(slotId, m.bulkInEp, true, cswMem, sizeof(*csw), 2000, &cswLen, &cc);
+            got = bulkTransfer(slotId, m.bulkInEp, true, cswMem, sizeof(*csw), kBOTDataTimeoutMs, &cswLen, &cc);
             if (!got && cc != TRB_CC_STALL) break;
+        }
+        // the device answered but its completion event was lost, the ring is already stopped past it
+        dmaFlush(csw, sizeof(*csw));
+        if (!got && csw->dCSWSignature == BOT_CSW_SIGNATURE && csw->dCSWTag == tag) {
+            XHCI_Log("BOT tag=%u csw arrived without its completion event, accepting it", tag);
+            got = true;
+            cswLen = sizeof(*csw);
         }
         if (!got || cswLen != sizeof(*csw) || csw->dCSWSignature != BOT_CSW_SIGNATURE || csw->dCSWTag != tag) {
             XHCI_Log("BOT tag=%u bad csw got=%d len=%u sig=%08x tag=%08x cc=%u",
@@ -3431,12 +3482,15 @@ void RavynXHCIPort::bulkThread(void *arg, wait_result_t)
 {
     RavynXHCIPort *self = (RavynXHCIPort *)arg;
     while (!self->fBulkStop) {
+        // an event filed while this thread delivered would wake nobody, so it only sleeps on an unchanged generation
+        UInt32 generation = self->eventGeneration();
         self->serviceEventRing();
         self->deliverBulkCompletions();
         AbsoluteTime deadline;
         clock_interval_to_deadline(self->fInterruptsEnabled ? 20 : 2, kMillisecondScale, &deadline);
         IOLockLock(self->fEventWaitLock);
-        IOLockSleepDeadline(self->fEventWaitLock, &self->fEventWaitChannel, deadline, THREAD_UNINT);
+        if (self->fEventGeneration == generation)
+            IOLockSleepDeadline(self->fEventWaitLock, &self->fEventWaitChannel, deadline, THREAD_UNINT);
         IOLockUnlock(self->fEventWaitLock);
     }
     thread_terminate(current_thread());
