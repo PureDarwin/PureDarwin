@@ -25,6 +25,15 @@ NSString * const NSControlTextDidEndEditingNotification=@"NSControlTextDidEndEdi
 
 @implementation NSControl
 
+// a control's size is its cell's, as on macOS 10.10 and later
+-(NSControlSize)controlSize {
+   return [[self cell] controlSize];
+}
+
+-(void)setControlSize:(NSControlSize)value {
+   [[self cell] setControlSize:value];
+}
+
 static NSMutableDictionary *cellClassDictionary = nil;
 
 +(void)initialize {

@@ -1823,6 +1823,9 @@ static NSApplicationActivationPolicy activationPolicy = NSApplicationActivationP
 }
 
 -(int)runModalSession:(NSModalSession)session {
+    // an ended session reports aborted, as on macOS
+    if([_modalStack indexOfObjectIdenticalTo:session]==NSNotFound)
+        return NSRunAbortedResponse;
     while([session stopCode]==NSRunContinuesResponse) {
         NSAutoreleasePool *pool=[NSAutoreleasePool new];
         NSEvent           *event=[self nextEventMatchingMask:NSAnyEventMask untilDate:[NSDate date] inMode:NSModalPanelRunLoopMode dequeue:YES];
@@ -1872,15 +1875,18 @@ static NSApplicationActivationPolicy activationPolicy = NSApplicationActivationP
 }
 
 -(void)endModalSession:(NSModalSession)session {
-    if(session!=[_modalStack lastObject])
-        [NSException raise:NSInvalidArgumentException format:@"-[%@ %s] modal session %@ is not the current one %@",[self class],sel_getName(_cmd),session,[_modalStack lastObject]];
+    // nested sessions may end out of order, a session no longer on the stack is already over
+    if([_modalStack indexOfObjectIdenticalTo:session]==NSNotFound)
+        return;
 
     for(NSEvent *requeue in [session unprocessedEvents]){
         [self postEvent:requeue atStart:YES];
     }
 
     [[session modalWindow] _showMenuViewIfNeeded];
-    [_modalStack removeLastObject];
+    // the caller may still hold the session for this pass of the run loop
+    [[session retain] autorelease];
+    [_modalStack removeObjectIdenticalTo:session];
 }
 
 -(void)stopModalWithCode:(int)code {

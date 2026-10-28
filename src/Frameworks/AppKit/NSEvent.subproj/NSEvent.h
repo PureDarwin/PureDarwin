@@ -244,7 +244,7 @@ enum {
     NSApplicationDeactivated = 1
 };
 
-@interface NSEvent : NSObject {
+@interface NSEvent : NSObject <NSCopying> {
     int _type;
     NSTimeInterval _timestamp;
     NSPoint _locationInWindow;

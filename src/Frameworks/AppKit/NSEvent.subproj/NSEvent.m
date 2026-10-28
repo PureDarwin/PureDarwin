@@ -38,6 +38,11 @@ static NSUInteger pressedButtons;
 
 @implementation NSEvent
 
+// events never change once made, so a copy is the same event
+-copyWithZone:(NSZone *)zone {
+   return [self retain];
+}
+
 +(id)addLocalMonitorForEventsMatchingMask:(NSEventMask)mask handler:(NSEvent *(^)(NSEvent *event))block {
    NSEventLocalMonitor *monitor=[[NSEventLocalMonitor new] autorelease];
 

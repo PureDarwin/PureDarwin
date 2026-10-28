@@ -19,6 +19,11 @@ NSString * const NSComboBoxWillPopUpNotification=@"NSComboBoxWillPopUpNotificati
 
 @implementation NSComboBox
 
+// a combo box made in code gets a combo box cell, the text field default has no list or button
++(Class)cellClass {
+   return [NSComboBoxCell class];
+}
+
 -dataSource {
    return [[self cell] dataSource];
 }

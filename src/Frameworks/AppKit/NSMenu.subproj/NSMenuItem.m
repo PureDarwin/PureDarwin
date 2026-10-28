@@ -9,6 +9,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 // Original - Christopher Lloyd <cjwl@objc.net>
 #import <AppKit/NSMenuItem.h>
 #import <objc/runtime.h>
+#import <string.h>
 #import <AppKit/NSMenu.h>
 #import <AppKit/NSImage.h>
 #import <AppKit/NSEvent.h>
@@ -109,7 +110,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -copyWithZone:(NSZone *)zone {
-    NSMenuItem *copy=NSCopyObject(self, 0, zone);
+    // only NSMenuItem ivars are copied, subclass ivars such as C++ members stay zeroed
+    NSMenuItem *copy=[[self class] allocWithZone:zone];
+    memcpy((char *)copy+sizeof(Class),(char *)self+sizeof(Class),class_getInstanceSize([NSMenuItem class])-sizeof(Class));
 
     copy->_title=[_title copyWithZone:zone];
     copy->_atitle=[_atitle copyWithZone:zone];

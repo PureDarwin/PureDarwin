@@ -9,6 +9,9 @@
 #import <Foundation/NSURL.h>
 #import <Foundation/NSArray.h>
 #import <Foundation/NSNumber.h>
+#import <Foundation/NSError.h>
+#import <Foundation/FoundationErrors.h>
+#include <sys/stat.h>
 #include <CoreFoundation/CFURL.h>
 #include <CoreFoundation/ForFoundationOnly.h>
 #include <objc/runtime.h>
@@ -53,6 +56,21 @@ extern Boolean _CFIsObjC(CFTypeID typeID, void *obj);
     BOOL isFile = CFStringCompare(scheme, CFSTR("file"), 0) == kCFCompareEqualTo;
     CFRelease(scheme);
     return isFile;
+}
+
+// only file URLs can be checked, others report an unsupported scheme
+- (BOOL)checkResourceIsReachableAndReturnError:(NSError **)error {
+    struct stat st;
+    NSInteger code = NSFileReadUnsupportedSchemeError;
+
+    if ([self isFileURL]) {
+        if (lstat([[self path] fileSystemRepresentation], &st) == 0)
+            return YES;
+        code = NSFileReadNoSuchFileError;
+    }
+    if (error)
+        *error = [NSError errorWithDomain:NSCocoaErrorDomain code:code userInfo:nil];
+    return NO;
 }
 
 + (instancetype)fileURLWithPath:(NSString *)path isDirectory:(BOOL)isDirectory {

@@ -12,8 +12,24 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <Foundation/NSKeyedArchiver.h>
 #import <AppKit/NSGraphicsStyle.h>
 #import <AppKit/NSRaise.h>
+#import <objc/runtime.h>
 
 @implementation NSComboBoxCell
+
+static char buttonCellKey;
+
+// the cell that draws the arrow part, Qt's mac style reads it through key value coding
+-(NSButtonCell *)_buttonCell {
+   NSButtonCell *cell=objc_getAssociatedObject(self,&buttonCellKey);
+
+   if(cell==nil){
+      cell=[[[NSButtonCell alloc] initTextCell:@""] autorelease];
+      [cell setBordered:_isButtonBordered];
+      [cell setEnabled:_buttonEnabled];
+      objc_setAssociatedObject(self,&buttonCellKey,cell,OBJC_ASSOCIATION_RETAIN);
+   }
+   return cell;
+}
 
 -(void)encodeWithCoder:(NSCoder *)coder {
    NSUnimplementedMethod();

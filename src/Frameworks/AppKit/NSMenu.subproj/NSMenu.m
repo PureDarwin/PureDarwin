@@ -7,6 +7,8 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
 #import <ctype.h>
+#import <objc/runtime.h>
+#import <string.h>
 #import <AppKit/NSMenu.h>
 #import <AppKit/NSScreen.h>
 #import <AppKit/NSMenuView.h>
@@ -198,7 +200,9 @@ static NSMutableArray *__NSMenuPopUpWindows = nil;
 }
 
 -copyWithZone:(NSZone *)zone {
-	NSMenu *copy=NSCopyObject(self, 0, zone);
+	// only NSMenu ivars are copied, subclass ivars such as C++ members stay zeroed
+	NSMenu *copy=[[self class] allocWithZone:zone];
+	memcpy((char *)copy+sizeof(Class),(char *)self+sizeof(Class),class_getInstanceSize([NSMenu class])-sizeof(Class));
 	
 	copy->_title=[_title copyWithZone:zone];
 	copy->_name=[_name copyWithZone:zone];

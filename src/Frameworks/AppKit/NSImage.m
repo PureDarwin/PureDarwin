@@ -55,6 +55,15 @@ NSString *const NSImageNameApplicationIcon=@"NSApplicationIcon";
 
 @implementation NSImage
 
+// there are no system symbol images here, an unknown name gives nil as on macOS
++(NSImage *)imageWithSystemSymbolName:(NSString *)name accessibilityDescription:(NSString *)description {
+   return nil;
+}
+
++(NSImage *)imageWithSystemSymbolName:(NSString *)name variableValue:(double)value accessibilityDescription:(NSString *)description {
+   return nil;
+}
+
 +(NSArray *)imageFileTypes {
    return [self imageUnfilteredFileTypes];
 }
