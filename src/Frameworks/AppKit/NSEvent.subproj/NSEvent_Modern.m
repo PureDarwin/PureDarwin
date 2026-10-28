@@ -90,6 +90,7 @@
 - (CGEventRef)CGEvent
 {
     NSEventType type = [self type];
+    NSWindow *window = [self window];
     NSPoint where = [NSEvent mouseLocation];
     CGFloat top = NSMaxY([[[NSScreen screens] firstObject] frame]);
     CGEventRef event = NULL;
@@ -121,6 +122,9 @@
         case NSOtherMouseDragged: mouseType = kCGEventOtherMouseDragged; button = kCGMouseButtonCenter; break;
         default: break;
         }
+        // a mouse event's own position, the global one may already be newer
+        if (type != NSAppKitDefined && type != NSSystemDefined && type != NSApplicationDefined && type != NSPeriodic)
+            where = (window != nil) ? [window convertBaseToScreen:[self locationInWindow]] : [self locationInWindow];
         // CGEvent locations are top-left based, NSEvent's screen locations bottom-left
         event = CGEventCreateMouseEvent(NULL, mouseType, CGPointMake(where.x, top - where.y), button);
     }

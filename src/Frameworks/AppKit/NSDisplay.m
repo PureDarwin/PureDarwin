@@ -232,9 +232,13 @@ static void displayReconfigured(CGDirectDisplayID display, CGDisplayChangeSummar
     else {
          result=[[check retain] autorelease];
 
-         NSEventType _type = [result type];
-         if(_type == NSMouseMoved || _type == NSLeftMouseDragged || _type == NSRightMouseDragged)
-             pointerPos = [result locationInWindow];
+         // the pointer in screen coordinates, every mouse event carries it
+         if(NSEventMaskFromType([result type]) & (NSMouseMovedMask|NSLeftMouseDraggedMask|NSRightMouseDraggedMask|NSOtherMouseDraggedMask|
+            NSLeftMouseDownMask|NSLeftMouseUpMask|NSRightMouseDownMask|NSRightMouseUpMask|NSOtherMouseDownMask|NSOtherMouseUpMask)){
+             NSWindow *window = [result window];
+
+             pointerPos = (window != nil) ? [window convertBaseToScreen:[result locationInWindow]] : [result locationInWindow];
+         }
 
         if(dequeue)
             [_eventQueue removeObjectAtIndex:0];

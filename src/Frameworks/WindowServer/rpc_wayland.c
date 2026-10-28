@@ -1178,6 +1178,8 @@ static void pointerEnter(void *data, struct wl_pointer *pointer, uint32_t serial
     }
     lastPointerX = wl_fixed_to_double(x);
     lastPointerY = wl_fixed_to_double(y);
+    // buttons pressed before enter belong to whoever had the pointer
+    leftButtonDown = rightButtonDown = otherButtonDown = 0;
 
     // a surface entered with no cursor set shows none, so the current shape goes on each time
     pthread_mutex_lock(&cursor.lock);
@@ -1204,10 +1206,22 @@ static void pointerLeave(void *data, struct wl_pointer *pointer, uint32_t serial
             event.x = lastPointerX;
             event.y = w->h - lastPointerY;
             event.mods = currentModifiers;
+            // a held button leaving means a compositor grab took the pointer, its release never comes here
+            int held[3] = { leftButtonDown, rightButtonDown, otherButtonDown };
+            int ups[3] = { WS_LEFT_MOUSE_UP, WS_RIGHT_MOUSE_UP, WS_OTHER_MOUSE_UP };
+            int exited = event.code;
+            for (int i = 0; i < 3; i++) {
+                if (!held[i])
+                    continue;
+                event.code = ups[i];
+                queuePush(&event);
+            }
+            event.code = exited;
             queuePush(&event);
             break;
         }
     }
+    leftButtonDown = rightButtonDown = otherButtonDown = 0;
     pthread_mutex_lock(&cursor.lock);
     cursor.inside = 0;
     pthread_mutex_unlock(&cursor.lock);
