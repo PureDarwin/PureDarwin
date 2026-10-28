@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: MIT
-// clean-room adreno drm driver (msm uapi): shared state, generations and chips, from the adreno-cleanroom spec
+// pd_msm.h - clean-room adreno drm driver (msm uapi): shared state, generations and chips, from the adreno-cleanroom spec
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause OR MIT
 #ifndef PD_MSM_H
 #define PD_MSM_H
 

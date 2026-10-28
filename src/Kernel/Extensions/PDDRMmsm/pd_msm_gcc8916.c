@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: MIT
-// msm8916 global clock controller: the gpu's and its smmu's clocks and the oxili power domain (spec 2)
+// pd_msm_gcc8916.c - msm8916 global clock controller: the gpu's and its smmu's clocks and the oxili power domain (spec 2)
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause OR MIT
 
 #include <linux/kernel.h>
 #include <linux/io.h>

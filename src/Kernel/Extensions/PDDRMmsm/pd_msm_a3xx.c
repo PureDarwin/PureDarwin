@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: MIT
-// the a3xx generation: register init, microcode, ring, submissions and fences (spec 4-6)
+// pd_msm_a3xx.c - the a3xx generation: register init, microcode, ring, submissions and fences (spec 4-6)
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause OR MIT
 
 #include <linux/kernel.h>
 #include <linux/slab.h>

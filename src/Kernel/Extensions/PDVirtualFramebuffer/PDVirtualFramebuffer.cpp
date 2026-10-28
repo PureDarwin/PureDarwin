@@ -1,6 +1,5 @@
-// SPDX-License-Identifier: MIT
-// a framebuffer in ram for a machine with no display: neuswc draws and flips through the
-// presenter, a streamer maps the same buffers and waits for flips to send them somewhere
+// PDVirtualFramebuffer.cpp - a framebuffer in ram for a machine with no display, flipped by neuswc and sent on by a streamer
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause OR MIT
 
 #include <IOKit/IOLib.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>

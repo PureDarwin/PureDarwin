@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: MIT
-// msm (adreno) drm driver glue: registers the driver with linuxkpi at sysinit time
+// glue.c - msm (adreno) drm driver glue: registers the driver with linuxkpi at sysinit time
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause OR MIT
 
 #include <sys/bus.h>
 

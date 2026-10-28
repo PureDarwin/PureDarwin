@@ -1,5 +1,5 @@
-# SPDX-License-Identifier: MIT
-# PDDRMmsm: the clean-room adreno driver over the msm uapi, generations behind pd_msm_gpu_funcs
+# CMakeLists.txt - the clean-room adreno driver over the msm uapi, generations behind pd_msm_gpu_funcs
+# Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause OR MIT
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../fbsdkpi/fbsdkpi.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../fbsdkpi/drm/drm.cmake")
 

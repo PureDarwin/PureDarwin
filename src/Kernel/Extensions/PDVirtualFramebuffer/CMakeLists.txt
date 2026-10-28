@@ -1,5 +1,5 @@
-# SPDX-License-Identifier: MIT
-# PDVirtualFramebuffer: an IOFramebuffer in ram for a machine with no display, opt in with pdvfb=
+# CMakeLists.txt - an IOFramebuffer in ram for a machine with no display, opt in with pdvfb=
+# Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause OR MIT
 add_kext_bundle(PDVirtualFramebuffer.kext INFO_PLIST Info.plist KERNEL_PRIVATE
     BUNDLE_IDENTIFIER org.puredarwin.PDVirtualFramebuffer BUNDLE_VERSION 1.0.0)
 set_property(TARGET PDVirtualFramebuffer.kext PROPERTY OUTPUT_NAME PDVirtualFramebuffer)

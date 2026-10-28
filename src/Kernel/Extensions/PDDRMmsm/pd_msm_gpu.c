@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: MIT
-// what every adreno generation shares: registers, the iommu, clocks, the first-open start, fences
+// pd_msm_gpu.c - what every adreno generation shares: registers, the iommu, clocks, the first-open start, fences
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause OR MIT
 
 #include <linux/kernel.h>
 #include <linux/delay.h>

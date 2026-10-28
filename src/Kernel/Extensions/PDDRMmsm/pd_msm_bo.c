@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: MIT
-// buffer objects: contiguous pieces joined by the smmu, gpu addresses and /dev/dri mmap
+// pd_msm_bo.c - buffer objects: contiguous pieces joined by the smmu, gpu addresses and /dev/dri mmap
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause OR MIT
 
 #include <linux/kernel.h>
 #include <linux/slab.h>

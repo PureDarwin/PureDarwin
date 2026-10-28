@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: MIT
-// msm8916's qcom,msm-iommu-v1: the gpu's context banks on one lpae table, and their secure setup (spec 3)
+// pd_msm_smmu.c - msm8916's qcom,msm-iommu-v1: the gpu's context banks on one lpae table, and their secure setup (spec 3)
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause OR MIT
 
 #include <linux/kernel.h>
 #include <linux/slab.h>

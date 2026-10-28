@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: MIT
-// the msm drm uapi (spec msm-uapi.md): device, buffers, submits and fences, the chips it drives
+// pd_msm_drv.c - the msm drm uapi (spec msm-uapi.md): device, buffers, submits and fences, the chips it drives
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause OR MIT
 
 #include <linux/kernel.h>
 #include <linux/module.h>
