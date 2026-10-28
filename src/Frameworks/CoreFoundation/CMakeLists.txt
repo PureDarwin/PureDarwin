@@ -313,7 +313,6 @@ add_framework(CoreFoundation
                 Locale.subproj/CFLocale.c
                 Locale.subproj/CFLocaleIdentifier.c
                 Locale.subproj/CFLocaleKeys.c
-                Locale.subproj/CFLocale_PureDarwin_LegacyAliases.c
                 Locale.subproj/CFNumberFormatter.c
                 # NumberData
                 NumberDate.subproj/CFBigNumber.c

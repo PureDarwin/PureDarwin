@@ -384,6 +384,9 @@ static _CF_CONSTANT_OBJECT_BACKING struct __CFAllocator __kCFAllocatorNull = {
     {0, NULL, NULL, NULL, NULL, __CFAllocatorNullAllocate, __CFAllocatorNullReallocate, NULL, NULL}
 };
 
+// the version apps compare against kCFCoreFoundationVersionNumber10_* constants, a macOS 26 level one (the JDK reads it)
+double kCFCoreFoundationVersionNumber = 4040.0;
+
 const CFAllocatorRef kCFAllocatorDefault = NULL;
 const CFAllocatorRef kCFAllocatorSystemDefault = &__kCFAllocatorSystemDefault;
 const CFAllocatorRef kCFAllocatorMalloc = &__kCFAllocatorMalloc;

@@ -65,6 +65,9 @@ stdenv.mkDerivation {
 
     # Foundation links CoreFoundation, so CF links a text stub of it, upward, to re-export from
     printf '%b\n' '${reexportList}' > ns-reexports.txt
+    # the locale keys are __attribute__((alias)) on linux and windows, mach-o takes them as linker aliases
+    sed -n 's/^CF_EXPORT CFStringRef const \([A-Za-z0-9_]*\) __attribute__((alias ("\([A-Za-z0-9_]*\)")));/_\2 _\1/p' \
+      Locale.subproj/CFLocaleKeys.c > cf-aliases.txt
     {
       echo '--- !tapi-tbd'
       echo 'tbd-version: 4'
@@ -97,7 +100,7 @@ stdenv.mkDerivation {
       ${lib.optionalString isArmv6 "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY"} \
       -DCMAKE_C_FLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include -I${pdCompatInclude} -I${lib.getDev icu}/include -I${libobjc}/usr/include -I$PWD/foundation-headers -DU_DISABLE_RENAMING=1 -DDEPLOYMENT_RUNTIME_OBJC=1 -DINCLUDE_OBJC=1 ${lib.optionalString (!isArmv6) "-DPD_CF_STRING_CLASS_FROM_FOUNDATION=1"} -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0" \
       -DCMAKE_OBJC_FLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include -I${pdCompatInclude} -I${lib.getDev icu}/include -I${libobjc}/usr/include -I$PWD/foundation-headers -fno-objc-arc -DU_DISABLE_RENAMING=1 -DDEPLOYMENT_RUNTIME_OBJC=1 -DINCLUDE_OBJC=1 ${lib.optionalString (!isArmv6) "-DPD_CF_STRING_CLASS_FROM_FOUNDATION=1"} -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0" \
-      -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=${nativeLd}/bin/ld -nostdlib -L$PWD/placeholder-libs -L${libSystem}/usr/lib -L${libobjc}/usr/lib -L${icu}/usr/lib -lSystem -lobjc ${lib.optionalString (compilerRt != null) "${compilerRt}/lib/libcompiler_rt.a"} -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-install_name,/usr/lib/libCoreFoundation.dylib ${lib.optionalString (!isArmv6) "-Wl,-upward_library,$PWD/Foundation-stub.tbd -Wl,-reexported_symbols_list,$PWD/ns-reexports.txt"} ${lib.optionalString (!isArmv6) "-Wl,-platform_version,macos,26.5,26.5 -Wl,-fixup_chains"}"
+      -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=${nativeLd}/bin/ld -nostdlib -L$PWD/placeholder-libs -L${libSystem}/usr/lib -L${libobjc}/usr/lib -L${icu}/usr/lib -lSystem -lobjc ${lib.optionalString (compilerRt != null) "${compilerRt}/lib/libcompiler_rt.a"} -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-install_name,/usr/lib/libCoreFoundation.dylib -Wl,-alias_list,$PWD/cf-aliases.txt ${lib.optionalString (!isArmv6) "-Wl,-upward_library,$PWD/Foundation-stub.tbd -Wl,-reexported_symbols_list,$PWD/ns-reexports.txt"} ${lib.optionalString (!isArmv6) "-Wl,-platform_version,macos,26.5,26.5 -Wl,-fixup_chains"}"
 
     runHook postConfigure
   '';
