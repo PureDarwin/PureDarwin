@@ -38,7 +38,8 @@ _fbsdkpi_objects(PDDRMmsm_drm SOURCES ${core}
     OPTIONS ${lkpiopt})
 
 # the driver itself, clean room from the adreno-cleanroom spec
-set(msmsrc pd_msm_drv.c pd_msm_bo.c pd_msm_gpu.c pd_msm_smmu.c pd_msm_a3xx.c pd_msm_gcc8916.c)
+set(msmsrc pd_msm_drv.c pd_msm_bo.c pd_msm_gpu.c pd_msm_smmu.c pd_msm_a3xx.c pd_msm_gcc8916.c
+    pd_msm_smmu500.c pd_msm_gpucc8280.c pd_msm_a6xx.c pd_msm_a6xx_gmu.c)
 list(TRANSFORM msmsrc PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
 _fbsdkpi_objects(PDDRMmsm_msm SOURCES ${msmsrc}
     INCLUDES "${CMAKE_CURRENT_SOURCE_DIR}/include/uapi" "${drmkmod}/include/uapi/drm" ${lkpiinc} ${coreinc}

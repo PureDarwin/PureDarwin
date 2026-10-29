@@ -16,6 +16,9 @@
 #include "../../fbsdkpi/pd_dri_cdev.h"
 #include "pd_msm.h"
 
+// set at probe from the chip: below 4 GB for a3xx, anywhere for a6xx
+u64 pd_msm_dma_max = 0xffffffffull;
+
 extern int (*pd_drm_mmap_pages)(struct linux_file *filp, off_t offset, size_t size, int prot,
     uint32_t *pages, unsigned int *wimg, void (**release)(void *), void **release_arg);
 
@@ -36,7 +39,7 @@ pd_msm_dma_alloc(size_t size, u64 *phys, void **alloc)
 	void *cpu;
 
 	size = round_up(size, PAGE_SIZE);
-	*alloc = pdos_malloc_contig(size, PAGE_SIZE, 0xffffffffull, phys);
+	*alloc = pdos_malloc_contig(size, PAGE_SIZE, pd_msm_dma_max, phys);
 	if (*alloc == NULL)
 		return (NULL);
 	// the gpu sees memory uncached, so the cpu works through an uncached view of its own
@@ -94,7 +97,7 @@ bo_alloc_chunks(struct pd_msm_bo *bo, size_t size)
 
 		if (want > left)
 			want = left;
-		c->alloc = pdos_malloc_contig(want, PAGE_SIZE, 0xffffffffull, &c->phys);
+		c->alloc = pdos_malloc_contig(want, PAGE_SIZE, pd_msm_dma_max, &c->phys);
 		if (c->alloc == NULL) {
 			if (want == PAGE_SIZE)
 				return (-ENOMEM);

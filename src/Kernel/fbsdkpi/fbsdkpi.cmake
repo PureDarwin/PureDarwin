@@ -66,8 +66,9 @@ function(_fbsdkpi_objects target)
         "${FBSDKPI_DIR}/pd/haiku-headers/private-kernel"
         "${FBSDKPI_DIR}/pd/haiku-headers"
         "${FBSDKPI_DIR}/pd/haiku-headers/os"
-        ${osdirs}
-        "${FBSDKPI_DIR}/pd/haiku-headers/posix")
+        # before os/*: on a case-insensitive build host os/support/String.h would answer <string.h>
+        "${FBSDKPI_DIR}/pd/haiku-headers/posix"
+        ${osdirs})
     target_compile_definitions(${target} PRIVATE
         _KERNEL=1 _KERNEL_MODE=1 __HAIKU__=1 __PUREDARWIN__=1
         # the kernel's own panic stays reachable from the xnu side

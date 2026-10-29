@@ -9,11 +9,53 @@
 #include <linux/string.h>
 #include <linux/ktime.h>
 
+#include "pd_fbsd_os.h"
 #include "pd_msm.h"
+
+// MARK: - DEV: DELETEME
+int pd_msm_stage(void)
+{
+    return (pdos_bootarg_int("pdmsmstage", 0));
+}
+
+static void
+selftest(struct pd_msm_dev *mdev)
+{
+    const struct pd_msm_gpu_funcs *f = mdev->info->funcs;
+    struct pd_msm_bo *ib, *dst;
+    u32 seqno, n, got;
+    u64 iova;
+    int error;
+    
+    if (f->selftest_ib == NULL || pdos_bootarg_int("pdmsmtest", 0) == 0)
+        return;
+    
+    ib = pd_msm_bo_new(&mdev->drm, PAGE_SIZE, PD_MSM_BO_KERNEL);
+    dst = pd_msm_bo_new(&mdev->drm, PAGE_SIZE, PD_MSM_BO_KERNEL);
+    if (IS_ERR(ib) || IS_ERR(dst) || pd_msm_bo_iova(mdev, ib) != 0 || pd_msm_bo_iova(mdev, dst) != 0) {
+        printf("pd msm: selftest: no buffers\n");
+        return;
+    }
+    n = f->selftest_ib(ib->cpu, dst->iova, 0xc0ffee01);
+    iova = ib->iova;
+    wmb();
+    if ((error = pd_msm_gpu_submit(mdev, NULL, &iova, &n, 1, &seqno)) != 0) {
+        printf("pd msm: selftest: submit %d\n", error);
+        return;
+    }
+    error = pd_msm_gpu_wait(mdev, seqno, 1000000000);
+    rmb();
+    got = READ_ONCE(*(volatile u32 *)dst->cpu);
+    printf("pd msm: selftest: ib 0x%llx %u dwords, seqno %u %s, marker 0x%08x (%s)\n",
+           (unsigned long long)iova, n, seqno, error == 0 ? "signalled" : "timed out", got,
+           got == 0xc0ffee01 ? "written" : "not written");
+}
+
 
 // the iommu kinds this driver knows, matched against the node the gpu's iommus property names
 static const struct pd_msm_iommu *const iommus[] = {
 	&pd_msm_iommu_v1,
+    &pd_msm_iommu_smmu500,
 };
 
 static int
@@ -61,7 +103,8 @@ power_on(struct pd_msm_dev *mdev)
 	if (mdev->nclks < 0)
 		return (mdev->nclks);
 	for (int i = 0; i < mdev->nclks; i++) {
-		if (mdev->clks[i].id != NULL && strcmp(mdev->clks[i].id, mdev->info->core_clk) == 0)
+		if (mdev->info->core_clk != NULL && mdev->clks[i].id != NULL &&
+            strcmp(mdev->clks[i].id, mdev->info->core_clk) == 0)
 			mdev->core_clk = mdev->clks[i].clk;
 	}
 	if (mdev->core_clk != NULL && (error = clk_set_rate(mdev->core_clk, mdev->info->max_freq)) != 0)
@@ -99,14 +142,18 @@ int
 pd_msm_gpu_start(struct pd_msm_dev *mdev)
 {
 	struct pd_msm_gpu *g = &mdev->gpu;
+    bool first = false;
 	int error = 0;
 
 	mutex_lock(&g->start_lock);
 	if (!g->running) {
 		error = mdev->info->funcs->start(mdev);
 		g->running = error == 0;
+        first = g->running;
 	}
 	mutex_unlock(&g->start_lock);
+    if (first)
+        selftest(mdev);
 	return (error);
 }
 

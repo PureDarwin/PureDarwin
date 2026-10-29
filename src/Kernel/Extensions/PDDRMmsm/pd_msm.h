@@ -59,6 +59,8 @@ struct pd_msm_gpu_funcs {
 	// after a wait: clears what the fence raised, interrupts are not wired yet
 	void			(*fence_ack)(struct pd_msm_dev *mdev);
 	void			(*dump)(struct pd_msm_dev *mdev);
+    // the self-test's ib: a marker write of value to dst, returns its length in dwords
+    u32             (*selftest_ib)(u32 *ib, u64 dst, u32 value);
 };
 
 // one chip, from the compatible's match data: what userspace is told and how it is driven
@@ -71,6 +73,7 @@ struct pd_msm_info {
 	u32			max_freq;
 	const char		*core_clk;	// the clock run at max_freq
 	u64			va_start, va_end;
+    u64         dma_max;        // highest physical address the gpu's memory may use, 0 for 4 GB
 	const struct pd_msm_gpu_funcs *funcs;
 };
 
@@ -87,6 +90,7 @@ struct pd_msm_gpu {
 	u64			va_next;
 	struct drm_file		*last_ctx;
 	bool			running;
+    void            *gen;           // the generation's state
 };
 
 struct pd_msm_dev {
@@ -112,6 +116,7 @@ struct pd_msm_bo *pd_msm_bo_new(struct drm_device *drm, size_t size, u32 flags);
 int pd_msm_bo_iova(struct pd_msm_dev *mdev, struct pd_msm_bo *bo);
 void pd_msm_mmap_register(void);
 extern const struct drm_gem_object_funcs pd_msm_bo_funcs;
+extern u64 pd_msm_dma_max;
 
 // pd_msm_gpu.c: what every generation shares
 int pd_msm_gpu_init(struct pd_msm_dev *mdev);
@@ -126,11 +131,28 @@ void pd_msm_iommu_unmap(struct pd_msm_dev *mdev, u64 iova, size_t size);
 
 // the generations
 extern const struct pd_msm_gpu_funcs pd_msm_a3xx_funcs;
+extern const struct pd_msm_gpu_funcs pd_msm_a6xx_funcs;
 
 // the iommus: pd_msm_smmu.c drives msm8916's qcom msm-iommu-v1
 extern const struct pd_msm_iommu pd_msm_iommu_v1;
+// pd_msm_smmu500.c: sc8280xp's adreno smmu-500
+extern const struct pd_msm_iommu pd_msm_iommu_smmu500;
+int pd_msm_smmu500_gmu_map(void *priv, u32 gmu_va, u64 phys, size_t size);
 
 // the soc clock and power providers: pd_msm_gcc8916.c
 void pd_msm_gcc8916_register(void);
+// pd_msm_gpucc8280.c: sc8280xp's gcc gpu clocks, gpucc and the cx gdsc
+void pd_msm_gpucc8280_register(void);
+
+// pd_msm_gpu.c: flight staging from the pdmsmstage boot-arg, 0 runs everything
+int pd_msm_stage(void);
+
+// linuxkpi's dev_* go through device_printf, which drops them here: send them to the log
+#undef dev_err
+#undef dev_warn
+#undef dev_info
+#define dev_err(dev, fmt, ...)        printf("pd msm: " fmt, ##__VA_ARGS__)
+#define dev_warn(dev, fmt, ...)       printf("pd msm: " fmt, ##__VA_ARGS__)
+#define dev_info(dev, fmt, ...)       printf("pd msm: " fmt, ##__VA_ARGS__)
 
 #endif

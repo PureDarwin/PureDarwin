@@ -35,6 +35,22 @@ static const struct pd_msm_info a306_info = {
 	.funcs = &pd_msm_a3xx_funcs,
 };
 
+// the a690 on sc8280xp (thinkpad x13s). observed no gpu id, mesa matches the chip id instead
+static const struct pd_msm_info a690_info = {
+    .name = "adreno 690",
+    .gpu_id = 0,
+    .chip_id = 0xffff06090000ull,
+    .gmem_size = 0x400000,
+    .gmem_base = 0,
+    .max_freq = 690000000,
+    .core_clk = NULL,               // the gmu sets the gpu clock through hfi votes
+    // user and kernel buffers share one range below 2^48, the smmu's ttbr0 half
+    .va_start = 0x100000000ull,
+    .va_end = 0x1000000000000ull,
+    .dma_max = ~0ull,
+    .funcs = &pd_msm_a6xx_funcs,
+};
+
 struct pd_msm_file {
 	u32	next_queue;
 };
@@ -415,6 +431,8 @@ pd_msm_probe(struct platform_device *pdev)
 	mdev->info = of_device_get_match_data(&pdev->dev);
 	if (mdev->info == NULL)
 		return (-ENODEV);
+    if (mdev->info->dma_max != 0)
+        pd_msm_dma_max = mdev->info->dma_max;
 	platform_set_drvdata(pdev, mdev);
 	if ((error = pd_msm_gpu_init(mdev)) != 0) {
 		dev_err(&pdev->dev, "gpu init failed: %d\n", error);
@@ -431,6 +449,7 @@ pd_msm_probe(struct platform_device *pdev)
 
 static const struct of_device_id pd_msm_match[] = {
 	{ .compatible = "qcom,adreno-306.0", .data = &a306_info },
+    { .compatible = "qcom,adreno-690.0", .data = &a690_info },
 	{ }
 };
 
@@ -445,6 +464,7 @@ static int __init
 pd_msm_init(void)
 {
 	pd_msm_gcc8916_register();
+    pd_msm_gpucc8280_register();
 	return (platform_driver_register(&pd_msm_platform_driver));
 }
 module_init(pd_msm_init);
