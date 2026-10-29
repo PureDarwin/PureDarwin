@@ -1,0 +1,3 @@
+[submodule "external/corecrypto"]
+	path = external/corecrypto
+	url = https://github.com/Vali0004/corecrypto
