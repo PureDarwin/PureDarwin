@@ -51,9 +51,8 @@ stdenv.mkDerivation {
       -Wl,-reexport-lGL \
       -Wl,-reexport-lGLU \
       ${lib.optionalString withX11 "-lX11 -lXext -lxcb -lXau -lXdmcp"} \
-      ${lib.optionalString (!withX11) "-lEGL"} \
       -lSystem \
-      ${src}/CGL.c \
+      ${src}/CGL.c ${src}/GLImaging.c \
       -o OpenGL
 
     runHook postBuild
@@ -73,9 +72,37 @@ stdenv.mkDerivation {
     # here already has Mesa's include dir on the search path.
     cp ${glu}/usr/include/GL/glu.h "$frameworkDir/Versions/A/Headers/glu.h"
 
+    # GLFW and others find the framework by identifier, then look GL entry points up in it
+    mkdir -p "$frameworkDir/Versions/A/Resources"
+    cat > "$frameworkDir/Versions/A/Resources/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>OpenGL</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.apple.opengl</string>
+	<key>CFBundleName</key>
+	<string>OpenGL</string>
+	<key>CFBundlePackageType</key>
+	<string>FMWK</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+</dict>
+</plist>
+PLIST
+
     ln -s A "$frameworkDir/Versions/Current"
     ln -s Versions/Current/OpenGL "$frameworkDir/OpenGL"
     ln -s Versions/Current/Headers "$frameworkDir/Headers"
+
+    # libGL and libGLU where macOS keeps them, SDL opens Libraries/libGL.dylib and Wine links Libraries/libGLU.dylib
+    mkdir -p "$frameworkDir/Versions/A/Libraries"
+    ln -s /usr/lib/libGL.1.dylib "$frameworkDir/Versions/A/Libraries/libGL.dylib"
+    ln -s /usr/lib/libGLU.1.dylib "$frameworkDir/Versions/A/Libraries/libGLU.dylib"
+    ln -s Versions/Current/Libraries "$frameworkDir/Libraries"
+    ln -s Versions/Current/Resources "$frameworkDir/Resources"
 
     # Flat dylib alias under /usr/lib, as Security.framework does, for callers
     # that link -lOpenGL instead of -framework OpenGL.

@@ -22,6 +22,52 @@
 #include <sys/sysctl.h>
 #include <time.h>
 
+#ifdef PD_CGL_USE_EGL
+// libEGL is opened at run time, so a dlsym on OpenGL.framework finds no eglGetProcAddress, as on macOS,
+// and loaders such as LWJGL look GL functions up with dlsym instead of through EGL
+#define PD_EGL_FUNCS(X) X(eglBindAPI) X(eglChooseConfig) X(eglCreateContext) X(eglCreatePbufferSurface) \
+	X(eglDestroyContext) X(eglDestroySurface) X(eglGetDisplay) X(eglGetError) X(eglGetPlatformDisplay) \
+	X(eglGetProcAddress) X(eglInitialize) X(eglMakeCurrent) X(eglQuerySurface)
+#define PD_EGL_POINTER(f) static __typeof__(&f) pd_##f;
+PD_EGL_FUNCS(PD_EGL_POINTER)
+static pthread_once_t pd_egl_once = PTHREAD_ONCE_INIT;
+
+static void pd_egl_open(void)
+{
+	void *egl = dlopen("/usr/lib/libEGL.1.dylib", RTLD_NOW | RTLD_LOCAL);
+
+	if (egl == NULL) {
+		fprintf(stderr, "CGL: cannot open libEGL: %s\n", dlerror());
+		return;
+	}
+#define PD_EGL_LOOKUP(f) pd_##f = (__typeof__(pd_##f))dlsym(egl, #f);
+	PD_EGL_FUNCS(PD_EGL_LOOKUP)
+#undef PD_EGL_LOOKUP
+}
+
+#define PD_EGL_CALL(f) (pthread_once(&pd_egl_once, pd_egl_open), pd_##f)
+#define eglBindAPI PD_EGL_CALL(eglBindAPI)
+#define eglChooseConfig PD_EGL_CALL(eglChooseConfig)
+#define eglCreateContext PD_EGL_CALL(eglCreateContext)
+#define eglCreatePbufferSurface PD_EGL_CALL(eglCreatePbufferSurface)
+#define eglDestroyContext PD_EGL_CALL(eglDestroyContext)
+#define eglDestroySurface PD_EGL_CALL(eglDestroySurface)
+#define eglGetDisplay PD_EGL_CALL(eglGetDisplay)
+#define eglGetError PD_EGL_CALL(eglGetError)
+#define eglGetPlatformDisplay PD_EGL_CALL(eglGetPlatformDisplay)
+#define eglGetProcAddress PD_EGL_CALL(eglGetProcAddress)
+#define eglInitialize PD_EGL_CALL(eglInitialize)
+#define eglMakeCurrent PD_EGL_CALL(eglMakeCurrent)
+#define eglQuerySurface PD_EGL_CALL(eglQuerySurface)
+
+// GLImaging.c looks its functions up through the same run-time EGL
+__attribute__((visibility("hidden"))) void *pd_cgl_egl_proc(const char *name)
+{
+	pthread_once(&pd_egl_once, pd_egl_open);
+	return pd_eglGetProcAddress != NULL ? (void *)pd_eglGetProcAddress(name) : NULL;
+}
+#endif
+
 /* Size of the backing buffer for a context. Large enough that a caller which
  * renders without ever setting a viewport still has somewhere sensible to draw,
  * small enough to be cheap for the common case of merely querying strings. */
@@ -39,6 +85,9 @@ struct _CGLPixelFormatObject {
 	int           double_buffer;
 	int           stereo;
 	int           samples;
+	int           aux_buffers;
+	int           backing_store;
+	int           pbuffer_only;
 };
 
 struct _CGLContextObject {
@@ -49,6 +98,13 @@ struct _CGLContextObject {
 	EGLContext        glx;
 	EGLSurface        pbuffer;
 	EGLConfig         config;
+	// once a view presents: two textures the frame is copied into, each shared as an EGLImage
+	// and named by an IOSurface, and which of them takes the next frame
+	int               presenting;
+	GLuint            present_fbo[2], present_tex[2];
+	void             *present_image[2];
+	IOSurfaceRef      present_surface[2];
+	int               present_next;
 #else
 	GLXContext        glx;
 	GLXPbuffer        pbuffer;
@@ -56,6 +112,11 @@ struct _CGLContextObject {
 #endif
 	int               width;
 	int               height;
+	// the thread the context is current on, a size asked for from any other thread waits for it
+	pthread_t         current_thread;
+	int               bound;
+	int               pending_width;
+	int               pending_height;
 	// the window an NSOpenGLContext draws for, 0 while offscreen only
 	int               window_number;
 	CGLPixelFormatObj pixel_format;
@@ -138,13 +199,16 @@ pd_cgl_have_gpu_vulkan(void)
 	return found;
 }
 
-// PD_CGL_RENDERER=zink, virgl, llvmpipe or auto picks mesa's driver, auto takes zink when a GPU vulkan device exists
+// PD_CGL_RENDERER=zink, virgl, llvmpipe, default or auto picks mesa's driver, auto takes zink when a GPU vulkan device exists
+// default leaves it to mesa and loads no vulkan driver
 static int
 pd_cgl_pick_renderer(void)
 {
 	const char *r = getenv("PD_CGL_RENDERER");
 
 	if (getenv("GALLIUM_DRIVER") != NULL || getenv("LIBGL_ALWAYS_SOFTWARE") != NULL)
+		return 0;
+	if (r != NULL && strcmp(r, "default") == 0)
 		return 0;
 	if (r != NULL && strcmp(r, "llvmpipe") == 0) {
 		setenv("GALLIUM_DRIVER", "llvmpipe", 1);
@@ -244,6 +308,9 @@ pd_cgl_parse_attributes(const CGLPixelFormatAttribute *attribs,
 		case kCGLPFASampleBuffers:
 			pix->samples = (int)*(++a);
 			break;
+		case kCGLPFAAuxBuffers:
+			pix->aux_buffers = (int)*(++a);
+			break;
 		case kCGLPFARendererID:
 		case kCGLPFADisplayMask:
 		case kCGLPFAVirtualScreenCount:
@@ -256,6 +323,13 @@ pd_cgl_parse_attributes(const CGLPixelFormatAttribute *attribs,
 			break;
 		case kCGLPFAStereo:
 			pix->stereo = 1;
+			break;
+		case kCGLPFABackingStore:
+			pix->backing_store = 1;
+			break;
+		// a pbuffer request without kCGLPFAWindow is an offscreen-only format
+		case kCGLPFAPBuffer:
+			pix->pbuffer_only = 1;
 			break;
 		default:
 			break;
@@ -282,6 +356,10 @@ CGLChoosePixelFormat(const CGLPixelFormatAttribute *attribs,
 	p->depth_size   = 24;
 	p->stencil_size = 8;
 	pd_cgl_parse_attributes(attribs, p);
+	for (const CGLPixelFormatAttribute *a = attribs; a != NULL && *a != 0; a++) {
+		if (*a == kCGLPFAWindow)
+			p->pbuffer_only = 0;
+	}
 
 	*pix = p;
 	if (npix != NULL) {
@@ -344,15 +422,24 @@ CGLDescribePixelFormat(CGLPixelFormatObj pix, int pix_num,
 	case kCGLPFAStereo:          *value = pix->stereo;        break;
 	case kCGLPFASamples:
 	case kCGLPFASampleBuffers:   *value = pix->samples;       break;
-	/* Software rendering: not accelerated, exactly one virtual screen. */
-	case kCGLPFAAccelerated:        *value = 0; break;
+	// every context renders through mesa's driver, winemac drops renderers that report no acceleration
+	case kCGLPFAAccelerated:        *value = 1; break;
 	case kCGLPFAVirtualScreenCount: *value = 1; break;
+	case kCGLPFAAuxBuffers:         *value = pix->aux_buffers;   break;
+	case kCGLPFABackingStore:       *value = pix->backing_store; break;
+	case kCGLPFAWindow:             *value = !pix->pbuffer_only; break;
+	case kCGLPFAPBuffer:            *value = 1; break;
+	case kCGLPFAColorFloat:         *value = 0; break;
 	default:
 		*value = 0;
 		return kCGLBadAttribute;
 	}
 	return kCGLNoError;
 }
+
+#ifdef PD_CGL_USE_EGL
+static void pd_cgl_stop_presenting(CGLContextObj ctx);
+#endif
 
 CGLError
 CGLCreateContext(CGLPixelFormatObj pix, CGLContextObj share, CGLContextObj *ctx)
@@ -417,12 +504,12 @@ CGLCreateContext(CGLPixelFormatObj pix, CGLContextObj share, CGLContextObj *ctx)
 		return kCGLBadPixelFormat;
 	}
 
+	c->config = config;
 	EGLint pb_attribs[] = {
 		EGL_WIDTH,  c->width,
 		EGL_HEIGHT, c->height,
 		EGL_NONE
 	};
-	c->config = config;
 	c->pbuffer = eglCreatePbufferSurface(dpy, config, pb_attribs);
 	if (c->pbuffer == EGL_NO_SURFACE) {
 		free(c);
@@ -562,6 +649,7 @@ CGLReleaseContext(CGLContextObj ctx)
 		}
 		pd_cgl_current = NULL;
 	}
+	pd_cgl_stop_presenting(ctx);
 	if (dpy != EGL_NO_DISPLAY) {
 		eglDestroyContext(dpy, ctx->glx);
 		eglDestroySurface(dpy, ctx->pbuffer);
@@ -597,6 +685,24 @@ CGLGetContextRetainCount(CGLContextObj ctx)
 	return ctx != NULL ? ctx->retain_count : 0;
 }
 
+static CGLError pd_cgl_resize(CGLContextObj ctx, int width, int height);
+
+// the context this thread leaves is no longer drawn into here
+static void
+pd_cgl_unbind_current(void)
+{
+	if (pd_cgl_current != NULL)
+		pd_cgl_current->bound = 0;
+	pd_cgl_current = NULL;
+}
+
+static void
+pd_cgl_apply_pending_size(CGLContextObj ctx)
+{
+	if (ctx->pending_width > 0)
+		pd_cgl_resize(ctx, ctx->pending_width, ctx->pending_height);
+}
+
 CGLError
 CGLSetCurrentContext(CGLContextObj ctx)
 {
@@ -610,7 +716,7 @@ CGLSetCurrentContext(CGLContextObj ctx)
 		/* CGL has no "unbind" entry point of its own; a NULL context here is
 		 * how callers release the current one. */
 		eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-		pd_cgl_current = NULL;
+		pd_cgl_unbind_current();
 		return kCGLNoError;
 	}
 
@@ -630,7 +736,7 @@ CGLSetCurrentContext(CGLContextObj ctx)
 		/* CGL has no "unbind" entry point of its own; a NULL context here is
 		 * how callers release the current one. */
 		glXMakeContextCurrent(dpy, None, None, NULL);
-		pd_cgl_current = NULL;
+		pd_cgl_unbind_current();
 		return kCGLNoError;
 	}
 
@@ -639,7 +745,11 @@ CGLSetCurrentContext(CGLContextObj ctx)
 	}
 #endif
 
+	pd_cgl_unbind_current();
 	pd_cgl_current = ctx;
+	ctx->current_thread = pthread_self();
+	ctx->bound = 1;
+	pd_cgl_apply_pending_size(ctx);
 	return kCGLNoError;
 }
 
@@ -666,6 +776,8 @@ CGLFlushDrawable(CGLContextObj ctx)
 	 * call has actually landed in the backing buffer, which is what a caller
 	 * reading the buffer back afterwards expects. */
 	glFinish();
+	if (pd_cgl_current == ctx)
+		pd_cgl_apply_pending_size(ctx);
 	return kCGLNoError;
 }
 
@@ -677,6 +789,14 @@ pd_cgl_resize(CGLContextObj ctx, int width, int height)
 		width = 1;
 	if (height < 1)
 		height = 1;
+	// another thread may be drawing into the surface, it swaps to the new size when it next binds or flushes
+	if (ctx->bound && !pthread_equal(ctx->current_thread, pthread_self())) {
+		ctx->pending_width = width;
+		ctx->pending_height = height;
+		return kCGLNoError;
+	}
+	ctx->pending_width = 0;
+	ctx->pending_height = 0;
 	if (width == ctx->width && height == ctx->height)
 		return kCGLNoError;
 
@@ -700,6 +820,8 @@ pd_cgl_resize(CGLContextObj ctx, int width, int height)
 		fprintf(stderr, "CGL: drawable %dx%d (asked %dx%d) current %d error %x\n", w, h, width, height,
 		    pd_cgl_current == ctx, eglGetError());
 	}
+	// the next flush makes textures of the new size
+	pd_cgl_stop_presenting(ctx);
 	eglDestroySurface(dpy, ctx->pbuffer);
 #else
 	Display *dpy = pd_cgl_get_display();
@@ -905,6 +1027,239 @@ static struct {
 } pd_cgl_stats;
 static const void *(*pd_cf_retain)(const void *);
 static void (*pd_cf_release)(const void *);
+
+// a view's frame is copied on the GPU into one of two textures, shared as EGLImages, and an IOSurface
+// names it: a renderer in this process samples the same storage, so nothing goes through the CPU
+struct pd_cgl_drawable {
+	IOSurfaceRef surface;
+	EGLImage     image;
+};
+
+static pthread_mutex_t pd_cgl_drawable_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct pd_cgl_drawable pd_cgl_drawables[64];
+static int pd_cgl_drawable_count;
+static pthread_once_t pd_cgl_present_once = PTHREAD_ONCE_INIT;
+static struct {
+	IOSurfaceRef (*create)(const void *);
+	const void **width, **height, **bytesPerElement, **pixelFormat;
+	void *(*dictionary)(const void *, long, const void *, const void *);
+	void (*set)(void *, const void *, const void *);
+	const void *(*number)(const void *, long, const void *);
+	const void *keyCallBacks, *valueCallBacks;
+	PFNEGLCREATEIMAGEKHRPROC createImage;
+	PFNEGLDESTROYIMAGEKHRPROC destroyImage;
+	void (*targetTexture)(GLenum, void *);
+} pd_present;
+
+static void
+pd_cgl_load_present(void)
+{
+	void *lib = dlopen("/System/Library/Frameworks/IOSurface.framework/IOSurface", RTLD_LAZY | RTLD_GLOBAL);
+
+	pd_cgl_load_iosurface();
+	if (lib == NULL)
+		return;
+	pd_present.create = dlsym(lib, "IOSurfaceCreate");
+	pd_present.width = dlsym(lib, "kIOSurfaceWidth");
+	pd_present.height = dlsym(lib, "kIOSurfaceHeight");
+	pd_present.bytesPerElement = dlsym(lib, "kIOSurfaceBytesPerElement");
+	pd_present.pixelFormat = dlsym(lib, "kIOSurfacePixelFormat");
+	pd_present.dictionary = dlsym(RTLD_DEFAULT, "CFDictionaryCreateMutable");
+	pd_present.set = dlsym(RTLD_DEFAULT, "CFDictionarySetValue");
+	pd_present.number = dlsym(RTLD_DEFAULT, "CFNumberCreate");
+	pd_present.keyCallBacks = dlsym(RTLD_DEFAULT, "kCFTypeDictionaryKeyCallBacks");
+	pd_present.valueCallBacks = dlsym(RTLD_DEFAULT, "kCFTypeDictionaryValueCallBacks");
+	pd_present.createImage = (PFNEGLCREATEIMAGEKHRPROC)eglGetProcAddress("eglCreateImageKHR");
+	pd_present.destroyImage = (PFNEGLDESTROYIMAGEKHRPROC)eglGetProcAddress("eglDestroyImageKHR");
+	pd_present.targetTexture = (void (*)(GLenum, void *))eglGetProcAddress("glEGLImageTargetTexture2DOES");
+	if (pd_cf_retain == NULL) {
+		pd_cf_retain = (const void *(*)(const void *))dlsym(RTLD_DEFAULT, "CFRetain");
+		pd_cf_release = (void (*)(const void *))dlsym(RTLD_DEFAULT, "CFRelease");
+	}
+}
+
+// a BGRA surface of the drawable's size, its memory stays untouched while the GL path works
+static IOSurfaceRef
+pd_cgl_create_surface(int width, int height)
+{
+	const void *keys[4] = { *pd_present.width, *pd_present.height, *pd_present.bytesPerElement,
+		*pd_present.pixelFormat };
+	int values[4] = { width, height, 4, 'BGRA' };
+	IOSurfaceRef surface;
+	void *properties;
+	int i;
+
+	properties = pd_present.dictionary(NULL, 4, pd_present.keyCallBacks, pd_present.valueCallBacks);
+	if (properties == NULL)
+		return NULL;
+	for (i = 0; i < 4; i++) {
+		// 9 is kCFNumberIntType
+		const void *number = pd_present.number(NULL, 9, &values[i]);
+
+		pd_present.set(properties, keys[i], number);
+		pd_cf_release(number);
+	}
+	surface = pd_present.create(properties);
+	pd_cf_release(properties);
+	return surface;
+}
+
+static void
+pd_cgl_forget_drawable(IOSurfaceRef surface)
+{
+	int i;
+
+	for (i = 0; i < pd_cgl_drawable_count; i++) {
+		if (pd_cgl_drawables[i].surface == surface) {
+			pd_cgl_drawables[i] = pd_cgl_drawables[--pd_cgl_drawable_count];
+			return;
+		}
+	}
+}
+
+// textures and framebuffers stay for the next size, images and surfaces go
+static void
+pd_cgl_stop_presenting(CGLContextObj ctx)
+{
+	int i;
+
+	if (!ctx->presenting)
+		return;
+	pthread_mutex_lock(&pd_cgl_drawable_lock);
+	for (i = 0; i < 2; i++)
+		pd_cgl_forget_drawable(ctx->present_surface[i]);
+	pthread_mutex_unlock(&pd_cgl_drawable_lock);
+	for (i = 0; i < 2; i++) {
+		pd_present.destroyImage(pd_cgl_get_display(), ctx->present_image[i]);
+		pd_cf_release(ctx->present_surface[i]);
+		ctx->present_image[i] = NULL;
+		ctx->present_surface[i] = NULL;
+	}
+	ctx->presenting = 0;
+}
+
+static int
+pd_cgl_start_presenting(CGLContextObj ctx)
+{
+	EGLDisplay dpy = pd_cgl_get_display();
+	GLint texture = 0, fbo = 0;
+	int i, ok = 1;
+
+	pthread_once(&pd_cgl_present_once, pd_cgl_load_present);
+	if (pd_present.create == NULL || pd_present.dictionary == NULL || pd_present.number == NULL ||
+	    pd_cf_release == NULL || pd_iosurface.lock == NULL || pd_present.createImage == NULL ||
+	    pd_present.destroyImage == NULL || pd_present.targetTexture == NULL || pd_cgl_drawable_count + 2 > 64)
+		return 0;
+	glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
+	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fbo);
+	if (ctx->present_tex[0] == 0) {
+		glGenTextures(2, ctx->present_tex);
+		glGenFramebuffers(2, ctx->present_fbo);
+	}
+	for (i = 0; i < 2; i++) {
+		// RGB storage so the layer is opaque whatever alpha the app left in its drawable
+		glBindTexture(GL_TEXTURE_2D, ctx->present_tex[i]);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, ctx->width, ctx->height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, ctx->present_fbo[i]);
+		glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ctx->present_tex[i], 0);
+		ok = ok && glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+	}
+	glBindTexture(GL_TEXTURE_2D, (GLuint)texture);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)fbo);
+	for (i = 0; i < 2 && ok; i++) {
+		ctx->present_image[i] = pd_present.createImage(dpy, ctx->glx, EGL_GL_TEXTURE_2D_KHR,
+		    (EGLClientBuffer)(uintptr_t)ctx->present_tex[i], NULL);
+		ctx->present_surface[i] = pd_cgl_create_surface(ctx->width, ctx->height);
+		ok = ctx->present_image[i] != EGL_NO_IMAGE_KHR && ctx->present_surface[i] != NULL;
+	}
+	if (!ok) {
+		if (getenv("PD_CGL_TRACE") != NULL)
+			fprintf(stderr, "CGL: no shared present textures, error %x\n", eglGetError());
+		for (i = 0; i < 2; i++) {
+			if (ctx->present_image[i] != NULL)
+				pd_present.destroyImage(dpy, ctx->present_image[i]);
+			if (ctx->present_surface[i] != NULL)
+				pd_cf_release(ctx->present_surface[i]);
+			ctx->present_image[i] = NULL;
+			ctx->present_surface[i] = NULL;
+		}
+		return 0;
+	}
+	pthread_mutex_lock(&pd_cgl_drawable_lock);
+	for (i = 0; i < 2; i++)
+		pd_cgl_drawables[pd_cgl_drawable_count++] = (struct pd_cgl_drawable){ ctx->present_surface[i],
+			ctx->present_image[i] };
+	pthread_mutex_unlock(&pd_cgl_drawable_lock);
+	ctx->presenting = 1;
+	return 1;
+}
+
+// called after CGLFlushDrawable with ctx current, returns the surface to show or NULL to read back instead.
+// the blit turns GL's bottom-up rows into the top-down rows a layer expects
+IOSurfaceRef
+CGLPDPresentDrawable(CGLContextObj ctx)
+{
+	static int disabled = -1;
+	GLint read_fbo = 0, draw_fbo = 0;
+	GLboolean scissor;
+	IOSurfaceRef surface;
+	int i;
+
+	if (disabled < 0)
+		disabled = getenv("PD_CGL_NO_PRESENT") != NULL;
+	if (disabled || ctx == NULL || ctx != pd_cgl_current)
+		return NULL;
+	if (!ctx->presenting && !pd_cgl_start_presenting(ctx)) {
+		disabled = 1;
+		return NULL;
+	}
+	i = ctx->present_next;
+	ctx->present_next = !i;
+	scissor = glIsEnabled(GL_SCISSOR_TEST);
+	glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read_fbo);
+	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw_fbo);
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, ctx->present_fbo[i]);
+	glDisable(GL_SCISSOR_TEST);
+	glBlitFramebuffer(0, 0, ctx->width, ctx->height, 0, ctx->height, ctx->width, 0, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+	if (scissor)
+		glEnable(GL_SCISSOR_TEST);
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)read_fbo);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)draw_fbo);
+	glFinish();
+	surface = ctx->present_surface[i];
+	// a write unlock moves the seed, which tells a renderer the frame changed
+	pd_iosurface.lock(surface, 0, NULL);
+	pd_iosurface.unlock(surface, 0, NULL);
+	return surface;
+}
+
+// with the renderer's context current and its texture bound to GL_TEXTURE_2D, points that texture at
+// the frame the surface names. returns 0 for other surfaces
+int
+CGLPDBindSurfaceTexture(IOSurfaceRef surface, int bind)
+{
+	int i, found = 0;
+
+	if (surface == NULL || pd_cgl_drawable_count == 0)
+		return 0;
+	pthread_mutex_lock(&pd_cgl_drawable_lock);
+	for (i = 0; i < pd_cgl_drawable_count; i++) {
+		if (pd_cgl_drawables[i].surface != surface)
+			continue;
+		found = 1;
+		if (bind) {
+			glGetError();
+			pd_present.targetTexture(GL_TEXTURE_2D, pd_cgl_drawables[i].image);
+			found = glGetError() == GL_NO_ERROR;
+		}
+		break;
+	}
+	pthread_mutex_unlock(&pd_cgl_drawable_lock);
+	return found;
+}
 
 // the real entry point behind one of the wrappers below
 #define PD_GL_REAL(name) \
@@ -1556,8 +1911,12 @@ CGLDescribeRenderer(CGLRendererInfoObj rend, int rend_num, CGLRendererProperty p
 	case kCGLRPOnline: case kCGLRPGPUVertProcCapable: case kCGLRPGPUFragProcCapable:
 		*value = 1;
 		break;
-	case kCGLRPAccelerated: case kCGLRPFullScreen: case kCGLRPRobust: case kCGLRPBackingStore:
-	case kCGLRPMultiScreen: case kCGLRPAcceleratedCompute: case kCGLRPMaxAuxBuffers:
+	// accelerated and a backing store as the pixel formats report, one aux buffer keeps winemac's aux loop finite
+	case kCGLRPAccelerated: case kCGLRPBackingStore: case kCGLRPMaxAuxBuffers:
+		*value = 1;
+		break;
+	case kCGLRPFullScreen: case kCGLRPRobust:
+	case kCGLRPMultiScreen: case kCGLRPAcceleratedCompute:
 	case kCGLRPMaxSampleBuffers: case kCGLRPMaxSamples:
 		*value = 0;
 		break;
@@ -1571,6 +1930,22 @@ CGLDescribeRenderer(CGLRendererInfoObj rend, int rend_num, CGLRendererProperty p
 	}
 	case kCGLRPMajorGLVersion:
 		*value = 4;
+		break;
+	// the buffer layouts the pbuffer configs offer, Wine's winemac builds its pixel formats from these
+	case kCGLRPBufferModes:
+		*value = kCGLSingleBufferBit | kCGLDoubleBufferBit | kCGLMonoscopicBit;
+		break;
+	case kCGLRPColorModes:
+		*value = kCGLRGB888Bit | kCGLARGB8888Bit | kCGLRGB888A8Bit;
+		break;
+	case kCGLRPAccumModes:
+		*value = kCGL0Bit;
+		break;
+	case kCGLRPDepthModes:
+		*value = kCGL0Bit | kCGL16Bit | kCGL24Bit;
+		break;
+	case kCGLRPStencilModes:
+		*value = kCGL0Bit | kCGL8Bit;
 		break;
 	default:
 		return kCGLBadProperty;
@@ -1622,4 +1997,39 @@ CGLError
 CGLTexImagePBuffer(CGLContextObj ctx, CGLPBufferObj pbuffer, GLenum source)
 {
     return kCGLBadCodeModule;
+}
+
+// GL_EXT_memory_object's queries are advertised by the driver but not exported by libGL, and a Mac's
+// OpenGL.framework exports every function of the extensions it lists: callers that dlsym them (Wine's
+// wined3d reads the device UUID this way) would otherwise call through null
+static void *
+pd_cgl_driver_proc(const char *name)
+{
+#ifdef PD_CGL_USE_EGL
+	return (void *)eglGetProcAddress(name);
+#else
+	return (void *)glXGetProcAddress((const GLubyte *)name);
+#endif
+}
+
+void
+glGetUnsignedBytevEXT(GLenum pname, GLubyte *data)
+{
+	static void (*fn)(GLenum, GLubyte *);
+
+	if (!fn)
+		fn = (void (*)(GLenum, GLubyte *))pd_cgl_driver_proc("glGetUnsignedBytevEXT");
+	if (fn)
+		fn(pname, data);
+}
+
+void
+glGetUnsignedBytei_vEXT(GLenum target, GLuint index, GLubyte *data)
+{
+	static void (*fn)(GLenum, GLuint, GLubyte *);
+
+	if (!fn)
+		fn = (void (*)(GLenum, GLuint, GLubyte *))pd_cgl_driver_proc("glGetUnsignedBytei_vEXT");
+	if (fn)
+		fn(target, index, data);
 }

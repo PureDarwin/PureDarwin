@@ -5356,6 +5356,7 @@
             # the Wayland images' Metal.framework, so it can be built and injected on its own
             metal-objc-nox = metalObjcPdNoxBuild;
             uigallery = uigalleryBuild;
+            opengl-framework-nox = openglFrameworkNoxBuild;
             mps = mpsBuild;
             metal-apple-samples = metalAppleSamplesBuild;
             framework-compat = frameworkCompatBuild;
