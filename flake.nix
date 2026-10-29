@@ -1684,6 +1684,26 @@
               mesa = mesaNoxBuild;
               src = ./src/Userspace/Dock;
             };
+          # the AppKit control gallery that is compared against macOS
+          uigalleryBuild =
+            pkgs.callPackage ./nix/pkgs/apps/uigallery.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              appkit = appkitBuild;
+              onyx2d = onyx2dBuild;
+              coretext = coretextBuild;
+              quartzcore = quartzcoreBuild;
+              coregraphics = coregraphicsBuild;
+              applicationservices = applicationservicesBuild;
+              coreservices = coreServicesBuild;
+              windowserver = windowserverBuild;
+              openglFramework = openglFrameworkNoxBuild;
+              mesa = mesaNoxBuild;
+              src = ./src/Tools/uigallery;
+            };
           # the file browser the dock's Files tile opens
           finderBuild =
             pkgs.callPackage ./nix/pkgs/apps/finder.nix {
@@ -5335,6 +5355,7 @@
             metal-objc = metalObjcPdBuild;
             # the Wayland images' Metal.framework, so it can be built and injected on its own
             metal-objc-nox = metalObjcPdNoxBuild;
+            uigallery = uigalleryBuild;
             mps = mpsBuild;
             metal-apple-samples = metalAppleSamplesBuild;
             framework-compat = frameworkCompatBuild;
