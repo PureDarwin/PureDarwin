@@ -3161,6 +3161,9 @@
                 UserNotifications = ./src/Frameworks/UserNotifications;
                 ScreenCaptureKit = ./src/Frameworks/ScreenCaptureKit;
                 GameKit = ./src/Frameworks/GameKit;
+                GameController = ./src/Frameworks/GameController;
+                ForceFeedback = ./src/Frameworks/ForceFeedback;
+                CoreHaptics = ./src/Frameworks/CoreHaptics;
                 ModelIO = ./src/Frameworks/ModelIO;
                 VideoToolbox = ./src/Frameworks/VideoToolbox;
                 AVFoundation = ./src/Frameworks/AVFoundation;

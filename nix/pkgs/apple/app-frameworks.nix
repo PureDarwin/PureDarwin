@@ -30,7 +30,8 @@
 let
   frameworks = [ "CoreMedia" "UniformTypeIdentifiers" "ImageIO" "UserNotifications" "ScreenCaptureKit" "GameKit" "ModelIO"
     "VideoToolbox" "AVFoundation" "MediaPlayer" "CoreMIDI" "AuthenticationServices" "LocalAuthentication" "CoreLocation"
-    "Vision" "ServiceManagement" "IOBluetooth" "Accessibility" "AddressBook" "CFNetwork" "GSS" "ColorSync" "WebKit" ];
+    "Vision" "ServiceManagement" "IOBluetooth" "Accessibility" "AddressBook" "CFNetwork" "GSS" "ColorSync" "WebKit"
+    "GameController" "ForceFeedback" "CoreHaptics" ];
 in
 stdenv.mkDerivation {
   pname = "puredarwin-app-frameworks";
@@ -116,12 +117,15 @@ stdenv.mkDerivation {
     $CC $LDFLAGS $(fw ColorSync) ColorSync.o -lCoreGraphics -lCoreFoundation -lSystem -o ColorSync
     $CC $CFLAGS -x objective-c -c ${srcs.WebKit}/WebKit.m -o WebKit.o
     $CC $LDFLAGS $(fw WebKit) WebKit.o -lAppKit -lFoundation -lCoreFoundation -lobjc -lSystem -o WebKit
+    # game controllers that never connect, no force feedback devices, haptics that never play
+    $CC $CFLAGS -c ${srcs.ForceFeedback}/ForceFeedback.c -o ForceFeedback.o
+    $CC $LDFLAGS $(fw ForceFeedback) ForceFeedback.o -lSystem -o ForceFeedback
     $CC $CFLAGS -c ${srcs.CoreMIDI}/CoreMIDI.c -o CoreMIDI.o
     $CC $LDFLAGS $(fw CoreMIDI) CoreMIDI.o -lCoreFoundation -lSystem -o CoreMIDI
     ${lib.concatMapStringsSep "\n" (f: ''
       $CC $CFLAGS -x objective-c -c ${srcs.${f}}/${f}.m -o ${f}.o
       $CC $LDFLAGS $(fw ${f}) ${f}.o -lFoundation -lCoreFoundation -lobjc -lSystem -o ${f}
-    '') [ "AuthenticationServices" "LocalAuthentication" "CoreLocation" "Vision" "IOBluetooth" ]}
+    '') [ "AuthenticationServices" "LocalAuthentication" "CoreLocation" "Vision" "IOBluetooth" "GameController" "CoreHaptics" ]}
     ${lib.concatMapStringsSep "\n" (f: ''
       $CC $CFLAGS -c ${srcs.${f}}/${f}.c -o ${f}.o
       $CC $LDFLAGS $(fw ${f}) ${f}.o -lCoreFoundation -lSystem -o ${f}
