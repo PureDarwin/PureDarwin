@@ -34,6 +34,24 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return _charactersIgnoringModifiers;
 }
 
+// the server translated the key twice, with the pressed modifiers and with none, so other combinations are derived
+-(NSString *)charactersByApplyingModifiers:(NSEventModifierFlags)modifiers {
+   const NSEventModifierFlags textMask=NSShiftKeyMask|NSAlternateKeyMask|NSAlphaShiftKeyMask;
+   NSEventModifierFlags pressed=[self modifierFlags];
+   BOOL controlDown=(pressed&NSControlKeyMask)!=0;
+
+   if((modifiers&textMask)==(pressed&textMask) && !controlDown)
+    return _characters;
+   if(!(modifiers&textMask))
+    return _charactersIgnoringModifiers;
+   if(!(modifiers&NSAlternateKeyMask)) {
+    if((pressed&(NSShiftKeyMask|NSAlphaShiftKeyMask)) && !controlDown && !(pressed&NSAlternateKeyMask))
+     return _characters;
+    return [_charactersIgnoringModifiers uppercaseString];
+   }
+   return _characters;
+}
+
 -(BOOL)isARepeat {
    return _isARepeat;
 }

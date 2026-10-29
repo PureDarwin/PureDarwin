@@ -70,6 +70,14 @@ typedef enum {
     NSMiniControlSize
 } NSControlSize;
 
+// the names macOS 10.12 and later use, the type keeps its old size for the ivars that hold it
+enum {
+    NSControlSizeRegular = NSRegularControlSize,
+    NSControlSizeSmall = NSSmallControlSize,
+    NSControlSizeMini = NSMiniControlSize,
+    NSControlSizeLarge = 3
+};
+
 typedef NSUInteger NSControlTint;
 
 enum {

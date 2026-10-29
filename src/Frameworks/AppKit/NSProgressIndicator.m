@@ -17,6 +17,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSObject+BindingSupport.h>
 #import <ApplicationServices/ApplicationServices.h>
 #import <AppKit/NSRaise.h>
+#import <AppKit/PDControlDrawing.h>
 
 @implementation NSProgressIndicator
 
@@ -62,7 +63,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    _style=NSProgressIndicatorBarStyle;
    _size=NSRegularControlSize;
    _tint=0;
-   _displayWhenStopped=NO;
+   _displayWhenStopped=YES;
    _isBezeled=YES;
    _isIndeterminate=YES;
    _usesThreadedAnimation=NO;
@@ -148,15 +149,19 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 -(void)drawRect:(NSRect)clipRect {
    if(_style==NSProgressIndicatorBarStyle){
+    PDDrawContext c=PDCurrentDrawContext(self);
+
+    // a stopped indeterminate bar shows its track with a dot at the leading end
     if(_isIndeterminate){
-     if([self isDisplayedWhenStopped] || (_animationTimer!=nil)){
-      [[self graphicsStyle] drawProgressIndicatorIndeterminate:_bounds clipRect:clipRect bezeled:_isBezeled animation:_animationValue];
-     }
+     if(_animationTimer!=nil)
+      PDDrawProgressBar(c,_bounds,0,YES,_animationValue);
+     else if([self isDisplayedWhenStopped])
+      PDDrawProgressBar(c,_bounds,0.0001,NO,0);
     }
     else {
-     double value=(_value-_minValue)/(_maxValue-_minValue);
+     double value=(_maxValue>_minValue) ? (_value-_minValue)/(_maxValue-_minValue) : 0;
 
-     [[self graphicsStyle] drawProgressIndicatorDeterminate:_bounds clipRect:clipRect bezeled:_isBezeled value:value];
+     PDDrawProgressBar(c,_bounds,value,NO,0);
     }
    }
    else {

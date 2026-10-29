@@ -10,6 +10,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSBezierPath.h>
 #import <AppKit/NSGraphics.h>
 #import <AppKit/NSFont.h>
+#import <AppKit/PDControlDrawing.h>
 #import <AppKit/NSAttributedString.h>
 #import <AppKit/NSColor.h>
 #import <AppKit/NSStringDrawing.h>
@@ -83,10 +84,12 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
   [super initWithFrame: frame];
 
-   _isTransparent = YES;
-   _titleCell = [[NSTextFieldCell alloc] initTextCell:@""];
-   _borderType = NSLineBorder;
-   _titlePosition = NSAboveTop;
+   // a new box is a titled primary box as on macOS, with the small system font for its title
+   _isTransparent = NO;
+   _titleCell = [[NSTextFieldCell alloc] initTextCell:@"Title"];
+   [_titleCell setFont:[NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
+   _borderType = NSBezelBorder;
+   _titlePosition = NSAtTop;
    _customData = [[NSMutableDictionary alloc] init];
 
   contentview = [[NSView alloc] initWithFrame:NSMakeRect(0,0,NSWidth(frame),NSHeight(frame))];
@@ -267,12 +270,42 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    NSUnimplementedMethod();
 }
 
+// the rounded well macOS 15 draws, three points in from the sides and fourteen below a top title
+-(BOOL)_drawModernBox {
+   PDDrawContext c=PDCurrentDrawContext(self);
+   NSString *title=[self title];
+   BOOL titled=(_titlePosition!=NSNoTitle && [title length]>0);
+   CGFloat top=titled ? 14 : 2;
+   NSRect box;
+
+   if(_boxType!=NSBoxPrimary && _boxType!=NSBoxSecondary)
+    return NO;
+   if(_titlePosition!=NSNoTitle && _titlePosition!=NSAtTop && _titlePosition!=NSAboveTop)
+    return NO;
+   box=PDRectFromTop(NSInsetRect(_bounds,3,0),c.flipped,top,MAX(0,_bounds.size.height-top-4));
+   if(_borderType!=NSNoBorder)
+    PDDrawBoxFill(c,box);
+   if(titled){
+    NSFont *font=[self titleFont]?:[NSFont systemFontOfSize:[NSFont smallSystemFontSize]];
+    NSDictionary *attributes=[NSDictionary dictionaryWithObjectsAndKeys:font,NSFontAttributeName,[NSColor labelColor],NSForegroundColorAttributeName,nil];
+    CGFloat line=ceil([font ascender]-[font descender]);
+    CGFloat baseline=11;
+    NSRect r=PDRectFromTop(NSMakeRect(NSMinX(_bounds)+15,0,_bounds.size.width-18,_bounds.size.height),c.flipped,baseline-[font ascender],line);
+
+    r.origin.y+=NSMinY(_bounds);
+    [title drawInRect:r withAttributes:attributes];
+   }
+   return YES;
+}
+
 -(void)drawRect:(NSRect)rect {
    NSRect              grooveRect=_bounds;
    NSRect              titleRect=[self titleRect];
    BOOL                drawTitle=YES;
 
    if([self isTransparent])
+    return;
+   if([self _drawModernBox])
     return;
 
    switch(_titlePosition){

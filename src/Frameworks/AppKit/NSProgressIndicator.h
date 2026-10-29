@@ -14,6 +14,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 typedef enum {
     NSProgressIndicatorBarStyle = 0,
     NSProgressIndicatorSpinningStyle = 1,
+    // the names macOS 10.14 and later use
+    NSProgressIndicatorStyleBar = 0,
+    NSProgressIndicatorStyleSpinning = 1,
 } NSProgressIndicatorStyle;
 
 @interface NSProgressIndicator : NSView {

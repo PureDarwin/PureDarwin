@@ -12,6 +12,12 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import "NSSegmentItem.h"
 #import <AppKit/NSButtonCell.h>
 #import <AppKit/NSPopUpWindow.h>
+#import <AppKit/NSGraphicsContext.h>
+#import <AppKit/NSStringDrawer.h>
+#import <AppKit/NSColor.h>
+#import <AppKit/NSFont.h>
+#import <AppKit/NSAppearance.h>
+#import <AppKit/PDControlDrawing.h>
 
 @interface NSSegmentedCell (Private)
 - (void)_recomputeSegmentWidths;
@@ -258,66 +264,128 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 
--(void)_recomputeSegmentWidths {
-   if ( !_segmentComputedWidths)
+-(NSFont *)_segmentFont {
+   return [self font]?:[NSFont systemFontOfSize:[NSFont systemFontSizeForControlSize:[self controlSize]]];
+}
+
+// a segment is its label or image plus 14 points, or the width it was given
+-(CGFloat)_naturalWidthOfSegment:(NSInteger)idx {
+   NSSegmentItem *segment=[_segments objectAtIndex:idx];
+   NSString *label=[segment label];
+   NSImage *image=[segment image];
+   CGFloat w=[segment width];
+
+   if(w>0)
+    return w;
+   if([label length])
+    w=ceil([label sizeWithAttributes:[NSDictionary dictionaryWithObject:[self _segmentFont] forKey:NSFontAttributeName]].width);
+   if(image!=nil)
+    w+=[image size].width+([label length] ? 4 : 0);
+   return w+14;
+}
+
+// the drawn widths, the outer two include the track's inset so hit testing can walk them from the frame's edge
+-(void)_layoutSegmentsInWidth:(CGFloat)frameWidth {
+   int i,count=[_segments count];
+   CGFloat natural=0,extra;
+
+   if (!_segmentComputedWidths)
     _segmentComputedWidths = [[NSMutableArray arrayWithCapacity:5] retain];
    else
     [_segmentComputedWidths removeAllObjects];
+   for(i=0;i<count;i++)
+    natural+=[self _naturalWidthOfSegment:i];
+   extra=(frameWidth>0 && count>0) ? MAX(0,(frameWidth-6-natural)/count) : 0;
+   for(i=0;i<count;i++){
+    CGFloat w=[self _naturalWidthOfSegment:i]+extra;
 
-   CGFloat x = 0;
-   NSDictionary *textAttrs = nil;
-
-   int i,count=[_segments count];
-   for(i=0;i<count;i++) {
-    NSSegmentItem *segment = [_segments objectAtIndex:i];
-    double w = [segment width];
-    if (w <= 0.0) {
-        NSCell *cell = [self _cellForSegment:i];
-        w = [cell cellSize].width;
-    }
+    if(i==0)
+     w+=3;
+    if(i==count-1)
+     w+=3;
     [_segmentComputedWidths addObject:[NSNumber numberWithDouble:w]];
    }
 }
 
--(void)drawSegment:(NSInteger)idx inFrame:(NSRect)frame withView:(NSView *)view {
-   NSButtonCell *cell=[self _cellForSegment:idx];
+-(void)_recomputeSegmentWidths {
+   [self _layoutSegmentsInWidth:_lastDrawRect.size.width];
+}
 
-   [cell setControlView:view];
-   [cell drawWithFrame:frame inView:view];
+-(void)drawSegment:(NSInteger)idx inFrame:(NSRect)frame withView:(NSView *)view {
+   NSSegmentItem *segment=[_segments objectAtIndex:idx];
+   PDDrawContext c=PDCurrentDrawContext(view);
+   NSString *label=[segment label];
+   NSImage *image=[segment image];
+   BOOL selected=[segment isSelected];
+   BOOL enabled=[self isEnabled] && [segment isEnabled];
+   NSRect body=PDRectFromTop(frame,c.flipped,1,frame.size.height-2);
+
+   if(selected && [self trackingMode]!=NSSegmentSwitchTrackingMomentary)
+    PDDrawSegmentSelection(c,body);
+   if(image!=nil){
+    NSSize size=[image size];
+    CGFloat lw=[label length] ? ceil([label sizeWithAttributes:[NSDictionary dictionaryWithObject:[self _segmentFont] forKey:NSFontAttributeName]].width)+4 : 0;
+    NSRect r=NSMakeRect(floor(NSMidX(frame)-(size.width+lw)/2),floor(NSMidY(frame)-size.height/2),size.width,size.height);
+
+    [image drawInRect:r fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:enabled ? 1 : 0.4 respectFlipped:YES hints:nil];
+    frame.origin.x+=size.width/2+2;
+   }
+   if([label length]){
+    NSFont *font=[self _segmentFont];
+    NSColor *color=enabled ? [NSColor controlTextColor] : [NSColor disabledControlTextColor];
+    NSDictionary *attributes=[NSDictionary dictionaryWithObjectsAndKeys:font,NSFontAttributeName,color,NSForegroundColorAttributeName,nil];
+    NSSize size=[label sizeWithAttributes:attributes];
+    CGFloat cap=[font capHeight]>0 ? [font capHeight] : [font ascender]*0.72;
+    CGFloat baseline=c.flipped ? round(NSMidY(body)+cap/2+0.5) : round(NSMidY(body)-cap/2-0.5);
+    NSRect r;
+
+    r.size=NSMakeSize(MIN(size.width,frame.size.width-4),ceil([font ascender]-[font descender]));
+    r.origin.x=floor(NSMidX(frame)-r.size.width/2);
+    r.origin.y=c.flipped ? baseline-[font ascender] : baseline+[font ascender]-r.size.height;
+    [label _clipAndDrawInRect:r withAttributes:attributes];
+   }
 }
 
 - (void)drawWithFrame:(NSRect)cellFrame inView:(NSView *)controlView {
-
+   PDDrawContext c=PDCurrentDrawContext(controlView);
    int i=0, count=[self segmentCount];
-   NSRect segmentFrame=cellFrame;
-
-   if ([_segmentComputedWidths count]!=count)
-    [self _recomputeSegmentWidths];
-
-   for(i=0; i<count; i++) {
-      segmentFrame.size.width=[[_segmentComputedWidths objectAtIndex:i] doubleValue];
-      [NSGraphicsContext saveGraphicsState];
-      // Make sure that segment drawing is not allowed to spill out into other segments
-      NSBezierPath* clipPath = [NSBezierPath bezierPathWithRect: segmentFrame];
-      [clipPath addClip];
-      [self drawSegment:i inFrame:segmentFrame withView:controlView];
-      [NSGraphicsContext restoreGraphicsState];
-      segmentFrame.origin.x+=segmentFrame.size.width;
-   }
+   NSRect track=PDRectFromTop(NSInsetRect(cellFrame,2,0),c.flipped,floor((cellFrame.size.height-24)/2)+1,22);
+   CGFloat x=NSMinX(cellFrame);
+   NSInteger selected=NSNotFound;
 
    _lastDrawRect=cellFrame;
+   [self _layoutSegmentsInWidth:cellFrame.size.width];
+   PDDrawSegmentTrack(c,track);
+
+   for(i=0; i<count; i++)
+    if([[_segments objectAtIndex:i] isSelected])
+     selected=i;
+   for(i=0; i<count; i++) {
+      CGFloat w=[[_segmentComputedWidths objectAtIndex:i] doubleValue];
+      NSRect segmentFrame=NSMakeRect(x,track.origin.y,w,track.size.height);
+
+      if(i==0){
+       segmentFrame.origin.x+=3;
+       segmentFrame.size.width-=3;
+      }
+      if(i==count-1)
+       segmentFrame.size.width-=3;
+      // dividers sit between two segments that are not selected
+      if(i>0 && i!=selected && i-1!=selected)
+       PDDrawSegmentDivider(c,track,x);
+      [self drawSegment:i inFrame:segmentFrame withView:controlView];
+      x+=w;
+   }
 }
 
 -(NSSize)cellSize
 {
-    NSSize cellSize = NSMakeSize(0., 0.);
-    for (int i = 0; i < [self segmentCount]; ++i) {
-        NSCell *cell = [self _cellForSegment:i];
-        NSSize size = [cell cellSize];
-        cellSize.width += size.width;
-        cellSize.height = MAX(size.height, cellSize.height);
-    }
-    return cellSize;
+    CGFloat width=6;
+    int i;
+
+    for (i = 0; i < [self segmentCount]; ++i)
+        width+=[self _naturalWidthOfSegment:i];
+    return NSMakeSize(ceil(width),24);
 }
 
 

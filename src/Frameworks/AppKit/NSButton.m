@@ -6,6 +6,7 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
+#import <objc/runtime.h>
 #import <AppKit/NSButton.h>
 #import <AppKit/NSButtonCell.h>
 #import <AppKit/NSController.h>
@@ -16,6 +17,17 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSFontManager.h>
 
 @implementation NSButton
+
+// the red look macOS gives a destructive button, kept so callers read it back
+static char hasDestructiveActionKey;
+
+-(BOOL)hasDestructiveAction {
+   return [objc_getAssociatedObject(self,&hasDestructiveActionKey) boolValue];
+}
+
+-(void)setHasDestructiveAction:(BOOL)flag {
+   objc_setAssociatedObject(self,&hasDestructiveActionKey,flag ? @YES : nil,OBJC_ASSOCIATION_RETAIN);
+}
 
 +(Class)cellClass {
    return [NSButtonCell class];
@@ -41,12 +53,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return [super resignFirstResponder];
 }
 
-#if 0
-// This results in no button being drawn if there's no image.
+// buttons are flipped on macOS, cells place their bezel and title from the top
 -(BOOL)isFlipped {
    return YES;
 }
-#endif
 -(BOOL)isOpaque {
    return [_cell isOpaque];
 }

@@ -9,12 +9,6 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSActionCell.h>
 #import <AppKit/NSSegmentedControl.h>
 
-typedef enum {
-    NSSegmentSwitchTrackingSelectOne,
-    NSSegmentSwitchTrackingSelectAny,
-    NSSegmentSwitchTrackingMomentary
-} NSSegmentSwitchTracking;
-
 @interface NSSegmentedCell : NSActionCell {
     NSMutableArray *_segments;
     NSMutableArray *_segmentComputedWidths;

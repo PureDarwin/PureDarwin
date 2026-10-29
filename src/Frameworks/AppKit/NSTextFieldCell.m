@@ -7,6 +7,8 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
 #import <AppKit/NSTextFieldCell.h>
+#import <AppKit/PDControlDrawing.h>
+#import <AppKit/NSAppearance.h>
 #import <AppKit/NSControl.h>
 #import <AppKit/NSApplication.h>
 #import <AppKit/NSAttributedString.h>
@@ -139,26 +141,22 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    _placeholder=value;
 }
 
-// titleRectForBounds is not used for generating the value rect in a text field
-// the text sits inside the bezel with room to breathe, a single line centred vertically as on macOS
--(NSRect)_valueRectForBounds:(NSRect)rect {
-   CGFloat padX=2;
+// the text rect macOS 15 gives a field, two points in from the sides and three below the top
+-(NSRect)_valueRectForBounds:(NSRect)rect flipped:(BOOL)flipped {
+   if([self isBezeled] && [self bezelStyle]==NSTextFieldRoundedBezel){
+    CGFloat padX=MAX(6,floor(rect.size.height*0.35));
 
-   if([self isBezeled])
-    padX=([self bezelStyle]==NSTextFieldRoundedBezel)?MAX(8,floor(rect.size.height*0.4)):7;
-   else if([self isBordered])
-    padX=6;
-   rect=NSInsetRect(rect,padX,0);
-   if(([self isBezeled] || [self isBordered]) && ![self wraps]){
-    NSFont *font=[self font]?:[NSFont systemFontOfSize:13];
-    CGFloat line=ceil([font ascender]-[font descender]);
-
-    if(line<rect.size.height){
-     rect.origin.y+=floor((rect.size.height-line)/2);
-     rect.size.height=line;
-    }
+    rect=NSInsetRect(rect,padX,0);
    }
+   else
+    rect=NSInsetRect(rect,2,0);
+   if(([self isBezeled] || [self isBordered]) && rect.size.height>5)
+    rect=PDRectFromTop(rect,flipped,3,rect.size.height-5);
    return rect;
+}
+
+-(NSRect)_valueRectForBounds:(NSRect)rect {
+   return [self _valueRectForBounds:rect flipped:PDLayoutFlipped([self controlView])];
 }
 
 -(NSRect)titleRectForBounds:(NSRect)rect {
@@ -245,7 +243,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(void)drawInteriorWithFrame:(NSRect)frame inView:(NSView *)control {
+   int saved=PDBeginCellDrawing();
    NSRect titleRect=[self titleRectForBounds:frame];
+
+   PDEndCellDrawing(saved);
 
    NSAttributedString *drawValue=[self attributedStringValue];
 
@@ -257,11 +258,32 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     if([_placeholder isKindOfClass:[NSAttributedString class]])
       drawValue=_placeholder;
     else if([_placeholder isKindOfClass:[NSString class]]){
-     NSMutableAttributedString *placeString=[[drawValue mutableCopy] autorelease];
-     [[placeString mutableString] setString:_placeholder];
-     [placeString addAttribute:NSForegroundColorAttributeName value:[NSColor disabledControlTextColor] range:NSMakeRange(0,[placeString length])];
-     drawValue=placeString;
-}
+     NSMutableDictionary *attributes=[NSMutableDictionary dictionary];
+     NSMutableParagraphStyle *paraStyle=[[[NSParagraphStyle defaultParagraphStyle] mutableCopy] autorelease];
+
+     if([self font]!=nil)
+      [attributes setObject:[self font] forKey:NSFontAttributeName];
+     [paraStyle setLineBreakMode:_lineBreakMode];
+     [paraStyle setAlignment:_textAlignment];
+     [attributes setObject:paraStyle forKey:NSParagraphStyleAttributeName];
+     // translucent text overwrites the pixels under it here, so draw the solid grey macOS shows on the white field
+     [attributes setObject:[[NSAppearance currentDrawingAppearance] _isDark] ? [NSColor colorWithCalibratedWhite:0.45 alpha:1] : [NSColor colorWithCalibratedWhite:0.75 alpha:1] forKey:NSForegroundColorAttributeName];
+     drawValue=[[[NSAttributedString alloc] initWithString:_placeholder attributes:attributes] autorelease];
+    }
+   }
+   // the field editor adds a two point line fragment padding, the drawn value lines up with it
+   if([self isBezeled] || [self isBordered])
+    titleRect=NSInsetRect(titleRect,2,0);
+   // a single line is drawn from the top of the rect in a line high box, a point lower to match macOS
+   if(titleRect.size.height>1){
+    NSFont *font=[self font]?:[NSFont systemFontOfSize:13];
+    CGFloat line=ceil([font ascender]-[font descender]);
+    BOOL flipped=PDContextIsFlipped();
+
+    if(![self wraps] && line<titleRect.size.height)
+     titleRect=PDRectFromTop(titleRect,flipped,1,line);
+    else
+     titleRect=PDRectFromTop(titleRect,flipped,1,titleRect.size.height-1);
    }
     [drawValue _clipAndDrawInRect:titleRect truncatingTail: _lineBreakMode > NSLineBreakByClipping];
 }
@@ -281,10 +303,12 @@ static BOOL isFocused(NSView *control) {
    _controlView=control;
 
    if([self isBezeled] || [self isBordered]){
-    // rounded fields fill themselves, a rectangle under them would square the corners off
-    [[control graphicsStyle] drawTextFieldBezelInRect:frame background:background
-                                              focused:isFocused(control)
-                                              capsule:[self isBezeled] && [self bezelStyle]==NSTextFieldRoundedBezel];
+    PDDrawContext c=PDCurrentDrawContext(control);
+    CGFloat radius=([self isBezeled] && [self bezelStyle]==NSTextFieldRoundedBezel) ? floor(frame.size.height/2) : 0;
+
+    PDDrawTextFieldBezel(c,frame,background,radius);
+    if(isFocused(control))
+     PDDrawFocusRing(c,frame,radius);
    }
    else if(background!=nil){
     [background setFill];

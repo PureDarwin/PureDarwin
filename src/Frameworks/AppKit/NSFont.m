@@ -246,7 +246,7 @@ static NSLock *_cacheLock=nil;
 }
 
 +(NSFont *)controlContentFontOfSize:(CGFloat)size {
-    return [self _uiFontOfType:kCTFontControlContentFontType size:(size==0)?10.0:size fallbackName:@"Inter-Regular"];
+    return [self _uiFontOfType:kCTFontControlContentFontType size:(size==0)?12.0:size fallbackName:@"Inter-Regular"];
 }
 
 +(NSFont *)labelFontOfSize:(CGFloat)size {
@@ -265,7 +265,7 @@ static NSLock *_cacheLock=nil;
 }
 
 +(NSFont *)messageFontOfSize:(CGFloat)size {
-    return [self _uiFontOfType:kCTFontSystemFontType size:(size==0)?10.0:size fallbackName:@"Inter-Regular"];
+    return [self _uiFontOfType:kCTFontSystemFontType size:(size==0)?13.0:size fallbackName:@"Inter-Regular"];
 }
 
 +(NSFont *)paletteFontOfSize:(CGFloat)size {
@@ -303,7 +303,7 @@ static NSLock *_cacheLock=nil;
  * +fontWithName: returns nil when that one family is not installed, and
  * callers store the result straight into attribute dictionaries. */
 +(NSFont *)userFontOfSize:(CGFloat)size {
-   return [self _uiFontOfType:kCTFontApplicationFontType size:(size==0)?10.0:size
+   return [self _uiFontOfType:kCTFontApplicationFontType size:(size==0)?12.0:size
                  fallbackName:@"Inter-Regular"];
 }
 

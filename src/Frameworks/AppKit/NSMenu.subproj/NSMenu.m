@@ -131,6 +131,17 @@ static NSMutableArray *__NSMenuPopUpWindows = nil;
    return chosen!=nil;
 }
 
+// the menu bar belongs to the MenuBar process, so an app hiding it for full screen only changes what it reads back
+static BOOL menuBarVisible=YES;
+
++(BOOL)menuBarVisible {
+   return menuBarVisible;
+}
+
++(void)setMenuBarVisible:(BOOL)visible {
+   menuBarVisible=visible;
+}
+
 +(void)popUpContextMenu:(NSMenu *)menu withEvent:(NSEvent *)event forView:(NSView *)view {
    /* Now that NSMenuView exists, a context menu is a popup at the click. */
    [menu popUpMenuPositioningItem:nil

@@ -29,11 +29,11 @@
 #include <sys/types.h>
 #include <sys/mman.h>
 
+#import <AppKit/NSDockTile.h>
 #import <CoreGraphics/CGDirectDisplay.h>
 #import <Onyx2D/O2Surface.h>
 #import <Onyx2D/O2GraphicsState.h>
 #import <AppKit/NSWindow.h>
-#import <AppKit/NSDockTile.h>
 #import <AppKit/NSColorSpace.h>
 #import <AppKit/NSTextField.h>
 #import <objc/runtime.h>
@@ -79,6 +79,16 @@ static char resizeBandKey;
 #import "O2Context_builtin_FT.h"
 
 NSString * const NSWindowDidBecomeKeyNotification=@"NSWindowDidBecomeKeyNotification";
+NSString * const NSWindowDidChangeBackingPropertiesNotification=@"NSWindowDidChangeBackingPropertiesNotification";
+NSString * const NSWindowDidChangeScreenNotification=@"NSWindowDidChangeScreenNotification";
+NSString * const NSWindowDidEnterFullScreenNotification=@"NSWindowDidEnterFullScreenNotification";
+NSString * const NSWindowDidExitFullScreenNotification=@"NSWindowDidExitFullScreenNotification";
+NSString * const NSWindowWillEnterFullScreenNotification=@"NSWindowWillEnterFullScreenNotification";
+NSString * const NSWindowWillExitFullScreenNotification=@"NSWindowWillExitFullScreenNotification";
+NSString * const NSWindowDidExposeNotification=@"NSWindowDidExposeNotification";
+NSString * const NSWindowDidChangeScreenProfileNotification=@"NSWindowDidChangeScreenProfileNotification";
+NSString * const NSBackingPropertyOldScaleFactorKey=@"NSBackingPropertyOldScaleFactorKey";
+NSString * const NSBackingPropertyOldColorSpaceKey=@"NSBackingPropertyOldColorSpaceKey";
 NSString * const NSWindowDidChangeOcclusionStateNotification=@"NSWindowDidChangeOcclusionStateNotification";
 NSString * const NSWindowDidResignKeyNotification=@"NSWindowDidResignKeyNotification";
 NSString * const NSWindowDidBecomeMainNotification=@"NSWindowDidBecomeMainNotification";
@@ -178,6 +188,10 @@ const float WSWindowEdgePad = 2;
     }
 }
 
+@end
+
+@interface NSView (PDMetalLayers)
+-(void)_pdUpdateMetalLayers;
 @end
 
 @implementation NSWindow
@@ -415,7 +429,6 @@ static BOOL _allowsAutomaticWindowTabbing=YES;
     [_title release];
     [_miniwindowTitle release];
     [_miniwindowImage release];
-    [_dockTile release];
     [_backgroundView _setWindow:nil];
     [_backgroundView release];
     [_menu release];
@@ -754,11 +767,17 @@ static BOOL _allowsAutomaticWindowTabbing=YES;
    return _miniwindowTitle;
 }
 
-// a window's tile shows when it is miniaturized, made on first use
+// each window keeps its own tile, made on first use (Wine's winemac asks every window for one)
+static char dockTileKey;
+
 -(NSDockTile *)dockTile {
-   if(_dockTile==nil)
-    _dockTile=[[NSDockTile alloc] initWithOwner:self];
-   return _dockTile;
+   NSDockTile *tile=objc_getAssociatedObject(self,&dockTileKey);
+
+   if(tile==nil){
+      tile=[[[NSDockTile alloc] initWithOwner:self] autorelease];
+      objc_setAssociatedObject(self,&dockTileKey,tile,OBJC_ASSOCIATION_RETAIN);
+   }
+   return tile;
 }
 
 -(NSColor *)backgroundColor {
@@ -1458,6 +1477,19 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 }
 
 // a view drawn where the title bar would be starts the same compositor move the title bar does
+// the compositor has no pointer confinement yet, so the rect is kept for callers to read back and the pointer stays free
+static char mouseConfinementKey;
+
+-(NSRect)mouseConfinementRect {
+   NSValue *rect=objc_getAssociatedObject(self,&mouseConfinementKey);
+
+   return rect ? [rect rectValue] : NSZeroRect;
+}
+
+-(void)setMouseConfinementRect:(NSRect)rect {
+   objc_setAssociatedObject(self,&mouseConfinementKey,NSIsEmptyRect(rect) ? nil : [NSValue valueWithRect:rect],OBJC_ASSOCIATION_RETAIN);
+}
+
 -(void)performWindowDragWithEvent:(NSEvent *)event {
    [self requestMove:event];
 }
@@ -2357,6 +2389,8 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
      _isVisible=YES;
      [self displayIfNeeded];
      [self _updateWSState];
+     if(!wasVisible)
+      [_backgroundView _pdUpdateMetalLayers];
      // this is here since it would seem that doing this any earlier will not work.
      if(![self isKindOfClass:[NSPanel class]] && ![self isExcludedFromWindowsMenu]) {
          [NSApp changeWindowsItem:self title:_title filename:NO];
@@ -2373,6 +2407,8 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
      _isVisible=YES;
      [self displayIfNeeded];
      [self _updateWSState];
+     if(!wasVisible)
+      [_backgroundView _pdUpdateMetalLayers];
      // this is here since it would seem that doing this any earlier will not work.
      if(![self isKindOfClass:[NSPanel class]] && ![self isExcludedFromWindowsMenu]) {
        [NSApp changeWindowsItem:self title:_title filename:NO];
@@ -2770,6 +2806,13 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
    [self orderWindow:NSWindowBelow relativeTo:0];
 }
 
+-(void)setIsVisible:(BOOL)flag {
+   if(flag)
+    [self orderFront:nil];
+   else
+    [self orderOut:nil];
+}
+
 -(void)orderOut:sender {
    [self orderWindow:NSWindowOut relativeTo:0];
 }
@@ -2864,14 +2907,14 @@ static char restorableKey, fullScreenFrameKey;
    NSNotificationCenter *center=[NSNotificationCenter defaultCenter];
 
    if(saved==nil){
-    [center postNotificationName:@"NSWindowWillEnterFullScreenNotification" object:self];
+    [center postNotificationName:NSWindowWillEnterFullScreenNotification object:self];
     objc_setAssociatedObject(self,&fullScreenFrameKey,[NSValue valueWithRect:[self frame]],OBJC_ASSOCIATION_RETAIN);
     _styleMask|=NSFullScreenWindowMask;
     [self setFrame:[[self screen] frame] display:YES];
     [center postNotificationName:@"NSWindowDidEnterFullScreenNotification" object:self];
    }
    else {
-    [center postNotificationName:@"NSWindowWillExitFullScreenNotification" object:self];
+    [center postNotificationName:NSWindowWillExitFullScreenNotification object:self];
     _styleMask&=~(NSUInteger)NSFullScreenWindowMask;
     [self setFrame:[saved rectValue] display:YES];
     objc_setAssociatedObject(self,&fullScreenFrameKey,nil,OBJC_ASSOCIATION_RETAIN);

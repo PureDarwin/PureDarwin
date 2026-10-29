@@ -2437,6 +2437,42 @@ static NSGraphicsContext *graphicsContextForView(NSView *view){
    [[self window] flushWindow];
 }
 
+// draws self and its subviews into context, each view focused so cells see its flippedness
+static void displayIntoContext(NSView *self,NSRect rect,NSGraphicsContext *context,BOOL root) {
+   CGContextRef port=[context graphicsPort];
+   BOOL outerFlipped=[context isFlipped];
+   NSRect bounds=[self bounds];
+
+   CGContextSaveGState(port);
+   if(root)
+    CGContextTranslateCTM(port,-NSMinX(rect),-NSMinY(rect));
+   else
+    CGContextTranslateCTM(port,-NSMinX(bounds),-NSMinY(bounds));
+   // a view whose flippedness differs from what it is drawn into mirrors within its own extent
+   if([self isFlipped]!=outerFlipped){
+    NSRect extent=root ? rect : bounds;
+
+    CGContextTranslateCTM(port,0,NSMaxY(extent)+NSMinY(extent));
+    CGContextScaleCTM(port,1,-1);
+   }
+   CGContextClipToRect(port,rect);
+   [[context focusStack] addObject:self];
+   [self drawRect:rect];
+   for(NSView *child in [self subviews]){
+    NSRect check=NSIntersectionRect([self convertRect:rect toView:child],[child bounds]);
+    NSRect frame=[child frame];
+
+    if(NSIsEmptyRect(check) || [child isHidden])
+     continue;
+    CGContextSaveGState(port);
+    CGContextTranslateCTM(port,NSMinX(frame),NSMinY(frame));
+    displayIntoContext(child,check,context,NO);
+    CGContextRestoreGState(port);
+   }
+   [[context focusStack] removeLastObject];
+   CGContextRestoreGState(port);
+}
+
 -(void)displayRectIgnoringOpacity:(NSRect)rect inContext:(NSGraphicsContext *)context {
    NSGraphicsContext *saved=[NSGraphicsContext currentContext];
 
@@ -2445,29 +2481,7 @@ static NSGraphicsContext *graphicsContextForView(NSView *view){
     return;
    [NSGraphicsContext saveGraphicsState];
    [NSGraphicsContext setCurrentContext:context];
-   CGContextRef port=[context graphicsPort];
-
-   CGContextSaveGState(port);
-   CGContextTranslateCTM(port,-NSMinX(rect),-NSMinY(rect));
-   if([self isFlipped]){
-    CGContextTranslateCTM(port,0,NSMaxY(rect)+NSMinY(rect));
-    CGContextScaleCTM(port,1,-1);
-   }
-   CGContextClipToRect(port,rect);
-   [self drawRect:rect];
-   for(NSView *child in [self subviews]){
-    NSRect check=NSIntersectionRect([self convertRect:rect toView:child],[child bounds]);
-
-    if(NSIsEmptyRect(check))
-     continue;
-    CGContextSaveGState(port);
-    NSRect frame=[child frame];
-
-    CGContextTranslateCTM(port,NSMinX(frame),NSMinY(frame));
-    [child displayRectIgnoringOpacity:check inContext:context];
-    CGContextRestoreGState(port);
-   }
-   CGContextRestoreGState(port);
+   displayIntoContext(self,rect,context,YES);
    [NSGraphicsContext restoreGraphicsState];
    [NSGraphicsContext setCurrentContext:saved];
 }

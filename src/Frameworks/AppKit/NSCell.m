@@ -142,7 +142,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    [self setFormatter:[keyed decodeObjectForKey:@"NSFormatter"]];
 
     if (_font==nil)
-       _font=[[NSFont userFontOfSize:16 - _controlSize*2] retain];
+       _font=[[NSFont systemFontOfSize:[NSFont systemFontSizeForControlSize:_controlSize]] retain];
    }
    else {
     [NSException raise:NSInvalidArgumentException format:@"%@ can not initWithCoder:%@",[self class],[coder class]];
@@ -153,7 +153,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 -initTextCell:(NSString *)string {
    _focusRingType=[[self class] defaultFocusRingType];
    _state=NSOffState;
-   _font=[[NSFont userFontOfSize:0] retain];
+   _font=[[NSFont systemFontOfSize:0] retain];
    _objectValue=[string copy];
    _image=nil;
    _cellType=NSTextCellType;
@@ -472,7 +472,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     if (type == NSTextCellType) {
 // FIX, localization
        [self setTitle:@"Cell"];           // mostly clarified in setEntryType dox
-       [self setFont:[NSFont systemFontOfSize:15.0]];
+       [self setFont:[NSFont systemFontOfSize:0]];
     }
     [[[self controlView] window] invalidateCursorRectsForView:[self controlView]];
    }
@@ -578,25 +578,17 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     [self setStringValue:title];
 }
 
+// a cell does not retain its control view, so the control's own setters refresh the cursor rects
 -(void)setEnabled:(BOOL)flag {
-   if(_isEnabled!=flag){
-    _isEnabled=flag;
-    [[[self controlView] window] invalidateCursorRectsForView:[self controlView]];
-   }
+   _isEnabled=flag;
 }
 
 -(void)setEditable:(BOOL)flag {
-   if(_isEditable!=flag){
-    _isEditable=flag;
-    [[[self controlView] window] invalidateCursorRectsForView:[self controlView]];
-   }
+   _isEditable=flag;
 }
 
 -(void)setSelectable:(BOOL)flag {
-   if(_isSelectable!=flag){
-    _isSelectable=flag;
-    [[[self controlView] window] invalidateCursorRectsForView:[self controlView]];
-   }
+   _isSelectable=flag;
 }
 
 -(void)setScrollable:(BOOL)flag {
@@ -717,7 +709,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 -(void)setControlSize:(NSControlSize)size {
    _controlSize = size;
    [_font release];
-   _font = [[NSFont userFontOfSize:16 - _controlSize*2] retain];
+   _font = [[NSFont systemFontOfSize:[NSFont systemFontSizeForControlSize:_controlSize]] retain];
    /* The control view is only an NSControl when the cell belongs to one; a
     * plain NSView hosting a cell does not implement -updateCell:. */
    if([[self controlView] respondsToSelector:@selector(updateCell:)])

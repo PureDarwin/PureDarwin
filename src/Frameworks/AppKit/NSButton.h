@@ -55,4 +55,6 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - (BOOL)performKeyEquivalent:(NSEvent *)event;
 - (void)performClick:sender;
 
+@property BOOL hasDestructiveAction;
+
 @end

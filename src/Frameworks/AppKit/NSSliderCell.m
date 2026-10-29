@@ -6,6 +6,7 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 #import <AppKit/NSSliderCell.h>
+#import <AppKit/PDControlDrawing.h>
 #import <AppKit/NSBezierPath.h>
 #import <AppKit/NSColor.h>
 #import <AppKit/NSGradient.h>
@@ -17,7 +18,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSGraphicsStyle.h>
 #import <AppKit/NSRaise.h>
 
-#define PIXELINSET      8
+// half the knob width, the knob centre travels this far inside each end
+#define PIXELINSET      12
 #define TICKHEIGHT      8
 
 #define ABS(x) ((x)>=0 ? (x) : -(x))
@@ -116,7 +118,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(CGFloat)knobThickness {
-   return 0;
+   return 24;
 }
 
 -(void)setSliderType:(NSSliderType)value {
@@ -248,31 +250,51 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return result;
 }
 
+// the knob rect macOS reports, 24 by 28 with the disc in its top 23 rows and the shadow under it
 -(NSRect)knobRectFlipped:(BOOL)flipped {
    double value=[self doubleValue];
-   double percent=(value-_minValue)/(_maxValue-_minValue);
+   double percent=(_maxValue>_minValue) ? (value-_minValue)/(_maxValue-_minValue) : 0;
    NSRect sliderRect=[self _sliderRect];
    NSRect knobRect;
-   NSSize knobSize=[[_controlView graphicsStyle] sliderKnobSizeForControlSize:[self controlSize]];
 
+   percent=MAX(0,MIN(1,percent));
    if ([self isVertical]) {
-    knobRect.size.height=knobSize.width;
-    knobRect.size.width=knobSize.height;
-    knobRect.origin.x=floor(sliderRect.origin.x+(sliderRect.size.width-knobSize.height)/2);
-    knobRect.origin.y=floor(sliderRect.origin.y+PIXELINSET+percent*(sliderRect.size.height-(PIXELINSET*2))-knobSize.width/2);
+    knobRect.size=NSMakeSize(28,24);
+    knobRect.origin.x=floor(sliderRect.origin.x+(sliderRect.size.width-28)/2);
+    if(flipped)
+     percent=1-percent;
+    knobRect.origin.y=floor(sliderRect.origin.y+percent*(sliderRect.size.height-24));
    }
    else {
-    knobRect.size.width=knobSize.width;
-    knobRect.size.height=knobSize.height;
-    knobRect.origin.x=floor(sliderRect.origin.x+PIXELINSET+percent*(sliderRect.size.width-(PIXELINSET*2))-knobSize.width/2);
-    knobRect.origin.y=floor(sliderRect.origin.y+(sliderRect.size.height-knobSize.height)/2);
+    knobRect.size=NSMakeSize(24,28);
+    knobRect.origin.x=sliderRect.origin.x+percent*(sliderRect.size.width-24);
+    knobRect.origin.y=PDRectFromTop(sliderRect,flipped,floor((sliderRect.size.height-28)/2),28).origin.y;
    }
 
    return knobRect;
 }
 
+static CGFloat knobDiameter(NSControlSize size) {
+   return (size==NSSmallControlSize) ? 15 : (size==NSMiniControlSize) ? 11 : 21;
+}
+
+// the disc inside a knob rect, a point below its top and centred across it
+-(NSRect)_knobDiscForKnobRect:(NSRect)knob flipped:(BOOL)flipped {
+   CGFloat d=knobDiameter([self controlSize]);
+   NSRect disc;
+
+   if([self isVertical]){
+    disc=NSMakeRect(NSMinX(knob)+1+(21-d)/2,floor(NSMidY(knob)-d/2),d,d);
+    return disc;
+   }
+   disc=PDRectFromTop(knob,flipped,1+(21-d)/2,d);
+   disc.origin.x=NSMidX(knob)-d/2;
+   disc.size.width=d;
+   return disc;
+}
+
 -(void)drawKnob {
-   [self drawKnob:[self knobRectFlipped:[[self controlView] isFlipped]]];
+   [self drawKnob:[self knobRectFlipped:PDContextIsFlipped()]];
 }
 
 -(void)drawKnob:(NSRect)rect {
@@ -289,11 +311,21 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 - (void)drawLinearSliderWithFrame:(NSRect)frame inView:(NSView*)controlView
 {
-    _isVertical = (frame.size.height>frame.size.width)?1:0;
+    PDDrawContext c=PDCurrentDrawContext(controlView);
+    NSRect knob,disc,track;
+    CGFloat thick=([self controlSize]==NSRegularControlSize) ? 4 : 3;
 
-    [self drawBarInside:[self _sliderRect] flipped:[controlView isFlipped]];
+    _isVertical = (frame.size.height>frame.size.width)?1:0;
+    knob=[self knobRectFlipped:c.flipped];
+    disc=[self _knobDiscForKnobRect:knob flipped:c.flipped];
+    if(_isVertical)
+     track=NSMakeRect(floor(NSMidX(disc)-thick/2),NSMinY([self _sliderRect])+2,thick,[self _sliderRect].size.height-4);
+    else {
+     track=NSMakeRect(NSMinX([self _sliderRect])+2,floor(NSMidY(disc)-thick/2+(c.flipped ? 0.5 : 0)),[self _sliderRect].size.width-4,thick);
+    }
+    PDDrawSliderTrack(c,track,_isVertical,_isVertical ? NSMidY(disc) : NSMidX(disc),[self isEnabled]);
     [self drawTickMarks];
-    [self drawKnob];
+    PDDrawSliderKnob(c,disc,[self isEnabled],[self isHighlighted]);
 }
 
 - (NSGradient*)circularSliderBackgroundGradient

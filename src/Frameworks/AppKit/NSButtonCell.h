@@ -28,6 +28,15 @@ typedef enum {
     NSMomentaryChangeButton = 5,
     NSOnOffButton = 6,
     NSMomentaryPushInButton = 7,
+    // the names macOS 10.12 and later use
+    NSButtonTypeMomentaryLight = 0,
+    NSButtonTypePushOnPushOff = 1,
+    NSButtonTypeToggle = 2,
+    NSButtonTypeSwitch = 3,
+    NSButtonTypeRadio = 4,
+    NSButtonTypeMomentaryChange = 5,
+    NSButtonTypeOnOff = 6,
+    NSButtonTypeMomentaryPushIn = 7,
     // deprecated values
     NSMomentaryPushButton = 0,
     NSMomentaryLight = 7
@@ -48,6 +57,24 @@ typedef enum {
     NSRoundRectBezelStyle = 12,
     NSRecessedBezelStyle = 13,
     NSRoundedDisclosureBezelStyle = 14,
+    // the names macOS 10.12 and later use
+    NSBezelStyleRounded = 1,
+    NSBezelStyleRegularSquare = 2,
+    NSBezelStyleDisclosure = 5,
+    NSBezelStyleShadowlessSquare = 6,
+    NSBezelStyleCircular = 7,
+    NSBezelStyleTexturedSquare = 8,
+    NSBezelStyleHelpButton = 9,
+    NSBezelStyleSmallSquare = 10,
+    NSBezelStyleTexturedRounded = 11,
+    NSBezelStyleRoundRect = 12,
+    NSBezelStyleRecessed = 13,
+    NSBezelStyleRoundedDisclosure = 14,
+    NSBezelStylePush = 1,
+    NSBezelStyleFlexiblePush = 2,
+    NSBezelStyleToolbar = 11,
+    NSBezelStyleAccessoryBarAction = 12,
+    NSBezelStyleAccessoryBar = 13,
 } NSBezelStyle;
 
 typedef enum {

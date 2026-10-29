@@ -14,6 +14,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSControl.h>
 #import <AppKit/NSTextField.h>
 #import <AppKit/NSRaise.h>
+#import <AppKit/NSGraphicsContext.h>
+#import <AppKit/PDControlDrawing.h>
 
 @implementation NSSearchFieldCell
 
@@ -119,22 +121,13 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return [self titleRectForBounds:rect];
 }
 
+// the magnifier sits six points in from the left, the cancel button five in from the right
 -(NSRect)searchButtonRectForBounds:(NSRect)rect {
-   NSRect result=[self titleRectForBounds:rect];
-   
-   result.size.width=result.size.height;
-   result.origin.x-=result.size.width;
-   
-   return result;
+   return NSMakeRect(NSMinX(rect)+5,NSMinY(rect)+floor((rect.size.height-16)/2),16,16);
 }
 
 -(NSRect)cancelButtonRectForBounds:(NSRect)rect {
-   NSRect result=[self titleRectForBounds:rect];
-   
-   result.origin.x+=result.size.width;
-   result.size.width=result.size.height;
-   
-   return result;
+   return NSMakeRect(NSMaxX(rect)-20,NSMinY(rect)+floor((rect.size.height-14)/2),14,14);
 }
 
 -(void)resetCancelButtonCell {
@@ -146,12 +139,16 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(NSRect)titleRectForBounds:(NSRect)rect {
-   CGFloat radius=rect.size.height/2;
-   NSRect  result=[super titleRectForBounds:rect];
-   
-   result=NSInsetRect(result,radius,0);
-  
+   NSRect result=[super titleRectForBounds:rect];
+   CGFloat left=NSMinX(rect)+26;
+
+   result.size.width=NSMaxX(rect)-24-left;
+   result.origin.x=left;
    return result;
+}
+
+-(NSRect)drawingRectForBounds:(NSRect)rect {
+   return [self titleRectForBounds:rect];
 }
 
 -(BOOL)trackMouse:(NSEvent *)event inRect:(NSRect)frame ofView:(NSView *)view untilMouseUp:(BOOL)untilMouseUp {
@@ -166,12 +163,31 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return [super trackMouse:event inRect:frame ofView:view untilMouseUp:untilMouseUp];
 }
 
+// the cells this class made draw as paths, the artwork may be missing or a PDF that does not render
+static BOOL hasDefaultImage(NSButtonCell *cell,NSString *name) {
+   return cell!=nil && ([cell image]==nil || [cell image]==[NSImage imageNamed:name]);
+}
+
 -(void)drawWithFrame:(NSRect)frame inView:(NSView *)control {
-   [super drawWithFrame:frame inView:control];
-   
-   [_searchButtonCell drawWithFrame:[self searchButtonRectForBounds:frame] inView:control];
-   if([[self attributedStringValue] length]>0)
-    [_cancelButtonCell drawWithFrame:[self cancelButtonRectForBounds:frame] inView:control];
+   PDDrawContext c=PDCurrentDrawContext(control);
+   NSColor *background=[self drawsBackground] ? [self backgroundColor] : nil;
+   NSRect glass=[self searchButtonRectForBounds:frame];
+   NSRect cancel=[self cancelButtonRectForBounds:frame];
+
+   _controlView=control;
+   PDDrawTextFieldBezel(c,frame,background,6);
+   [self drawInteriorWithFrame:frame inView:control];
+
+   if(hasDefaultImage(_searchButtonCell,@"NSSearchGlass"))
+    PDDrawSearchGlass(c,NSInsetRect(glass,1.5,1.5),[self isEnabled]);
+   else
+    [_searchButtonCell drawWithFrame:glass inView:control];
+   if([[self stringValue] length]>0){
+    if(hasDefaultImage(_cancelButtonCell,@"NSStopProgressFreestandingTemplate"))
+     PDDrawCancelButton(c,cancel);
+    else
+     [_cancelButtonCell drawWithFrame:cancel inView:control];
+   }
 }
 
 @end

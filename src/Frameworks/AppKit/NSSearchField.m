@@ -11,6 +11,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 @implementation NSSearchField
 
++(Class)cellClass {
+   return [NSSearchFieldCell class];
+}
+
 -(NSSearchFieldCell *)_searchCell {
    return [self cell];
 }

@@ -232,15 +232,18 @@ static NSMutableDictionary *cellClassDictionary = nil;
 
 -(void)setEnabled:(BOOL)flag {
    [_cell setEnabled:flag];
+   [[self window] invalidateCursorRectsForView:self];
    [self setNeedsDisplay:YES];
 }
 
 -(void)setEditable:(BOOL)flag {
    [_cell setEditable:flag];
+   [[self window] invalidateCursorRectsForView:self];
 }
 
 -(void)setSelectable:(BOOL)flag {
    [_cell setSelectable:flag];
+   [[self window] invalidateCursorRectsForView:self];
 }
 
 -(void)setScrollable:(BOOL)flag {

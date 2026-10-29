@@ -90,6 +90,19 @@ static NSUInteger pressedButtons;
 }
 
 
++(NSTimeInterval)doubleClickInterval {
+   return [[NSDisplay currentDisplay] doubleClickInterval];
+}
+
+// macOS defaults, there is no keyboard preference pane to change them
++(NSTimeInterval)keyRepeatDelay {
+   return 0.5;
+}
+
++(NSTimeInterval)keyRepeatInterval {
+   return 0.083;
+}
+
 +(NSPoint)mouseLocation {
    return [[NSDisplay currentDisplay] mouseLocation];
 }
@@ -299,7 +312,9 @@ static NSTimer *_periodicTimer=nil;
 
 @end
 
-NSEventMask NSEventMaskFromType(NSEventType type){
-   return type < 64 ? 1ULL << type : 0;
+// binaries built against the earlier non-inline header still import this name
+NSEventMask PDExportedNSEventMaskFromType(NSEventType type) __asm__("_NSEventMaskFromType");
+NSEventMask PDExportedNSEventMaskFromType(NSEventType type){
+   return NSEventMaskFromType(type);
 }
 

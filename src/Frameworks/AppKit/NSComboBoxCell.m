@@ -7,6 +7,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
 #import <AppKit/NSComboBoxCell.h>
+#import <AppKit/PDControlDrawing.h>
 #import <AppKit/NSButtonCell.h>
 #import <AppKit/NSComboBoxWindow.h>
 #import <Foundation/NSKeyedArchiver.h>
@@ -33,6 +34,21 @@ static char buttonCellKey;
 
 -(void)encodeWithCoder:(NSCoder *)coder {
    NSUnimplementedMethod();
+}
+
+// a combo box made in code has the bordered button and an empty list, as one from a nib does
+-initTextCell:(NSString *)string {
+   [super initTextCell:string];
+   if(_objectValues==nil)
+    _objectValues=[[NSMutableArray alloc] init];
+   _numberOfVisibleItems=5;
+   _hasVerticalScroller=YES;
+   _isButtonBordered=YES;
+   _buttonEnabled=([_objectValues count]>0)?YES:NO;
+   _buttonPressed=NO;
+   [self setEditable:YES];
+   [self setBezeled:YES];
+   return self;
 }
 
 -initWithCoder:(NSCoder *)coder {
@@ -343,25 +359,37 @@ static char buttonCellKey;
    return YES;
 }
 
--(NSRect)titleRectForBounds:(NSRect)rect {
-   // Keep some room for the button
-   NSRect buttonFrame = [self buttonRectForBounds:rect];
-   rect.size.width   = NSMinX(buttonFrame) - rect.origin.x;
-   rect=[super titleRectForBounds:rect];
+// the field is a rounded text field three points narrower than the frame, 22 rows tall
+static NSRect comboFieldRect(NSRect frame,BOOL flipped) {
+   frame.size.width-=3;
+   return PDRectFromTop(frame,flipped,floor((frame.size.height-24)/2)+1,22);
+}
 
-   return rect;
+-(NSRect)titleRectForBounds:(NSRect)rect {
+   NSRect field=comboFieldRect(rect,PDLayoutFlipped([self controlView]));
+   NSRect result=[super titleRectForBounds:field];
+
+   result.origin.x=NSMinX(field)+7;
+   result.size.width=NSMaxX(field)-21-4-result.origin.x;
+   return result;
 }
 
 -(void)drawInteriorWithFrame:(NSRect)frame inView:(NSView *)controlView {
-   frame.size = [self cellSize];
    [super drawInteriorWithFrame:frame inView:controlView];
 }
 
 -(void)drawWithFrame:(NSRect)frame inView:(NSView *)controlView {
-   frame.size = [self cellSize];
-   [super drawWithFrame:frame inView:controlView];
+   PDDrawContext c=PDCurrentDrawContext(controlView);
+   NSRect field=comboFieldRect(frame,c.flipped);
+   NSRect box=PDRectFromTop(NSMakeRect(NSMaxX(field)-18,0,16,field.size.height),c.flipped,3,16);
+   NSColor *background=[self drawsBackground] ? [self backgroundColor] : nil;
 
-   [[controlView graphicsStyle] drawComboBoxButtonInRect:[self buttonRectForBounds:frame] enabled:_buttonEnabled bordered:_isButtonBordered pressed:_buttonPressed];
+   box.origin.y+=NSMinY(field);
+   _controlView=controlView;
+   PDDrawTextFieldBezel(c,field,background,4);
+   [self drawInteriorWithFrame:frame inView:controlView];
+   if(_isButtonBordered)
+    PDDrawArrowBox(c,box,NO,_buttonEnabled && [self isEnabled]);
 }
 
 @end

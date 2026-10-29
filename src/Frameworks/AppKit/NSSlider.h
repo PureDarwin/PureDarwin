@@ -40,4 +40,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 - (BOOL)acceptsFirstMouse:(NSEvent *)event;
 
++ (instancetype)sliderWithTarget:(id)target action:(SEL)action;
++ (instancetype)sliderWithValue:(double)value minValue:(double)minValue maxValue:(double)maxValue target:(id)target action:(SEL)action;
+
 @end

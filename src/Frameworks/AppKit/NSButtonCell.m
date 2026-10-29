@@ -29,6 +29,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSPopUpButtonCell.h>
 #import <AppKit/NSSound.h>
 #import <AppKit/NSRaise.h>
+#import <AppKit/PDControlDrawing.h>
 
 @implementation NSButtonCell
 
@@ -265,7 +266,8 @@ static const float kImageMargin = 2.;
      [attributes setObject:[NSColor disabledControlTextColor]
                    forKey:NSForegroundColorAttributeName];
 
-    return [[[NSAttributedString alloc] initWithString:[self title] attributes:attributes] autorelease];
+    // a cell nobody gave a title, such as a fresh segment, has an empty one as on macOS
+    return [[[NSAttributedString alloc] initWithString:[self title] ?: @"" attributes:attributes] autorelease];
    }
 }
 
@@ -793,8 +795,184 @@ static void drawRoundedBezel(CGContextRef context,CGRect frame){
    CGContextFillPath(context);
 }
 
+
+// the checkbox and radio glyphs NSSwitchButton and NSRadioButton install
+static BOOL isToggleImage(NSImage *image,BOOL *radio) {
+   NSString *name=[image name];
+
+   *radio=[name isEqualToString:@"NSRadioButton"] || [name isEqualToString:@"NSHighlightedRadioButton"];
+   return *radio || [name isEqualToString:@"NSSwitch"] || [name isEqualToString:@"NSHighlightedSwitch"];
+}
+
+// macOS 15 bezel rows, frame heights the bezel centres in, side insets and title baselines per control size
+static const CGFloat kPushBezelRows[3]={ 22, 18, 15 };
+static const CGFloat kPushCentreHeight[3]={ 24, 21, 16 };
+static const CGFloat kPushSideInset[3]={ 6, 5, 1 };
+static const CGFloat kToggleBox[3]={ 14, 12, 10 };
+static const CGFloat kToggleBoxInset[3]={ 2, 1, 0 };
+static const CGFloat kToggleTitleInset[3]={ 22, 17, 14 };
+
+static NSUInteger sizeIndex(NSControlSize size) {
+   return (size==NSSmallControlSize) ? 1 : (size==NSMiniControlSize) ? 2 : 0;
+}
+
+-(BOOL)_isModernPushBezel {
+   BOOL radio;
+
+   if(![self isBordered] || isToggleImage([self image],&radio))
+    return NO;
+   // style 0 is NSBezelStyleAutomatic, which a push button or popup resolves to the rounded bezel
+   return _bezelStyle==0 || _bezelStyle==NSRoundedBezelStyle || _bezelStyle==NSRegularSquareBezelStyle;
+}
+
+// the drawn bezel, its visual top centred in the frame as macOS does whatever the frame height
+-(NSRect)_modernBezelRectForFrame:(NSRect)frame flipped:(BOOL)flipped {
+   NSUInteger i=sizeIndex(_controlSize);
+   CGFloat inset=(_bezelStyle==NSRegularSquareBezelStyle) ? 2 : kPushSideInset[i];
+   CGFloat dy=floor((frame.size.height-kPushCentreHeight[i])/2);
+
+   // a popup's bezel runs two points from the sides and a point higher than a push button's
+   if([self isKindOfClass:[NSPopUpButtonCell class]]){
+    inset=(i==2) ? 1 : 2;
+    dy-=1;
+   }
+   // macOS offsets the bezel from the frame's origin in either orientation, so unflipped it sits lower
+   frame=NSInsetRect(frame,inset,0);
+   return NSMakeRect(frame.origin.x,NSMinY(frame)+dy,frame.size.width,kPushBezelRows[i]);
+}
+
+// the accent box at the trailing end of a popup, inset three points inside the bezel
+-(NSRect)_modernArrowBoxForBezel:(NSRect)bezel flipped:(BOOL)flipped {
+   NSUInteger i=sizeIndex(_controlSize);
+   CGFloat size=(i==0) ? 16 : (i==1) ? 13 : 10;
+   NSRect body=PDRectFromTop(bezel,flipped,1,bezel.size.height-2);
+
+   return NSMakeRect(NSMaxX(bezel)-3-size,floor(NSMidY(body)-size/2),size,size);
+}
+
+// the title rect macOS reports for a push button, measured from the frame's origin like the bezel
+static NSRect pushTitleRect(NSRect frame,NSUInteger i) {
+   static const CGFloat base[3]={ 20, 17, 14 };
+   static const CGFloat height[3]={ 16, 14, 11 };
+
+   return NSMakeRect(frame.origin.x,NSMinY(frame)+floor((frame.size.height-base[i])/2),frame.size.width,height[i]);
+}
+
+-(BOOL)_isModernDefault:(NSView *)controlView {
+   NSWindow *window=[controlView window];
+
+   if(window!=nil && [window defaultButtonCell]==self)
+    return YES;
+   return [_keyEquivalent isEqualToString:@"\r"] || [_keyEquivalent isEqualToString:@"\n"];
+}
+
+// the title with the colour macOS gives it in this state
+-(NSAttributedString *)_modernTitle:(NSAttributedString *)title onAccent:(BOOL)onAccent {
+   NSMutableAttributedString *result;
+   NSColor *color=nil;
+
+   if([title length]==0 || [_titleOrAttributedTitle isKindOfClass:[NSAttributedString class]])
+    return title;
+   if(onAccent)
+    color=[NSColor whiteColor];
+   else if(![self isEnabled])
+    color=[[NSAppearance currentDrawingAppearance] _isDark] ? [NSColor colorWithCalibratedWhite:0.42 alpha:1] : [NSColor colorWithCalibratedWhite:0.72 alpha:1];
+   if(color==nil)
+    return title;
+   result=[[title mutableCopy] autorelease];
+   [result addAttribute:NSForegroundColorAttributeName value:color range:NSMakeRange(0,[result length])];
+   return result;
+}
+
+// a rect for one line of title whose cap height is centred on centreY, nudged by delta towards the bottom
+static NSRect titleLineRect(NSAttributedString *title,NSFont *font,CGFloat x,CGFloat width,CGFloat centreY,CGFloat delta,BOOL flipped) {
+   CGFloat ascender=[font ascender],descender=[font descender],cap=[font capHeight];
+   CGFloat line=ceil(ascender-descender);
+   CGFloat baseline;
+
+   if(cap<=0)
+    cap=ascender*0.72;
+   if(flipped){
+    baseline=round(centreY+cap/2+delta);
+    return NSMakeRect(x,baseline-ascender,width,line);
+   }
+   baseline=round(centreY-cap/2-delta);
+   return NSMakeRect(x,baseline+ascender-line,width,line);
+}
+
+-(BOOL)_drawModernInteriorWithFrame:(NSRect)frame inView:(NSView *)controlView {
+   PDDrawContext c=PDCurrentDrawContext(controlView);
+   NSUInteger i=sizeIndex(_controlSize);
+   NSAttributedString *title=[self titleForHighlight];
+   NSFont *font=[self font]?:[NSFont systemFontOfSize:[NSFont systemFontSizeForControlSize:_controlSize]];
+   BOOL radio;
+
+   if([self isTransparent])
+    return YES;
+
+   if([self imagePosition]==NSImageLeft && isToggleImage([self image],&radio)){
+    CGFloat size=kToggleBox[i];
+    NSRect box=PDRectFromTop(NSMakeRect(frame.origin.x+kToggleBoxInset[i],frame.origin.y,size,frame.size.height),c.flipped,floor((frame.size.height-size)/2),size);
+    BOOL pressed=[self isHighlighted];
+    CGFloat titleX=frame.origin.x+kToggleTitleInset[i];
+    NSRect titleRect;
+
+    if(radio)
+     PDDrawRadioButton(c,box,[self state]!=NSOffState,[self isEnabled],pressed);
+    else
+     PDDrawCheckBox(c,box,[self state],[self isEnabled],pressed);
+    title=[self _modernTitle:[self attributedTitle] onAccent:NO];
+    if([title length]){
+     titleRect=titleLineRect(title,font,titleX,NSMaxX(frame)-titleX,NSMidY(box),1.3,c.flipped);
+     [self drawTitle:title withFrame:titleRect inView:controlView];
+    }
+    return YES;
+   }
+
+   if([self _isModernPushBezel] && ([self image]==nil || [self imagePosition]==NSNoImage)){
+    NSRect bezel=[self _modernBezelRectForFrame:frame flipped:c.flipped];
+    BOOL onAccent=[self _isModernDefault:controlView] && c.active && [self isEnabled] && _bezelStyle!=NSRegularSquareBezelStyle;
+    CGFloat pad=(i==2) ? 4 : 9;
+    NSRect body=PDRectFromTop(bezel,c.flipped,1,bezel.size.height-2);
+    NSRect titleRect;
+
+    title=[self _modernTitle:title onAccent:onAccent];
+    if([title length]){
+     if([self isKindOfClass:[NSPopUpButtonCell class]]){
+      NSRect box=[self _modernArrowBoxForBezel:bezel flipped:c.flipped];
+      NSMutableAttributedString *left=[[title mutableCopy] autorelease];
+      NSMutableParagraphStyle *style=[[[NSParagraphStyle defaultParagraphStyle] mutableCopy] autorelease];
+
+      [style setAlignment:NSLeftTextAlignment];
+      [style setLineBreakMode:NSLineBreakByTruncatingTail];
+      [left addAttribute:NSParagraphStyleAttributeName value:style range:NSMakeRange(0,[left length])];
+      title=left;
+      titleRect=titleLineRect(title,font,NSMinX(bezel)+9,NSMinX(box)-4-(NSMinX(bezel)+9),NSMidY(body),-0.5,c.flipped);
+     }
+     else
+      titleRect=titleLineRect(title,font,NSMinX(bezel)+pad,bezel.size.width-2*pad,NSMidY(pushTitleRect(frame,i)),0.5,c.flipped);
+     [self drawTitle:title withFrame:titleRect inView:controlView];
+    }
+    return YES;
+   }
+   return NO;
+}
+
 -(void)drawBezelWithFrame:(NSRect)frame inView:(NSView *)controlView {
    BOOL defaulted=([[controlView window] defaultButtonCell] == self);
+
+   if([self _isModernPushBezel]){
+    PDDrawContext c=PDCurrentDrawContext(controlView);
+    BOOL pressed=(([self highlightsBy]&NSPushInCellMask) && [self isHighlighted]) || [self isVisuallyHighlighted];
+    BOOL accent=[self _isModernDefault:controlView] && c.active && _bezelStyle!=NSRegularSquareBezelStyle;
+
+    NSRect bezel=[self _modernBezelRectForFrame:frame flipped:c.flipped];
+
+    PDDrawPushBezel(c,bezel,accent,pressed,[self isEnabled]);
+    if([self isKindOfClass:[NSPopUpButtonCell class]] && [(NSPopUpButtonCell *)self arrowPosition]!=NSPopUpNoArrow)
+     PDDrawArrowBox(c,[self _modernArrowBoxForBezel:bezel flipped:c.flipped],![(NSPopUpButtonCell *)self pullsDown],[self isEnabled]);
+    return;
+   }
 
    NSRect adjustment = [self getControlSizeAdjustment:[controlView isFlipped] ];
    frame.size.width -= adjustment.size.width;
@@ -884,7 +1062,7 @@ static void drawRoundedBezel(CGContextRef context,CGRect frame){
    CGContextRef ctx=[[NSGraphicsContext currentContext] graphicsPort];
    CGContextSaveGState(ctx);
    CGContextTranslateCTM(ctx,rect.origin.x,rect.origin.y);
-   if([controlView isFlipped]){
+   if(PDContextIsFlipped()){
     CGContextTranslateCTM(ctx,0,rect.size.height);
     CGContextScaleCTM(ctx,1,-1);
    }
@@ -957,6 +1135,9 @@ static NSSize scaledImageSizeInFrameSize(NSSize imageSize,NSSize frameSize,NSIma
 /* This method gets the original button frame. We have to compensate for borders.
    There is some duplication of rect calculation which can be split out
  */
+   if([self _drawModernInteriorWithFrame:frame inView:controlView])
+    return;
+
    BOOL defaulted=([[controlView window] defaultButtonCell] == self);
    NSRect adjustment = [self getControlSizeAdjustment:[controlView isFlipped] ];
    frame.size.width -= adjustment.size.width;
@@ -1114,6 +1295,26 @@ static NSSize scaledImageSizeInFrameSize(NSSize imageSize,NSSize frameSize,NSIma
 
 -(NSSize)cellSize  {
    NSSize              result=NSMakeSize(0,0);
+   BOOL                radio;
+
+   // the sizes macOS 15 reports for push buttons, checkboxes and radio buttons
+   if([self imagePosition]==NSImageLeft && isToggleImage([self image],&radio)){
+    static const CGFloat height[3]={ 18, 16, 11 };
+    static const CGFloat extra[3]={ 24, 20, 18 };
+    NSUInteger i=sizeIndex(_controlSize);
+    CGFloat width=ceil([[self attributedTitle] size].width);
+
+    if(radio && i==1)
+     return NSMakeSize(width+extra[i],height[i]-1);
+    return NSMakeSize(width+extra[i],height[i]);
+   }
+   if([self _isModernPushBezel] && ([self image]==nil || [self imagePosition]==NSNoImage)){
+    static const CGFloat height[3]={ 32, 27, 16 };
+    static const CGFloat extra[3]={ 34, 30, 20 };
+    NSUInteger i=sizeIndex(_controlSize);
+
+    return NSMakeSize(ceil([[self attributedTitle] size].width)+extra[i],height[i]);
+   }
    NSAttributedString *title=[self attributedTitle];
     NSImage            *image=[self image];
     BOOL                enabled=[self isEnabled]?YES:![self imageDimsWhenDisabled];

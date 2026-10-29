@@ -374,6 +374,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 	[super drawBezelWithFrame: frame inView: controlView];
 
+	// the bordered bezel draws its own chevrons
+	if([self isBordered] && ([self bezelStyle]==0 || [self bezelStyle]==NSRoundedBezelStyle || [self bezelStyle]==NSRegularSquareBezelStyle))
+		return;
+
 	// Now draw the arrow
     if( _arrowPosition != NSPopUpNoArrow )
 	{

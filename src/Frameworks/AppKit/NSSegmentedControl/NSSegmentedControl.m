@@ -14,6 +14,42 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 @end
 
 @implementation NSSegmentedControl
+
+// the control forwards its tracking mode to its cell, as on macOS since 10.10.3
+-(NSSegmentSwitchTracking)trackingMode {
+   return [(NSSegmentedCell *)[self cell] trackingMode];
+}
+
+-(void)setTrackingMode:(NSSegmentSwitchTracking)trackingMode {
+   [(NSSegmentedCell *)[self cell] setTrackingMode:trackingMode];
+}
+
+// the convenience constructors macOS 10.12 added, one segment per label or image, sized to fit
++(instancetype)segmentedControlWithLabels:(NSArray *)labels trackingMode:(NSSegmentSwitchTracking)trackingMode target:(id)target action:(SEL)action {
+   NSSegmentedControl *control=[[[self alloc] initWithFrame:NSZeroRect] autorelease];
+
+   [control setSegmentCount:[labels count]];
+   for(NSUInteger i=0;i<[labels count];i++)
+    [control setLabel:[labels objectAtIndex:i] forSegment:i];
+   [control setTrackingMode:trackingMode];
+   [control setTarget:target];
+   [control setAction:action];
+   [control sizeToFit];
+   return control;
+}
+
++(instancetype)segmentedControlWithImages:(NSArray *)images trackingMode:(NSSegmentSwitchTracking)trackingMode target:(id)target action:(SEL)action {
+   NSSegmentedControl *control=[[[self alloc] initWithFrame:NSZeroRect] autorelease];
+
+   [control setSegmentCount:[images count]];
+   for(NSUInteger i=0;i<[images count];i++)
+    [control setImage:[images objectAtIndex:i] forSegment:i];
+   [control setTrackingMode:trackingMode];
+   [control setTarget:target];
+   [control setAction:action];
+   [control sizeToFit];
+   return control;
+}
 +(Class)cellClass {
 	return [NSSegmentedCell class];
 }

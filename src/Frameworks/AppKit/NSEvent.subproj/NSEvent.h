@@ -287,6 +287,9 @@ enum {
 - (CGFloat)scrollingDeltaX;
 - (CGFloat)scrollingDeltaY;
 + (NSUInteger)pressedMouseButtons;
++ (NSTimeInterval)doubleClickInterval;
++ (NSTimeInterval)keyRepeatDelay;
++ (NSTimeInterval)keyRepeatInterval;
 + (id)addLocalMonitorForEventsMatchingMask:(NSEventMask)mask handler:(NSEvent *(^)(NSEvent *event))block;
 + (id)addGlobalMonitorForEventsMatchingMask:(NSEventMask)mask handler:(void (^)(NSEvent *event))block;
 + (void)removeMonitor:(id)monitor;
@@ -294,6 +297,7 @@ enum {
 
 - (NSString *)characters;
 - (NSString *)charactersIgnoringModifiers;
+- (NSString *)charactersByApplyingModifiers:(NSEventModifierFlags)modifiers;
 - (unsigned short)keyCode;
 
 + (void)startPeriodicEventsAfterDelay:(NSTimeInterval)delay withPeriod:(NSTimeInterval)period;
@@ -308,7 +312,10 @@ enum {
 
 @end
 
-APPKIT_EXPORT NSEventMask NSEventMaskFromType(NSEventType type);
+// inline as in Apple's header, so code built here imports nothing for it
+NS_INLINE NSEventMask NSEventMaskFromType(NSEventType type) {
+    return type < 64 ? 1ULL << type : 0;
+}
 
 typedef NS_OPTIONS(NSUInteger, NSEventPhase) {
     NSEventPhaseNone = 0,

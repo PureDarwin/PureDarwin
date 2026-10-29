@@ -7,6 +7,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
 #import <AppKit/NSStepperCell.h>
+#import <AppKit/PDControlDrawing.h>
 #import <AppKit/NSStepper.h>
 #import <AppKit/NSGraphics.h>
 #import <AppKit/NSButtonCell.h>
@@ -177,8 +178,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     BOOL drawDottedRect = NO;
 
     _controlView=controlView;
-    [[_controlView graphicsStyle] drawStepperButtonInRect:[self _upArrowFrameForFrame:frame] clipRect:frame enabled:[self isEnabled] highlighted:_isUpHighlighted upNotDown:YES];
-    [[_controlView graphicsStyle] drawStepperButtonInRect:[self _downArrowFrameForFrame:frame] clipRect:frame enabled:[self isEnabled] highlighted:_isDownHighlighted upNotDown:NO];
+    PDDrawStepper(PDCurrentDrawContext(controlView),frame,[self isEnabled],_isUpHighlighted,_isDownHighlighted);
         
     if ([[controlView window] firstResponder] == controlView){
         if([controlView isKindOfClass:[NSMatrix class]]){

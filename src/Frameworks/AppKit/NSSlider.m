@@ -10,6 +10,22 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 @implementation NSSlider
 
+// the convenience constructors macOS 10.12 added, a horizontal slider from 0 to 1 unless given a range
++(instancetype)sliderWithValue:(double)value minValue:(double)minValue maxValue:(double)maxValue target:(id)target action:(SEL)action {
+   NSSlider *slider=[[[self alloc] initWithFrame:NSMakeRect(0,0,96,21)] autorelease];
+
+   [slider setMinValue:minValue];
+   [slider setMaxValue:maxValue];
+   [slider setDoubleValue:value];
+   [slider setTarget:target];
+   [slider setAction:action];
+   return slider;
+}
+
++(instancetype)sliderWithTarget:(id)target action:(SEL)action {
+   return [self sliderWithValue:0 minValue:0 maxValue:1 target:target action:action];
+}
+
 +(Class)cellClass {
    return [NSSliderCell class];
 }

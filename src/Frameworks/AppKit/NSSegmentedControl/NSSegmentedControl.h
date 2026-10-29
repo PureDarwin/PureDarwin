@@ -9,6 +9,12 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSControl.h>
 #import <AppKit/NSCell.h>
 
+typedef enum {
+    NSSegmentSwitchTrackingSelectOne,
+    NSSegmentSwitchTrackingSelectAny,
+    NSSegmentSwitchTrackingMomentary
+} NSSegmentSwitchTracking;
+
 enum {
     NSSegmentStyleAutomatic = 0,
     NSSegmentStyleRounded = 1,
@@ -52,5 +58,11 @@ typedef NSInteger NSSegmentStyle;
 - (BOOL)selectSegmentWithTag:(NSInteger)tag;
 - (void)setSelected:(BOOL)flag forSegment:(NSInteger)segment;
 - (void)setSelectedSegment:(NSInteger)segment;
+
+- (NSSegmentSwitchTracking)trackingMode;
+- (void)setTrackingMode:(NSSegmentSwitchTracking)trackingMode;
+
++ (instancetype)segmentedControlWithLabels:(NSArray *)labels trackingMode:(NSSegmentSwitchTracking)trackingMode target:(id)target action:(SEL)action;
++ (instancetype)segmentedControlWithImages:(NSArray *)images trackingMode:(NSSegmentSwitchTracking)trackingMode target:(id)target action:(SEL)action;
 
 @end

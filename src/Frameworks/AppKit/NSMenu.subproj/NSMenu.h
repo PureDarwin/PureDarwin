@@ -27,6 +27,8 @@ APPKIT_EXPORT NSString *const NSMenuWillSendActionNotification;
 }
 
 + (void)popUpContextMenu:(NSMenu *)menu withEvent:(NSEvent *)event forView:(NSView *)view;
++ (BOOL)menuBarVisible;
++ (void)setMenuBarVisible:(BOOL)visible;
 
 /* Shows the menu in its own window with its top-left at location, which is in
  * view's coordinates (or screen coordinates when view is nil). Returns whether
