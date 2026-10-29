@@ -1,241 +1,113 @@
-//
-//  CommonCollabKeyGen.c
-//  CommonCrypto
-//
-//  Copyright (c) 2019 Apple Inc. All rights reserved.
-//
+// CommonCollabKeyGen.c - collaborative key generation entry points
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 
-#define CORECRYPTO_DONOT_USE_TRANSPARENT_UNION /* ZORMEISTER: is this a good idea? */
+// stubs that return kCCUnimplemented until corecrypto grows EC support
 
-#include <CommonCrypto/CommonCryptoErrorSPI.h>
 #include <CommonCrypto/CommonCollabKeyGen.h>
-#include <CommonCrypto/CommonRandomSPI.h>
-#include "CommonDigestPriv.h"
 
-#include <corecrypto/ccckg.h>
+size_t CCCKGGetCommitmentSize(size_t nbits, CCDigestAlgorithm alg) { (void)nbits; (void)alg; return 0; }
+size_t CCCKGGetShareSize(size_t nbits, CCDigestAlgorithm alg) { (void)nbits; (void)alg; return 0; }
+size_t CCCKGGetOpeningSize(size_t nbits, CCDigestAlgorithm alg) { (void)nbits; (void)alg; return 0; }
 
-#include <stdlib.h>
-
-typedef struct _CCCollabKeyGenContributor {
-    ccckg_ctx_t ctx;
-} CCCollabKeyGenContributor;
-
-typedef struct _CCCollabKeyGenOwner {
-    ccckg_ctx_t ctx;
-} CCCollabKeyGenOwner;
-
-#define CheckCurveAndDigestParams(_nbits_, _alg_)                  \
-    if (!ccec_keysize_is_supported(_nbits_)) {                     \
-        return kCCParamError;                                      \
-    }                                                              \
-    ccec_const_cp_t cp = ccec_get_cp(_nbits_);                     \
-    const struct ccdigest_info *di = CCDigestGetDigestInfo(_alg_); \
-    if (di == NULL) {                                              \
-        return kCCParamError;                                      \
-    }
-
-static CCCryptorStatus
-CCCKGMapReturnCode(int rv)
+CCStatus
+CCCKGContributorCreate(size_t nbits, CCDigestAlgorithm alg, CCCKGContributorRef *contrib)
 {
-    switch (rv) {
-        case CCERR_OK:
-            return kCCSuccess;
-        case CCERR_PARAMETER:
-            return kCCParamError;
-        case CCERR_INTEGRITY:
-            return kCCDecodeError;
-        case CCERR_CALL_SEQUENCE:
-            return kCCCallSequenceError;
-    }
-
-    return kCCUnspecifiedError;
+    (void)nbits;
+    (void)alg;
+    if (contrib) *contrib = NULL;
+    return kCCUnimplemented;
 }
 
-int
-CCCKGGetCommitmentSize(size_t nbits, CCDigestAlgorithm alg)
+CCStatus
+CCCKGOwnerCreate(size_t nbits, CCDigestAlgorithm alg, CCCKGOwnerRef *owner)
 {
-    CheckCurveAndDigestParams(nbits, alg);
-    return (int)ccckg_sizeof_commitment(cp, di);
+    (void)nbits;
+    (void)alg;
+    if (owner) *owner = NULL;
+    return kCCUnimplemented;
 }
 
-int
-CCCKGGetShareSize(size_t nbits, CCDigestAlgorithm alg)
+void CCCKGContributorDestroy(CCCKGContributorRef contrib) { (void)contrib; }
+void CCCKGOwnerDestroy(CCCKGOwnerRef owner) { (void)owner; }
+
+CCStatus
+CCCKGContributorCommit(CCCKGContributorRef contrib, void *commitment, size_t commitmentLen)
 {
-    CheckCurveAndDigestParams(nbits, alg);
-    return (int)ccckg_sizeof_share(cp, di);
+    (void)contrib; (void)commitment; (void)commitmentLen;
+    return kCCUnimplemented;
 }
 
-int
-CCCKGGetOpeningSize(size_t nbits, CCDigestAlgorithm alg)
+CCStatus
+CCCKGOwnerGenerateShare(CCCKGOwnerRef owner, const void *commitment, size_t commitmentLen, void *share, size_t shareLen)
 {
-    CheckCurveAndDigestParams(nbits, alg);
-    return (int)ccckg_sizeof_opening(cp, di);
+    (void)owner; (void)commitment; (void)commitmentLen; (void)share; (void)shareLen;
+    return kCCUnimplemented;
 }
 
-static CCCryptorStatus
-CCCKGContextCreate(size_t nbits, CCDigestAlgorithm alg, ccckg_ctx_t *ctx)
+CCStatus
+CCCKGContributorFinish(CCCKGContributorRef contrib, const void *share, size_t shareLen, void *opening, size_t openingLen,
+                       void *sharedKey, size_t sharedKeyLen, CCECCryptorRef *publicKey)
 {
-    CheckCurveAndDigestParams(nbits, alg);
-
-    *ctx = malloc(ccckg_sizeof_ctx(cp, di));
-    if (*ctx == NULL) {
-        return kCCMemoryFailure;
-    }
-
-    struct ccrng_state *rng = ccDRBGGetRngState();
-    ccckg_init(*ctx, cp, di, rng);
-
-    return kCCSuccess;
+    (void)contrib; (void)share; (void)shareLen; (void)opening; (void)openingLen; (void)sharedKey; (void)sharedKeyLen;
+    if (publicKey) *publicKey = NULL;
+    return kCCUnimplemented;
 }
 
-CCCryptorStatus
-CCCKGContributorCreate(size_t nbits, CCDigestAlgorithm alg, CCCollabKeyGenContributorRef *contrib)
+CCStatus
+CCCKGOwnerFinish(CCCKGOwnerRef owner, const void *opening, size_t openingLen, void *sharedKey, size_t sharedKeyLen,
+                 CCECCryptorRef *publicKey)
 {
-    if (contrib == NULL) {
-        return kCCParamError;
-    }
-
-    CCCollabKeyGenContributor *ctx = malloc(sizeof(CCCollabKeyGenContributor));
-    if (ctx == NULL) {
-        return kCCMemoryFailure;
-    }
-
-    CCCryptorStatus rv = CCCKGContextCreate(nbits, alg, &ctx->ctx);
-    if (rv == kCCSuccess) {
-        *contrib = ctx;
-    } else {
-        free(ctx);
-    }
-
-    return rv;
+    (void)owner; (void)opening; (void)openingLen; (void)sharedKey; (void)sharedKeyLen;
+    if (publicKey) *publicKey = NULL;
+    return kCCUnimplemented;
 }
 
-CCCryptorStatus
-CCCKGOwnerCreate(size_t nbits, CCDigestAlgorithm alg, CCCollabKeyGenOwnerRef *owner)
+CCCKG2Params CCCKG2ParamsP224Sha256Version2(void) { return NULL; }
+size_t CCCKG2GetCommitmentSize(CCCKG2Params params) { (void)params; return 0; }
+size_t CCCKG2GetShareSize(CCCKG2Params params) { (void)params; return 0; }
+size_t CCCKG2GetOpeningSize(CCCKG2Params params) { (void)params; return 0; }
+
+CCStatus
+CCCKG2ContributorCreate(CCCKG2Params params, CCCKGContributorRef *contrib)
 {
-    if (owner == NULL) {
-        return kCCParamError;
-    }
-
-    CCCollabKeyGenOwner *ctx = malloc(sizeof(CCCollabKeyGenOwner));
-    if (ctx == NULL) {
-        return kCCMemoryFailure;
-    }
-
-    CCCryptorStatus rv = CCCKGContextCreate(nbits, alg, &ctx->ctx);
-    if (rv == kCCSuccess) {
-        *owner = ctx;
-    } else {
-        free(ctx);
-    }
-
-    return rv;
+    (void)params;
+    if (contrib) *contrib = NULL;
+    return kCCUnimplemented;
 }
 
-void
-CCCKGContributorDestroy(CCCollabKeyGenContributorRef contrib)
+CCStatus
+CCCKG2OwnerCreate(CCCKG2Params params, CCCKGOwnerRef *owner)
 {
-    free(contrib->ctx);
-    free(contrib);
+    (void)params;
+    if (owner) *owner = NULL;
+    return kCCUnimplemented;
 }
 
-void
-CCCKGOwnerDestroy(CCCollabKeyGenOwnerRef owner)
+void CCCKG2ContributorDestroy(CCCKGContributorRef contrib) { (void)contrib; }
+void CCCKG2OwnerDestroy(CCCKGOwnerRef owner) { (void)owner; }
+
+CCStatus
+CCCKG2ContributorCommit(CCCKGContributorRef contrib, void *commitment, size_t commitmentLen)
 {
-    free(owner->ctx);
-    free(owner);
+    return CCCKGContributorCommit(contrib, commitment, commitmentLen);
 }
 
-CCCryptorStatus
-CCCKGContributorCommit(CCCollabKeyGenContributorRef contrib, void *commitment, size_t commitmentLen)
+CCStatus
+CCCKG2OwnerGenerateShare(CCCKGOwnerRef owner, const void *commitment, size_t commitmentLen, void *share, size_t shareLen)
 {
-    if (contrib == NULL || commitment == NULL) {
-        return kCCParamError;
-    }
-
-    return CCCKGMapReturnCode(ccckg_contributor_commit(contrib->ctx, commitmentLen, commitment));
+    return CCCKGOwnerGenerateShare(owner, commitment, commitmentLen, share, shareLen);
 }
 
-CCCryptorStatus
-CCCKGOwnerGenerateShare(CCCollabKeyGenOwnerRef owner,
-                        const void *commitment, size_t commitmentLen,
-                        void *share, size_t shareLen)
+CCStatus
+CCCKG2ContributorFinish(CCCKGContributorRef contrib, const void *share, size_t shareLen, void *opening, size_t openingLen,
+                        void *sharedKey, size_t sharedKeyLen, CCECCryptorRef *publicKey)
 {
-    if (owner == NULL || commitment == NULL || share == NULL) {
-        return kCCParamError;
-    }
-
-    return CCCKGMapReturnCode(ccckg_owner_generate_share(owner->ctx, commitmentLen, commitment, shareLen, share));
+    return CCCKGContributorFinish(contrib, share, shareLen, opening, openingLen, sharedKey, sharedKeyLen, publicKey);
 }
 
-static CCCryptorStatus
-CCCKGConvertNativeToECCryptor(ccckg_ctx_t context, ccec_full_ctx_t P, CCECKeyType keyType, CCECCryptorRef *key)
+CCStatus
+CCCKG2OwnerFinish(CCCKGOwnerRef owner, const void *opening, size_t openingLen, void *sharedKey, size_t sharedKeyLen,
+                  CCECCryptorRef *publicKey)
 {
-    bool fullkey = (keyType == ccECKeyPrivate);
-    uint8_t key_data[ccec_x963_export_size_cp(fullkey, context->cp)];
-
-    // Export the raw key.
-    ccec_x963_export(fullkey, key_data, P);
-
-    // Import into a CCECCryptor.
-    CCCryptorStatus rv = CCECCryptorImportKey(kCCImportKeyBinary, key_data, sizeof(key_data), keyType, key);
-    cc_clear(sizeof(key_data), key_data);
-    return rv;
-}
-
-CCCryptorStatus
-CCCKGContributorFinish(CCCollabKeyGenContributorRef contrib,
-                       const void *share, size_t shareLen,
-                       void *opening, size_t openingLen,
-                       void *sharedKey, size_t sharedKeyLen,
-                       CCECCryptorRef *publicKey)
-{
-    if (contrib == NULL || share == NULL || opening == NULL || sharedKey == NULL || publicKey == NULL) {
-        return kCCParamError;
-    }
-
-    CCCryptorStatus retval;
-    ccec_pub_ctx_decl_cp(contrib->ctx->cp, P);
-    ccec_ctx_init(contrib->ctx->cp, ccec_ctx_pub(P));
-
-    int rv = ccckg_contributor_finish(contrib->ctx, shareLen, share, openingLen, opening, P, sharedKeyLen, sharedKey);
-    if (rv != kCCSuccess) {
-        retval = CCCKGMapReturnCode(rv);
-        goto cleanup;
-    }
-
-    // Convert ccec context to ECCryptor.
-    retval = CCCKGConvertNativeToECCryptor(contrib->ctx, (ccec_full_ctx_t)P, ccECKeyPublic, publicKey);
-
-cleanup:
-    ccec_pub_ctx_clear_cp(contrib->ctx->cp, P);
-    return retval;
-}
-
-CCCryptorStatus
-CCCKGOwnerFinish(CCCollabKeyGenOwnerRef owner,
-                 const void *opening, size_t openingLen,
-                 void *sharedKey, size_t sharedKeyLen,
-                 CCECCryptorRef *privateKey)
-{
-    if (owner == NULL || opening == NULL || sharedKey == NULL || privateKey == NULL) {
-        return kCCParamError;
-    }
-
-    CCCryptorStatus retval;
-    ccec_full_ctx_decl_cp(owner->ctx->cp, P);
-    ccec_ctx_init(owner->ctx->cp, ccec_ctx_pub(P));
-
-    int rv = ccckg_owner_finish(owner->ctx, openingLen, opening, P, sharedKeyLen, sharedKey);
-    if (rv != kCCSuccess) {
-        retval = CCCKGMapReturnCode(rv);
-        goto cleanup;
-    }
-
-    // Convert ccec context to ECCryptor.
-    retval = CCCKGConvertNativeToECCryptor(owner->ctx, P, ccECKeyPrivate, privateKey);
-
-cleanup:
-    ccec_full_ctx_clear_cp(owner->ctx->cp, P);
-    return retval;
+    return CCCKGOwnerFinish(owner, opening, openingLen, sharedKey, sharedKeyLen, publicKey);
 }

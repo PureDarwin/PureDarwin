@@ -1,25 +1,15 @@
-/*
- * Real CommonCrypto digest API, bridged onto corecrypto (which PureDarwin
- * already has real and cross-built - see src/Libraries/libSystem/corecrypto).
- * Apple never open-sourced CommonCrypto's own digest-bridging code (only
- * its checksum/CRC helpers live in libcn/), so this fills that gap for the
- * subset callers actually need (currently: ld64's OutputFile.cpp UUID
- * computation via CC_MD5).
- *
- * CC_MD5_CTX's public struct layout (CommonDigest.h: A,B,C,D,Nl,Nh,
- * data[16] - 88 bytes) is a legacy, fixed-size ABI from the original
- * (non-corecrypto) MD5 implementation. corecrypto's real ccdigest context
- * for MD5 needs ccdigest_di_size(state=16,block=64) = 92 bytes, 4 more than
- * CC_MD5_CTX provides - too tight to embed in place. Instead we heap-
- * allocate the real context and stash the pointer in the first 8 bytes of
- * CC_MD5_CTX; nothing else inspects CC_MD5_CTX's individual fields, only
- * passes the struct by pointer between Init/Update/Final.
- */
+// pd_cc_digest_bridge.c - CC_MD5 digest API over corecrypto for callers without CommonDigest.c
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
+// ld64 needs CC_MD5 for its output UUID and builds this file alone
+
 #include <corecrypto/ccmd5.h>
 #include <corecrypto/ccdigest.h>
 #include <CommonCrypto/CommonDigest.h>
 #include <stdlib.h>
 
+// CC_MD5_CTX is a fixed 88-byte legacy layout and the corecrypto MD5 context needs 92
+// the context lives on the heap and its pointer sits in the first 8 bytes of CC_MD5_CTX
 struct pd_cc_md5_shim {
 	void *real_ctx;
 };
@@ -31,8 +21,7 @@ CC_MD5_Init(CC_MD5_CTX *c)
 	const struct ccdigest_info *di = ccmd5_di();
 
 	shim->real_ctx = malloc(ccdigest_di_size(di));
-	if (shim->real_ctx == NULL)
-		return 0;
+	if (shim->real_ctx == NULL) return 0;
 	ccdigest_init(di, (struct ccdigest_ctx *)shim->real_ctx);
 	return 1;
 }

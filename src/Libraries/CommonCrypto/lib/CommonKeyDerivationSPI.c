@@ -1,221 +1,177 @@
-//
-//  CommonNistKeyDerivation.c
-//  CommonCrypto
-//
-//  Created by Richard Murphy on 12/15/13.
-//  Copyright (c) 2013 Platform Security. All rights reserved.
-//
+// CommonKeyDerivationSPI.c - HMAC key derivation functions over corecrypto
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 
-#include <stdlib.h>
 #include <CommonCrypto/CommonKeyDerivationSPI.h>
-#include <corecrypto/cchkdf.h>
 #include <corecrypto/ccansikdf.h>
+#include <corecrypto/cchkdf.h>
 #include <corecrypto/ccnistkdf.h>
 #include <corecrypto/ccpbkdf2.h>
+#include <stdlib.h>
+#include <string.h>
 #include "CommonDigestPriv.h"
-#include "ccdebug.h"
 
-typedef struct CCKDFParameters {
+struct CCKDFParameters {
     CCKDFAlgorithm algorithm;
+    unsigned rounds;
+    size_t saltLen;
+    uint8_t *salt;
+    size_t labelLen;
+    uint8_t *label;
+    size_t contextLen;
+    uint8_t *context;
+};
 
-    union {
-        struct {
-            unsigned rounds;
-            const void *salt;
-            size_t saltLen;
-        } pbkdf2;
-
-        struct {
-            const void *label;
-            size_t labelLen;
-            const void *context;
-            size_t contextLen;
-        } ctr_hmac;
-
-        struct {
-            const void *context;
-            size_t contextLen;
-        } ctr_hmac_fixed;
-
-        struct {
-            const void *salt;
-            size_t saltLen;
-            const void *context;
-            size_t contextLen;
-        } hkdf;
-
-        struct {
-            const void *sharedinfo;
-            size_t sharedinfoLen;
-        } ansi_x963;
-    } u;
-} CCKDFParameters;
-
-CCStatus
-CCKDFParametersCreatePbkdf2(CCKDFParametersRef *params,
-                            unsigned rounds, const void *salt, size_t saltLen)
+static CCStatus
+kdf_status(int rc)
 {
-    if (rounds == 0) {
-        return kCCParamError;
-    }
-    if (salt == NULL && saltLen > 0) {
-        return kCCParamError;
-    }
+    return rc == 0 ? kCCSuccess : kCCParamError;
+}
 
-    CCKDFParametersRef p = malloc(sizeof(CCKDFParameters));
-    if (p == NULL) {
-        return kCCMemoryFailure;
-    }
+static const struct ccdigest_info *
+kdf_digest(CCDigestAlgorithm digest)
+{
+    if (digest == kCCDigestNone || digest >= kCCDigestMax) return NULL;
+    return CCDigestGetDigestInfo(digest);
+}
 
-    p->algorithm = kCCKDFAlgorithmPBKDF2_HMAC;
-    p->u.pbkdf2.rounds = rounds;
-    p->u.pbkdf2.salt = salt;
-    p->u.pbkdf2.saltLen = saltLen;
+static CCStatus
+kdf_copy(uint8_t **dst, size_t *dstLen, const void *src, size_t len)
+{
+    *dst = NULL;
+    *dstLen = 0;
+    if (len == 0) return kCCSuccess;
+    if (src == NULL) return kCCParamError;
+
+    *dst = malloc(len);
+    if (*dst == NULL) return kCCMemoryFailure;
+
+    memcpy(*dst, src, len);
+    *dstLen = len;
+    return kCCSuccess;
+}
+
+static CCStatus
+kdf_create(CCKDFParametersRef *params, CCKDFAlgorithm algorithm, unsigned rounds,
+           const void *salt, size_t saltLen, const void *label, size_t labelLen,
+           const void *context, size_t contextLen)
+{
+    CCKDFParametersRef p;
+    CCStatus st;
+
+    if (params == NULL) return kCCParamError;
+    *params = NULL;
+
+    p = calloc(1, sizeof(*p));
+    if (p == NULL) return kCCMemoryFailure;
+
+    p->algorithm = algorithm;
+    p->rounds = rounds;
+    st = kdf_copy(&p->salt, &p->saltLen, salt, saltLen);
+    if (st == kCCSuccess) st = kdf_copy(&p->label, &p->labelLen, label, labelLen);
+    if (st == kCCSuccess) st = kdf_copy(&p->context, &p->contextLen, context, contextLen);
+    if (st != kCCSuccess) {
+        CCKDFParametersDestroy(p);
+        return st;
+    }
 
     *params = p;
     return kCCSuccess;
 }
 
 CCStatus
-CCKDFParametersCreateCtrHmac(CCKDFParametersRef *params,
-                             const void *label, size_t labelLen,
+CCKDFParametersCreatePbkdf2(CCKDFParametersRef *params, unsigned rounds, const void *salt, size_t saltLen)
+{
+    if (rounds == 0) return kCCParamError;
+    return kdf_create(params, kCCKDFAlgorithmPBKDF2_HMAC, rounds, salt, saltLen, NULL, 0, NULL, 0);
+}
+
+CCStatus
+CCKDFParametersCreateCtrHmac(CCKDFParametersRef *params, const void *label, size_t labelLen,
                              const void *context, size_t contextLen)
 {
-    if (label == NULL && labelLen > 0) {
-        return kCCParamError;
-    }
-    if (context == NULL && contextLen > 0) {
-        return kCCParamError;
-    }
-
-    CCKDFParametersRef p = malloc(sizeof(CCKDFParameters));
-    if (p == NULL) {
-        return kCCMemoryFailure;
-    }
-
-    p->algorithm = kCCKDFAlgorithmCTR_HMAC;
-    p->u.ctr_hmac.label = label;
-    p->u.ctr_hmac.labelLen = labelLen;
-    p->u.ctr_hmac.context = context;
-    p->u.ctr_hmac.contextLen = contextLen;
-
-    *params = p;
-    return kCCSuccess;
+    return kdf_create(params, kCCKDFAlgorithmCTR_HMAC, 0, NULL, 0, label, labelLen, context, contextLen);
 }
 
 CCStatus
-CCKDFParametersCreateCtrHmacFixed(CCKDFParametersRef *params,
-                                  const void *context, size_t contextLen)
+CCKDFParametersCreateCtrHmacFixed(CCKDFParametersRef *params, const void *context, size_t contextLen)
 {
-    if (context == NULL && contextLen > 0) {
-        return kCCParamError;
-    }
-
-    CCKDFParametersRef p = malloc(sizeof(CCKDFParameters));
-    if (p == NULL) {
-        return kCCMemoryFailure;
-    }
-
-    p->algorithm = kCCKDFAlgorithmCTR_HMAC_FIXED;
-    p->u.ctr_hmac_fixed.context = context;
-    p->u.ctr_hmac_fixed.contextLen = contextLen;
-
-    *params = p;
-    return kCCSuccess;
+    return kdf_create(params, kCCKDFAlgorithmCTR_HMAC_FIXED, 0, NULL, 0, NULL, 0, context, contextLen);
 }
 
 CCStatus
-CCKDFParametersCreateHkdf(CCKDFParametersRef *params,
-                          const void *salt, size_t saltLen,
+CCKDFParametersCreateHkdf(CCKDFParametersRef *params, const void *salt, size_t saltLen,
                           const void *context, size_t contextLen)
 {
-    if (salt == NULL && saltLen > 0) {
-        return kCCParamError;
-    }
-    if (context == NULL && contextLen > 0) {
-        return kCCParamError;
-    }
-
-    CCKDFParametersRef p = malloc(sizeof(CCKDFParameters));
-    if (p == NULL) {
-        return kCCMemoryFailure;
-    }
-
-    p->algorithm = kCCKDFAlgorithmHKDF;
-    p->u.hkdf.salt = salt;
-    p->u.hkdf.saltLen = saltLen;
-    p->u.hkdf.context = context;
-    p->u.hkdf.contextLen = contextLen;
-
-    *params = p;
-    return kCCSuccess;
+    return kdf_create(params, kCCKDFAlgorithmHKDF, 0, salt, saltLen, NULL, 0, context, contextLen);
 }
 
 CCStatus
-CCKDFParametersCreateAnsiX963(CCKDFParametersRef *params,
-                              const void *sharedinfo, size_t sharedinfoLen)
+CCKDFParametersCreateAnsiX963(CCKDFParametersRef *params, const void *sharedinfo, size_t sharedinfoLen)
 {
-    if (sharedinfo == NULL && sharedinfoLen > 0) {
-        return kCCParamError;
-    }
-
-    CCKDFParametersRef p = malloc(sizeof(CCKDFParameters));
-    if (p == NULL) {
-        return kCCMemoryFailure;
-    }
-
-    p->algorithm = kCCKDFAlgorithmAnsiX963;
-    p->u.ansi_x963.sharedinfo = sharedinfo;
-    p->u.ansi_x963.sharedinfoLen = sharedinfoLen;
-
-    *params = p;
-    return kCCSuccess;
+    return kdf_create(params, kCCKDFAlgorithmAnsiX963, 0, NULL, 0, NULL, 0, sharedinfo, sharedinfoLen);
 }
 
 void
 CCKDFParametersDestroy(CCKDFParametersRef params)
 {
-    cc_clear(sizeof(CCKDFParameters), params);
+    if (params == NULL) return;
+    free(params->salt);
+    free(params->label);
+    free(params->context);
     free(params);
 }
 
+static CCStatus
+kdf_derive(CCKDFAlgorithm algorithm, const struct ccdigest_info *di, unsigned rounds,
+           const void *kdk, size_t kdkLen, const void *label, size_t labelLen,
+           const void *context, size_t contextLen, const void *salt, size_t saltLen,
+           void *dk, size_t dkLen)
+{
+    switch (algorithm) {
+    case kCCKDFAlgorithmPBKDF2_HMAC:
+        // RFC 8018 section 5.2
+        if (rounds == 0) return kCCParamError;
+        return kdf_status(ccpbkdf2_hmac(di, kdkLen, kdk, saltLen, salt, rounds, dkLen, dk));
+    case kCCKDFAlgorithmCTR_HMAC:
+        // SP 800-108 section 4.1, fixed input label || 0x00 || context || [L]32
+        return kdf_status(ccnistkdf_ctr_hmac(di, kdkLen, kdk, labelLen, label, contextLen, context, dkLen, dk));
+    case kCCKDFAlgorithmCTR_HMAC_FIXED:
+        // SP 800-108 section 4.1 with the caller's own fixed input data
+        return kdf_status(ccnistkdf_ctr_hmac_fixed(di, kdkLen, kdk, contextLen, context, dkLen, dk));
+    case kCCKDFAlgorithmHKDF:
+        // RFC 5869 section 2, context is the info string
+        return kdf_status(cchkdf(di, kdkLen, kdk, saltLen, salt, contextLen, context, dkLen, dk));
+    case kCCKDFAlgorithmAnsiX963:
+        // ANSI X9.63 section 5.6.3, also SEC 1 v2 section 3.6.1, context is SharedInfo
+        return kdf_status(ccansikdf_x963(di, kdkLen, kdk, contextLen, context, dkLen, dk));
+    case kCCKDFAlgorithmFB_HMAC:
+    case kCCKDFAlgorithmFB_HMAC_FIXED:
+    case kCCKDFAlgorithmDPIPE_HMAC:
+        // feedback and pipeline modes have no corecrypto backend yet
+        return kCCUnimplemented;
+    default:
+        return kCCParamError;
+    }
+}
+
 CCStatus
-CCKeyDerivationHMac(CCKDFAlgorithm algorithm, CCDigestAlgorithm digest,
-                    unsigned rounds, // ignored except for PBKDF
+CCKeyDerivationHMac(CCKDFAlgorithm algorithm, CCDigestAlgorithm digest, unsigned rounds,
                     const void *keyDerivationKey, size_t keyDerivationKeyLen,
                     const void *label, size_t labelLen,
-                    const void *context, size_t contextLen, // or FIXED buffer (label | context)
-                    const void * __unused iv, size_t __unused ivLen,           // for FB
-                    const void *salt, size_t saltLen,       // for PBKDF or HKDF
+                    const void *context, size_t contextLen,
+                    const void *iv, size_t ivLen,
+                    const void *salt, size_t saltLen,
                     void *derivedKey, size_t derivedKeyLen)
 {
-    CCStatus rv = kCCUnimplemented;
-    CCKDFParametersRef params;
+    const struct ccdigest_info *di = kdf_digest(digest);
 
-    switch (algorithm) {
-        case kCCKDFAlgorithmPBKDF2_HMAC:
-            rv = CCKDFParametersCreatePbkdf2(&params, rounds, salt, saltLen);
-            break;
-        case kCCKDFAlgorithmCTR_HMAC:
-            rv = CCKDFParametersCreateCtrHmac(&params, label, labelLen, context, contextLen);
-            break;
-        case kCCKDFAlgorithmCTR_HMAC_FIXED:
-            rv = CCKDFParametersCreateCtrHmacFixed(&params, context, contextLen);
-            break;
-        case kCCKDFAlgorithmHKDF:
-            rv = CCKDFParametersCreateHkdf(&params, salt, saltLen, context, contextLen);
-            break;
-    }
+    (void)iv;
+    (void)ivLen;
+    if (di == NULL || derivedKey == NULL || derivedKeyLen == 0) return kCCParamError;
+    if (keyDerivationKey == NULL && keyDerivationKeyLen != 0) return kCCParamError;
 
-    if (rv != kCCSuccess) {
-        return rv;
-    }
-
-    rv = CCDeriveKey(params, digest, keyDerivationKey, keyDerivationKeyLen,
-                     derivedKey, derivedKeyLen);
-
-    CCKDFParametersDestroy(params);
-    return rv;
+    return kdf_derive(algorithm, di, rounds, keyDerivationKey, keyDerivationKeyLen,
+                      label, labelLen, context, contextLen, salt, saltLen, derivedKey, derivedKeyLen);
 }
 
 CCStatus
@@ -223,129 +179,41 @@ CCDeriveKey(const CCKDFParametersRef params, CCDigestAlgorithm digest,
             const void *keyDerivationKey, size_t keyDerivationKeyLen,
             void *derivedKey, size_t derivedKeyLen)
 {
-    int rv = 0;
-    const struct ccdigest_info *di = CCDigestGetDigestInfo(digest);
+    const struct ccdigest_info *di = kdf_digest(digest);
 
-    if (di == NULL) {
-        return kCCParamError;
-    }
+    if (params == NULL || di == NULL || derivedKey == NULL || derivedKeyLen == 0) return kCCParamError;
+    if (keyDerivationKey == NULL && keyDerivationKeyLen != 0) return kCCParamError;
 
-    if (derivedKey == NULL || derivedKeyLen == 0) {
-        return kCCParamError;
-    }
-    if (keyDerivationKey == NULL && keyDerivationKeyLen > 0) {
-        return kCCParamError;
-    }
-
-    // Allow empty IKM for HKDF.
-    if (params->algorithm != kCCKDFAlgorithmHKDF) {
-        if (keyDerivationKey == NULL || keyDerivationKeyLen == 0) {
-            return kCCParamError;
-        }
-    }
-
-    switch (params->algorithm) {
-        case kCCKDFAlgorithmPBKDF2_HMAC: {
-            rv = ccpbkdf2_hmac(di, keyDerivationKeyLen, keyDerivationKey,
-                               params->u.pbkdf2.saltLen, params->u.pbkdf2.salt,
-                               params->u.pbkdf2.rounds, derivedKeyLen, derivedKey);
-            break;
-        }
-        case kCCKDFAlgorithmCTR_HMAC: {
-            rv = ccnistkdf_ctr_hmac(di, keyDerivationKeyLen, keyDerivationKey,
-                                    params->u.ctr_hmac.labelLen,
-                                    params->u.ctr_hmac.label,
-                                    params->u.ctr_hmac.contextLen,
-                                    params->u.ctr_hmac.context,
-                                    derivedKeyLen, derivedKey);
-            break;
-        }
-        case kCCKDFAlgorithmCTR_HMAC_FIXED: {
-            rv = ccnistkdf_ctr_hmac_fixed(di, keyDerivationKeyLen, keyDerivationKey,
-                                          params->u.ctr_hmac_fixed.contextLen,
-                                          params->u.ctr_hmac_fixed.context,
-                                          derivedKeyLen, derivedKey);
-            break;
-        }
-        case kCCKDFAlgorithmHKDF: {
-            rv = cchkdf(di, keyDerivationKeyLen, keyDerivationKey,
-                        params->u.hkdf.saltLen, params->u.hkdf.salt,
-                        params->u.hkdf.contextLen, params->u.hkdf.context,
-                        derivedKeyLen, derivedKey);
-            break;
-        }
-        case kCCKDFAlgorithmAnsiX963: {
-            rv = ccansikdf_x963(di, keyDerivationKeyLen, keyDerivationKey,
-                                params->u.ansi_x963.sharedinfoLen,
-                                params->u.ansi_x963.sharedinfo,
-                                derivedKeyLen, derivedKey);
-            break;
-        }
-        default: {
-            return kCCUnimplemented;
-        }
-    }
-
-    if (rv) {
-        // Probably a bad derivedKeyLen.
-        return kCCParamError;
-    }
-
-    return kCCSuccess;
+    return kdf_derive(params->algorithm, di, params->rounds, keyDerivationKey, keyDerivationKeyLen,
+                      params->label, params->labelLen, params->context, params->contextLen,
+                      params->salt, params->saltLen, derivedKey, derivedKeyLen);
 }
 
 CCStatus
-CCHKDFExtract(const CCKDFParametersRef params, CCDigestAlgorithm digest, const void *keyDerivationKey, size_t keyDerivationKeyLen, void *prk, size_t prkLen)
+CCHKDFExtract(const CCKDFParametersRef params, CCDigestAlgorithm digest,
+              const void *keyDerivationKey, size_t keyDerivationKeyLen,
+              void *prk, size_t prkLen)
 {
-    const struct ccdigest_info *di = CCDigestGetDigestInfo(digest);
+    const struct ccdigest_info *di = kdf_digest(digest);
 
-    if (di == NULL) {
-        return kCCParamError;
-    }
+    if (params == NULL || params->algorithm != kCCKDFAlgorithmHKDF || di == NULL || prk == NULL) return kCCParamError;
+    if (keyDerivationKey == NULL && keyDerivationKeyLen != 0) return kCCParamError;
+    if (prkLen < di->output_size) return kCCBufferTooSmall;
 
-    if (prk == NULL || prkLen != di->output_size) {
-        return kCCParamError;
-    }
-    if (keyDerivationKey == NULL && keyDerivationKeyLen > 0) {
-        return kCCParamError;
-    }
-
-    if (params->algorithm != kCCKDFAlgorithmHKDF) {
-        return kCCParamError;
-    }
-
-    int result = cchkdf_extract(di, params->u.hkdf.saltLen, params->u.hkdf.salt, keyDerivationKeyLen, keyDerivationKey, prk);
-    if (result) {
-        return kCCUnspecifiedError;
-    }
-
-    return kCCSuccess;
+    // RFC 5869 section 2.2
+    return kdf_status(cchkdf_extract(di, params->saltLen, params->salt, keyDerivationKeyLen, keyDerivationKey, prk));
 }
 
 CCStatus
-CCHKDFExpand(const CCKDFParametersRef params, CCDigestAlgorithm digest, const void *prk, size_t prkLen, void *derivedKey, size_t derivedKeyLen)
+CCHKDFExpand(const CCKDFParametersRef params, CCDigestAlgorithm digest,
+             const void *prk, size_t prkLen,
+             void *derivedKey, size_t derivedKeyLen)
 {
-    const struct ccdigest_info *di = CCDigestGetDigestInfo(digest);
+    const struct ccdigest_info *di = kdf_digest(digest);
 
-    if (di == NULL) {
-        return kCCParamError;
-    }
+    if (params == NULL || params->algorithm != kCCKDFAlgorithmHKDF || di == NULL) return kCCParamError;
+    if (prk == NULL || derivedKey == NULL || derivedKeyLen == 0) return kCCParamError;
 
-    if (derivedKey == NULL || derivedKeyLen == 0) {
-        return kCCParamError;
-    }
-    if (prk == NULL || prkLen != di->output_size) {
-        return kCCParamError;
-    }
-
-    if (params->algorithm != kCCKDFAlgorithmHKDF) {
-        return kCCParamError;
-    }
-
-    int result = cchkdf_expand(di, prkLen, prk, params->u.hkdf.contextLen, params->u.hkdf.context, derivedKeyLen, derivedKey);
-    if (result) {
-        return kCCUnspecifiedError;
-    }
-
-    return kCCSuccess;
+    // RFC 5869 section 2.3
+    return kdf_status(cchkdf_expand(di, prkLen, prk, params->contextLen, params->context, derivedKeyLen, derivedKey));
 }

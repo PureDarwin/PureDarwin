@@ -52,6 +52,7 @@ target_sources(host_commoncrypto_static PRIVATE
     lib/CommonCryptorChaCha20Poly1305.c
     lib/CommonKeyDerivationSPI.c
     lib/CommonCMAC.c
+    lib/CommonCollabKeyGen.c
     lib/CommonCryptor.c
     lib/CommonDigest.c
     lib/CommonCryptorGCM.c
@@ -79,6 +80,5 @@ if(NOT PD_CORECRYPTO_DIR)
         lib/CommonDH.c
         lib/CommonECCryptor.c
         lib/CommonRSACryptor.c
-        lib/CommonCollabKeyGen.c
     )
 endif()
