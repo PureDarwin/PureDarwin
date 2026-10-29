@@ -64,6 +64,12 @@
 
 mach_port_t bootstrap_port = MACH_PORT_NULL;
 mach_port_t mach_task_self_ = MACH_PORT_NULL;
+
+// the macro hides it, but callers such as LWJGL look the function up by name with dlsym
+mach_port_t (mach_task_self)(void)
+{
+	return mach_task_self_;
+}
 #ifdef __i386__
 mach_port_t mach_host_self_ = MACH_PORT_NULL;
 #endif

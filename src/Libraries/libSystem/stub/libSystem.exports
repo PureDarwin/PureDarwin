@@ -803,6 +803,7 @@ _modf
 _scalbn
 _os_log_create
 ___udivti3
+___muldc3
 ___divti3
 _proc_pid_rusage
 _acosf
@@ -1323,6 +1324,7 @@ _mach_msg
 _mach_msg_destroy
 _mach_host_self
 _mach_task_self_
+_mach_task_self
 _task_self_trap
 _mach_port_deallocate
 _mach_port_mod_refs
