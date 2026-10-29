@@ -103,6 +103,16 @@ struct MslAttr : public ParsedAttrInfo {
       return AttributeApplied;
     }
 
+    // a function constant: writable so it needs no initializer, airify gives it Apple's shape
+    if (!t.compare(0, 18, "function_constant(") && VD && VD->isFileVarDecl()) {
+      QualType q = VD->getType();
+      QualType bare = S.Context.removeAddrSpaceQualType(q.getUnqualifiedType());
+      VD->setType(S.Context.getAddrSpaceQualType(bare, LangAS::opencl_global));
+      std::string fc = "FC|" + t.substr(18, t.size() - 19) + "|" + bare.getAsString(S.getPrintingPolicy()) + "|" +
+                       VD->getNameAsString();
+      VD->addAttr(AnnotateAttr::CreateImplicit(S.Context, fc, nullptr, 0));
+    }
+
     attrs[D].push_back(t);
     return AttributeApplied;
   }
@@ -191,6 +201,18 @@ struct Desc {
 
   std::string tname(QualType t) {
     t = ctx.removeAddrSpaceQualType(t.getUnqualifiedType());
+    // scalars by their MSL names whatever typedef spelled them (uint32_t is uint), as Apple's type names
+    if (t->isBuiltinType()) {
+      static const char *const msl[][2] = { { "unsigned int", "uint" }, { "unsigned short", "ushort" },
+                                            { "unsigned char", "uchar" }, { "unsigned long", "ulong" },
+                                            { "signed char", "char" }, { "_Bool", "bool" } };
+      std::string c = t.getCanonicalType().getAsString(pp);
+      for (auto &m : msl) {
+        if (c == m[0])
+          return m[1];
+      }
+      return c;
+    }
     return t.getAsString(pp);
   }
 

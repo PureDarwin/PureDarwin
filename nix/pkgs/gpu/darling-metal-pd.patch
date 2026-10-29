@@ -3150,3 +3150,350 @@
  - (instancetype)copyWithZone: (NSZone*)zone
  {
  	MTLRenderPipelineDescriptor* copy = [MTLRenderPipelineDescriptor new];
+--- a/src/Metal/MTLDevice.mm
++++ b/src/Metal/MTLDevice.mm
+@@ -17,6 +17,13 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <sys/stat.h>
++#include <sys/wait.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <spawn.h>
++#include <unistd.h>
++
++extern char** environ;
+ 
+ MTL_EXTERN const MTLDeviceNotificationName MTLDeviceWasAddedNotification = @"MTLDeviceWasAdded";
+ MTL_EXTERN const MTLDeviceNotificationName MTLDeviceRemovalRequestedNotification = @"MTLDeviceRemovalRequested";
+@@ -95,8 +102,17 @@
+ 	return [NSString stringWithUTF8String: hex];
+ }
+ 
++// the metallibs mslc builds: ~/Library/Caches/metal-pd/library-cache, or under /var/tmp without a home
++static NSString* userCacheDirectory(void) {
++	const char* home = getenv("HOME");
++
++	if (home && *home)
++		return [[NSString stringWithUTF8String: home] stringByAppendingPathComponent: @"Library/Caches/metal-pd/library-cache"];
++	return [NSString stringWithFormat: @"/var/tmp/metal-pd-library-cache-%u", (unsigned)getuid()];
++}
++
+ // where cached metallibs are looked for: $MTL_PD_LIBRARY_CACHE (colon separated), the app's
+-// Resources/MetalLibraryCache, then the system cache
++// Resources/MetalLibraryCache, the per-user cache mslc fills, then the system cache
+ static NSArray<NSString*>* sourceCacheDirectories(void) {
+ 	NSMutableArray* dirs = [NSMutableArray array];
+ 	const char* env = getenv("MTL_PD_LIBRARY_CACHE");
+@@ -106,10 +122,79 @@
+ 		[dirs addObjectsFromArray: [[NSString stringWithUTF8String: env] componentsSeparatedByString: @":"]];
+ 	if (resources)
+ 		[dirs addObject: [resources stringByAppendingPathComponent: @"MetalLibraryCache"]];
++	[dirs addObject: userCacheDirectory()];
+ 	[dirs addObject: @"/usr/local/share/metal-pd/library-cache"];
+ 	return dirs;
+ }
+ 
++// mslc builds the source's metallib into the per-user cache: Metal.framework runs it on a miss
++static const char* compilerPath(void) {
++	const char* env = getenv("MTL_PD_MSLC");
++
++	return env ? env : "/usr/libexec/mslc";
++}
++
++// runs mslc on the source with its macros as a forced include and returns the metallib, also stored at out
++static NSData* compileSource(NSString* source, MTLCompileOptions* options, NSString* out, NSString** log) {
++	char dir[] = "/tmp/metal-pd-mslc.XXXXXX";
++	NSFileManager* fm = [NSFileManager defaultManager];
++	NSData* result = nil;
++
++	*log = nil;
++	if (!mkdtemp(dir)) {
++		*log = [NSString stringWithFormat: @"mkdtemp: %s", strerror(errno)];
++		return nil;
++	}
++	NSString* tmp = [NSString stringWithUTF8String: dir];
++	NSString* src = [tmp stringByAppendingPathComponent: @"source.metal"];
++	NSString* macros = [tmp stringByAppendingPathComponent: @"macros.h"];
++	NSString* errs = [tmp stringByAppendingPathComponent: @"errors.txt"];
++	NSString* lib = [tmp stringByAppendingPathComponent: @"out.metallib"];
++	NSMutableString* defs = [NSMutableString string];
++
++	[[source dataUsingEncoding: NSUTF8StringEncoding] writeToFile: src atomically: NO];
++	for (NSString* name in [[options.preprocessorMacros allKeys] sortedArrayUsingSelector: @selector(compare:)]) {
++		id value = [options.preprocessorMacros objectForKey: name];
++		NSString* text = [value isKindOfClass: [NSString class]] ? value :
++		                 [value respondsToSelector: @selector(stringValue)] ? [value stringValue] : [value description];
++		[defs appendFormat: @"#define %@ %@\n", name, text];
++	}
++	[[defs dataUsingEncoding: NSUTF8StringEncoding] writeToFile: macros atomically: NO];
++
++	const char* argv[] = { "/bin/sh", compilerPath(), src.fileSystemRepresentation, "-o", lib.fileSystemRepresentation,
++	                       "-include", macros.fileSystemRepresentation, NULL };
++	posix_spawn_file_actions_t fa;
++	pid_t pid;
++	int status = 0;
++
++	posix_spawn_file_actions_init(&fa);
++	posix_spawn_file_actions_addopen(&fa, 1, errs.fileSystemRepresentation, O_WRONLY | O_CREAT | O_TRUNC, 0644);
++	posix_spawn_file_actions_adddup2(&fa, 1, 2);
++	int rc = posix_spawn(&pid, argv[0], &fa, NULL, (char* const*)argv, environ);
++	posix_spawn_file_actions_destroy(&fa);
++	if (rc) {
++		*log = [NSString stringWithFormat: @"cannot run %s: %s", compilerPath(), strerror(rc)];
++	} else {
++		while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
++		}
++		NSString* text = [NSString stringWithContentsOfFile: errs encoding: NSUTF8StringEncoding error: nil];
++		if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
++			result = [NSData dataWithContentsOfFile: lib];
++		if (result) {
++			// a rename keeps a half-written metallib out of the cache, a cache that cannot be written is only slower
++			NSString* part = [out stringByAppendingFormat: @".%d", getpid()];
++			[fm createDirectoryAtPath: [out stringByDeletingLastPathComponent] withIntermediateDirectories: YES attributes: nil error: nil];
++			if (![result writeToFile: part atomically: NO] || rename(part.fileSystemRepresentation, out.fileSystemRepresentation))
++				[fm removeItemAtPath: part error: nil];
++			*log = text;
++		} else {
++			*log = text.length ? text : [NSString stringWithFormat: @"mslc exited with status %d", status];
++		}
++	}
++	[fm removeItemAtPath: tmp error: nil];
++	return result;
++}
++
+ #endif
+ 
+ #if DARLING_METAL_ENABLED
+@@ -465,6 +550,19 @@
+ 			return [self newLibraryWithURL: [NSURL fileURLWithPath: path] error: error];
+ 	}
+ 
++	// compile it here and return the library from this call, the cache only speeds up later launches
++	NSString* log = nil;
++	NSString* built = [userCacheDirectory() stringByAppendingPathComponent: name];
++	NSData* metallib = compileSource(source ?: @"", options, built, &log);
++	if (metallib) {
++		auto lib = _device->newLibrary(metallib.bytes, metallib.length);
++		if (lib)
++			return [[MTLLibraryInternal alloc] initWithLibrary: lib device: self];
++		log = @"mslc's metallib does not load";
++		[fm removeItemAtPath: built error: nil];
++	}
++	fprintf(stderr, "metal-pd: mslc failed for key %s:\n%s\n", key.UTF8String, log.UTF8String ?: "");
++
+ 	// keep the source (and its macros) where metal-precompile can pick it up
+ 	mkdir(missing.fileSystemRepresentation, 0777);
+ 	[[source dataUsingEncoding: NSUTF8StringEncoding] writeToFile: [missing stringByAppendingPathComponent: [key stringByAppendingPathExtension: @"metal"]] atomically: YES];
+@@ -487,6 +585,8 @@
+ 		NSString* text = [NSString stringWithFormat: @"PureDarwin has no Metal compiler and no precompiled metallib for this source "
+ 			"(key %@). The source was saved as %@/%@.metal: build it on a Mac with metal-precompile and install the result "
+ 			"as %@ in one of: %@", key, missing, key, name, [sourceCacheDirectories() componentsJoinedByString: @", "]];
++		if (log.length)
++			text = [text stringByAppendingFormat: @"\nmslc:\n%@", log];
+ 		*error = [NSError errorWithDomain: MTLLibraryErrorDomain
+ 		                             code: MTLLibraryErrorCompileFailure
+ 		                         userInfo: @{ NSLocalizedDescriptionKey: text, @"MTLPDLibraryCacheKey": key }];
+--- a/include/Metal/MTLDevice.h
++++ b/include/Metal/MTLDevice.h
+@@ -126,8 +126,8 @@
+ - (id<MTLLibrary>)newLibraryWithData: (dispatch_data_t)data
+                                error: (NSError**)error;
+ 
+-// PureDarwin: no Metal compiler, the source's metallib comes from a cache built on a Mac (keyed by the
+-// source's SHA-256), see metal-precompile; a miss is an MTLLibraryErrorCompileFailure naming the key
++// PureDarwin: the source's metallib comes from a cache keyed by its SHA-256, on a miss mslc compiles it in
++// this call and stores it in the per-user cache, a failed compile is an MTLLibraryErrorCompileFailure
+ - (id<MTLLibrary>)newLibraryWithSource: (NSString*)source
+                                options: (MTLCompileOptions*)options
+                                  error: (NSError**)error;
+--- a/include/Metal/MTLCompileOptions.h
++++ b/include/Metal/MTLCompileOptions.h
+@@ -37,8 +37,8 @@
+ 	MTLMathFloatingPointFunctionsPrecise = 1,
+ };
+ 
+-// PureDarwin has no Metal compiler: newLibraryWithSource: looks the source up in a cache of metallibs built
+-// on a Mac, so these options only take part through preprocessorMacros (part of the cache key)
++// on PureDarwin these options only take part through preprocessorMacros (part of the cache key and mslc's
++// defines), mslc always compiles with fast math
+ @interface MTLCompileOptions : NSObject <NSCopying>
+ 
+ @property(copy) NSDictionary<NSString*, NSObject*>* preprocessorMacros;
+--- a/src/Metal/MTLDevice.mm
++++ b/src/Metal/MTLDevice.mm
+@@ -102,13 +102,17 @@
+ 	return [NSString stringWithUTF8String: hex];
+ }
+ 
+-// the metallibs mslc builds: ~/Library/Caches/metal-pd/library-cache, or under /var/tmp without a home
++// the metallibs mslc builds: ~/Library/Caches/metal-pd/library-cache, or under /var/tmp without a home, one
++// directory per compiler build (/usr/share/mslc/version) so a new mslc never loads an older one's output
+ static NSString* userCacheDirectory(void) {
+ 	const char* home = getenv("HOME");
++	NSString* version = [NSString stringWithContentsOfFile: @"/usr/share/mslc/version" encoding: NSUTF8StringEncoding error: nil];
++	NSString* dir = home && *home
++		? [[NSString stringWithUTF8String: home] stringByAppendingPathComponent: @"Library/Caches/metal-pd/library-cache"]
++		: [NSString stringWithFormat: @"/var/tmp/metal-pd-library-cache-%u", (unsigned)getuid()];
+ 
+-	if (home && *home)
+-		return [[NSString stringWithUTF8String: home] stringByAppendingPathComponent: @"Library/Caches/metal-pd/library-cache"];
+-	return [NSString stringWithFormat: @"/var/tmp/metal-pd-library-cache-%u", (unsigned)getuid()];
++	version = [version stringByTrimmingCharactersInSet: [NSCharacterSet whitespaceAndNewlineCharacterSet]];
++	return version.length ? [dir stringByAppendingPathComponent: version] : dir;
+ }
+ 
+ // where cached metallibs are looked for: $MTL_PD_LIBRARY_CACHE (colon separated), the app's
+--- a/include/Metal/MTLTexture.h
++++ b/include/Metal/MTLTexture.h
+@@ -56,6 +56,8 @@
+ 
+ #define MTLTextureSwizzleChannelsDefault MTLTextureSwizzleChannelsMake(MTLTextureSwizzleRed, MTLTextureSwizzleGreen, MTLTextureSwizzleBlue, MTLTextureSwizzleAlpha)
+ 
++@protocol MTLBuffer;
++
+ @protocol MTLTexture <MTLResource>
+ 
+ @property(readonly) MTLTextureType textureType;
+@@ -71,6 +73,10 @@
+ @property(readonly) BOOL allowGPUOptimizedContents;
+ @property(readonly, getter=isShareable) BOOL shareable;
+ @property(readonly, nonatomic) MTLTextureSwizzleChannels swizzle;
++// a texture made over a buffer's bytes: that buffer, nil otherwise
++@property(readonly) id<MTLBuffer> buffer;
++@property(readonly) NSUInteger bufferOffset;
++@property(readonly) NSUInteger bufferBytesPerRow;
+ 
+ - (id<MTLTexture>)newTextureViewWithPixelFormat: (MTLPixelFormat)pixelFormat;
+ 
+--- a/include/Metal/MTLBuffer.h
++++ b/include/Metal/MTLBuffer.h
+@@ -9,6 +9,9 @@
+ #import <Metal/MTLResource.h>
+ #import <Metal/MTLDefines.h>
+ 
++@class MTLTextureDescriptor;
++@protocol MTLTexture;
++
+ METAL_DECLARATIONS_BEGIN
+ 
+ @protocol MTLBuffer <MTLResource>
+@@ -20,6 +23,11 @@
+ 
+ - (void)didModifyRange: (NSRange)range;
+ 
++// a texture over the buffer's bytes from offset on, which the two share
++- (id<MTLTexture>)newTextureWithDescriptor: (MTLTextureDescriptor*)descriptor
++                                    offset: (NSUInteger)offset
++                               bytesPerRow: (NSUInteger)bytesPerRow;
++
+ @end
+ 
+ METAL_DECLARATIONS_END
+--- a/include/Metal/MTLTextureDescriptor.h
++++ b/include/Metal/MTLTextureDescriptor.h
+@@ -23,6 +23,12 @@
+                                                          size: (NSUInteger)size
+                                                     mipmapped: (BOOL)mipmapped;
+ 
++// one row of width texels, for newTextureWithDescriptor:offset:bytesPerRow: on a buffer (PureDarwin's MetalExtras)
+++ (MTLTextureDescriptor*)textureBufferDescriptorWithPixelFormat: (MTLPixelFormat)pixelFormat
++                                                          width: (NSUInteger)width
++                                                resourceOptions: (MTLResourceOptions)resourceOptions
++                                                          usage: (MTLTextureUsage)usage;
++
+ @property(nonatomic) MTLTextureType textureType;
+ @property(nonatomic) MTLPixelFormat pixelFormat;
+ @property(nonatomic) NSUInteger width;
+--- a/include/Metal/MTLComputeCommandEncoder.h
++++ b/include/Metal/MTLComputeCommandEncoder.h
+@@ -87,6 +87,11 @@
+ - (void)dispatchThreads: (MTLSize)threadsPerGrid 
+   threadsPerThreadgroup: (MTLSize)threadsPerThreadgroup;
+ 
++// threadgroupsPerGrid from an MTLDispatchThreadgroupsIndirectArguments in the buffer, read when the dispatch runs
++- (void)dispatchThreadgroupsWithIndirectBuffer: (id<MTLBuffer>)indirectBuffer
++                          indirectBufferOffset: (NSUInteger)indirectBufferOffset
++                         threadsPerThreadgroup: (MTLSize)threadsPerThreadgroup;
++
+ @end
+ 
+ METAL_DECLARATIONS_END
+--- a/include/Metal/MTLRenderCommandEncoder.h
++++ b/include/Metal/MTLRenderCommandEncoder.h
+@@ -328,6 +328,19 @@
+                   indexBuffer: (id<MTLBuffer>)indexBuffer
+             indexBufferOffset: (NSUInteger)indexBufferOffset;
+ 
++// the counts from an MTLDrawPrimitivesIndirectArguments or MTLDrawIndexedPrimitivesIndirectArguments in the
++// buffer, read when the draw runs
++- (void)drawPrimitives: (MTLPrimitiveType)primitiveType
++        indirectBuffer: (id<MTLBuffer>)indirectBuffer
++  indirectBufferOffset: (NSUInteger)indirectBufferOffset;
++
++- (void)drawIndexedPrimitives: (MTLPrimitiveType)primitiveType
++                    indexType: (MTLIndexType)indexType
++                  indexBuffer: (id<MTLBuffer>)indexBuffer
++            indexBufferOffset: (NSUInteger)indexBufferOffset
++               indirectBuffer: (id<MTLBuffer>)indirectBuffer
++         indirectBufferOffset: (NSUInteger)indirectBufferOffset;
++
+ @end
+ 
+ METAL_DECLARATIONS_END
+--- a/src/Metal/MTLRenderCommandEncoder.mm
++++ b/src/Metal/MTLRenderCommandEncoder.mm
+@@ -625,6 +625,25 @@
+ 	IndiumPD::dispatchThreadsPerTile(_encoder, MTLSizeToIndium(threadsPerTile));
+ }
+ 
++- (void)drawPrimitives: (MTLPrimitiveType)primitiveType
++        indirectBuffer: (id<MTLBuffer>)indirectBuffer
++  indirectBufferOffset: (NSUInteger)indirectBufferOffset
++{
++	IndiumPD::drawIndirect(_encoder, static_cast<Indium::PrimitiveType>(primitiveType), false, Indium::IndexType::UInt16, nullptr, 0,
++		((MTLBufferInternal*)indirectBuffer).buffer, indirectBufferOffset);
++}
++
++- (void)drawIndexedPrimitives: (MTLPrimitiveType)primitiveType
++                    indexType: (MTLIndexType)indexType
++                  indexBuffer: (id<MTLBuffer>)indexBuffer
++            indexBufferOffset: (NSUInteger)indexBufferOffset
++               indirectBuffer: (id<MTLBuffer>)indirectBuffer
++         indirectBufferOffset: (NSUInteger)indirectBufferOffset
++{
++	IndiumPD::drawIndirect(_encoder, static_cast<Indium::PrimitiveType>(primitiveType), true, static_cast<Indium::IndexType>(indexType),
++		((MTLBufferInternal*)indexBuffer).buffer, indexBufferOffset, ((MTLBufferInternal*)indirectBuffer).buffer, indirectBufferOffset);
++}
++
+ - (void)setTriangleFillMode: (MTLTriangleFillMode)fillMode
+ {
+ 	_encoder->setTriangleFillMode(static_cast<Indium::TriangleFillMode>(fillMode));
+--- a/src/Metal/MTLComputeCommandEncoder.mm
++++ b/src/Metal/MTLComputeCommandEncoder.mm
+@@ -10,6 +10,10 @@
+ #import <Metal/MTLDescriptorsInternal.h>
+ #import <Metal/stubs.h>
+ 
++#if DARLING_METAL_ENABLED
++#include <indium/pd-tile.hpp>
++#endif
++
+ @implementation MTLComputePassSampleBufferAttachmentDescriptor
+ 
+ #if DARLING_METAL_ENABLED
+@@ -278,6 +282,14 @@
+ 	_encoder->dispatchThreads(MTLSizeToIndium(threadsPerGrid), MTLSizeToIndium(threadsPerThreadgroup));
+ }
+ 
++- (void)dispatchThreadgroupsWithIndirectBuffer: (id<MTLBuffer>)indirectBuffer
++                          indirectBufferOffset: (NSUInteger)indirectBufferOffset
++                         threadsPerThreadgroup: (MTLSize)threadsPerThreadgroup
++{
++	IndiumPD::dispatchIndirect(_encoder, ((MTLBufferInternal*)indirectBuffer).buffer, indirectBufferOffset,
++		MTLSizeToIndium(threadsPerThreadgroup));
++}
++
+ #else
+ 
+ @dynamic dispatchType;

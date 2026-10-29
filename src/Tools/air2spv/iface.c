@@ -192,6 +192,8 @@ static void texture_param(struct a2s *a, LLVMValueRef p, unsigned loc, const cha
   int cube = !strncmp(tname, "texturecube", 11), arrayed = strstr(tname, "_array") != 0, as_array = 0;
   SpvDim dim = !strncmp(tname, "texture3d", 9) ? SpvDim3D : cube ? SpvDimCube : SpvDim2D;
 
+  int texel = !strncmp(tname, "texture_buffer", 14);
+
   if (!strncmp(tname, "depth", 5) || !strncmp(tname, "texture1d", 9))
     a2s_note(a, "texture type %s treated as 2D", tname);
 
@@ -209,8 +211,12 @@ static void texture_param(struct a2s *a, LLVMValueRef p, unsigned loc, const cha
   if (cube && arrayed && !as_array)
     spv_cap(&a->s, r->storage ? SpvCapabilityImageCubeArray : SpvCapabilitySampledCubeArray);
   st = r->elem == 'u' ? spv_t_uint(&a->s) : r->elem == 's' ? spv_t_int(&a->s) : spv_t_float(&a->s);
+  if (texel) {
+    r->texel = 1, r->dim = 1, r->arrayed = r->cube = 0, dim = SpvDimBuffer;
+    spv_cap(&a->s, r->storage ? SpvCapabilityImageBuffer : SpvCapabilitySampledBuffer);
+  }
   it = spv_t_image_arrayed(&a->s, st, dim, r->arrayed, r->storage ? 2 : 1, SpvImageFormatUnknown);
-  r->levels = r->storage && writes_levels(p) ? A2S_LEVELS : 0;
+  r->levels = r->storage && !texel && writes_levels(p) ? A2S_LEVELS : 0;
   var = spv_var(&a->s,
                 spv_t_ptr(&a->s, SpvStorageClassUniformConstant,
                           r->levels ? spv_t_array(&a->s, it, spv_c_u32(&a->s, r->levels)) : it),
@@ -751,6 +757,9 @@ static void output_var(struct a2s *a, LLVMTypeRef t, int member, LLVMValueRef md
     } else if (!strcmp(s, "air.clip_distance")) {
       skip = 1;
       a2s_note(a, "clip distance output dropped");
+    } else if (!strcmp(s, "air.render_target_array_index") || !strcmp(s, "air.viewport_array_index")) {
+      skip = 1;
+      a2s_note(a, "%s output dropped, layer and viewport 0 are drawn", s);
     } else if (!strcmp(s, "air.vertex_output") && j + 1 < nf && md_str(f[j + 1], s, sizeof(s))) {
       struct a2s_varying *v = &a->r->var[a->r->nvar];
       if (a->r->nvar == A2S_MAX_VARYINGS)

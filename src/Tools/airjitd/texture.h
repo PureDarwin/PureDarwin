@@ -55,6 +55,19 @@ enum {
   PD_FMT_BC6H_UF = 40,
   PD_FMT_BC7 = 41,
   PD_FMT_BC7_SRGB = 42,
+  // integer formats, for texel buffers and integer textures
+  PD_FMT_R8UI = 43,
+  PD_FMT_RG8UI = 44,
+  PD_FMT_RGBA32UI = 45,
+  PD_FMT_R8I = 46,
+  PD_FMT_RG8I = 47,
+  PD_FMT_RGBA8I = 48,
+  PD_FMT_R16I = 49,
+  PD_FMT_RG16I = 50,
+  PD_FMT_RGBA16I = 51,
+  PD_FMT_R32I = 52,
+  PD_FMT_RG32I = 53,
+  PD_FMT_RGBA32I = 54,
   PD_FMT_COUNT
 };
 

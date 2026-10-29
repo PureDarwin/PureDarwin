@@ -419,19 +419,25 @@ static uint32_t coords(struct a2s *a, LLVMValueRef v) {
 }
 
 // a texel coordinate with the slice of an array or the face of a cube (bound as a 2D array) joined on, and
-// where the next operand is. A cube array's face comes before its slice
+// where the next operand is. A cube array's face comes before its slice. MSL 4 reads pass a read sampler
+// (air.get_read_sampler) after the texture, which Vulkan's fetches have no use for
 static uint32_t texel_coord(struct a2s *a, struct call *c, struct handle h, const char *ty, unsigned *next) {
-  uint32_t coord = coords(a, arg_v(c, 1)), ut = spv_t_uint(&a->s), layer;
+  unsigned at = c->n > 2 && LLVMGetTypeKind(arg_t(c, 1)) == LLVMPointerTypeKind ? 2 : 1;
+  uint32_t coord = coords(a, arg_v(c, at)), ut = spv_t_uint(&a->s), layer;
   int cube = !strncmp(ty, "cube", 4), arrayed = strstr(ty, "_array") != 0;
 
-  *next = 2;
-  if (!(cube || arrayed) || c->n <= 2)
+  *next = at + 1;
+  // a texel buffer takes the index itself, a 1D texture is bound as one row of a 2D image
+  if (h.res >= 0 && a->r->res[h.res].texel)
+    return coord;
+  if (!cube && !arrayed && a2s_lanes(arg_t(c, at)) == 1)
+    return join_lane(a, coord, 1, ut, spv_c_u32(&a->s, 0));
+  if (!(cube || arrayed) || c->n <= *next)
     return coord;
   layer = arg(a, c, (*next)++);
   if (cube && arrayed && *next < c->n)
     layer = a2s_op2(a, SpvOpIAdd, ut, layer, a2s_op2(a, SpvOpIMul, ut, arg(a, c, (*next)++), spv_c_u32(&a->s, 6)));
-  (void)h;
-  return join_lane(a, coord, a2s_lanes(arg_t(c, 1)), ut, layer);
+  return join_lane(a, coord, a2s_lanes(arg_t(c, at)), ut, layer);
 }
 
 // a storage texture's texel with red and blue swapped when spec constant 64 + metal says its BGRA bytes
@@ -464,7 +470,8 @@ static int air_read_tex(struct a2s *a, struct call *c) {
 
   w[n++] = img;
   w[n++] = texel_coord(a, c, tex, c->op + 13, &next);
-  if (!storage) {
+  // texel buffers have no levels
+  if (!storage && !(tex.res >= 0 && a->r->res[tex.res].texel)) {
     w[n++] = SpvImageOperandsLodMask;
     w[n++] = c->n > next ? arg(a, c, next) : spv_c_u32(&a->s, 0);
   }
@@ -472,6 +479,9 @@ static int air_read_tex(struct a2s *a, struct call *c) {
   v4 = a2s_op(a, storage ? SpvOpImageRead : SpvOpImageFetch, vt, w, n);
   if (storage)
     v4 = bgra_swap(a, tex, v4, vt);
+  // a signed image's texels as the unsigned lanes the rest of the translation carries
+  if (tex.res >= 0 && a->r->res[tex.res].elem == 's')
+    v4 = a2s_op1(a, SpvOpBitcast, spv_t_vec(&a->s, spv_t_uint(&a->s), 4), v4);
   texel_result(a, c, v4, texel_type(c));
   return 1;
 }
@@ -546,6 +556,9 @@ static int air_write_tex(struct a2s *a, struct call *c) {
   col = arg(a, c, next);
   lod = c->n > next + 1 ? arg(a, c, next + 1) : spv_c_u32(&a->s, 0);
   nl = a2s_lanes(ct);
+  // a signed image takes signed texels, the colour comes in unsigned lanes
+  if (tex.res >= 0 && a->r->res[tex.res].elem == 's')
+    col = a2s_op1(a, SpvOpBitcast, nl == 1 ? spv_t_int(&a->s) : spv_t_vec(&a->s, spv_t_int(&a->s), nl), col);
 
   // images take four components
   if (nl < 4) {
@@ -569,6 +582,12 @@ static int air_tex_size(struct a2s *a, struct call *c) {
   unsigned comps = 2 + (tex.arrayed || tex.three ? 1 : 0), pick;
 
   spv_cap(&a->s, SpvCapabilityImageQuery);
+  // a texel buffer's size is its texel count
+  if (tex.res >= 0 && a->r->res[tex.res].texel) {
+    r = what[0] == 'w' ? a2s_op1(a, SpvOpImageQuerySize, ut, img) : spv_c_u32(&a->s, 1);
+    a2s_set(a, c->in, a2s_mask(a, c->rt, r));
+    return 1;
+  }
   if (!strncmp(what, "num_mip_levels", 14)) {
     r = storage ? spv_c_u32(&a->s, tex.levels ? tex.levels : 1) : a2s_op1(a, SpvOpImageQueryLevels, ut, img);
     a2s_set(a, c->in, a2s_mask(a, c->rt, r));
@@ -1323,6 +1342,9 @@ int a2s_air_call(struct a2s *a, LLVMValueRef in, const char *name) {
       (!strcmp(op, "min") || !strcmp(op, "max") || !strcmp(op, "clamp") || !strcmp(op, "abs")))
     return air_int(a, &c, op, dot[1]);
 
+  // MSL 4's read sampler: only the texel reads take it, and they skip it
+  if (!strcmp(op, "get_read_sampler"))
+    return 1;
   if (!strcmp(op, "convert"))
     return air_convert(a, &c);
   if (!strcmp(op, "mul_hi") || !strcmp(op, "clz") || !strcmp(op, "ctz") || !strcmp(op, "popcount") ||

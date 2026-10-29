@@ -36,6 +36,9 @@ unsigned tex_bpp(unsigned fmt) {
     [PD_FMT_BC3] = 16,      [PD_FMT_BC3_SRGB] = 16, [PD_FMT_BC4] = 8,      [PD_FMT_BC4_SNORM] = 8,
     [PD_FMT_BC5] = 16,      [PD_FMT_BC5_SNORM] = 16, [PD_FMT_BC6H_SF] = 16, [PD_FMT_BC6H_UF] = 16,
     [PD_FMT_BC7] = 16,      [PD_FMT_BC7_SRGB] = 16,
+    [PD_FMT_R8UI] = 1,      [PD_FMT_RG8UI] = 2,     [PD_FMT_RGBA32UI] = 16, [PD_FMT_R8I] = 1,
+    [PD_FMT_RG8I] = 2,      [PD_FMT_RGBA8I] = 4,    [PD_FMT_R16I] = 2,     [PD_FMT_RG16I] = 4,
+    [PD_FMT_RGBA16I] = 8,   [PD_FMT_R32I] = 4,      [PD_FMT_RG32I] = 8,    [PD_FMT_RGBA32I] = 16,
   };
 
   return fmt < PD_FMT_COUNT ? bpp[fmt] : 4;
@@ -195,6 +198,34 @@ void pd_texel_load(unsigned fmt, const uint8_t *px, float out[4]) {
   case PD_FMT_RGBA8UI:
     load_lanes(px, 4, 1, 0, out);
     break;
+  // the CPU path reads the newer integer formats' lanes unsigned, narrow signed ones are not sign extended
+  case PD_FMT_R8UI: case PD_FMT_R8I:
+    load_lanes(px, 1, 1, 0, out);
+    break;
+  case PD_FMT_RG8UI: case PD_FMT_RG8I:
+    load_lanes(px, 2, 1, 0, out);
+    break;
+  case PD_FMT_RGBA8I:
+    load_lanes(px, 4, 1, 0, out);
+    break;
+  case PD_FMT_R16I:
+    load_lanes(px, 1, 2, 0, out);
+    break;
+  case PD_FMT_RG16I:
+    load_lanes(px, 2, 2, 0, out);
+    break;
+  case PD_FMT_RGBA16I:
+    load_lanes(px, 4, 2, 0, out);
+    break;
+  case PD_FMT_R32I:
+    load_lanes(px, 1, 4, 0, out);
+    break;
+  case PD_FMT_RG32I:
+    load_lanes(px, 2, 4, 0, out);
+    break;
+  case PD_FMT_RGBA32UI: case PD_FMT_RGBA32I:
+    load_lanes(px, 4, 4, 0, out);
+    break;
   case PD_FMT_R16F:
     load_floats(px, 1, 1, out);
     break;
@@ -289,6 +320,33 @@ void pd_texel_store(unsigned fmt, uint8_t *px, const float in[4]) {
     break;
   case PD_FMT_RGBA8UI:
     store_lanes(px, 4, 1, 0, in);
+    break;
+  case PD_FMT_R8UI: case PD_FMT_R8I:
+    store_lanes(px, 1, 1, 0, in);
+    break;
+  case PD_FMT_RG8UI: case PD_FMT_RG8I:
+    store_lanes(px, 2, 1, 0, in);
+    break;
+  case PD_FMT_RGBA8I:
+    store_lanes(px, 4, 1, 0, in);
+    break;
+  case PD_FMT_R16I:
+    store_lanes(px, 1, 2, 0, in);
+    break;
+  case PD_FMT_RG16I:
+    store_lanes(px, 2, 2, 0, in);
+    break;
+  case PD_FMT_RGBA16I:
+    store_lanes(px, 4, 2, 0, in);
+    break;
+  case PD_FMT_R32I:
+    store_lanes(px, 1, 4, 0, in);
+    break;
+  case PD_FMT_RG32I:
+    store_lanes(px, 2, 4, 0, in);
+    break;
+  case PD_FMT_RGBA32UI: case PD_FMT_RGBA32I:
+    store_lanes(px, 4, 4, 0, in);
     break;
   case PD_FMT_R16F:
     store_floats(px, 1, 1, in);

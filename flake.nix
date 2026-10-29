@@ -3010,6 +3010,17 @@
               spirvCross = spirvCrossPdBuild;
               inherit (pkgs) spirv-headers glm stb xxd;
             };
+          # mslc for Metal.framework's newLibraryWithSource:, loaded into PD's clang
+          mslcPdBuild =
+            pkgs.callPackage ./nix/pkgs/gpu/mslc-pd.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              libcxxDylib = libcxxDylibBuild;
+              libcxxabiDylib = libcxxabiDylibBuild;
+              llvm = llvmCrossBuild;
+              clang = clangCrossBuild;
+              clangHeaders = pkgs.llvmPackages_21.clang-unwrapped;
+            };
           metalObjcPdBuild =
             pkgs.callPackage ./nix/pkgs/gpu/metal-objc-pd.nix {
               inherit darwinCrossToolchain nativeLd appleSdk;
@@ -5111,7 +5122,7 @@
               coreServicesBuild dbusBuild dilloBuild diskArbitrationBuild wineBuild cabextractBuild winetricksBuild dxvkBuild dmenuBuild exoBuild expatBuild fastfetchBuild
               libX11SharedBuild libxcbSharedBuild libXauSharedBuild libXdmcpSharedBuild
               libXextSharedBuild libXrenderSharedBuild libXfixesSharedBuild libXiSharedBuild
-              libXcursorSharedBuild libXrandrSharedBuild libXxf86vmSharedBuild nettleSharedBuild gnutlsSharedBuild glibNetworkingBuild llvmCrossBuild vulkanLoaderBuild libxshmfenceSharedBuild vulkanToolsBuild vulkanLoaderNoxBuild vulkanToolsNoxBuild mesaVenusWaylandBuild venusTestsNoxBuild libdrmVirtgpuBuild glfwPdBuild metalPdNoxBuild metalObjcPdNoxBuild metalAppleSamplesNoxBuild spirvCrossPdBuild
+              libXcursorSharedBuild libXrandrSharedBuild libXxf86vmSharedBuild nettleSharedBuild gnutlsSharedBuild glibNetworkingBuild llvmCrossBuild vulkanLoaderBuild libxshmfenceSharedBuild vulkanToolsBuild vulkanLoaderNoxBuild vulkanToolsNoxBuild mesaVenusWaylandBuild venusTestsNoxBuild libdrmVirtgpuBuild glfwPdBuild metalPdNoxBuild metalObjcPdNoxBuild metalAppleSamplesNoxBuild spirvCrossPdBuild mslcPdBuild
               fbdoomBuild fbdoomExternalSrc fileBuild flexBuild fontconfigBuild foundationBuild frameworkCompatBuild swiftRuntimeBuild cocoaBuild appFrameworksBuild cgFfTestsBuild frameworksFfTestsBuild mpsNoxBuild audiotoolboxBuild pcmplayBuild coreaudiodBuild pdMetalSurfaceBuild carbonBuild iosurfaceBuild iosurfaceTestsBuild
               freetype2Build fribidiBuild garconBuild gdkPixbufBuild gitBuild glibBuild gnum4Build
               gnumakeBuild gtk3Build gtkLayerShellBuild gtk3NoxBuild gtkLayerShellNoxBuild onyx2dBuild coregraphicsBuild coretextBuild quartzcoreBuild corevideoBuild coredataBuild cgScreenDemoBuild systemFontsBuild cairoNoxBuild dbusNoxBuild pdEpollShimBuild tllistBuild fcftBuild footBuild userlandNoxBuild pangoNoxBuild netsurfNoxBuild libepoxyNoxBuild fastfetchNoxBuild harfbuzzNoxBuild atspi2CoreNoxBuild cairoGobjectNoxBuild xkbcommonNoxBuild mesaNoxBuild openglFrameworkNoxBuild mesaDemosNoxBuild librsvgNoxBuild harfbuzzBuild i3Build i3statusShimBuild iceauthBuild
@@ -5355,10 +5366,12 @@
             metal-objc = metalObjcPdBuild;
             # the Wayland images' Metal.framework, so it can be built and injected on its own
             metal-objc-nox = metalObjcPdNoxBuild;
+            mslc-pd = mslcPdBuild;
             uigallery = uigalleryBuild;
             opengl-framework-nox = openglFrameworkNoxBuild;
             mps = mpsBuild;
             metal-apple-samples = metalAppleSamplesBuild;
+            metal-apple-samples-nox = metalAppleSamplesNoxBuild;
             framework-compat = frameworkCompatBuild;
             cocoa = cocoaBuild;
             app-frameworks = appFrameworksBuild;

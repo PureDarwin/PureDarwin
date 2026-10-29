@@ -127,6 +127,7 @@
 , metalPdNoxBuild
 , metalObjcPdNoxBuild
 , metalAppleSamplesNoxBuild
+, mslcPdBuild
 , spirvCrossPdBuild
 , libxshmfenceSharedBuild
 , iomediacheckBuild
@@ -1309,6 +1310,8 @@ let
           vulkanLoaderNoxBuild mesaVenusWaylandBuild pdMetalSurfaceBuild libdrmVirtgpuBuild vulkanToolsNoxBuild venusTestsNoxBuild
           # the Metal demos: pdmtl and Indium tests (metal-pd), Metal.framework (metal-objc), Apple's samples
           glfwPdBuild metalPdNoxBuild metalObjcPdNoxBuild metalAppleSamplesNoxBuild spirvCrossPdBuild
+          # mslc compiles newLibraryWithSource: on a cache miss, through the image's clang
+          mslcPdBuild
       ];
       imageWaylandBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemWayland;

@@ -128,6 +128,13 @@ struct Md {
   }
 };
 
+// a [[function_constant(n)]] variable: "FC|index|type|name" from the plugin
+struct FuncConst {
+  std::string global, type, name;
+  unsigned index;
+};
+static std::vector<FuncConst> fconsts;
+
 static std::vector<Entry> read_entries(Module &m) {
   std::vector<Entry> es;
   GlobalVariable *ga = m.getGlobalVariable("llvm.global.annotations");
@@ -139,14 +146,22 @@ static std::vector<Entry> read_entries(Module &m) {
   for (unsigned i = 0; i < arr->getNumOperands(); i++) {
     auto *cs = cast<ConstantStruct>(arr->getOperand(i));
     auto *fn = dyn_cast<Function>(cs->getOperand(0)->stripPointerCasts());
+    auto *gv = dyn_cast<GlobalVariable>(cs->getOperand(0)->stripPointerCasts());
     auto *sg = dyn_cast<GlobalVariable>(cs->getOperand(1)->stripPointerCasts());
-    if (!fn || !sg || !sg->hasInitializer())
+    if ((!fn && !gv) || !sg || !sg->hasInitializer())
       continue;
     auto *cda = dyn_cast<ConstantDataArray>(sg->getInitializer());
     if (!cda || !cda->isCString())
       continue;
     std::string d = cda->getAsCString().str();
-    if (d.compare(0, 2, "E|"))
+    if (gv && !d.compare(0, 3, "FC|")) {
+      std::vector<std::string> f = split(d, '|');
+      // loads must not see the zero initializer: the value comes when the pipeline is specialized
+      gv->setExternallyInitialized(true);
+      fconsts.push_back({ gv->getName().str(), f[2], f[3], (unsigned)atoi(f[1].c_str()) });
+      continue;
+    }
+    if (!fn || d.compare(0, 2, "E|"))
       continue;
 
     Entry e;
@@ -202,18 +217,48 @@ static void interp(Md &md, const std::vector<std::string> &a) {
   md.s(where).s(persp);
 }
 
+// the name Apple gives a varying without an attribute: generated(<length><name><Itanium type>), as in
+// "generated(10v_texCoordDv3_f)" for a float3 v_texCoord
+static std::string generated_name(const std::string &lt, const std::string &tname, const std::string &name) {
+  size_t x = lt.find('x');
+  std::string e = x == std::string::npos ? lt : lt.substr(0, x), m;
+  bool u = !tname.compare(0, 1, "u");
+
+  if (e == "f32")
+    m = "f";
+  else if (e == "f16")
+    m = "Dh";
+  else if (e == "i32")
+    m = u ? "j" : "i";
+  else if (e == "i16")
+    m = u ? "t" : "s";
+  else if (e == "i8")
+    m = u ? "h" : "c";
+  else
+    m = "v";
+  if (x != std::string::npos)
+    m = "Dv" + lt.substr(x + 1) + "_" + m;
+  return "generated(" + std::to_string(name.size()) + name + m + ")";
+}
+
 // an output (return value or member) and its AIR description
 static MDNode *output_md(LLVMContext &c, const std::string &stage, const std::vector<std::string> &a,
-                         const std::string &tname, const std::string &name) {
+                         const std::string &tname, const std::string &name, const std::string &lt = "") {
   Md md(c);
   std::string x;
 
   if (has(a, "user", &x) && stage == "vertex")
     md.s("air.vertex_output").s(x);
+  else if (stage == "vertex" && (a.empty() || (a.size() == 1 && a[0].empty())) && !name.empty())
+    md.s("air.vertex_output").s(generated_name(lt, tname, name));
   else if (has(a, "position"))
     md.s("air.position");
   else if (has(a, "point_size"))
     md.s("air.point_size");
+  else if (has(a, "render_target_array_index"))
+    md.s("air.render_target_array_index");
+  else if (has(a, "viewport_array_index"))
+    md.s("air.viewport_array_index");
   else if (has(a, "clip_distance"))
     md.s("air.clip_distance");
   else if (has(a, "color", &x)) {
@@ -368,6 +413,8 @@ static Function *build_entry(Module &m, Entry &e) {
           fm.s("air.vertex_input").s("air.location_index").i(attr_int(x)).i(1);
         else if (has(a, "user", &x))
           fm.s("air.fragment_input").s(x), interp(fm, a);
+        else if (e.stage == "fragment" && (a.empty() || (a.size() == 1 && a[0].empty())))
+          fm.s("air.fragment_input").s(generated_name(fl.f[2], fl.f[3], fl.f[5])), interp(fm, a);
         else
           builtin_md(fm, e.stage, a);
         fm.s("air.arg_type_name").s(fl.f[3]).s("air.arg_name").s(fl.f[5]);
@@ -428,7 +475,7 @@ static Function *build_entry(Module &m, Entry &e) {
       auto &o = e.outs[j];
       Value *x = b.CreateLoad(lty(c, o.f[2]), byte_ptr(b, ret_slot, (unsigned)atoi(o.f[1].c_str())));
       r = b.CreateInsertValue(r, x, j);
-      outs.push_back(output_md(c, e.stage, split(o.f[4], ','), o.f[3], o.f[5]));
+      outs.push_back(output_md(c, e.stage, split(o.f[4], ','), o.f[3], o.f[5], o.f[2]));
     }
     b.CreateRet(r);
   } else {
@@ -607,9 +654,11 @@ static void constant_globals(Module &m) {
   }
 
   for (GlobalVariable *g : gs) {
-    auto *ng = new GlobalVariable(m, g->getValueType(), true, g->getLinkage(), g->getInitializer(), "", nullptr,
-                                  GlobalValue::NotThreadLocal, AS_CONSTANT);
+    // globals a static initialiser writes stay writable, as in Apple's output
+    auto *ng = new GlobalVariable(m, g->getValueType(), g->isConstant(), g->getLinkage(), g->getInitializer(), "",
+                                  nullptr, GlobalValue::NotThreadLocal, AS_CONSTANT);
     ng->takeName(g);
+    ng->setExternallyInitialized(g->isExternallyInitialized());
     ng->setAlignment(g->getAlign());
     g->replaceAllUsesWith(ConstantExpr::getAddrSpaceCast(ng, g->getType()));
     g->eraseFromParent();
@@ -763,6 +812,111 @@ static void run(Module &m, const std::string &pipeline) {
   mpm.run(m, mam);
 }
 
+// pd.const_sampler(state) calls: one internal __air_sampler_state global per state, listed in
+// !air.sampler_states, as Apple's compiler emits constexpr samplers
+static void const_samplers(Module &m) {
+  Function *f = m.getFunction("pd.const_sampler");
+  LLVMContext &c = m.getContext();
+  std::map<uint64_t, GlobalVariable *> made;
+
+  if (!f)
+    return;
+  for (User *u : make_early_inc_range(f->users())) {
+    auto *call = dyn_cast<CallInst>(u);
+    if (!call)
+      continue;
+    auto *k = dyn_cast<ConstantInt>(call->getArgOperand(0));
+    if (!k)
+      fail("constexpr sampler whose state is not a constant in " + call->getFunction()->getName().str());
+    GlobalVariable *&g = made[k->getZExtValue()];
+    if (!g) {
+      // Xcode 26's shape: [2 x i64] { state, 0 }
+      ArrayType *at = ArrayType::get(Type::getInt64Ty(c), 2);
+      Constant *init = ConstantArray::get(at, { k, ConstantInt::get(Type::getInt64Ty(c), 0) });
+      g = new GlobalVariable(m, at, true, GlobalValue::InternalLinkage, init, "__air_sampler_state", nullptr,
+                             GlobalValue::NotThreadLocal, AS_CONSTANT);
+      g->setAlignment(Align(8));
+      m.getOrInsertNamedMetadata("air.sampler_states")
+          ->addOperand(MDNode::get(c, { MDString::get(c, "air.sampler_state"), ValueAsMetadata::get(g) }));
+    }
+    call->replaceAllUsesWith(ConstantExpr::getPointerBitCastOrAddrSpaceCast(g, call->getType()));
+    call->eraseFromParent();
+  }
+  if (f->use_empty())
+    f->eraseFromParent();
+}
+
+// function constants in Apple's shape: an externally initialized constant in air.fc_initializer, named in
+// !air.function_constants, its static initialisers in air.static_init, is_function_constant_defined on space 2
+static void function_constants(Module &m) {
+  LLVMContext &c = m.getContext();
+
+  for (auto &fc : fconsts) {
+    GlobalVariable *g = m.getGlobalVariable(fc.global, true);
+    if (!g)
+      continue;
+    g->setInitializer(UndefValue::get(g->getValueType()));
+    g->setConstant(true);
+    g->setExternallyInitialized(true);
+    g->setLinkage(GlobalValue::LinkOnceODRLinkage);
+    g->setVisibility(GlobalValue::HiddenVisibility);
+    g->setSection("air.fc_initializer");
+    m.getOrInsertNamedMetadata("air.function_constants")
+        ->addOperand(MDNode::get(c, { ValueAsMetadata::get(g), MDString::get(c, fc.type), MDString::get(c, fc.name),
+                                      ConstantAsMetadata::get(ConstantInt::get(Type::getInt32Ty(c), fc.index)) }));
+  }
+  // loads and stores of constant space globals name them directly, as Apple's do
+  for (GlobalVariable &g : m.globals()) {
+    if (g.getAddressSpace() != AS_CONSTANT)
+      continue;
+    for (User *u : make_early_inc_range(g.users())) {
+      auto *ce = dyn_cast<ConstantExpr>(u);
+      if (!ce || ce->getOpcode() != Instruction::AddrSpaceCast)
+        continue;
+      for (User *cu : make_early_inc_range(ce->users())) {
+        if (auto *ld = dyn_cast<LoadInst>(cu))
+          ld->setOperand(0, &g);
+        else if (auto *st = dyn_cast<StoreInst>(cu); st && st->getPointerOperand() == ce)
+          st->setOperand(1, &g);
+      }
+    }
+  }
+  if (GlobalVariable *ctors = m.getGlobalVariable("llvm.global_ctors")) {
+    if (auto *arr = dyn_cast<ConstantArray>(ctors->getInitializer())) {
+      for (Value *op : arr->operands()) {
+        if (auto *fn = dyn_cast<Function>(cast<ConstantStruct>(op)->getOperand(1)->stripPointerCasts()))
+        {
+          fn->setSection("air.static_init");
+          // spir kernel argument metadata means nothing to AIR
+          for (const char *k : { "kernel_arg_addr_space", "kernel_arg_access_qual", "kernel_arg_type",
+                                 "kernel_arg_base_type", "kernel_arg_type_qual" })
+            fn->setMetadata(k, nullptr);
+        }
+      }
+    }
+  }
+  if (Function *d = m.getFunction("air.is_function_constant_defined")) {
+    FunctionType *ft = FunctionType::get(Type::getInt1Ty(c), { PointerType::get(c, AS_CONSTANT) }, false);
+    d->setName("");
+    Function *nd = Function::Create(ft, GlobalValue::ExternalLinkage, "air.is_function_constant_defined", m);
+    for (User *u : make_early_inc_range(d->users())) {
+      auto *call = dyn_cast<CallInst>(u);
+      if (!call)
+        continue;
+      IRBuilder<> b(call);
+      Value *p = call->getArgOperand(0)->stripPointerCasts();
+      if (p->getType()->getPointerAddressSpace() != AS_CONSTANT)
+        p = b.CreateAddrSpaceCast(p, PointerType::get(c, AS_CONSTANT));
+      Value *r = b.CreateCall(nd, { p });
+      if (call->getType() != r->getType())
+        r = b.CreateZExt(r, call->getType());
+      call->replaceAllUsesWith(r);
+      call->eraseFromParent();
+    }
+    d->eraseFromParent();
+  }
+}
+
 static void module_md(Module &m) {
   LLVMContext &c = m.getContext();
   const char *limits[][2] = { { "air.max_device_buffers", "31" }, { "air.max_constant_buffers", "31" },
@@ -780,8 +934,59 @@ static void module_md(Module &m) {
   co->addOperand(Md(c).s("air.compile.framebuffer_fetch_enable").get());
 }
 
+static void put(std::string &b, uint64_t v, unsigned n) {
+  for (unsigned i = 0; i < n; i++)
+    b += (char)(v >> 8 * i);
+}
+
+// a metallib the way pdmtl_lib_load_data reads one: the function list offset at 0x18, the bitcode section at
+// 0x48, one entry per function with NAME, MDSZ and OFFT tags, all sharing the module's bitcode
+static bool write_mtlb(const std::string &path, Module &m, const std::vector<Entry> &es) {
+  SmallVector<char, 0> bc;
+  raw_svector_ostream bs(bc);
+  std::string list, file;
+  std::error_code ec;
+
+  WriteBitcodeToFile(m, bs);
+  put(list, es.size(), 4);
+  for (const Entry &e : es) {
+    std::string t;
+    t += "NAME";
+    put(t, e.name.size() + 1, 2);
+    t += e.name;
+    t += '\0';
+    t += "MDSZ";
+    put(t, 8, 2);
+    put(t, bc.size(), 8);
+    t += "OFFT";
+    put(t, 24, 2);
+    put(t, 0, 8);
+    put(t, 0, 8);
+    put(t, 0, 8);
+    t += "ENDT";
+    put(list, t.size() + 4, 4);
+    list += t;
+  }
+  uint64_t flist = 0x58, bcoff = flist + list.size();
+  file = "MTLB";
+  file.resize(0x18, '\0');
+  put(file, flist, 8);
+  put(file, list.size(), 8);
+  file.resize(0x48, '\0');
+  put(file, bcoff, 8);
+  put(file, bc.size(), 8);
+  file += list;
+  file.append(bc.data(), bc.size());
+
+  raw_fd_ostream o(path, ec, sys::fs::OF_None);
+  if (ec)
+    return false;
+  o << file;
+  return true;
+}
+
 int main(int argc, char **argv) {
-  std::string in, out, ll, lib, entry;
+  std::string in, out, ll, lib, mtlb, entry;
   LLVMContext c;
   SMDiagnostic diag;
 
@@ -793,13 +998,15 @@ int main(int argc, char **argv) {
       ll = argv[++i];
     else if (a == "-m" && i + 1 < argc)
       lib = argv[++i];
+    else if (a == "-L" && i + 1 < argc)
+      mtlb = argv[++i];
     else if (a == "-e" && i + 1 < argc)
       entry = argv[++i];
     else
       in = a;
   }
   if (in.empty())
-    fail("usage: airify IN.ll [-o OUT.bc] [-S OUT.ll] [-m OUT.metallib -e ENTRY]");
+    fail("usage: airify IN.ll [-o OUT.bc] [-S OUT.ll] [-m OUT.metallib -e ENTRY] [-L OUT.metallib]");
 
   std::unique_ptr<Module> m = parseIRFile(in, diag, c);
   if (!m) {
@@ -852,6 +1059,8 @@ int main(int argc, char **argv) {
   run(*m, "function(instcombine<no-verify-fixpoint>,simplifycfg,adce),globaldce");
   lower_intrinsics(*m);
   lower_converts(*m);
+  const_samplers(*m);
+  function_constants(*m);
 
   // AIR's target, attributes that only meant something to spir, and the module metadata
   for (Function &f : *m) {
@@ -899,5 +1108,7 @@ int main(int argc, char **argv) {
     o << "NAME" << (char)(n & 0xff) << (char)(n >> 8) << entry << '\0';
     o.write(bc.data(), bc.size());
   }
+  if (!mtlb.empty() && !write_mtlb(mtlb, *m, es))
+    fail("cannot write " + mtlb);
   return 0;
 }

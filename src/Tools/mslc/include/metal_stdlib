@@ -545,9 +545,95 @@ enum class access { sample, read, write, read_write };
 struct _texture_2d_t;
 struct _sampler_t;
 
+// constexpr sampler arguments, valued as the fields of AIR's 64 bit sampler state they set. The layout is read
+// from Apple's metal output (Xcode 26) for samplers with each argument: addresses at 0, 3, 6, mag, min and mip
+// filters at 9, 11, 13, coord at 15, compare at 16, anisotropy - 1 at 20, lod clamp halves at 24 and 40, border
+// colour at 56. clamp_to_border is address 0 with its border colour, transparent black is clamp_to_zero
+enum class coord { normalized = 0, pixel = 1 };
+enum class address { clamp_to_zero = 0, clamp_to_edge = 1, repeat = 2, mirrored_repeat = 3, clamp_to_border = 0 };
+enum class s_address { clamp_to_zero = 0, clamp_to_edge = 1, repeat = 2, mirrored_repeat = 3, clamp_to_border = 0 };
+enum class t_address { clamp_to_zero = 0, clamp_to_edge = 1, repeat = 2, mirrored_repeat = 3, clamp_to_border = 0 };
+enum class r_address { clamp_to_zero = 0, clamp_to_edge = 1, repeat = 2, mirrored_repeat = 3, clamp_to_border = 0 };
+enum class filter { nearest = 0, linear = 1 };
+enum class mag_filter { nearest = 0, linear = 1 };
+enum class min_filter { nearest = 0, linear = 1 };
+enum class mip_filter { none = 0, nearest = 1, linear = 2 };
+enum class compare_func {
+  none = 8, less = 1, less_equal = 2, greater = 3, greater_equal = 4, equal = 5, not_equal = 6, always = 7, never = 8
+};
+enum class border_color { transparent_black = 0, opaque_black = 1, opaque_white = 2 };
+struct max_anisotropy {
+  int value;
+  constexpr max_anisotropy(int v) : value(v) {}
+};
+struct lod_clamp {
+  float lo, hi;
+  constexpr lod_clamp(float a, float b) : lo(a), hi(b) {}
+};
+
+// the state Apple's compiler gives a constexpr sampler with no arguments: clamp_to_edge on all three axes,
+// nearest filters, no mip filter, normalized coordinates, no compare, anisotropy 1, lod clamp 0 to the half maximum
+constexpr ulong __pd_sampler_default = 0x007bff0000080049ul;
+constexpr ulong __pd_sfield(ulong s, unsigned at, unsigned bits, unsigned v) {
+  return (s & ~(((1ul << bits) - 1) << at)) | (ulong)v << at;
+}
+// a lod as a half, rounded to nearest, clamped to the half maximum as Apple's FLT_MAX default is
+constexpr unsigned __pd_lod_half(float f) {
+  if (!(f > 0.0f))
+    return 0;
+  if (f >= 65504.0f)
+    return 0x7bff;
+  uint u = __builtin_bit_cast(uint, f);
+  int e = (int)(u >> 23) - 127 + 15;
+  uint m = u & 0x7fffff;
+  // below the smallest normal half a lod is 0 for every purpose
+  if (e <= 0)
+    return 0;
+  uint h = (uint)e << 10 | m >> 13;
+  return (unsigned)(h + ((m >> 12) & 1));
+}
+constexpr ulong __pd_sapply(ulong s, coord c) { return __pd_sfield(s, 15, 1, (unsigned)c); }
+constexpr ulong __pd_sapply(ulong s, address a) {
+  return __pd_sfield(__pd_sfield(__pd_sfield(s, 0, 3, (unsigned)a), 3, 3, (unsigned)a), 6, 3, (unsigned)a);
+}
+constexpr ulong __pd_sapply(ulong s, s_address a) { return __pd_sfield(s, 0, 3, (unsigned)a); }
+constexpr ulong __pd_sapply(ulong s, t_address a) { return __pd_sfield(s, 3, 3, (unsigned)a); }
+constexpr ulong __pd_sapply(ulong s, r_address a) { return __pd_sfield(s, 6, 3, (unsigned)a); }
+constexpr ulong __pd_sapply(ulong s, filter f) { return __pd_sfield(__pd_sfield(s, 9, 2, (unsigned)f), 11, 2, (unsigned)f); }
+constexpr ulong __pd_sapply(ulong s, mag_filter f) { return __pd_sfield(s, 9, 2, (unsigned)f); }
+constexpr ulong __pd_sapply(ulong s, min_filter f) { return __pd_sfield(s, 11, 2, (unsigned)f); }
+constexpr ulong __pd_sapply(ulong s, mip_filter f) { return __pd_sfield(s, 13, 2, (unsigned)f); }
+constexpr ulong __pd_sapply(ulong s, compare_func f) { return __pd_sfield(s, 16, 4, (unsigned)f); }
+constexpr ulong __pd_sapply(ulong s, border_color b) { return __pd_sfield(s, 56, 2, (unsigned)b); }
+constexpr ulong __pd_sapply(ulong s, max_anisotropy a) {
+  return __pd_sfield(s, 20, 4, (unsigned)(a.value < 1 ? 0 : a.value > 16 ? 15 : a.value - 1));
+}
+constexpr ulong __pd_sapply(ulong s, lod_clamp l) {
+  return __pd_sfield(__pd_sfield(s, 24, 16, __pd_lod_half(l.lo)), 40, 16, __pd_lod_half(l.hi));
+}
+
+__attribute__((const, nothrow)) __constant _sampler_t *__pd_const_sampler(ulong) __asm__("pd.const_sampler");
+
 struct sampler {
   __constant _sampler_t *__h;
 };
+
+// mslc spells constexpr sampler as constexpr __pd_csampler: the state is a constant expression, and the
+// sampler it converts to names a __air_sampler_state global, which airify makes from pd.const_sampler(state)
+struct __pd_csampler {
+  ulong __state;
+
+  template <class... A> constexpr __pd_csampler(A... a) : __state(__pd_sampler_default) {
+    ((__state = __pd_sapply(__state, a)), ...);
+  }
+  operator sampler() const {
+    return sampler{ __pd_const_sampler(__state) };
+  }
+};
+
+inline __constant _sampler_t *__pd_smp(sampler s) {
+  return s.__h;
+}
 
 struct level {
   float lod;
@@ -557,6 +643,14 @@ struct bias {
   float value;
   explicit bias(float b) : value(b) {}
 };
+struct gradient2d {
+  float2 dx, dy;
+  gradient2d(float2 x, float2 y) : dx(x), dy(y) {}
+};
+struct min_lod_clamp {
+  float value;
+  explicit min_lod_clamp(float v) : value(v) {}
+};
 
 // calls named pd.sret.air.* return AIR's { texel, i8 } pair: airify restores the pair
 template <class T> struct __pd_tex2d;
@@ -564,11 +658,11 @@ template <class T> struct __pd_tex2d;
   __attribute__((pure, convergent, nothrow)) vec<T, 4> __pd_sample_2d_##T(__global _texture_2d_t *,                    \
                                                                       __constant _sampler_t *, float2, bool, int2, \
                                                                       bool, float, float, int) __asm__(            \
-      "pd.sret.air.sample_texture_2d.v4" t);                                                                        \
+      "pd.sret.air.sample_texture_2d." t);                                                                        \
   __attribute__((pure, nothrow)) vec<T, 4> __pd_read_2d_##T(__global _texture_2d_t *, uint2, uint, int) __asm__(        \
-      "pd.sret.air.read_texture_2d.v4" t);                                                                          \
+      "pd.sret.air.read_texture_2d." t);                                                                          \
   __attribute__((nothrow)) void __pd_write_2d_##T(__global _texture_2d_t *, uint2, vec<T, 4>, uint, int) __asm__(      \
-      "air.write_texture_2d.v4" t);                                                                         \
+      "air.write_texture_2d." t);                                                                         \
   template <> struct __pd_tex2d<T> {                                                                                \
     static vec<T, 4> sample(__global _texture_2d_t *h, __constant _sampler_t *s, float2 c, int2 off, bool lod,     \
                             float v) {                                                                              \
@@ -582,10 +676,28 @@ template <class T> struct __pd_tex2d;
     }                                                                                                               \
   };
 
-PD_TEX2D(float, "f32")
-PD_TEX2D(half, "f16")
-PD_TEX2D(int, "i32")
-PD_TEX2D(uint, "i32")
+// explicit gradients, Apple's shape: coordinate, dPdx, dPdy, min lod, true, offset, 0
+template <class T> struct __pd_tex2dg;
+#define PD_TEX2DG(T, t)                                                                                             \
+  __attribute__((pure, nothrow)) vec<T, 4> __pd_sample_2dg_##T(__global _texture_2d_t *, __constant _sampler_t *,     \
+                                                               float2, float2, float2, float, bool, int2, int)       \
+      __asm__("pd.sret.air.sample_texture_2d_grad." t);                                                         \
+  template <> struct __pd_tex2dg<T> {                                                                               \
+    static vec<T, 4> sample(__global _texture_2d_t *h, __constant _sampler_t *s, float2 c, float2 dx, float2 dy,   \
+                            int2 off) {                                                                             \
+      return __pd_sample_2dg_##T(h, s, c, dx, dy, 0.0f, true, off, 0);                                              \
+    }                                                                                                               \
+  };
+
+PD_TEX2DG(float, "v4f32")
+PD_TEX2DG(half, "v4f16")
+PD_TEX2DG(int, "s.v4i32")
+PD_TEX2DG(uint, "u.v4i32")
+
+PD_TEX2D(float, "v4f32")
+PD_TEX2D(half, "v4f16")
+PD_TEX2D(int, "s.v4i32")
+PD_TEX2D(uint, "u.v4i32")
 
 __attribute__((pure, nothrow)) uint __pd_width_2d(__global _texture_2d_t *, uint) __asm__("air.get_width_texture_2d");
 __attribute__((pure, nothrow)) uint __pd_height_2d(__global _texture_2d_t *, uint) __asm__("air.get_height_texture_2d");
@@ -594,13 +706,16 @@ template <class T, access A = access::sample> struct texture2d {
   __global _texture_2d_t *__h;
 
   vec<T, 4> sample(sampler s, float2 c, int2 off = (int2)0) const {
-    return __pd_tex2d<T>::sample(__h, s.__h, c, off, false, 0.0f);
+    return __pd_tex2d<T>::sample(__h, __pd_smp(s), c, off, false, 0.0f);
   }
   vec<T, 4> sample(sampler s, float2 c, level l, int2 off = (int2)0) const {
-    return __pd_tex2d<T>::sample(__h, s.__h, c, off, true, l.lod);
+    return __pd_tex2d<T>::sample(__h, __pd_smp(s), c, off, true, l.lod);
   }
   vec<T, 4> sample(sampler s, float2 c, bias b, int2 off = (int2)0) const {
-    return __pd_tex2d<T>::sample(__h, s.__h, c, off, false, b.value);
+    return __pd_tex2d<T>::sample(__h, __pd_smp(s), c, off, false, b.value);
+  }
+  vec<T, 4> sample(sampler s, float2 c, gradient2d g, int2 off = (int2)0) const {
+    return __pd_tex2dg<T>::sample(__h, __pd_smp(s), c, g.dx, g.dy, off);
   }
   vec<T, 4> read(int2 c, uint lod = 0) const {
     return __pd_tex2d<T>::read(__h, as_type<uint2>(c), lod, (int)A);
@@ -619,11 +734,282 @@ template <class T, access A = access::sample> struct texture2d {
   }
 };
 
+// 2D array textures: the slice follows the coordinate, as air2spv decodes array operands
+struct _texture_2d_array_t;
+template <class T> struct __pd_tex2da;
+#define PD_TEX2DA(T, t)                                                                                             \
+  __attribute__((pure, convergent, nothrow)) vec<T, 4> __pd_sample_2da_##T(__global _texture_2d_array_t *,            \
+                                                                       __constant _sampler_t *, float2, uint, bool, \
+                                                                       int2, bool, float, float, int) __asm__(      \
+      "pd.sret.air.sample_texture_2d_array." t);                                                                  \
+  __attribute__((pure, nothrow)) vec<T, 4> __pd_read_2da_##T(__global _texture_2d_array_t *, uint2, uint, uint, int)   \
+      __asm__("pd.sret.air.read_texture_2d_array." t);                                                            \
+  __attribute__((nothrow)) void __pd_write_2da_##T(__global _texture_2d_array_t *, uint2, uint, vec<T, 4>, uint, int) \
+      __asm__("air.write_texture_2d_array." t);                                                                   \
+  template <> struct __pd_tex2da<T> {                                                                               \
+    static vec<T, 4> sample(__global _texture_2d_array_t *h, __constant _sampler_t *s, float2 c, uint i, int2 off,  \
+                            bool lod, float v) {                                                                    \
+      return __pd_sample_2da_##T(h, s, c, i, true, off, lod, v, 0.0f, 0);                                           \
+    }                                                                                                               \
+    static vec<T, 4> read(__global _texture_2d_array_t *h, uint2 c, uint i, uint lod, int a) {                     \
+      return __pd_read_2da_##T(h, c, i, lod, a);                                                                    \
+    }                                                                                                               \
+    static void write(__global _texture_2d_array_t *h, uint2 c, uint i, vec<T, 4> v, uint lod, int a) {            \
+      __pd_write_2da_##T(h, c, i, v, lod, a);                                                                       \
+    }                                                                                                               \
+  };
+
+PD_TEX2DA(float, "v4f32")
+PD_TEX2DA(half, "v4f16")
+PD_TEX2DA(int, "s.v4i32")
+PD_TEX2DA(uint, "u.v4i32")
+
+__attribute__((pure, nothrow)) uint __pd_width_2da(__global _texture_2d_array_t *, uint) __asm__(
+    "air.get_width_texture_2d_array");
+__attribute__((pure, nothrow)) uint __pd_height_2da(__global _texture_2d_array_t *, uint) __asm__(
+    "air.get_height_texture_2d_array");
+__attribute__((pure, nothrow)) uint __pd_size_2da(__global _texture_2d_array_t *) __asm__(
+    "air.get_array_size_texture_2d_array");
+
+template <class T, access A = access::sample> struct texture2d_array {
+  __global _texture_2d_array_t *__h;
+
+  vec<T, 4> sample(sampler s, float2 c, uint i, int2 off = (int2)0) const {
+    return __pd_tex2da<T>::sample(__h, __pd_smp(s), c, i, off, false, 0.0f);
+  }
+  vec<T, 4> sample(sampler s, float2 c, uint i, level l, int2 off = (int2)0) const {
+    return __pd_tex2da<T>::sample(__h, __pd_smp(s), c, i, off, true, l.lod);
+  }
+  vec<T, 4> read(uint2 c, uint i, uint lod = 0) const {
+    return __pd_tex2da<T>::read(__h, c, i, lod, (int)A);
+  }
+  void write(vec<T, 4> v, uint2 c, uint i, uint lod = 0) const {
+    __pd_tex2da<T>::write(__h, c, i, v, lod, (int)A);
+  }
+  uint get_width(uint lod = 0) const {
+    return __pd_width_2da(__h, lod);
+  }
+  uint get_height(uint lod = 0) const {
+    return __pd_height_2da(__h, lod);
+  }
+  uint get_array_size() const {
+    return __pd_size_2da(__h);
+  }
+};
+
+// cube textures in Apple's shapes: sample (coordinate, lod given, lod or bias, min lod, 0), read and write by
+// texel with the face after the coordinate
+struct _texture_cube_t;
+template <class T> struct __pd_texc;
+#define PD_TEXC(T, t)                                                                                               \
+  __attribute__((pure, convergent, nothrow)) vec<T, 4> __pd_sample_cube_##T(__global _texture_cube_t *,               \
+                                                                        __constant _sampler_t *, float3, bool,     \
+                                                                        float, float, int) __asm__(                \
+      "pd.sret.air.sample_texture_cube." t);                                                                      \
+  __attribute__((pure, nothrow)) vec<T, 4> __pd_read_cube_##T(__global _texture_cube_t *, uint2, uint, uint, int)      \
+      __asm__("pd.sret.air.read_texture_cube." t);                                                                \
+  __attribute__((nothrow)) void __pd_write_cube_##T(__global _texture_cube_t *, uint2, uint, vec<T, 4>, uint, int)    \
+      __asm__("air.write_texture_cube." t);                                                                       \
+  template <> struct __pd_texc<T> {                                                                                 \
+    static vec<T, 4> sample(__global _texture_cube_t *h, __constant _sampler_t *s, float3 c, bool lod, float v) {  \
+      return __pd_sample_cube_##T(h, s, c, lod, v, 0.0f, 0);                                                        \
+    }                                                                                                               \
+    static vec<T, 4> read(__global _texture_cube_t *h, uint2 c, uint face, uint lod, int a) {                      \
+      return __pd_read_cube_##T(h, c, face, lod, a);                                                                \
+    }                                                                                                               \
+    static void write(__global _texture_cube_t *h, uint2 c, uint face, vec<T, 4> v, uint lod, int a) {             \
+      __pd_write_cube_##T(h, c, face, v, lod, a);                                                                   \
+    }                                                                                                               \
+  };
+
+PD_TEXC(float, "v4f32")
+PD_TEXC(half, "v4f16")
+PD_TEXC(int, "s.v4i32")
+PD_TEXC(uint, "u.v4i32")
+
+__attribute__((pure, nothrow)) uint __pd_width_cube(__global _texture_cube_t *, uint) __asm__(
+    "air.get_width_texture_cube");
+__attribute__((pure, nothrow)) uint __pd_height_cube(__global _texture_cube_t *, uint) __asm__(
+    "air.get_height_texture_cube");
+
+template <class T, access A = access::sample> struct texturecube {
+  __global _texture_cube_t *__h;
+
+  vec<T, 4> sample(sampler s, float3 c) const {
+    return __pd_texc<T>::sample(__h, __pd_smp(s), c, false, 0.0f);
+  }
+  vec<T, 4> sample(sampler s, float3 c, level l) const {
+    return __pd_texc<T>::sample(__h, __pd_smp(s), c, true, l.lod);
+  }
+  vec<T, 4> sample(sampler s, float3 c, bias b) const {
+    return __pd_texc<T>::sample(__h, __pd_smp(s), c, false, b.value);
+  }
+  vec<T, 4> read(uint2 c, uint face, uint lod = 0) const {
+    return __pd_texc<T>::read(__h, c, face, lod, (int)A);
+  }
+  void write(vec<T, 4> v, uint2 c, uint face, uint lod = 0) const {
+    __pd_texc<T>::write(__h, c, face, v, lod, (int)A);
+  }
+  uint get_width(uint lod = 0) const {
+    return __pd_width_cube(__h, lod);
+  }
+  uint get_height(uint lod = 0) const {
+    return __pd_height_cube(__h, lod);
+  }
+};
+
+// texel buffers in Apple's shapes: read (index, access), write (index, colour, access), get_width
+struct _texture_buffer_t;
+template <class T> struct __pd_texb;
+#define PD_TEXB(T, t)                                                                                               \
+  __attribute__((pure, nothrow)) vec<T, 4> __pd_read_buf_##T(__global _texture_buffer_t *, uint, int) __asm__(        \
+      "pd.sret.air.read_texture_buffer_1d." t);                                                                   \
+  __attribute__((nothrow)) void __pd_write_buf_##T(__global _texture_buffer_t *, uint, vec<T, 4>, int) __asm__(       \
+      "air.write_texture_buffer_1d." t);                                                                          \
+  template <> struct __pd_texb<T> {                                                                                 \
+    static vec<T, 4> read(__global _texture_buffer_t *h, uint c, int a) {                                          \
+      return __pd_read_buf_##T(h, c, a);                                                                            \
+    }                                                                                                               \
+    static void write(__global _texture_buffer_t *h, uint c, vec<T, 4> v, int a) {                                 \
+      __pd_write_buf_##T(h, c, v, a);                                                                               \
+    }                                                                                                               \
+  };
+
+PD_TEXB(float, "v4f32")
+PD_TEXB(half, "v4f16")
+PD_TEXB(int, "s.v4i32")
+PD_TEXB(uint, "u.v4i32")
+
+__attribute__((pure, nothrow)) uint __pd_width_buf(__global _texture_buffer_t *) __asm__(
+    "air.get_width_texture_buffer_1d");
+
+template <class T, access A = access::read> struct texture_buffer {
+  __global _texture_buffer_t *__h;
+
+  vec<T, 4> read(uint c) const {
+    return __pd_texb<T>::read(__h, c, (int)A);
+  }
+  void write(vec<T, 4> v, uint c) const {
+    __pd_texb<T>::write(__h, c, v, (int)A);
+  }
+  uint get_width() const {
+    return __pd_width_buf(__h);
+  }
+};
+
+// multisampled textures in Apple's shapes (read: coordinate, sample, access). air2spv has no multisampled images
+// yet, so these functions do not run
+struct _texture_2d_ms_t;
+struct _texture_2d_ms_array_t;
+template <class T> struct __pd_tex2dms;
+#define PD_TEX2DMS(T, t)                                                                                            \
+  __attribute__((pure, nothrow)) vec<T, 4> __pd_read_2dms_##T(__global _texture_2d_ms_t *, uint2, uint, int) __asm__(  \
+      "pd.sret.air.read_texture_2d_ms." t);                                                                       \
+  __attribute__((pure, nothrow)) vec<T, 4> __pd_read_2dmsa_##T(__global _texture_2d_ms_array_t *, uint2, uint, uint,   \
+                                                               int) __asm__("pd.sret.air.read_texture_2d_ms_array." t); \
+  template <> struct __pd_tex2dms<T> {                                                                              \
+    static vec<T, 4> read(__global _texture_2d_ms_t *h, uint2 c, uint smp, int a) {                                \
+      return __pd_read_2dms_##T(h, c, smp, a);                                                                      \
+    }                                                                                                               \
+    static vec<T, 4> read(__global _texture_2d_ms_array_t *h, uint2 c, uint i, uint smp, int a) {                  \
+      return __pd_read_2dmsa_##T(h, c, i, smp, a);                                                                  \
+    }                                                                                                               \
+  };
+
+PD_TEX2DMS(float, "v4f32")
+PD_TEX2DMS(half, "v4f16")
+PD_TEX2DMS(int, "s.v4i32")
+PD_TEX2DMS(uint, "u.v4i32")
+
+__attribute__((pure, nothrow)) uint __pd_width_2dms(__global _texture_2d_ms_t *) __asm__("air.get_width_texture_2d_ms");
+__attribute__((pure, nothrow)) uint __pd_height_2dms(__global _texture_2d_ms_t *) __asm__("air.get_height_texture_2d_ms");
+__attribute__((pure, nothrow)) uint __pd_samples_2dms(__global _texture_2d_ms_t *) __asm__(
+    "air.get_num_samples_texture_2d_ms");
+
+template <class T, access A = access::read> struct texture2d_ms {
+  __global _texture_2d_ms_t *__h;
+
+  vec<T, 4> read(uint2 c, uint smp) const {
+    return __pd_tex2dms<T>::read(__h, c, smp, (int)A);
+  }
+  uint get_width() const {
+    return __pd_width_2dms(__h);
+  }
+  uint get_height() const {
+    return __pd_height_2dms(__h);
+  }
+  uint get_num_samples() const {
+    return __pd_samples_2dms(__h);
+  }
+};
+
+template <class T, access A = access::read> struct texture2d_ms_array {
+  __global _texture_2d_ms_array_t *__h;
+
+  vec<T, 4> read(uint2 c, uint i, uint smp) const {
+    return __pd_tex2dms<T>::read(__h, c, i, smp, (int)A);
+  }
+};
+
+// unorm packing written out from the MSL specification's conversion rules, no AIR intrinsic involved
+inline uint pack_float_to_unorm4x8(float4 v) {
+  uint4 u = __builtin_convertvector(clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f, uint4);
+  return u.x | u.y << 8 | u.z << 16 | u.w << 24;
+}
+inline float4 unpack_unorm4x8_to_float(uint p) {
+  uint4 u = (uint4)(p & 0xff, p >> 8 & 0xff, p >> 16 & 0xff, p >> 24);
+  return __builtin_convertvector(u, float4) / 255.0f;
+}
+inline uint pack_float_to_unorm2x16(float2 v) {
+  uint2 u = __builtin_convertvector(clamp(v, 0.0f, 1.0f) * 65535.0f + 0.5f, uint2);
+  return u.x | u.y << 16;
+}
+inline float2 unpack_unorm2x16_to_float(uint p) {
+  uint2 u = (uint2)(p & 0xffff, p >> 16);
+  return __builtin_convertvector(u, float2) / 65535.0f;
+}
+inline float3 unpack_unorm565_to_float(ushort p) {
+  uint q = p;
+  return (float3)((float)(q >> 11) / 31.0f, (float)(q >> 5 & 0x3f) / 63.0f, (float)(q & 0x1f) / 31.0f);
+}
+inline ushort pack_float_to_unorm565(float3 v) {
+  float3 c = clamp(v, 0.0f, 1.0f);
+  return (ushort)((uint)(c.x * 31.0f + 0.5f) << 11 | (uint)(c.y * 63.0f + 0.5f) << 5 | (uint)(c.z * 31.0f + 0.5f));
+}
+
+// the indirect argument layouts of Metal's public API
+struct MTLDrawPrimitivesIndirectArguments {
+  uint vertexCount;
+  uint instanceCount;
+  uint vertexStart;
+  uint baseInstance;
+};
+struct MTLDrawIndexedPrimitivesIndirectArguments {
+  uint indexCount;
+  uint instanceCount;
+  uint indexStart;
+  int baseVertex;
+  uint baseInstance;
+};
+struct MTLDispatchThreadgroupsIndirectArguments {
+  uint threadgroupsPerGrid[3];
+};
+struct MTLDrawPatchIndirectArguments {
+  uint patchCount;
+  uint instanceCount;
+  uint patchStart;
+  uint baseInstance;
+};
+
 } // namespace metal
 
 using metal::matrix;
 using metal::vec;
 using namespace metal;
+
+// whether the pipeline gave this function constant a value: AIR asks with the constant's address
+__attribute__((const, nothrow)) bool __pd_fc_defined(const __global void *) __asm__("air.is_function_constant_defined");
+#define is_function_constant_defined(x) __pd_fc_defined(&(x))
 
 // MSL's vector constructors T(a, b, ...): a function-like macro leaves the type name alone elsewhere
 #define float2(...) ::metal::__pd_make<::float2>(__VA_ARGS__)

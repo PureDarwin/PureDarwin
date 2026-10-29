@@ -682,6 +682,17 @@ PD_FENCES(MTLRenderCommandEncoderInternal)
 - (BOOL)hasUnifiedMemory {
   return YES;
 }
+// what MoltenVK asks of a device while it sets up (seen in its message log on a Mac): the executor filters 32 bit
+// floats linearly, resolves 32 bit formats by copying and has the BC formats in its table
+- (BOOL)supports32BitFloatFiltering {
+  return YES;
+}
+- (BOOL)supports32BitMSAA {
+  return NO;
+}
+- (BOOL)supportsBCTextureCompression {
+  return YES;
+}
 - (BOOL)isHeadless {
   return NO;
 }
@@ -1127,17 +1138,39 @@ static NSUInteger pdAlignUp(NSUInteger n, NSUInteger a) {
 }
 @end
 
-// a texture over a buffer's bytes (linear images), its rows have to be the tight rows the executor reads
+// a texture buffer: one row of width texels over an MTLBuffer's bytes, made by newTextureWithDescriptor:offset:bytesPerRow:
+@implementation MTLTextureDescriptor (PDTextureBuffer)
++ (MTLTextureDescriptor *)textureBufferDescriptorWithPixelFormat:(MTLPixelFormat)pixelFormat width:(NSUInteger)width
+                                                 resourceOptions:(MTLResourceOptions)resourceOptions
+                                                           usage:(MTLTextureUsage)usage {
+  MTLTextureDescriptor *d = [[[MTLTextureDescriptor alloc] init] autorelease];
+  d.textureType = MTLTextureTypeTextureBuffer;
+  d.pixelFormat = pixelFormat;
+  d.width = width, d.height = 1, d.depth = 1;
+  d.mipmapLevelCount = 1, d.arrayLength = 1, d.sampleCount = 1;
+  // storage, cache and hazard tracking modes are read from the options
+  d.resourceOptions = resourceOptions;
+  d.usage = usage;
+  return d;
+}
+@end
+
+// a texture over a buffer's bytes (linear images), its rows have to be the tight rows the executor reads. A texture
+// buffer is one row, whatever row pitch the caller passes
 @implementation MTLBufferInternal (PDTextures)
 - (id<MTLTexture>)newTextureWithDescriptor:(MTLTextureDescriptor *)descriptor offset:(NSUInteger)offset
                                bytesPerRow:(NSUInteger)bytesPerRow {
   Indium::TextureDescriptor d = [descriptor asIndiumDescriptor];
+  if (descriptor.textureType == MTLTextureTypeTextureBuffer)
+    d.height = 1, d.depth = 1, bytesPerRow = IndiumPD::tightRowBytes(d.pixelFormat, d.width);
   if (bytesPerRow != IndiumPD::tightRowBytes(d.pixelFormat, d.width)) {
     NSLog(@"Metal: a texture over a buffer needs %zu-byte rows, not %lu", IndiumPD::tightRowBytes(d.pixelFormat, d.width),
           (unsigned long)bytesPerRow);
     return nil;
   }
-  if (offset + IndiumPD::textureStorageSize(d) > self.length) return nil;
+  // a texture buffer's bytes are its row, the storage size rounds a slice up
+  size_t need = descriptor.textureType == MTLTextureTypeTextureBuffer ? bytesPerRow : IndiumPD::textureStorageSize(d);
+  if (offset + need > self.length) return nil;
   MTLTextureInternal *t = [[MTLTextureInternal alloc] initWithTexture:IndiumPD::newBufferTexture(self.buffer, offset, d)
                                                                device:self.device resourceOptions:descriptor.resourceOptions];
   [t setBuffer:self offset:offset bytesPerRow:bytesPerRow];

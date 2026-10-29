@@ -120,6 +120,37 @@ namespace IndiumPD {
 		report("draw", rc);
 	}
 
+	// an indirect draw's arguments (MTLDraw[Indexed]PrimitivesIndirectArguments) as the GPU left them when the draw
+	// runs, false when they draw nothing
+	static bool indirectDraw(struct PDDrawRequest &r, uint32_t off) {
+		const uint32_t *a;
+
+		pdmtl_sync(off, 20);
+		a = (const uint32_t *)(pdmtl_arena() + off);
+		if (!a[0] || !a[1])
+			return false;
+		r.count = a[0], r.instances = a[1];
+		if (r.indexed) {
+			r.indexOff += a[2] * r.indexBytes;
+			r.ext.baseVertex = (int32_t)a[3], r.ext.baseInstance = a[4];
+		} else {
+			r.ext.firstVertex = a[2], r.ext.baseInstance = a[3];
+		}
+		return true;
+	}
+
+	// an indirect dispatch's threadgroupsPerGrid (MTLDispatchThreadgroupsIndirectArguments) when it runs
+	static bool indirectDispatch(struct PDComputeRequest &r, uint32_t off) {
+		const uint32_t *a;
+
+		pdmtl_sync(off, 12);
+		a = (const uint32_t *)(pdmtl_arena() + off);
+		if (!a[0] || !a[1] || !a[2])
+			return false;
+		r.grid[0] = a[0], r.grid[1] = a[1], r.grid[2] = a[2];
+		return true;
+	}
+
 	void runCompute(struct PDComputeRequest &r) {
 		uint64_t t0 = profiling() ? nowUs() : 0;
 		int rc = pdmtl_exec_compute(&r);
@@ -306,7 +337,7 @@ namespace IndiumPD {
 			if (!b)
 				return;
 			draw(type, count, instances, b->offset() + (uint32_t)offset, true, indexType == Indium::IndexType::UInt32 ? 4 : 2, 0,
-			     (int32_t)baseVertex, (uint32_t)baseInstance);
+			     (int32_t)baseVertex, (uint32_t)baseInstance, nullptr, 0, b);
 		}
 		void drawIndexedPrimitives(Indium::PrimitiveType type, size_t count, Indium::IndexType indexType, std::shared_ptr<Indium::Buffer> indexBuffer,
 		                           size_t offset, size_t instances) override {
@@ -406,8 +437,22 @@ namespace IndiumPD {
 			pdmtl_fill(&d, v);
 		}
 
+	public:
+		// arguments read from args at argOff when the draw runs, the index buffer as for drawIndexedPrimitives
+		void drawIndirect(Indium::PrimitiveType type, bool indexed, Indium::IndexType indexType, std::shared_ptr<Indium::Buffer> indexBuffer,
+		                  size_t indexOffset, std::shared_ptr<Indium::Buffer> args, size_t argOff) {
+			auto a = asBuffer(args), b = indexed ? asBuffer(indexBuffer) : nullptr;
+
+			if (!a || (indexed && !b))
+				return;
+			draw(type, 1, 1, indexed ? b->offset() + (uint32_t)indexOffset : 0, indexed,
+			     indexType == Indium::IndexType::UInt32 ? 4 : 2, 0, 0, 0, a, a->offset() + (uint32_t)argOff, b);
+		}
+
+	private:
 		void draw(Indium::PrimitiveType type, size_t count, size_t instances, uint32_t indexOff, bool indexed, uint32_t indexBytes,
-		          uint32_t firstVertex, int32_t baseVertex, uint32_t baseInstance) {
+		          uint32_t firstVertex, int32_t baseVertex, uint32_t baseInstance, std::shared_ptr<Buffer> args = nullptr,
+		          uint32_t argOff = 0, std::shared_ptr<Buffer> indices = nullptr) {
 			struct PDDrawRequest r;
 			auto cb = _cb.lock();
 
@@ -502,7 +547,14 @@ namespace IndiumPD {
 			r.viewport[0] = _viewport.originX, r.viewport[1] = _viewport.originY;
 			r.viewport[2] = _viewport.width, r.viewport[3] = _viewport.height;
 			r.viewport[4] = _viewport.znear, r.viewport[5] = _viewport.zfar;
-			cb->add([r]() mutable { runDraw(r); });
+			// the index and argument buffers live until the draw has run, as a command buffer keeps what it uses
+			if (args)
+				cb->add([r, args, argOff, indices]() mutable {
+					if (indirectDraw(r, argOff))
+						runDraw(r);
+				});
+			else
+				cb->add([r, indices]() mutable { runDraw(r); });
 		}
 
 	public:
@@ -640,13 +692,18 @@ namespace IndiumPD {
 				_tgmem[index] = (uint32_t)length;
 		}
 		void dispatchThreadgroups(Indium::Size groups, Indium::Size tpg) override { dispatch(groups, tpg, false); }
+		// threadgroupsPerGrid read from args at argOff when the dispatch runs
+		void dispatchIndirect(std::shared_ptr<Indium::Buffer> args, size_t argOff, Indium::Size tpg) {
+			if (auto a = asBuffer(args))
+				dispatch({ 1, 1, 1 }, tpg, false, a, a->offset() + (uint32_t)argOff);
+		}
 		void dispatchThreads(Indium::Size threads, Indium::Size tpg) override { dispatch(threads, tpg, true); }
 		void setImageblockSize(size_t width, size_t height) override { _ib[0] = (uint32_t)width, _ib[1] = (uint32_t)height; }
 		void setStageInRegion(Indium::Region) override {}
 		Indium::DispatchType dispatchType() override { return _type; }
 
 	private:
-		void dispatch(Indium::Size grid, Indium::Size tpg, bool threads) {
+		void dispatch(Indium::Size grid, Indium::Size tpg, bool threads, std::shared_ptr<Buffer> args = nullptr, uint32_t argOff = 0) {
 			struct PDComputeRequest r;
 			auto cb = _cb.lock();
 
@@ -666,7 +723,13 @@ namespace IndiumPD {
 					_tex[i]->layout(&r.ext.texLayout[i]);
 			}
 			memcpy(r.samp, _samp, sizeof(r.samp));
-			cb->add([r]() mutable { runCompute(r); });
+			if (args)
+				cb->add([r, args, argOff]() mutable {
+					if (indirectDispatch(r, argOff))
+						runCompute(r);
+				});
+			else
+				cb->add([r]() mutable { runCompute(r); });
 		}
 
 		std::weak_ptr<CommandBuffer> _cb;
@@ -979,5 +1042,16 @@ namespace IndiumPD {
 	void dispatchThreadsPerTile(std::shared_ptr<Indium::RenderCommandEncoder> e, Indium::Size tpt) {
 		if (auto r = tileEncoder(e))
 			r->dispatchThreadsPerTile(tpt);
+	}
+
+	void drawIndirect(std::shared_ptr<Indium::RenderCommandEncoder> e, Indium::PrimitiveType type, bool indexed, Indium::IndexType indexType,
+	                  std::shared_ptr<Indium::Buffer> indexBuffer, size_t indexOffset, std::shared_ptr<Indium::Buffer> args, size_t argOff) {
+		if (auto r = tileEncoder(e))
+			r->drawIndirect(type, indexed, indexType, indexBuffer, indexOffset, args, argOff);
+	}
+
+	void dispatchIndirect(std::shared_ptr<Indium::ComputeCommandEncoder> e, std::shared_ptr<Indium::Buffer> args, size_t argOff, Indium::Size tpg) {
+		if (auto c = dynamic_cast<ComputeEncoder *>(e.get()))
+			c->dispatchIndirect(args, argOff, tpg);
 	}
 };

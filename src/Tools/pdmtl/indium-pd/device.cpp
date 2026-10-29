@@ -206,6 +206,13 @@ namespace IndiumPD {
 		{ Indium::PixelFormat::BC5_RGUnorm, 37, 16 },    { Indium::PixelFormat::BC5_RGSnorm, 38, 16 },
 		{ Indium::PixelFormat::BC6H_RGBFloat, 39, 16 },  { Indium::PixelFormat::BC6H_RGBUfloat, 40, 16 },
 		{ Indium::PixelFormat::BC7_RGBAUnorm, 41, 16 },  { Indium::PixelFormat::BC7_RGBAUnorm_sRGB, 42, 16 },
+		// integer formats (texel buffers, integer render targets): airjitd/texture.h 43-54
+		{ Indium::PixelFormat::R8Uint, 43, 1 },          { Indium::PixelFormat::RG8Uint, 44, 2 },
+		{ Indium::PixelFormat::RGBA32Uint, 45, 16 },     { Indium::PixelFormat::R8Sint, 46, 1 },
+		{ Indium::PixelFormat::RG8Sint, 47, 2 },         { Indium::PixelFormat::RGBA8Sint, 48, 4 },
+		{ Indium::PixelFormat::R16Sint, 49, 2 },         { Indium::PixelFormat::RG16Sint, 50, 4 },
+		{ Indium::PixelFormat::RGBA16Sint, 51, 8 },      { Indium::PixelFormat::R32Sint, 52, 4 },
+		{ Indium::PixelFormat::RG32Sint, 53, 8 },        { Indium::PixelFormat::RGBA32Sint, 54, 16 },
 	};
 
 	int pdFormat(Indium::PixelFormat format) {
@@ -361,8 +368,10 @@ namespace IndiumPD {
 		int f = pdFormat(_desc.pixelFormat);
 		auto ty = storageType(_desc.textureType);
 
+		// a texture buffer and a 1D texture are one row of texels
 		if (f < 0 || (ty != Indium::TextureType::e2D && ty != Indium::TextureType::e2DArray && ty != Indium::TextureType::eCube &&
-		              ty != Indium::TextureType::eCubeArray && ty != Indium::TextureType::e3D))
+		              ty != Indium::TextureType::eCubeArray && ty != Indium::TextureType::e3D &&
+		              ty != Indium::TextureType::eTextureBuffer && ty != Indium::TextureType::e1D))
 			return false;
 		// the CPU writes such a texture through its buffer, which tells nobody
 		if (_cpuWritten)
@@ -377,6 +386,9 @@ namespace IndiumPD {
 		memset(l, 0, sizeof(*l));
 		// a plain 2D texture with one level needs none, as with the kext
 		if (_drawable || (storageType(_desc.textureType) == Indium::TextureType::e2D && _levels <= 1))
+			return;
+		// a texture buffer or a 1D texture is a single row, bound like a plain 2D texture
+		if (_desc.textureType == Indium::TextureType::eTextureBuffer || _desc.textureType == Indium::TextureType::e1D)
 			return;
 		l->flags = PD_TEXLAYOUT_SET;
 		l->type = (uint8_t)storageType(_desc.textureType), l->levels = (uint8_t)_levels, l->slices = (uint32_t)_slices;

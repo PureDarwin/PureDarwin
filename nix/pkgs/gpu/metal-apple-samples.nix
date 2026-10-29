@@ -141,7 +141,7 @@ stdenv.mkDerivation {
     done
     $CXX $LINK tex-*.o -o BasicTexturing
 
-    # newLibraryWithSource: through the source cache
+    # newLibraryWithSource: through the source cache and mslc
     $CC $OBJC -c Tools/pdmtl/objc/samples/source/main.m -o source.o
     $CXX $LINK source.o -o metal-source-test
     runHook postBuild

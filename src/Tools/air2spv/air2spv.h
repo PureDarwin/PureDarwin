@@ -38,6 +38,8 @@ struct a2s_resource {
   // storage textures: the id of the bool spec constant 64 + metal (BGRA bytes bound as RGBA), 0 none
   uint32_t bgra_spec;
   uint64_t state;
+  // a texture_buffer: a uniform (sampled) or storage texel buffer of w texels at the PDDrawTex's bytes
+  uint32_t texel;
 };
 
 struct a2s_varying {
@@ -145,20 +147,35 @@ struct a2s_pin {
   uint32_t size;
 };
 
-// AIR's 64 bit constexpr sampler state, decoded (layout inferred from the shaders' own values)
+// AIR's 64 bit constexpr sampler state, decoded. Layout from Apple's metal output for constexpr samplers
+// with each argument (Xcode 26, metalfe-32023.883): addresses 0-8, filters 9-14, coord 15, compare 16-19,
+// anisotropy - 1 at 20-23, lod clamp min and max as halves at 24-39 and 40-55, border colour 56-57
 struct a2s_sampler_desc {
-  // MSL address: 0 clamp_to_zero, 1 clamp_to_edge, 2 repeat, 3 mirrored_repeat, 4 clamp_to_border
+  // MSL address: 0 clamp_to_zero or clamp_to_border (the border colour tells), 1 clamp_to_edge, 2 repeat,
+  // 3 mirrored_repeat
   unsigned addr[3];
   // filters: 0 nearest, 1 linear, mip 0 none, 1 nearest, 2 linear
   unsigned mag, min, mip;
   // coord::pixel
   int pixel;
+  // compare: 1 less, 2 less_equal, 3 greater, 4 greater_equal, 5 equal, 6 not_equal, 7 always, 8 none (never
+  // gives the same word)
+  unsigned compare;
+  // max_anisotropy
+  unsigned anisotropy;
+  // lod_clamp as half floats, 0x7bff the half maximum
+  uint16_t lod_min, lod_max;
+  // border_color: 0 transparent_black, 1 opaque_black, 2 opaque_white
+  unsigned border;
 };
 
 static inline void a2s_sampler_state(uint64_t s, struct a2s_sampler_desc *d) {
   d->addr[0] = s & 7, d->addr[1] = (s >> 3) & 7, d->addr[2] = (s >> 6) & 7;
   d->mag = (s >> 9) & 3, d->min = (s >> 11) & 3, d->mip = (s >> 13) & 3;
   d->pixel = (s >> 15) & 1;
+  d->compare = (s >> 16) & 15, d->anisotropy = ((s >> 20) & 15) + 1;
+  d->lod_min = (uint16_t)(s >> 24), d->lod_max = (uint16_t)(s >> 40);
+  d->border = (s >> 56) & 3;
 }
 
 // the same state as the kext's sampler flags word (bridge.h), which both paths take, bit 30 keeps a
@@ -169,7 +186,7 @@ static inline uint32_t a2s_sampler_flags(uint64_t s) {
 
   a2s_sampler_state(s, &d);
   return (d.min ? 1u : 0) | (d.mag ? 4u : 0) | (uint32_t)mode[d.addr[0]] << 8 | (uint32_t)mode[d.addr[1]] << 12 |
-         (uint32_t)mode[d.addr[2]] << 16 | (d.pixel ? 0 : 0x80000000u) | 0x40000000u;
+         (uint32_t)mode[d.addr[2]] << 16 | (uint32_t)d.mip << 4 | (d.pixel ? 0 : 0x80000000u) | 0x40000000u;
 }
 
 // spec constant ids: 0-2 the threadgroup size, 8-10 the workgroup size, 3-4 a tile function's tile size, 16 + i bound sampler i

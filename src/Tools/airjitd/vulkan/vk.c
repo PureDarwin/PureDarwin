@@ -3,6 +3,7 @@
 #define VK_NO_PROTOTYPES
 #include "vk.h"
 
+#include <math.h>
 #include <dlfcn.h>
 #include <setjmp.h>
 #include <stdarg.h>
@@ -48,6 +49,7 @@ void logv(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
   X(vkCreateFence) X(vkWaitForFences) X(vkResetFences) X(vkCreateSemaphore) X(vkCreatePipelineCache)                   \
   X(vkCmdCopyBuffer) X(vkCmdClearDepthStencilImage) X(vkCmdClearColorImage)           \
   X(vkCreateBuffer) X(vkDestroyBuffer) X(vkGetBufferMemoryRequirements) X(vkAllocateMemory) X(vkFreeMemory)            \
+  X(vkCreateBufferView) X(vkDestroyBufferView)                                                                         \
   X(vkBindBufferMemory) X(vkMapMemory) X(vkCreateImage) X(vkDestroyImage) X(vkGetImageMemoryRequirements)              \
   X(vkBindImageMemory) X(vkCreateImageView) X(vkDestroyImageView) X(vkCmdCopyBufferToImage)                            \
   X(vkCmdCopyImageToBuffer) X(vkCreateSampler) X(vkDestroySampler) X(vkCreateShaderModule)                             \
@@ -110,6 +112,8 @@ static struct {
   // pipeline creation flags of the 1.3 feature: Venus creates a pipeline synchronously when one is set, so a
   // pipeline the host rejects comes back as an error and no null handle is bound later
   uint32_t cache_control;
+  // samplerAnisotropy: maxSamplerAnisotropy, else 0
+  float anisotropy;
 } lim;
 
 // samplers the kext did not know: compute jobs (CoreImage) address texels, draws normalized coordinates
@@ -399,6 +403,7 @@ static int vk_init(void) {
   vkGetPhysicalDeviceFeatures2(phys, &f2);
   lim.bresenham = lim.bresenham && lr.bresenhamLines;
   lim.cube_array = f2.features.imageCubeArray, lim.depth_clamp = f2.features.depthClamp;
+  lim.anisotropy = f2.features.samplerAnisotropy ? p2.properties.limits.maxSamplerAnisotropy : 0;
   lim.bias_clamp = f2.features.depthBiasClamp, lim.draw_params = f11.shaderDrawParameters;
   lim.max_invocations = p2.properties.limits.maxComputeWorkGroupInvocations;
   lim.max_push = p2.properties.limits.maxPushConstantsSize;
@@ -430,6 +435,7 @@ static int vk_init(void) {
     want.shaderStorageImageArrayDynamicIndexing = lim.dyn_image_index;
     want.imageCubeArray = lim.cube_array, want.depthClamp = lim.depth_clamp, want.depthBiasClamp = lim.bias_clamp;
     want.textureCompressionBC = f2.features.textureCompressionBC;
+    want.samplerAnisotropy = f2.features.samplerAnisotropy;
     f2.features = want;
     f12 = (VkPhysicalDeviceVulkan12Features){ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
     f13 = (VkPhysicalDeviceVulkan13Features){ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
@@ -527,6 +533,7 @@ struct job_arena {
   VkBuffer buf[ARENA_BUFS];
   VkImage img[64];
   VkImageView view[ARENA_VIEWS];
+  VkBufferView bview[ARENA_VIEWS];
   VkDeviceMemory mem[ARENA_BUFS + 64];
   VkFramebuffer fbs[ARENA_POOLS];
   VkDescriptorPool dpools[ARENA_POOLS];
@@ -534,7 +541,7 @@ struct job_arena {
   VkDescriptorPool dpool;
   // a batch's command buffer
   VkCommandBuffer cb;
-  unsigned nbuf, nimg, nview, nmem, nfb, npool;
+  unsigned nbuf, nimg, nview, nmem, nfb, npool, nbview;
 };
 static struct job_arena arenas[2];
 static int cur_arena;
@@ -557,6 +564,9 @@ static void arena_free(void) {
   }
   for (i = 0; i < arena.nview; i++) {
     vkDestroyImageView(dev, arena.view[i], 0);
+  }
+  for (i = 0; i < arena.nbview; i++) {
+    vkDestroyBufferView(dev, arena.bview[i], 0);
   }
   for (i = 0; i < arena.nimg; i++) {
     vkDestroyImage(dev, arena.img[i], 0);
@@ -600,6 +610,13 @@ static const struct {
   { VK_FORMAT_BC5_UNORM_BLOCK, 16, 'c' },      { VK_FORMAT_BC5_SNORM_BLOCK, 16, 'c' },
   { VK_FORMAT_BC6H_SFLOAT_BLOCK, 16, 'c' },    { VK_FORMAT_BC6H_UFLOAT_BLOCK, 16, 'c' },
   { VK_FORMAT_BC7_UNORM_BLOCK, 16, 'c' },      { VK_FORMAT_BC7_SRGB_BLOCK, 16, 'c' },
+  // integer formats texel buffers and textures take (texture.h 43-54)
+  { VK_FORMAT_R8_UINT, 1, 'u' },              { VK_FORMAT_R8G8_UINT, 2, 'u' },
+  { VK_FORMAT_R32G32B32A32_UINT, 16, 'u' },   { VK_FORMAT_R8_SINT, 1, 'i' },
+  { VK_FORMAT_R8G8_SINT, 2, 'i' },            { VK_FORMAT_R8G8B8A8_SINT, 4, 'i' },
+  { VK_FORMAT_R16_SINT, 2, 'i' },             { VK_FORMAT_R16G16_SINT, 4, 'i' },
+  { VK_FORMAT_R16G16B16A16_SINT, 8, 'i' },    { VK_FORMAT_R32_SINT, 4, 'i' },
+  { VK_FORMAT_R32G32_SINT, 8, 'i' },          { VK_FORMAT_R32G32B32A32_SINT, 16, 'i' },
 };
 // fmts[] entry of R8G8B8A8_UNORM
 #define FMT_RGBA8 4
@@ -1634,7 +1651,8 @@ static VkBuffer res_buffer(uint8_t *base, uint32_t off, uint32_t size, int write
       if (residents[i].gpu_newer && overlaps(&residents[i], off, size))
         sync_range(off, size);
     }
-    b = new_buf_mem(size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 0);
+    b = new_buf_mem(size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+                    VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT, 0);
     logv("AIRJITD:   small buffer through %p + %u", b.map, size);
     to_map(b.map, base + off, size);
     pd_vk_last.up_bytes += size;
@@ -1651,8 +1669,10 @@ static VkBuffer res_buffer(uint8_t *base, uint32_t off, uint32_t size, int write
     VkMemoryRequirements rq;
 
     ci.size = size ? (size + 15) & ~(VkDeviceSize)15 : 16;
+    // texel buffer usage too: a texture_buffer binds these bytes through a view
     ci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
-               VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+               VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT |
+               VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT;
     if (vkCreateBuffer(dev, &ci, 0, &r->b) != VK_SUCCESS) {
       r->live = 0;
       decline("resident buffer");
@@ -1836,7 +1856,6 @@ static VkSampler keep_sampler(VkSamplerCreateInfo *ci) {
 
   // texel addressing is the shader's job (spec constant 16 + i): the sampler stays normalized
   ci->unnormalizedCoordinates = 0;
-  ci->borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
   key = fnv((const uint8_t *)&ci->magFilter, (size_t)((const uint8_t *)&ci->unnormalizedCoordinates - (const uint8_t *)&ci->magFilter), 1);
   for (unsigned i = 0; i < nsamplers; i++) {
     if (samplers[i].key == key)
@@ -1874,9 +1893,41 @@ static int sampler_pixel(uint32_t flags) {
   return flags ? !(flags & 0x80000000u) : unknown_pixel;
 }
 
-// a constexpr sampler through the same flags word the CPU path decodes it to
+static float half_to_float(uint16_t h) {
+  int e = (h >> 10) & 31, m = h & 1023;
+  float v = e ? ldexpf((float)(m | 1024), e - 25) : ldexpf((float)m, -24);
+
+  return h & 0x8000 ? -v : v;
+}
+
+// a constexpr sampler from its whole AIR state: the flags word's filters and addressing, plus the border colour,
+// anisotropy and lod clamp only the state carries. Comparison samplers wait for sample_compare in air2spv
 static VkSampler const_sampler(uint64_t state) {
-  return bound_sampler(a2s_sampler_flags(state));
+  uint32_t flags = a2s_sampler_flags(state);
+  struct a2s_sampler_desc d;
+  VkSamplerCreateInfo ci = { VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+  static const VkBorderColor border[4] = { VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK, VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
+                                           VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE, VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK };
+
+  a2s_sampler_state(state, &d);
+  ci.magFilter = d.mag ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+  ci.minFilter = d.min ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+  ci.addressModeU = addr_mode((flags >> 8) & 15), ci.addressModeV = addr_mode((flags >> 12) & 15);
+  ci.addressModeW = addr_mode((flags >> 16) & 15);
+  ci.borderColor = border[d.border];
+  ci.minLod = half_to_float(d.lod_min);
+  ci.maxLod = d.lod_max == 0x7bff ? VK_LOD_CLAMP_NONE : half_to_float(d.lod_max);
+  if (d.mip) {
+    ci.mipmapMode = d.mip == 2 ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST;
+  } else {
+    // level 0 only, as bound_sampler does
+    ci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST, ci.maxLod = 0.25f, ci.minLod = 0;
+  }
+  if (d.anisotropy > 1 && lim.anisotropy > 1) {
+    ci.anisotropyEnable = VK_TRUE;
+    ci.maxAnisotropy = d.anisotropy < lim.anisotropy ? (float)d.anisotropy : lim.anisotropy;
+  }
+  return keep_sampler(&ci);
 }
 
 // translations by metallib content and options, kept for the daemon's life
@@ -2078,7 +2129,10 @@ static struct shader *translate(const uint8_t *mtl, uint32_t size, uint32_t set,
 static VkDescriptorType desc_type(const struct a2s_resource *r) {
   switch (r->kind) {
   case A2S_RES_BUFFER: return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  case A2S_RES_TEXTURE: return r->storage ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+  case A2S_RES_TEXTURE:
+    if (r->texel)
+      return r->storage ? VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER : VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER;
+    return r->storage ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
   case A2S_RES_INPUT_ATTACHMENT: return VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
   case A2S_RES_ATTACHMENT_IMAGE: return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
   default: return VK_DESCRIPTOR_TYPE_SAMPLER;
@@ -2362,6 +2416,8 @@ struct stage_res {
   const struct a2s_reflect *r;
   VkBuffer bufs[32];
   struct img *imgs[16], *att[8], *scratch;
+  // texture_buffer bindings: views over a buffer holding the texture's bytes
+  VkBufferView bviews[16];
   VkSampler samp[48];
   // resident mode: what the stage writes, gpu_newer once the job is recorded
   struct resident *wres[48];
@@ -2457,6 +2513,54 @@ static void bind_stage(struct stage_res *s, uint8_t *base, uint32_t bsize, const
       s->bufs[r->metal] = b.b;
       if (r->access & A2S_WRITE && *nwritten < 32)
         wmaps[*nwritten] = b, wsrc[(*nwritten)++] = &bufs[r->metal], (void)written;
+    } else if (r->kind == A2S_RES_TEXTURE && r->texel) {
+      // the texture's bytes are its MTLBuffer's (newTextureWithDescriptor:offset:bytesPerRow:): copied into a
+      // texel buffer, and back after the job when the shader writes them
+      static struct PDDrawBuffer texel_src[64];
+      static unsigned ntexel_src;
+      const struct PDDrawTex *tt;
+      VkBufferViewCreateInfo vi = { VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO };
+      VkFormatProperties fp;
+      VkFormatFeatureFlags need;
+      uint32_t size;
+      struct buf b;
+
+      if (r->metal >= 16 || !texs[r->metal].w)
+        decline("texture buffer %u not bound", r->metal);
+      tt = &texs[r->metal];
+      if (tt->fmt >= NFMTS || fmts[tt->fmt].kind == 'c' || fmts[tt->fmt].kind == 'd')
+        decline("texture buffer %u has format %u", r->metal, tt->fmt);
+      vkGetPhysicalDeviceFormatProperties(phys, fmts[tt->fmt].vk, &fp);
+      need = r->storage ? VK_FORMAT_FEATURE_STORAGE_TEXEL_BUFFER_BIT : VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT;
+      if (!(fp.bufferFeatures & need))
+        decline("format %u has no texel buffer support", tt->fmt);
+      size = (uint32_t)fmt_row_bytes(tt->fmt, tt->w);
+      if (tt->off > bsize || size > bsize - tt->off)
+        decline("texture buffer %u outside the bridge", r->metal);
+      if (arena.nbview == ARENA_VIEWS)
+        decline("too many buffer views");
+      if (resident_mode) {
+        // the resident buffer over the same bridge bytes, so the texture and its MTLBuffer stay one memory
+        struct resident *wr;
+
+        vi.buffer = res_buffer(base, tt->off, size, r->storage, &wr);
+        stage_written(s, wr);
+      } else {
+        b = new_buf(size, r->storage ? VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+                                     : VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT);
+        to_map(b.map, base + tt->off, size);
+        pd_vk_last.up_bytes += size;
+        vi.buffer = b.b;
+      }
+      vi.format = fmts[tt->fmt].vk, vi.offset = 0, vi.range = VK_WHOLE_SIZE;
+      CK(vkCreateBufferView(dev, &vi, 0, &s->bviews[r->metal]));
+      arena.bview[arena.nbview++] = s->bviews[r->metal];
+      if (!resident_mode && r->storage && *nwritten < 32) {
+        struct PDDrawBuffer *src = &texel_src[ntexel_src++ % 64];
+
+        src->off = tt->off, src->size = size;
+        wmaps[*nwritten] = b, wsrc[(*nwritten)++] = src;
+      }
     } else if (r->kind == A2S_RES_TEXTURE) {
       struct PDDrawTex tt;
 
@@ -2533,6 +2637,8 @@ static VkDescriptorSet fill_set(struct stage_res *s, VkDescriptorSetLayout l) {
     if (r->kind == A2S_RES_BUFFER) {
       bi[n].buffer = s->bufs[r->metal], bi[n].offset = 0, bi[n].range = VK_WHOLE_SIZE;
       w[n].pBufferInfo = &bi[n];
+    } else if (r->kind == A2S_RES_TEXTURE && r->texel) {
+      w[n].pTexelBufferView = &s->bviews[r->metal];
     } else if (r->kind == A2S_RES_TEXTURE || r->kind == A2S_RES_INPUT_ATTACHMENT || r->kind == A2S_RES_ATTACHMENT_IMAGE) {
       struct img *im = r->kind == A2S_RES_TEXTURE ? s->imgs[r->metal] : s->att[r->metal];
       if (!im)
@@ -2571,10 +2677,11 @@ static void new_dpool(void) {
   keep_dpool();
   VkDescriptorPoolSize ps[] = { { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 64 }, { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 64 },
                                 { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 32 },  { VK_DESCRIPTOR_TYPE_SAMPLER, 32 },
-                                { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 8 } };
+                                { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 8 }, { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 16 },
+                                { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 16 } };
   VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
 
-  pci.maxSets = 2, pci.poolSizeCount = 5, pci.pPoolSizes = ps;
+  pci.maxSets = 2, pci.poolSizeCount = 7, pci.pPoolSizes = ps;
   CK(vkCreateDescriptorPool(dev, &pci, 0, &arena.dpool));
 }
 
@@ -2794,7 +2901,7 @@ static int compute_like(uint8_t *base, uint32_t bsize, const uint8_t *mtl, uint3
   }
   for (k = 0; k < sh->refl->nres && nout < 24; k++) {
     const struct a2s_resource *r = &sh->refl->res[k];
-    if (r->kind == A2S_RES_TEXTURE && r->storage)
+    if (r->kind == A2S_RES_TEXTURE && r->storage && !r->texel)
       outs[nout++] = s.imgs[r->metal];
     if (r->kind == A2S_RES_ATTACHMENT_IMAGE && s.att[r->metal])
       outs[nout++] = s.att[r->metal];
@@ -2834,7 +2941,7 @@ static int run(int (*fn)(void *, uint8_t *, uint32_t), void *r, uint8_t *base, u
   }
   if (resident_mode) {
     // a batch whose arena is filling up runs now
-    if (arena.nbuf > ARENA_BUFS - 64 || arena.nview > ARENA_VIEWS - 32 || arena.npool > ARENA_POOLS - 4 || arena.nimg > 48)
+    if (arena.nbuf > ARENA_BUFS - 64 || arena.nview > ARENA_VIEWS - 32 || arena.nbview > ARENA_VIEWS - 32 || arena.npool > ARENA_POOLS - 4 || arena.nimg > 48)
       pd_vk_flush(1);
     return fn(r, base, bsize);
   }
@@ -3548,6 +3655,8 @@ static int do_draw(void *vr, uint8_t *base, uint32_t bsize) {
         to_map(ib.map, base + q->indexOff, (size_t)q->count * ib_bytes);
       }
       vkCmdBindIndexBuffer(cb, ib.b, 0, ib_bytes == 4 ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16);
+      logv("AIRJITD:   indexed draw: %u indices of %u bytes at 0x%x, %u instances, base vertex %d, base instance %u", q->count,
+           ib_bytes, q->indexOff, q->instances, x ? x->baseVertex : 0, x ? x->baseInstance : 0);
       vkCmdDrawIndexed(cb, q->count, q->instances ? q->instances : 1, 0, x ? x->baseVertex : 0, x ? x->baseInstance : 0);
     } else {
       vkCmdDraw(cb, q->count, q->instances ? q->instances : 1, x ? x->firstVertex : 0, x ? x->baseInstance : 0);
