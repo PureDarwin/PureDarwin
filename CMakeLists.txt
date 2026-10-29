@@ -164,6 +164,12 @@ if(PUREDARWIN_PREBUILT_LIBSYSTEM_ROOT)
     include(cmake/prebuilt_libsystem.cmake)
 endif()
 
+# corecrypto lives outside this tree (the corecrypto submodule), build.nix passes its path
+set(PD_CORECRYPTO_DIR "" CACHE PATH "external corecrypto source tree")
+if(PD_CORECRYPTO_DIR)
+    include(${PD_CORECRYPTO_DIR}/pd/corecrypto-pd.cmake)
+endif()
+
 add_subdirectory(src)
 if(PUREDARWIN_ENABLE_TOOLS)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/CMakeLists.txt")

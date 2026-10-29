@@ -51,18 +51,13 @@ target_sources(host_commoncrypto_static PRIVATE
     lib/ccDispatch.c
     lib/CommonCryptorChaCha20Poly1305.c
     lib/CommonKeyDerivationSPI.c
-    lib/CommonBigNum.c
     lib/CommonCMAC.c
-    lib/CommonCollabKeyGen.c
     lib/CommonCryptor.c
-    lib/CommonDH.c
     lib/CommonDigest.c
-    lib/CommonECCryptor.c
     lib/CommonCryptorGCM.c
     lib/CommonHMAC.c
     lib/CommonKeyDerivation.c
     lib/CommonRandom.c
-    lib/CommonRSACryptor.c
     lib/CommonSymmetricKeywrap.c
     lib/corecryptoSymmetricBridge.c
     lib/CommonCryptorDES.c
@@ -74,3 +69,16 @@ target_sources(host_commoncrypto_static PRIVATE
     libcn/reverse_crc.c
     libcn/reverse_poly.c
 )
+
+# the asymmetric half (RSA, EC, DH, BigNum) needs corecrypto APIs the
+# external corecrypto does not have yet, and libSystem exports none of it, so build it only
+# against the old in-tree corecrypto
+if(NOT PD_CORECRYPTO_DIR)
+    target_sources(host_commoncrypto_static PRIVATE
+        lib/CommonBigNum.c
+        lib/CommonDH.c
+        lib/CommonECCryptor.c
+        lib/CommonRSACryptor.c
+        lib/CommonCollabKeyGen.c
+    )
+endif()

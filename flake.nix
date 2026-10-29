@@ -4,9 +4,15 @@
     iig-tools.url = "github:PureDarwin/iig-tools";
     kc-tools.url = "github:PureDarwin/kc-tools/xnu-12377";
     xnu-loader.url = "github:PureDarwin/xnu-loader/xnu-12377";
+    # the interim corecrypto fork, the submodule at external/corecrypto
+    self.submodules = true;
+    corecrypto-src = {
+      url = "path:./external/corecrypto";
+      flake = false;
+    };
   };
 
-  outputs = { self, nixpkgs, iig-tools, kc-tools, xnu-loader }:
+  outputs = { self, nixpkgs, iig-tools, kc-tools, xnu-loader, corecrypto-src }:
     let
       lib = nixpkgs.lib;
       systems = [ "x86_64-linux" "x86_64-darwin" "aarch64-linux" "aarch64-darwin" ];
@@ -218,6 +224,9 @@
           ];
           mkPureDarwinBuild = args: pkgs.callPackage ./build.nix ({
             inherit appleSdk darwinCrossToolchain nativeLd nativeUnifdef nativeMigcom iig;
+            # the kernel proper never builds corecrypto, keep its hash independent of it
+            corecryptoSrc = if lib.hasPrefix "puredarwin-kernel" (args.pname or "") || lib.hasPrefix "puredarwin-xnu-headers" (args.pname or "")
+              then null else corecrypto-src;
             compilerRt = compilerRtBuild;
             compilerRtArm64 = arm64.compilerRtArm64Build or null;
             compilerRtRiscv64 = compilerRtRiscv64Build;

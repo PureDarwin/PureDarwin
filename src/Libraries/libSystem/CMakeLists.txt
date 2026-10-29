@@ -1,5 +1,9 @@
+# user-space corecrypto comes from the external corecrypto tree, src/Libraries/libSystem/corecrypto
+# now only serves Security.framework's private copy
+if(PD_CORECRYPTO_DIR)
+    include(${PD_CORECRYPTO_DIR}/pd/libsystem.cmake)
+endif()
 foreach(_puredarwin_libsystem_dir
-    corecrypto
     libsystem_kernel
     libc
     libplatform

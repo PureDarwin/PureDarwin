@@ -2,6 +2,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../xnu/pd_apple_builtins.h")
     add_compile_options(-include "${CMAKE_CURRENT_SOURCE_DIR}/../xnu/pd_apple_builtins.h")
 endif()
 
+if(PD_CORECRYPTO_DIR)
+    include(${PD_CORECRYPTO_DIR}/pd/corecrypto-pd.cmake)
+endif()
+
 # The legacy extension sources use the MacOSX branch of the XNU KPI headers.
 add_compile_definitions(XNU_PLATFORM_MacOSX=1)
 

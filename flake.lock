@@ -1,5 +1,17 @@
 {
   "nodes": {
+    "corecrypto-src": {
+      "flake": false,
+      "locked": {
+        "path": "./external/corecrypto",
+        "type": "path"
+      },
+      "original": {
+        "path": "./external/corecrypto",
+        "type": "path"
+      },
+      "parent": []
+    },
     "iig-tools": {
       "inputs": {
         "nixpkgs": "nixpkgs"
@@ -103,6 +115,7 @@
     },
     "root": {
       "inputs": {
+        "corecrypto-src": "corecrypto-src",
         "iig-tools": "iig-tools",
         "kc-tools": "kc-tools",
         "nixpkgs": "nixpkgs_3",

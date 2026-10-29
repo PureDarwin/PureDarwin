@@ -89,7 +89,7 @@ target_include_directories(dyld PRIVATE
     ${DYLD_SOURCE_DIR}/src
     ${DYLD_SOURCE_DIR}/dyld3
     ${DYLD_SOURCE_DIR}/dyld3/shared-cache
-    ${CMAKE_SOURCE_DIR}/src/Libraries/libSystem/corecrypto/include
+    ${PD_CORECRYPTO_INCLUDE_DIRS}
     ${CMAKE_SOURCE_DIR}/src/Libraries/CrashReporterClient/include
     ${CMAKE_CURRENT_SOURCE_DIR}/compat-include
     # Prefer libsystem_kernel's generated userspace MIG headers over libc's

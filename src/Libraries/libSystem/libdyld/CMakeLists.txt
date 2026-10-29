@@ -71,7 +71,7 @@ target_include_directories(libdyld PRIVATE
     ${DYLD_SRC_DIR}/src
     ${DYLD_SRC_DIR}/dyld3
     ${DYLD_SRC_DIR}/dyld3/shared-cache
-    ${CMAKE_SOURCE_DIR}/src/Libraries/libSystem/corecrypto/include
+    ${PD_CORECRYPTO_INCLUDE_DIRS}
     ${CMAKE_SOURCE_DIR}/src/Libraries/dyld/compat-include
     ${CMAKE_SOURCE_DIR}/src/Libraries/CrashReporterClient/include
     ${CMAKE_SOURCE_DIR}/src/Libraries/libSystem/libdispatch

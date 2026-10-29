@@ -34,7 +34,9 @@
 //#include <os/assumes.h>
 #endif
 
+#if __has_include(<corecrypto/ccdh.h>)
 #include <corecrypto/ccdh.h>
+#endif
 #include <corecrypto/ccdigest.h>
 #include "CommonCryptorPriv.h"
 #include "basexx.h"

@@ -61,6 +61,8 @@
 , compilerRt ? null
 , compilerRtArm64 ? null
 , compilerRtRiscv64 ? null
+# the external corecrypto tree (flake input corecrypto-src, later the corecrypto submodule)
+, corecryptoSrc ? null
 }:
 
 let
@@ -220,6 +222,7 @@ EOF
       -DPUREDARWIN_TCC_SOURCE=${tinycc.src} \
       ${lib.optionalString (xorgDriverIncludes != null) "-DPUREDARWIN_XORG_INCLUDE_DIRS=${lib.escapeShellArg (lib.concatStringsSep ";" xorgDriverIncludes)}"} \
       ${lib.optionalString (prebuiltLibSystem != null) "-DPUREDARWIN_PREBUILT_LIBSYSTEM_ROOT=${prebuiltLibSystem}"} \
+      ${lib.optionalString (corecryptoSrc != null) "-DPD_CORECRYPTO_DIR=${corecryptoSrc}"} \
       ${lib.optionalString (installKernel || installKexts) ''"-DCMAKE_MODULE_LINKER_FLAGS=-Wl,-oso_prefix,$PWD/"''} \
       ${lib.concatStringsSep " \\\n      " extraCmakeFlags}
     runHook postConfigure

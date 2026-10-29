@@ -489,7 +489,7 @@ target_include_directories(libc_static PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/stdtime/FreeBSD   # timelocal.h (locale chain)
     ${CMAKE_CURRENT_SOURCE_DIR}/posix1e           # aclvar.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../../XPC/libinfo/membership.subproj  # membership.h (posix1e)
-    ${CMAKE_CURRENT_SOURCE_DIR}/../corecrypto/include # corecrypto-backed arc4random
+    ${PD_CORECRYPTO_INCLUDE_DIRS} # corecrypto-backed arc4random
     ${CMAKE_CURRENT_SOURCE_DIR}/../libplatform/private   # _simple.h (subsystem.c)
     ${CMAKE_CURRENT_SOURCE_DIR}/../pthread/private       # pthread/tsd_private.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../libsystem_kernel/private_include  # os/tsd.h

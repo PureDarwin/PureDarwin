@@ -47,7 +47,7 @@ target_include_directories(hfs.kext PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/shim
     ${CMAKE_CURRENT_SOURCE_DIR}/core
     ${CMAKE_CURRENT_SOURCE_DIR}/hfs_encodings
-    ${CMAKE_CURRENT_SOURCE_DIR}/../corecrypto/include
+    ${PD_CORECRYPTO_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/../IOStorageFamily/include)
 target_link_libraries(hfs.kext PRIVATE xnu_kernel_private_headers)
 target_compile_options(hfs.kext PRIVATE
