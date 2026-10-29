@@ -123,6 +123,8 @@ typedef NS_OPTIONS(NSUInteger, NSStringCompareOptions) {
 + (instancetype)stringWithCString:(const char *)cString;
 + (NSStringEncoding)defaultCStringEncoding;
 - (const char *)cStringUsingEncoding:(NSStringEncoding)encoding NS_RETURNS_INNER_POINTER;
+- (NSUInteger)lengthOfBytesUsingEncoding:(NSStringEncoding)encoding;
+- (BOOL)getCString:(char *)buffer maxLength:(NSUInteger)maxLength encoding:(NSStringEncoding)encoding;
 - (NSRange)rangeOfCharacterFromSet:(NSCharacterSet *)set;
 - (BOOL)writeToFile:(NSString *)path atomically:(BOOL)atomically;
 - (BOOL)writeToFile:(NSString *)path atomically:(BOOL)atomically encoding:(NSStringEncoding)enc error:(NSError **)error;

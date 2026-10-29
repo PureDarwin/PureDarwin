@@ -279,6 +279,21 @@ static CFMutableSetRef _setFromArguments(id firstObject, va_list arguments) {
     [[self allObjects] makeObjectsPerformSelector:selector withObject:object];
 }
 
+// whichever member CFSet hands out first, nil when the set is empty
+- (id)anyObject {
+    CFIndex count = CFSetGetCount((CFSetRef)self);
+    const void **values;
+    id object;
+
+    if (count == 0)
+        return nil;
+    values = malloc((size_t)count * sizeof(*values));
+    CFSetGetValues((CFSetRef)self, values);
+    object = (id)values[0];
+    free(values);
+    return object;
+}
+
 - (NSArray *)allObjects {
     CFIndex count = CFSetGetCount((CFSetRef)self);
     const void **values = count ? malloc((size_t)count * sizeof(*values)) : NULL;

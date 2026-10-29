@@ -731,6 +731,26 @@ static CFOptionFlags __NSStringCFCompareFlags(NSStringCompareOptions options) {
     return NSUTF8StringEncoding;
 }
 
+// the exact byte count, 0 when a character has no form in the encoding, as on macOS
+- (NSUInteger)lengthOfBytesUsingEncoding:(NSStringEncoding)encoding {
+    CFMutableStringRef copy = __NSStringCreateCFCopy(self);
+    CFRange range = CFRangeMake(0, CFStringGetLength(copy));
+    CFIndex used = 0;
+    CFIndex converted = CFStringGetBytes(copy, range, __NSStringCFEncoding(encoding), 0, false, NULL, 0, &used);
+
+    CFRelease(copy);
+    return converted == range.length ? (NSUInteger)used : 0;
+}
+
+// maxLength counts the terminating NUL, and NO comes back when the string or a character does not fit
+- (BOOL)getCString:(char *)buffer maxLength:(NSUInteger)maxLength encoding:(NSStringEncoding)encoding {
+    CFMutableStringRef copy = __NSStringCreateCFCopy(self);
+    Boolean ok = CFStringGetCString(copy, buffer, (CFIndex)maxLength, __NSStringCFEncoding(encoding));
+
+    CFRelease(copy);
+    return ok ? YES : NO;
+}
+
 @end
 
 /* CFStringCreateMutable takes maxLength, not a capacity hint: a non-zero value

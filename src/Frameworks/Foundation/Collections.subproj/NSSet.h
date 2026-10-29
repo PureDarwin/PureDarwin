@@ -33,6 +33,7 @@
 - (nullable ObjectType)member:(ObjectType)object;
 - (BOOL)containsObject:(ObjectType)object;
 - (NSArray<ObjectType> *)allObjects;
+- (ObjectType)anyObject;
 - (void)makeObjectsPerformSelector:(SEL)selector;
 - (void)makeObjectsPerformSelector:(SEL)selector withObject:(nullable id)object;
 - (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state

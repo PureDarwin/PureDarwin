@@ -11,7 +11,8 @@
 
 #import <Foundation/NSString.h>
 
-@interface NSCFString : NSString
+// a mutable string class as on macOS, so categories on NSMutableString reach every CF string
+@interface NSCFString : NSMutableString
 @end
 
 #endif /* NSCFString_h */
