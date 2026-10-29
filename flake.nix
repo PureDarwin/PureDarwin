@@ -5873,7 +5873,7 @@
             kc = kcGpuBuild;
             extraPackages = dropGpuDefaults old.extraPackages ++ [ userlandBuild gpuAuxFiles
               (mkAmdgpuFirmware [ "granite-ridge" "mendocino" "navi21" "navi22" "navi23" "navi24" "navi31" "navi32" "navi33" "raven" "renoir" "rembrandt" "kaveri" "kabini" "mullins" "polaris10" "polaris11" "polaris12" "vegam" ]) i915Firmware gfxInfoTool
-              radvFiles libdrmAmdgpuBuild vulkanLoaderNoxBuild vulkanToolsNoxBuild i915GlNeuswcEnv pdgltriBuild libelfBuild nouveauFirmware ];
+              radvFiles libdrmAmdgpuBuild vulkanLoaderNoxBuild vulkanToolsNoxBuild i915GlFiles i915GlNeuswcEnv pdgltriBuild libelfBuild nouveauFirmware ];
             imageFileName = "puredarwin-gpu-nouveau.img";
             # every drm firmware family no longer fits the wayland-minimal root
             rootMB = old.rootMB + 600;
