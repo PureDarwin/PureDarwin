@@ -105,6 +105,7 @@
             pkgs.callPackage ./nix/pkgs/toolchain/native-ld.nix {
               darwinCrossToolchain = bootstrapCrossToolchain;
               inherit libtapi iig;
+              corecryptoSrc = corecrypto-src;
             };
           # Not actually a *cross* toolchain on Darwin - the wrappers pin the
           # target triple, the pinned SDK and the linker, which is what every

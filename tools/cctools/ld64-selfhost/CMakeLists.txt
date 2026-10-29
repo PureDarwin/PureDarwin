@@ -40,7 +40,14 @@ set(_ld_libcxx_config "${CMAKE_SOURCE_DIR}/src/Libraries/libcxxabi/config")
 # ld.cpp and Options.cpp include <cxxabi.h>, which -nostdinc++ below takes the
 # SDK's copy out of reach of.
 set(_ld_libcxxabi_include "${CMAKE_SOURCE_DIR}/src/Libraries/libcxxabi/include")
-set(_ld_corecrypto_include "${CMAKE_SOURCE_DIR}/src/Libraries/libSystem/corecrypto/include")
+# corecrypto headers come from the external corecrypto tree (PD_CORECRYPTO_DIR, see the top-level CMakeLists.txt)
+if(NOT PD_CORECRYPTO_INCLUDE_DIRS)
+    message(FATAL_ERROR "ld64_selfhost needs PD_CORECRYPTO_DIR for the corecrypto headers.")
+endif()
+set(_ld_corecrypto_include)
+foreach(_dir IN LISTS PD_CORECRYPTO_INCLUDE_DIRS)
+    list(APPEND _ld_corecrypto_include -I ${_dir})
+endforeach()
 set(_ld_commoncrypto_include "${CMAKE_SOURCE_DIR}/src/Libraries/CommonCrypto/include/Private")
 set(_ld_commoncrypto_public_include "${CMAKE_SOURCE_DIR}/src/Libraries/CommonCrypto/include")
 
@@ -57,7 +64,7 @@ set(_ld_includes
     -I ${_ld_src}/ld/passes
     -I ${_ld_commoncrypto_include}
     -I ${_ld_commoncrypto_public_include}
-    -I ${_ld_corecrypto_include}
+    ${_ld_corecrypto_include}
 )
 
 set(_ld_cxx_flags

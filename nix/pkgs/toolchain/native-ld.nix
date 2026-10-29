@@ -26,6 +26,8 @@
 , libtapi
 , targetTriple ? "x86_64-apple-darwin20.4"
 , appleSdk
+# the external corecrypto tree (flake input corecrypto-src), host_corecrypto_static comes from its pd/host-static.cmake
+, corecryptoSrc
 }:
 
 let
@@ -40,7 +42,6 @@ let
       ../../../tools/cctools/misc
       ../../../tools/cctools/ld64/src
       ../../../src/Libraries/CommonCrypto
-      ../../../src/Libraries/libSystem/corecrypto
     ];
   };
 
@@ -97,17 +98,15 @@ add_compile_options(-Wno-return-type -Wno-error=cpp -Wno-nullability-completenes
 # nixpkgs' Darwin libc++ traps on that by default, Apple's build does not.
 add_compile_definitions(_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE)
 
-add_subdirectory(src/Libraries/libSystem/corecrypto)
+# host_corecrypto_static, PD_CORECRYPTO_DIR also keeps CommonCrypto's asymmetric half out
+set(PD_CORECRYPTO_DIR ${corecryptoSrc})
+include(${corecryptoSrc}/pd/host-static.cmake)
 add_subdirectory(src/Libraries/CommonCrypto)
 add_subdirectory(tools/xar)
 add_subdirectory(tools/cctools/libmacho)
 add_subdirectory(tools/cctools/libstuff)
 add_subdirectory(tools/cctools/misc)
 add_subdirectory(tools/cctools/ld64/src)
-EOF
-
-    cat > src/Libraries/libSystem/corecrypto/CMakeLists.txt <<'EOF'
-include(host_corecrypto_static.cmake)
 EOF
 
     cat > src/Libraries/CommonCrypto/CMakeLists.txt <<'EOF'
