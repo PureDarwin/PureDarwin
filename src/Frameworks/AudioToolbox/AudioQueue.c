@@ -503,6 +503,28 @@ OSStatus AudioQueueGetProperty(AudioQueueRef q, AudioQueuePropertyID id, void *o
     return property(q, id, out, &size);
 }
 
+// the queue converts to the device's own layout, so a channel layout or device is accepted without changing anything
+OSStatus AudioQueueSetProperty(AudioQueueRef q, AudioQueuePropertyID id, const void *data, UInt32 size)
+{
+    if (q == NULL || (data == NULL && size != 0))
+        return kAudio_ParamError;
+    switch (id) {
+    case kAudioQueueProperty_ChannelLayout:
+    case kAudioQueueProperty_CurrentDevice:
+        return noErr;
+    }
+    return kAudioQueueErr_InvalidProperty;
+}
+
+OSStatus AudioQueueNewInput(const AudioStreamBasicDescription *format, AudioQueueInputCallback callback, void *userData,
+                            CFRunLoopRef runLoop, CFStringRef runLoopMode, UInt32 flags, AudioQueueRef *outQ)
+{
+    if (format == NULL || callback == NULL || outQ == NULL)
+        return kAudio_ParamError;
+    *outQ = NULL;
+    return kAudioQueueErr_InvalidDevice;
+}
+
 OSStatus AudioQueueAddPropertyListener(AudioQueueRef q, AudioQueuePropertyID id, AudioQueuePropertyListenerProc proc, void *data)
 {
     if (q == NULL || proc == NULL)

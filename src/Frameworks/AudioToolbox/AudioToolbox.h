@@ -255,6 +255,9 @@ typedef UInt32 AudioQueuePropertyID;
 typedef UInt32 AudioQueueParameterID;
 typedef Float32 AudioQueueParameterValue;
 typedef void (*AudioQueueOutputCallback)(void *inUserData, AudioQueueRef inAQ, AudioQueueBufferRef inBuffer);
+typedef void (*AudioQueueInputCallback)(void *inUserData, AudioQueueRef inAQ, AudioQueueBufferRef inBuffer,
+                                        const AudioTimeStamp *inStartTime, UInt32 inNumberPacketDescriptions,
+                                        const AudioStreamPacketDescription *inPacketDescs);
 typedef void (*AudioQueuePropertyListenerProc)(void *inUserData, AudioQueueRef inAQ, AudioQueuePropertyID inID);
 
 enum {
@@ -263,6 +266,7 @@ enum {
     kAudioQueueDeviceProperty_SampleRate = 'aqsr',
     kAudioQueueDeviceProperty_NumberChannels = 'aqdc',
     kAudioQueueProperty_CurrentDevice = 'aqcd',
+    kAudioQueueProperty_ChannelLayout = 'aqcl',
     kAudioQueueProperty_StreamDescription = 'aqft',
     kAudioQueueErr_InvalidBuffer = -66687,
     kAudioQueueErr_BufferEmpty = -66686,
@@ -278,6 +282,11 @@ enum {
 OSStatus AudioQueueNewOutput(const AudioStreamBasicDescription *inFormat, AudioQueueOutputCallback inCallbackProc, void *inUserData,
                              CFRunLoopRef inCallbackRunLoop, CFStringRef inCallbackRunLoopMode, UInt32 inFlags,
                              AudioQueueRef *outAQ);
+// there is no capture device yet, so an input queue is refused the way macOS refuses one without a microphone
+OSStatus AudioQueueNewInput(const AudioStreamBasicDescription *inFormat, AudioQueueInputCallback inCallbackProc, void *inUserData,
+                            CFRunLoopRef inCallbackRunLoop, CFStringRef inCallbackRunLoopMode, UInt32 inFlags,
+                            AudioQueueRef *outAQ);
+OSStatus AudioQueueSetProperty(AudioQueueRef inAQ, AudioQueuePropertyID inID, const void *inData, UInt32 inDataSize);
 OSStatus AudioQueueDispose(AudioQueueRef inAQ, Boolean inImmediate);
 OSStatus AudioQueueAllocateBuffer(AudioQueueRef inAQ, UInt32 inBufferByteSize, AudioQueueBufferRef *outBuffer);
 OSStatus AudioQueueAllocateBufferWithPacketDescriptions(AudioQueueRef inAQ, UInt32 inBufferByteSize, UInt32 inNumberPacketDescriptions,
