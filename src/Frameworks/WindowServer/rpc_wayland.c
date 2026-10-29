@@ -578,25 +578,35 @@ static const struct zwlr_layer_surface_v1_listener layerSurfaceListener = {
     .closed = layerSurfaceClosed,
 };
 
-/* AppKit window levels are CGWindowLevelKey values, so desktop sorts below
- * normal and the dock/menu levels above it. Anything that maps to a layer is
- * given a layer-shell role instead of an xdg_toplevel. */
+// window levels are the values CGWindowLevelForKey returns, the same numbers apps built against Apple's SDK pass
+enum {
+    kWSDesktopIconLevel = INT32_MIN + 45,
+    kWSModalPanelLevel = 8,
+    kWSDockLevel = 20,
+    kWSMainMenuLevel = 24,
+    kWSPopUpMenuLevel = 101,
+    kWSScreenSaverLevel = 1000,
+};
+
+/* Desktop sorts below normal and the dock/menu levels above it. Anything that
+ * maps to a layer is given a layer-shell role instead of an xdg_toplevel. */
 static int layerForWindowLevel(int level, uint32_t *layerOut) {
     if (ws.layerShell == NULL) {
         return 0;
     }
-    if (level <= kCGDesktopWindowLevelKey) {
+    if (level <= kWSDesktopIconLevel) {
         *layerOut = ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND;
         return 1;
     }
     /* The dock sits on the TOP layer; the menu bar and anything above it are
      * overlays, which is both what they are semantically and what keeps them
      * clear of the dock's stacking. */
-    if (level >= kCGMainMenuWindowLevelKey) {
+    // modal panels sit with the menus, above the dock, as they did before levels were real values
+    if (level >= kWSMainMenuLevel || level == kWSModalPanelLevel) {
         *layerOut = ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY;
         return 1;
     }
-    if (level >= kCGDockWindowLevelKey) {
+    if (level >= kWSDockLevel) {
         *layerOut = ZWLR_LAYER_SHELL_V1_LAYER_TOP;
         return 1;
     }
@@ -663,7 +673,7 @@ static void windowApplyLayerGeometry(struct wsWindow *window, uint32_t layer) {
             zone = (int32_t)window->h;
     }
     // the dock is narrower than the screen but still keeps windows above its top edge
-    if (window->level >= kCGDockWindowLevelKey && window->level < kCGMainMenuWindowLevelKey &&
+    if (window->level >= kWSDockLevel && window->level < kWSMainMenuLevel &&
         anchor == ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM)
         zone = (int32_t)(window->h + bottomGap);
 
@@ -1918,9 +1928,9 @@ static void windowCreateRole(struct wsWindow *window, const char *title) {
             uint32_t keys = ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND;
 
             // a modal panel and a login or lock screen hold the keyboard as soon as they show
-            if (window->level == kCGModalPanelWindowLevelKey || window->level >= kCGScreenSaverWindowLevelKey)
+            if (window->level == kWSModalPanelLevel || window->level >= kWSScreenSaverLevel)
                 keys = ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE;
-            else if (window->level <= kCGPopUpMenuWindowLevelKey)
+            else if (window->level <= kWSPopUpMenuLevel)
                 keys = ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE;
             zwlr_layer_surface_v1_set_keyboard_interactivity(window->layerSurface, keys);
         }
@@ -2274,7 +2284,7 @@ kern_return_t _windowServerRPC(void *data, size_t len, void *reply, int *replyLe
             }
 
             if (getenv("PD_WS_TRACE") != NULL && window->pixels != NULL &&
-                window->level >= kCGMainMenuWindowLevelKey) {
+                window->level >= kWSMainMenuLevel) {
                 const uint32_t *px = window->pixels;
                 size_t count = window->pixelsSize / 4;
                 size_t nonzero = 0;
@@ -2339,6 +2349,9 @@ kern_return_t _windowServerRPC(void *data, size_t len, void *reply, int *replyLe
             struct wsRPCSimple *msg = (struct wsRPCSimple *)data;
             struct wsWindow *window = windowForID(msg->val1);
 
+            if (getenv("PD_WS_TRACE") != NULL)
+                fprintf(stderr, "WindowServer: window %d move, toplevel %p, seat %p, button serial %u\n", msg->val1,
+                        window ? (void *)window->toplevel : NULL, (void *)ws.seat, ws.pointerButtonSerial);
             if (window == NULL || window->toplevel == NULL || ws.seat == NULL ||
                 ws.pointerButtonSerial == 0) {
                 return KERN_FAILURE;

@@ -709,7 +709,7 @@ static BOOL PDTypesIntersect(NSArray *registered, NSArray *offered)
 
         imageWindow = [[NSPanel alloc] initWithContentRect:NSMakeRect(origin.x, origin.y, imageSize.width, imageSize.height)
                                                  styleMask:NSBorderlessWindowMask backing:NSBackingStoreBuffered defer:NO];
-        [imageWindow setLevel:kCGDraggingWindowLevelKey];
+        [imageWindow setLevel:kCGDraggingWindowLevel];
         [imageWindow setOpaque:NO];
         [imageWindow setBackgroundColor:[NSColor clearColor]];
         [imageWindow setHasShadow:NO];

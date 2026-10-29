@@ -13,6 +13,16 @@
 #include <signal.h>
 #include <sys/ucontext.h>
 #include <unistd.h>
+#if __has_include(<notify.h>)
+#include <notify.h>
+#else
+// libSystem exports notify(3) but this sdk does not ship its header
+#define NOTIFY_STATUS_OK 0
+uint32_t notify_post(const char *name);
+uint32_t notify_register_check(const char *name, int *out_token);
+uint32_t notify_set_state(int token, uint64_t state64);
+uint32_t notify_cancel(int token);
+#endif
 
 @interface NSWindow (PDBlur)
 - (void)_setBackgroundBlurInset:(CGFloat)inset radius:(CGFloat)radius;
@@ -78,6 +88,7 @@ static BOOL magnify = YES;
     NSImage *icon;
     BOOL separator;
     BOOL running;
+    pid_t pid;
     NSRect frame;
 }
 @end
@@ -289,6 +300,7 @@ static BOOL magnify = YES;
     NSArray *_items;
     NSString *_picture;
 }
+- (void)reopenProcess:(pid_t)pid;
 @end
 
 @implementation DockController
@@ -455,7 +467,7 @@ static BOOL magnify = YES;
     if (timer != nil)
         [self checkPrefs];
     size_t len = 0;
-    NSMutableSet *names = [NSMutableSet set];
+    NSMutableDictionary *names = [NSMutableDictionary dictionary];
     BOOL changed = NO;
 
     if (sysctl(mib, 3, NULL, &len, NULL, 0) == 0 && (procs = malloc(len + 16 * sizeof(*procs))) != NULL) {
@@ -465,7 +477,7 @@ static BOOL magnify = YES;
                 // an exited app that nobody has reaped yet is not running
                 if (procs[i].kp_proc.p_stat == SZOMB)
                     continue;
-                [names addObject:[NSString stringWithUTF8String:procs[i].kp_proc.p_comm]];
+                [names setObject:[NSNumber numberWithInt:procs[i].kp_proc.p_pid] forKey:[NSString stringWithUTF8String:procs[i].kp_proc.p_comm]];
             }
         }
         free(procs);
@@ -473,7 +485,10 @@ static BOOL magnify = YES;
     for (DockItem *item in _items) {
         // p_comm keeps only the first MAXCOMLEN characters
         NSString *comm = [item->executable length] > MAXCOMLEN ? [item->executable substringToIndex:MAXCOMLEN] : item->executable;
-        BOOL running = comm != nil && [names containsObject:comm];
+        NSNumber *pid = comm != nil ? [names objectForKey:comm] : nil;
+        BOOL running = pid != nil;
+
+        item->pid = [pid intValue];
 
         if (running != item->running) {
             item->running = running;
@@ -490,12 +505,26 @@ static BOOL magnify = YES;
         NSLog(@"Dock: %@ is not installed", item->label);
         return;
     }
-    // there is no way to bring a running app forward yet, so a second click does nothing
-    if (item->running)
+    // a running app is asked to reopen, like macOS's reopen event, it activates and opens a window if it has none
+    if (item->running) {
+        if (item->pid > 0)
+            [self reopenProcess:item->pid];
         return;
+    }
     [[NSWorkspace sharedWorkspace] launchApplication:item->path];
     item->running = YES;
     [_bar setNeedsDisplay:YES];
+}
+
+- (void)reopenProcess:(pid_t)pid
+{
+    int token;
+
+    if (notify_register_check("org.puredarwin.appkit.reopen", &token) != NOTIFY_STATUS_OK)
+        return;
+    notify_set_state(token, (uint64_t)pid);
+    notify_post("org.puredarwin.appkit.reopen");
+    notify_cancel(token);
 }
 
 - (void)dockBar:(DockBarView *)bar hoverItem:(DockItem *)item

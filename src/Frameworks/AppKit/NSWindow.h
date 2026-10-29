@@ -90,19 +90,20 @@ enum {
 };
 typedef NSUInteger NSWindowBackingLocation;
 
+// the levels themselves, what CGWindowLevelForKey returns, so apps built against Apple's SDK agree with ours
 enum {
-    NSDesktopWindowLevel = kCGDesktopWindowLevelKey,
-    NSBackstopMenuLevel = kCGBackstopMenuLevelKey,
-    NSNormalWindowLevel = kCGNormalWindowLevelKey,
-    NSDockWindowLevel = kCGDockWindowLevelKey,
-    NSFloatingWindowLevel = kCGFloatingWindowLevelKey,
-    NSSubmenuWindowLevel = kCGTornOffMenuWindowLevelKey,
-    NSTornOffMenuWindowLevel = kCGTornOffMenuWindowLevelKey,
-    NSMainMenuWindowLevel = kCGMainMenuWindowLevelKey,
-    NSStatusWindowLevel = kCGStatusWindowLevelKey,
-    NSModalPanelWindowLevel = kCGModalPanelWindowLevelKey,
-    NSPopUpMenuWindowLevel = kCGPopUpMenuWindowLevelKey,
-    NSScreenSaverWindowLevel = kCGScreenSaverWindowLevelKey,
+    NSDesktopWindowLevel = INT32_MIN + 25,
+    NSBackstopMenuLevel = -20,
+    NSNormalWindowLevel = 0,
+    NSDockWindowLevel = 20,
+    NSFloatingWindowLevel = 3,
+    NSSubmenuWindowLevel = 3,
+    NSTornOffMenuWindowLevel = 3,
+    NSMainMenuWindowLevel = 24,
+    NSStatusWindowLevel = 25,
+    NSModalPanelWindowLevel = 8,
+    NSPopUpMenuWindowLevel = 101,
+    NSScreenSaverWindowLevel = 1000,
 };
 
 enum {

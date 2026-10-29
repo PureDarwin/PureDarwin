@@ -1375,6 +1375,22 @@ static BOOL pdIsMenuAgent(void)
       needsUntitled = NO;
    }
 
+   if(needsUntitled)
+    [self _openUntitledFile:controller];
+
+   NS_DURING
+    [[NSNotificationCenter defaultCenter] postNotificationName:NSApplicationDidFinishLaunchingNotification object:self];
+   NS_HANDLER
+    [self reportException:localException];
+   NS_ENDHANDLER
+
+   [pool release];
+}
+
+// what launch and a reopen with no windows do: ask the delegate, then fall back to a new document
+-(void)_openUntitledFile:(NSDocumentController *)controller {
+   BOOL needsUntitled=YES;
+
    if(needsUntitled && _delegate &&
       [_delegate respondsToSelector: @selector(applicationShouldOpenUntitledFile:)]) {
        needsUntitled = [_delegate applicationShouldOpenUntitledFile: self];
@@ -1392,14 +1408,6 @@ static BOOL pdIsMenuAgent(void)
        [controller _updateRecentDocumentsMenu];
        [controller newDocument: self];
    }
-
-   NS_DURING
-    [[NSNotificationCenter defaultCenter] postNotificationName:NSApplicationDidFinishLaunchingNotification object:self];
-   NS_HANDLER
-    [self reportException:localException];
-   NS_ENDHANDLER
-
-   [pool release];
 }
 
 -(void)_checkForReleasedWindows {
@@ -1826,6 +1834,8 @@ static NSApplicationActivationPolicy activationPolicy = NSApplicationActivationP
     // an ended session reports aborted, as on macOS
     if([_modalStack indexOfObjectIdenticalTo:session]==NSNotFound)
         return NSRunAbortedResponse;
+    // an event below may end the session, the caller's pool keeps it alive until this returns
+    [[session retain] autorelease];
     while([session stopCode]==NSRunContinuesResponse) {
         NSAutoreleasePool *pool=[NSAutoreleasePool new];
         NSEvent           *event=[self nextEventMatchingMask:NSAnyEventMask untilDate:[NSDate date] inMode:NSModalPanelRunLoopMode dequeue:YES];
@@ -1844,7 +1854,7 @@ static NSApplicationActivationPolicy activationPolicy = NSApplicationActivationP
 
         if(window==[session modalWindow] || [window worksWhenModal])
             [self sendEvent:event];
-        else if([event type]==NSLeftMouseDown)
+        else if([event type]==NSLeftMouseDown && ![[session modalWindow] isKeyWindow])
             [[session modalWindow] makeKeyAndOrderFront:self];
         else {
             // We need to preserve some events which are not processed in the modal loop and requeue them.
@@ -1868,6 +1878,9 @@ static NSApplicationActivationPolicy activationPolicy = NSApplicationActivationP
             }
         }
         [pool release];
+        // the dispatched event ended this session, Qt does that from nested loops
+        if([_modalStack indexOfObjectIdenticalTo:session]==NSNotFound)
+            return NSRunAbortedResponse;
     }
 
 
@@ -2070,6 +2083,8 @@ extern uint32_t notify_cancel(int token);
 
 static const char *kHideOthersNotification="org.puredarwin.appkit.hide-others";
 static const char *kUnhideAllNotification="org.puredarwin.appkit.unhide-all";
+// the state is the pid the Dock asks to reopen
+static const char *kReopenNotification="org.puredarwin.appkit.reopen";
 
 -(void)_listenForOtherApplications {
    static BOOL listening;
@@ -2087,6 +2102,13 @@ static const char *kUnhideAllNotification="org.puredarwin.appkit.unhide-all";
    });
    notify_register_dispatch(kUnhideAllNotification,&token,dispatch_get_main_queue(),^(int t){
     [NSApp unhideWithoutActivation];
+   });
+   notify_register_dispatch(kReopenNotification,&token,dispatch_get_main_queue(),^(int t){
+    uint64_t target=0;
+
+    notify_get_state(t,&target);
+    if((pid_t)target==getpid())
+     [NSApp _reopen];
    });
 }
 
@@ -2392,12 +2414,29 @@ standardAboutPanel] retain];
 //private method called when the application is reopened
 -(void)_reopen {
     BOOL doReopen=YES;
+    BOOL visible=NO;
+
+    if(!_isHidden) {
+        for(NSWindow *window in _windows) {
+            if([window isVisible] && ![window isMiniaturized] && ![window isKindOfClass:[NSPanel class]]) {
+                visible=YES;
+                break;
+            }
+        }
+    }
+    [self activateIgnoringOtherApps:YES];
     if ([_delegate respondsToSelector:@selector(applicationShouldHandleReopen:hasVisibleWindows:)])
-        doReopen=[_delegate applicationShouldHandleReopen:self hasVisibleWindows:!_isHidden];
+        doReopen=[_delegate applicationShouldHandleReopen:self hasVisibleWindows:visible];
     if(!doReopen)
         return;
     if(_isHidden)
         [self unhide:nil];
+    if(visible)
+        return;
+
+    // no window on screen, so the app gets the untitled window it opens at launch
+    id types=[[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleDocumentTypes"];
+    [self _openUntitledFile:[types count] > 0 ? [NSDocumentController sharedDocumentController] : nil];
 }
 
 @end
