@@ -46,6 +46,7 @@ bool framebuffer_present(struct swc_fb *fb);
 const char *framebuffer_name(void);
 // direct scanout of a GPU resource, only where the framebuffer driver offers it
 bool framebuffer_gpu_scanout_available(void);
+bool framebuffer_gpu_pci_id(char *out, size_t size);
 bool framebuffer_set_scanout_resource(uint32_t resource, uint32_t width, uint32_t height);
 bool framebuffer_present_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 // a flip pair the GPU can render into: dma-buf fds of both buffers, then flips by index

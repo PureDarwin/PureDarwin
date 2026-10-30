@@ -124,7 +124,15 @@ gpu_renderer(void)
 		return NULL;
 	}
 	fprintf(stderr, "neuswc: the framebuffer can scan out GPU resources, starting GL\n");
-	renderer = wld_gl_create_renderer();
+	// with several GPUs mesa's default may be one with no display, so take the display's own
+	char display_gpu[16];
+	renderer = NULL;
+	if (framebuffer_gpu_scanout_available() && framebuffer_gpu_pci_id(display_gpu, sizeof(display_gpu))) {
+		renderer = wld_gl_create_renderer_on(display_gpu);
+		fprintf(stderr, "neuswc: the display is on %s, GL %s there\n", display_gpu, renderer ? "started" : "failed");
+	}
+	if (!renderer)
+		renderer = wld_gl_create_renderer();
 	if (!renderer) {
 		fprintf(stderr, "neuswc: no GL renderer, compositing on the CPU\n");
 		return NULL;

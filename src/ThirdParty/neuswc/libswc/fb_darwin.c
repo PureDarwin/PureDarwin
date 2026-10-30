@@ -797,6 +797,51 @@ framebuffer_gpu_scanout_available(void)
 	return gpu_scanout.available;
 }
 
+// a 4-byte little-endian OSData id property, as PCI nubs carry vendor-id and device-id
+static bool
+pci_id_property(io_registry_entry_t entry, CFStringRef key, unsigned *out)
+{
+	CFTypeRef value = IORegistryEntryCreateCFProperty(entry, key, kCFAllocatorDefault, 0);
+	const UInt8 *bytes;
+	bool ok = false;
+
+	if (value && CFGetTypeID(value) == CFDataGetTypeID() && CFDataGetLength(value) >= 2) {
+		bytes = CFDataGetBytePtr(value);
+		*out = bytes[0] | bytes[1] << 8;
+		ok = true;
+	}
+	if (value)
+		CFRelease(value);
+	return ok;
+}
+
+// the vendor:device pair of the PCI device behind the display's framebuffer, so GL composites on that GPU
+bool
+framebuffer_gpu_pci_id(char *out, size_t size)
+{
+	io_registry_entry_t entry = darwin_fb.service, parent;
+	unsigned vendor, device;
+	bool found = false;
+
+	if (entry == IO_OBJECT_NULL)
+		return false;
+	IOObjectRetain(entry);
+	while (!found && entry != IO_OBJECT_NULL) {
+		if (pci_id_property(entry, CFSTR("vendor-id"), &vendor) &&
+		    pci_id_property(entry, CFSTR("device-id"), &device)) {
+			snprintf(out, size, "%04x:%04x", vendor, device);
+			found = true;
+		}
+		if (IORegistryEntryGetParentEntry(entry, kIOServicePlane, &parent) != KERN_SUCCESS)
+			parent = IO_OBJECT_NULL;
+		IOObjectRelease(entry);
+		entry = parent;
+	}
+	if (entry != IO_OBJECT_NULL)
+		IOObjectRelease(entry);
+	return found;
+}
+
 // points the display at a GPU resource, 0 gives it back to the framebuffer
 bool
 framebuffer_set_scanout_resource(uint32_t resource, uint32_t width, uint32_t height)
