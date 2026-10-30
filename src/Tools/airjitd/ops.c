@@ -56,6 +56,18 @@ static float air_mix(float x, float y, float t) {
   return x + (y - x) * t;
 }
 
+// Metal's smoothstep(edge0, edge1, x): the Hermite curve over x clamped into the edges
+static float air_smoothstep(float e0, float e1, float x) {
+  float t = pd_clamp((x - e0) / (e1 - e0), 0, 1);
+
+  return t * t * (3 - 2 * t);
+}
+
+// step(edge, x): 0 below the edge, else 1
+static float air_step(float edge, float x) {
+  return x < edge ? 0 : 1;
+}
+
 #define OP1(name, native, fn) { name, 1, native, { .f1 = fn } }
 #define OP2(name, native, fn) { name, 2, native, { .f2 = fn } }
 #define OP3(name, native, fn) { name, 3, native, { .f3 = fn } }
@@ -80,6 +92,8 @@ static const struct air_math_op math_ops[] = {
   OP3("clamp", AIR_CLAMP, pd_clamp),
   OP1("saturate", AIR_SATURATE, air_saturate),
   OP3("mix", AIR_MIX, air_mix),
+  OP3("smoothstep", AIR_CALL, air_smoothstep),
+  OP2("step", AIR_CALL, air_step),
   OP1("sin", AIR_CALL, sinf),
   OP1("cos", AIR_CALL, cosf),
   OP1("tan", AIR_CALL, tanf),

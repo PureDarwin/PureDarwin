@@ -430,8 +430,10 @@ static void bind_params(struct StageInfo *si, LLVMModuleRef mod, LLVMValueRef fn
   unsigned k, i;
 
   for (k = 0; k < PD_ARRAY_LEN(entry_lists); k++) {
-    LLVMValueRef eps[16];
-    int ne = named_md_ops(mod, entry_lists[k], eps, 16), e;
+    // a library holds any number of entry points, MoltenVK's internal one has 22 kernels
+    unsigned cap = LLVMGetNamedMetadataNumOperands(mod, entry_lists[k]);
+    LLVMValueRef *eps = calloc(cap ? cap : 1, sizeof *eps);
+    int ne = eps ? named_md_ops(mod, entry_lists[k], eps, cap) : -1, e;
 
     for (e = 0; e < ne; e++) {
       LLVMValueRef ops[16], args[64];
@@ -451,6 +453,7 @@ static void bind_params(struct StageInfo *si, LLVMModuleRef mod, LLVMValueRef fn
         bind_param(si, args[d], (int)k);
       }
     }
+    free(eps);
   }
 
   for (i = 0; i < si->nparams; i++) {
@@ -729,12 +732,14 @@ static int llvm_introspect(uint32_t id, const struct pd_metallib *lib) {
 
   // one node per entry point: the function, then its argument descriptors
   for (unsigned k = 0; k < PD_ARRAY_LEN(entry_lists); k++) {
-    LLVMValueRef ops[8];
-    int n = named_md_ops(mod, entry_lists[k], ops, 8);
+    unsigned cap = LLVMGetNamedMetadataNumOperands(mod, entry_lists[k]);
+    LLVMValueRef *ops = calloc(cap ? cap : 1, sizeof *ops);
+    int n = ops ? named_md_ops(mod, entry_lists[k], ops, cap) : -1;
 
     for (int i = 0; i < n; i++) {
       dump_md(ops[i], entry_lists[k], 0);
     }
+    free(ops);
   }
 
   return 0;
