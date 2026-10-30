@@ -3233,9 +3233,12 @@
               src = ./tests/frameworks-ff;
             };
           # apple's Metal samples (MIT) on PD's Metal, MetalKit and AppKit storyboards
+          # mslc for the build host, compiling the samples' shaders at build time
+          mslcHostBuild = pkgs.callPackage ./nix/pkgs/gpu/mslc.nix { };
           metalAppleSamplesBuild =
             pkgs.callPackage ./nix/pkgs/gpu/metal-apple-samples.nix {
               inherit darwinCrossToolchain nativeLd appleSdk;
+              mslc = mslcHostBuild;
               libSystem = libSystemBuild;
               libcxxDylib = libcxxDylibBuild;
               libcxxabiDylib = libcxxabiDylibBuild;
@@ -5367,6 +5370,7 @@
             # the Wayland images' Metal.framework, so it can be built and injected on its own
             metal-objc-nox = metalObjcPdNoxBuild;
             mslc-pd = mslcPdBuild;
+            mslc = mslcHostBuild;
             uigallery = uigalleryBuild;
             opengl-framework-nox = openglFrameworkNoxBuild;
             mps = mpsBuild;

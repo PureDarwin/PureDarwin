@@ -1,7 +1,6 @@
 { stdenv
 , lib
 , fetchurl
-, requireFile
 , unzip
 , darwinCrossToolchain
 , nativeLd
@@ -24,11 +23,12 @@
 , windowserver
 , openglFramework
 , mesa
+, mslc
 , targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 # apple's Metal sample code (MIT, downloaded from developer.apple.com, sources unchanged) built for PureDarwin: storyboards read by AppKit's NSStoryboard, MTKView and MTKTextureLoader from PD's MetalKit,
-# shaders from a metallib cache compiled on a Mac (PD has no Metal compiler, see src/Tools/pdmtl/tools/metal-precompile), a tarball added by hand and keyed by each app's sources so changed shaders fail the build
+# shaders compiled here by mslc, the MSL compiler Metal.framework uses for newLibraryWithSource:
 let
   sdk = "${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk";
   fw = "/System/Library/Frameworks";
@@ -45,19 +45,6 @@ let
     hash = "sha256-9X6HYo5/vYgJskz8w7dF0vHCTJLK6B0DlzhS+7Q87s0=";
   };
 
-  metallibs = requireFile {
-    name = "pd-metallibs-apple-samples.tar";
-    hash = "sha256-aWiOzwH7xZwYMh+A2FBr82vEblpXKdyDvFBZ1GkJzYY=";
-    message = ''
-      The Apple samples' shaders are compiled on a Mac and kept as a tarball of metallibs named by key.
-      Rebuild it with src/Tools/pdmtl/tools/metal-precompile (see metal-apple-samples.nix for the calls),
-      pack the cache directory with
-        tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf pd-metallibs-apple-samples.tar *.metallib *.meta
-      and add it on the building machine with
-        nix-store --add-fixed sha256 pd-metallibs-apple-samples.tar
-      then update the hash here.
-    '';
-  };
 in
 stdenv.mkDerivation {
   pname = "puredarwin-metal-apple-samples";
@@ -66,7 +53,6 @@ stdenv.mkDerivation {
   src = lib.fileset.toSource {
     root = ../../../src;
     fileset = lib.fileset.unions [
-      ../../../src/Tools/pdmtl/tools/metal-precompile
       ../../../src/Tools/pdmtl/objc/samples/source
     ];
   };
@@ -77,8 +63,7 @@ stdenv.mkDerivation {
     runHook preBuild
     CC=${darwinCrossToolchain}/bin/${targetTriple}-clang
     CXX=${darwinCrossToolchain}/bin/${targetTriple}-clang++
-    MP="bash $PWD/Tools/pdmtl/tools/metal-precompile" C=$PWD/cache
-    mkdir -p cache inc/Cocoa && tar -C cache -xf ${metallibs}
+    mkdir -p inc/Cocoa
     # cocoa without CoreData (PD's Cocoa.h pulls it in)
     printf '#import <Foundation/Foundation.h>\n#import <AppKit/AppKit.h>\n' > inc/Cocoa/Cocoa.h
 
@@ -107,20 +92,9 @@ stdenv.mkDerivation {
       -lFoundation -lCoreFoundation -lobjc -lc++ -lc++abi -lSystem \
       ${compilerRt}/lib/darwin/libclang_rt.osx.a"
 
-    # an app's default.metallib: the cache entry for the key of its shaders, headers and options
-    default_metallib() {
-      local key dst=$1; shift
-      key=$($MP --key "$@")
-      if [ ! -f $C/$key.metallib ]; then
-        echo "no precompiled metallib for $* (key $key): run metal-precompile --default $* and refresh the tarball"
-        exit 1
-      fi
-      cp $C/$key.metallib $dst
-    }
-
-    # the shaders' keys are of the sources as downloaded, so they are looked up before anything is rewritten
-    (cd gl && default_metallib ../gl-default.metallib -I Common Metal/AAPLShaders.metal)
-    (cd tex && default_metallib ../tex-default.metallib Renderer/AAPLShaders.metal)
+    # each app's default.metallib, its shaders compiled by mslc
+    (cd gl && ${mslc}/bin/mslc Metal/AAPLShaders.metal -I Common -o ../gl-default.metallib)
+    (cd tex && ${mslc}/bin/mslc Renderer/AAPLShaders.metal -o ../tex-default.metallib)
 
     # PD's headers have no module maps: an @import is the framework's umbrella header
     find gl tex \( -name '*.h' -o -name '*.m' -o -name '*.mm' \) -exec \
@@ -167,13 +141,9 @@ stdenv.mkDerivation {
     install -Dm644 tex-default.metallib $S/BasicTexturing.app/Contents/Resources/default.metallib
     install -Dm644 tex/Renderer/Image.tga $S/BasicTexturing.app/Contents/Resources/Image.tga
 
-    # metal-source-test and the system source cache (every source-keyed metallib in the tarball)
+    # metal-source-test, its source compiled by mslc on the first newLibraryWithSource:
     install -Dm755 metal-source-test $S/MetalSourceTest.app/Contents/MacOS/metal-source-test
     install -Dm644 Tools/pdmtl/objc/samples/source/add.metal $S/MetalSourceTest.app/Contents/Resources/add.metal
-    mkdir -p $S/library-cache
-    for m in cache/*.meta; do
-      grep -q '^source ' $m && cp ''${m%.meta}.metallib ''${m%.meta}.meta $S/library-cache/
-    done
 
     # runners: venus, the window on Wayland when WAYLAND_DISPLAY is set
     mkdir -p $out/usr/local/bin
