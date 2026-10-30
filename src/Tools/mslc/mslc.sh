@@ -1,5 +1,5 @@
 #!/bin/sh
-# mslc IN.metal -o OUT.metallib [-e ENTRY] [-S OUT.ll] [-D NAME[=V]]... [-include F]: MSL source to AIR for air2spv, through
+# mslc IN.metal -o OUT.metallib [-e ENTRY] [-S OUT.ll] [-D NAME[=V]]... [-I DIR]... [-include F]: MSL source to AIR for air2spv, through
 # clang (C++ for OpenCL, the mslc plugin, PD's metal_stdlib) and airify. CLANG, PLUGIN, AIRIFY from the environment
 # without -e the output is an MTLB library of every entry, with -e the one function blob air2spv reads
 set -e
@@ -13,11 +13,17 @@ while [ $# -gt 0 ]; do
     -D) defs="$defs -D$2"; shift ;;
     -D*) defs="$defs $1" ;;
     -include) defs="$defs -include $2"; shift ;;
+    -I) defs="$defs -I$2"; shift ;;
+    -I*) defs="$defs $1" ;;
     *) in=$1 ;;
   esac
   shift
 done
 [ -n "$in" ] && [ -n "$out" ] || { echo "usage: mslc IN.metal -o OUT.metallib [-e ENTRY] [-S OUT.ll] [-D N=V]" >&2; exit 2; }
+# the source is compiled from a rewritten copy, so its own directory is searched for its quoted includes
+case $in in */*) defs="$defs -iquote ${in%/*}" ;; *) defs="$defs -iquote ." ;; esac
+# shared headers test __METAL_VERSION__ to tell shader code from host code, mslc reports Metal 3.1
+defs="$defs -D__METAL_VERSION__=310 -D__METAL_MACOS__"
 inc=${MSLC_INCLUDE:-$here/include}
 [ -d "$inc" ] || inc=/usr/share/mslc/include
 # the PureDarwin install, when the environment names nothing
