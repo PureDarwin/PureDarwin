@@ -851,7 +851,9 @@ _openlog
 _syslog$DARWIN_EXTSN
 _vsyslog
 _recvmsg
+_recvmsg_x
 _sendmsg
+_sendmsg_x
 _strerror_r
 _mlock
 _connectx
@@ -863,6 +865,7 @@ __dyld_register_func_for_remove_image
 _dirname
 _environ
 _fchdir
+___pthread_fchdir
 _fcntl
 _fdopen
 _ferror
@@ -1059,6 +1062,7 @@ _rand_r
 _read
 _readv
 _readdir$INODE64
+___getdirentries64
 _readlink
 _realloc
 _realpath$DARWIN_EXTSN
@@ -1507,6 +1511,7 @@ _readlinkat
 _sqrt
 _srandom
 _statfs$INODE64
+_statfs64
 _statvfs
 _strptime
 _symlinkat
@@ -1657,6 +1662,17 @@ _tmpfile
 _open_memstream
 _nftw$INODE64
 _close$NOCANCEL
+_poll$NOCANCEL
+_pread$NOCANCEL
+_preadv$NOCANCEL
+_pwrite$NOCANCEL
+_pwritev$NOCANCEL
+_read$NOCANCEL
+_readv$NOCANCEL
+_recvfrom$NOCANCEL
+_sendto$NOCANCEL
+_write$NOCANCEL
+_writev$NOCANCEL
 _realpath
 _fmtcheck
 _swap_fat_header
@@ -1798,6 +1814,7 @@ _stat_with_subsystem
 _vm_copy
 _vm_kernel_page_mask
 _vm_protect
+_vm_inherit
 _vm_remap
 _OBJC_CLASS_$_OS_xpc_object
 _OBJC_CLASS_$_OS_xpc_connection
