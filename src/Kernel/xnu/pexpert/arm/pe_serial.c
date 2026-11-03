@@ -828,6 +828,60 @@ SECURITY_READ_ONLY_LATE(static struct pe_serial_functions) vmapple_uart_serial_f
 
 /*****************************************************************************/
 
+#if defined(DW8250_UART)
+
+/* DesignWare APB 8250: byte registers 4 bytes apart; U-Boot leaves it at 115200 8N1 */
+static vm_offset_t dw8250_uart_base_vaddr = 0;
+#define DW8250_REG(n)   (*(volatile uint32_t *)(dw8250_uart_base_vaddr + 4 * (n)))
+#define DW8250_THR      DW8250_REG(0)
+#define DW8250_RBR      DW8250_REG(0)
+#define DW8250_LSR      DW8250_REG(5)
+#define DW8250_LSR_DR   0x01u
+#define DW8250_LSR_THRE 0x20u
+
+static int
+dw8250_uart_transmit_ready(void)
+{
+	return (int) ((DW8250_LSR & DW8250_LSR_THRE) != 0);
+}
+
+static void
+dw8250_uart_transmit_data(int c)
+{
+	DW8250_THR = (uint32_t) c;
+}
+
+static int
+dw8250_uart_receive_ready(void)
+{
+	return (int) ((DW8250_LSR & DW8250_LSR_DR) != 0);
+}
+
+static int
+dw8250_uart_receive_data(void)
+{
+	return (int) (DW8250_RBR & 0xff);
+}
+
+static void
+dw8250_uart_init(void)
+{
+}
+
+SECURITY_READ_ONLY_LATE(static struct pe_serial_functions) dw8250_uart_serial_functions =
+{
+	.uart_init = dw8250_uart_init,
+	.uart_set_baud_rate = NULL,
+	.tr0 = dw8250_uart_transmit_ready,
+	.td0 = dw8250_uart_transmit_data,
+	.rr0 = dw8250_uart_receive_ready,
+	.rd0 = dw8250_uart_receive_data
+};
+
+#endif /* DW8250_UART */
+
+/*****************************************************************************/
+
 static void
 register_serial_functions(struct pe_serial_functions *fns)
 {
@@ -871,6 +925,14 @@ serial_init(void)
 	soc_base = pe_arm_get_soc_base_phys();
 
 	if (soc_base == 0) {
+#if defined(DW8250_UART)
+		/* No arm-io node on this board either: map the console UART directly */
+		dw8250_uart_base_vaddr = ml_io_map(DW8250_UART_BASE_PHYS, DW8250_UART_SIZE);
+		if (dw8250_uart_base_vaddr != 0) {
+			register_serial_functions(&dw8250_uart_serial_functions);
+			return 1;
+		}
+#endif
 #if defined(QEMUVIRT_UART)
 		/* QEMU virt has no Apple arm-io node. Map the architectural PL011
 		 * directly from the board definition so post-MMU kernel logging works. */
@@ -1027,10 +1089,18 @@ serial_init(void)
 extern void vc_serial_record_early(char c);
 #endif
 
+/* A second console sink a driver can attach (the USB gadget serial port); must not block */
+void (*PE_console_mirror_putc)(char c) = NULL;
+
 void
 uart_putc(char c)
 {
 	struct pe_serial_functions *fns = gPESF;
+	void (*mirror)(char) = PE_console_mirror_putc;
+
+	if (mirror != NULL) {
+		mirror(c);
+	}
 	while (fns != NULL) {
 		while (!fns->tr0()) {
 #if __arm64__                           /* on arm64, we have a WFE timeout, so no need to hot-poll here */

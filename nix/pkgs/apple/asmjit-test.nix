@@ -67,6 +67,7 @@ stdenv.mkDerivation {
     ${cxx} -isysroot "$DARWIN_SDK_ROOT" -mmacosx-version-min=11.0 \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
       -L${libSystem}/usr/lib -L${libcxxDylib}/usr/lib -L${libcxxabiDylib}/usr/lib \
+      -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -Wl,-platform_version,macos,11.0,11.5 -Wl,-fixup_chains \
       -lc++ -lc++abi -lSystem \
       -o asmjit-test $objs

@@ -1096,10 +1096,11 @@ clock_initialize_calendar(void)
 	clock2bintime(&utc_offset_secs, &utc_offset_microsecs, &bt);
 
 	/*
-	 *	Initialize the boot time based on the platform clock.
+	 *	Initialize the boot time based on the platform clock: UTC when the uptime clock
+	 *	read zero, so kern.boottime stays right however late the calendar starts
 	 */
-	clock_boottime = secs;
-	clock_boottime_usec = microsecs;
+	clock_boottime = utc_offset_secs;
+	clock_boottime_usec = utc_offset_microsecs;
 	commpage_update_boottime(clock_boottime * USEC_PER_SEC + clock_boottime_usec);
 
 	nanoseconds_to_absolutetime((uint64_t)NSEC_PER_SEC, &ticks_per_sec);

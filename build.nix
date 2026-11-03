@@ -70,25 +70,14 @@ let
   # Selected here rather than per-derivation so no component can be missed.
   activeCompilerRt = if isArm64 then compilerRtArm64 else compilerRt;
   nixDarwinHost = if isArm64 then "arm64-apple-darwin20.4" else "x86_64-apple-darwin20.4";
-  # xar and ctfconvert are host tools, so they want the host's zlib/libxml2. The
-  # nix apple-sdk ships neither the headers nor the .tbd stubs, so the SDK paths
-  # only work for the Linux cross SDK tarball.
-  zlibInclude =
-    if isDarwinHost
-    then "${zlib.dev}/include"
-    else "$DARWIN_SDK_ROOT/usr/include";
-  zlibLibrary =
-    if isDarwinHost
+  # The global cross toolchain currently compiles ctfconvert as Mach-O, so it
+  # needs the SDK's target zlib stub. Other host-tool inputs remain native.
+  zlibInclude = "${zlib.dev}/include";
+  zlibLibrary = if isDarwinHost
     then "${zlib.out}/lib/libz.dylib"
-    else "$DARWIN_SDK_ROOT/usr/lib/libz.tbd";
-  libxml2Include =
-    if isDarwinHost
-    then "${libxml2.dev}/include/libxml2"
-    else "$DARWIN_SDK_ROOT/usr/include/libxml2";
-  libxml2Library =
-    if isDarwinHost
-    then "${libxml2.out}/lib/libxml2.dylib"
-    else "$DARWIN_SDK_ROOT/usr/lib/libxml2.tbd";
+    else "${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib/libz.tbd";
+  libxml2Include = "${libxml2.dev}/include/libxml2";
+  libxml2Library = "${libxml2.out}/lib/libxml2.${if isDarwinHost then "dylib" else "so"}";
   opensslCryptoLibrary =
     if isDarwinHost
     then "${openssl.out}/lib/libcrypto.dylib"

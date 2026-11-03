@@ -35,7 +35,8 @@
 
 #if PRIVATE
 #define TURNSTILE_MAX_HOP_DEFAULT (10)
-struct turnstile_stats {
+// 64-bit atomics: the armv7 ABI aligns uint64_t to 4, LDREXD needs 8
+struct __attribute__((aligned(8))) turnstile_stats {
 	uint64_t ts_priority_propagation;
 	uint64_t ts_no_inheritor;
 	uint64_t ts_thread_runnable;

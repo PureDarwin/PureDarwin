@@ -24,6 +24,7 @@ stdenv.mkDerivation {
       -I${libSystem}/usr/include \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
       -L${libSystem}/usr/lib \
+      -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -Wl,-platform_version,macos,11.0,11.5 -Wl,-fixup_chains \
       -lSystem \
       -o vmprobe ${./vmprobe.c}

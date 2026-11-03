@@ -54,6 +54,7 @@
 // define this when including socket.h to get at SO_EXECPATH
 #define PRIVATE 1
 #include <sys/socket.h>
+#include <sys/ioctl.h>          // ioctl + SIOC*, which editline used to pull in
 #undef PRIVATE
 
 #include <sys/un.h>
@@ -90,7 +91,10 @@ extern kern_return_t xpc_domain_mig_load_services(mach_port_t j, vm_offset_t ser
 //#include <readline/readline.h>
 //#include <readline/history.h>
 // the above are both symlinks to this
+// Nothing here calls readline; the armv6 SDK has no editline
+#if __has_include(<editline/readline.h>)
 #include <editline/readline.h>
+#endif
 
 //#include <dns_sd.h>
 #include <paths.h>

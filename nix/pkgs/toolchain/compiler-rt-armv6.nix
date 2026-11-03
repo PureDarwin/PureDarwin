@@ -5,12 +5,13 @@
 , llvmSrc
 , llvmVersion
 , appleSdk
+, arch ? "armv6"
 }:
 
 let
 in
 stdenv.mkDerivation {
-  pname = "puredarwin-compiler-rt-armv6";
+  pname = "puredarwin-compiler-rt-${arch}";
   version = llvmVersion;
   src = llvmSrc;
 
@@ -32,17 +33,17 @@ stdenv.mkDerivation {
         atomic.c|atomic_*.c) continue ;;
       esac
       obj="$OLDPWD/obj/''${f%.c}.o"
-      $CC -arch armv6 -isysroot "$SDK" -mmacosx-version-min=11.0 \
+      $CC -arch ${arch} -isysroot "$SDK" -mmacosx-version-min=11.0 \
           -c "$f" -o "$obj" \
           -O2 -fno-builtin -fno-stack-protector -ffreestanding \
           -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 \
           -DCOMPILER_RT_HAS_FLOAT16=0 \
-        || { echo "compiler-rt-armv6: skipping $f (does not build for this target)"; rm -f "$obj"; }
+        || { echo "compiler-rt-${arch}: skipping $f (does not build for this target)"; rm -f "$obj"; }
     done
 
     cd "$OLDPWD"
     $AR -crs libcompiler_rt.a obj/*.o
-    echo "compiler-rt-armv6: archived $(ls obj/*.o | wc -l) objects"
+    echo "compiler-rt-${arch}: archived $(ls obj/*.o | wc -l) objects"
 
     runHook postBuild
   '';

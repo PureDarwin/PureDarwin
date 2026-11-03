@@ -6,6 +6,10 @@
 , libSystem
 , corefoundation
 , iokit
+# IOKit headers: the armv6 iokit package ships only the dylib, iokitcf-static has the headers
+, iokitHeaders ? iokit
+, compilerRt ? null
+, isArmv6 ? lib.hasPrefix "armv6-" targetTriple
 , src
 , appleSdk
 }:
@@ -38,8 +42,9 @@ stdenv.mkDerivation {
       -I${libSystem}/pd-xpc-dev/include \
       -I${corefoundation}/include \
       -F${corefoundation}/System/Library/Frameworks \
-      -I${iokit}/include \
+      -I${iokitHeaders}/include \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
+      -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${iokit}/usr/lib \
       -Wl,-platform_version,macos,11.0,11.5 \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_libxpc_static.a \
@@ -48,8 +53,8 @@ stdenv.mkDerivation {
       -Wl,-U,__objc_empty_cache \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_libinfo_static.a \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_libnv_static.a \
-      -Wl,-fixup_chains \
-      -lCoreFoundation -lIOKitCF -lSystem \
+      ${lib.optionalString (!isArmv6) "-Wl,-fixup_chains"} \
+      -lCoreFoundation -lIOKitCF -lSystem ${lib.optionalString (compilerRt != null) "${compilerRt}/lib/libcompiler_rt.a"} \
       ${src}/src/Libraries/XPC/launchctl/launchctl.c \
       ${libSystem}/pd-xpc-dev/lib/libXPC_launchd_mig_static.a \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libCrashReporterClient.a \

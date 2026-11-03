@@ -835,6 +835,8 @@ let
         espMB = 768;
         rootMB = 512;
         imageFileName = "puredarwin-arm64-virt-minimal.img";
+        # rd=md0 below needs the loader to find ramdisk.img on the esp
+        useRamdisk = true;
         ramdiskMB = 512;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 pdtrace=1 serial_video_mirror=1 no_interrupt_masked_debug=1 rd=md0";
       };

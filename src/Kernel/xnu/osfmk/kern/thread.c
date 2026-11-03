@@ -650,6 +650,12 @@ thread_deallocate_complete(
 	if (!(thread->state & TH_TERMINATE2)) {
 		panic("thread_deallocate: thread not properly terminated\n");
 	}
+#if __arm__
+	// Cortex-A7 bring-up: the running thread showed up zeroed (freed). Catch the free itself
+	if (thread == current_thread()) {
+		panic("PD: freeing the current thread %p (state 0x%x)", thread, thread->state);
+	}
+#endif
 
 	assert(thread->runq == PROCESSOR_NULL);
 

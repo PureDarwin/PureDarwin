@@ -119,23 +119,20 @@ target_compile_options(libdyld PRIVATE
 add_dependencies(libdyld libsystem_kernel_static corecrypto_static libc_static libc_internal_static
     pthread_static libplatform_static libmalloc_static libcxxabi_static_build
     libcxx_static_build CrashReporterClient dyld_availability_headers)
+# libc, malloc, pthread and the syscalls come from libSystem at load time: a private copy
+# here is a second, never-initialised libc (malloc_zones still 0xdeaddead, libkernel's
+# function table still null) that libdyld's own code would call into
 target_link_libraries(libdyld PRIVATE
     dyld_availability_headers
-    $<TARGET_FILE:libsystem_kernel_static>
-    $<TARGET_FILE:libplatform_static>
-    $<TARGET_FILE:pthread_static>
-    $<TARGET_FILE:libmalloc_static>    # malloc/free/malloc_size (helper table + atexit)
-    $<TARGET_FILE:libc_static>
-    $<TARGET_FILE:libc_internal_static>
-    ${CMAKE_BINARY_DIR}/src/Libraries/libSystem/libsystem_kernel/syscalls.a
     $<TARGET_FILE:corecrypto_static>
     $<TARGET_FILE:CrashReporterClient>
-    $<TARGET_FILE:openlibm_static>
-    $<TARGET_FILE:libcxxabi_static>    # __cxa_atexit/__cxa_finalize[_ranges]
+    $<TARGET_FILE:libcxxabi_static>
     # std::out_of_range (dyld3/Loading.cpp) needs std::logic_error's ctor. Up to
     # libc++ 10 that was in libc++abi's stdlib_stdexcept.cpp; LLVM 21 moved the
     # constructors to libc++'s own stdexcept.cpp.
     $<TARGET_FILE:libcxx_static>)
+# /usr/lib/system/ install names default to shared-cache eligible, which forbids dynamic lookup
+target_link_options(libdyld PRIVATE -Wl,-undefined,dynamic_lookup -Wl,-not_for_dyld_shared_cache)
 
 # dyld's C++ exception and ABI references form archive cycles on ARM32. Force
 # these runtime archives into the image so the linker does not discard the
@@ -172,6 +169,11 @@ target_link_options(libdyld PRIVATE
 if(NOT PUREDARWIN_ARM32)
     target_link_options(libdyld PRIVATE -Wl,-u,__dyld_find_unwind_sections)
 endif()
+# Only the dyld API (and the C++ runtime it carries) leaves libdyld: an exported libc here
+# split every process between two stdios, mallocs and pthreads, and on x86 and arm64 bound
+# libSystem's own ___error and friends to a libkernel copy nothing initialises
+target_link_options(libdyld PRIVATE
+    -Wl,-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/libdyld.exports)
 
 if(CMAKE_HOST_APPLE)
     set(_libdyld_apple_ld_stub_dir ${CMAKE_CURRENT_BINARY_DIR}/apple-ld-stubs)
@@ -188,8 +190,6 @@ if(CMAKE_HOST_APPLE)
     target_link_options(libdyld PRIVATE
         -Wl,-L,${_libdyld_apple_ld_stub_dir}
         -Wl,-framework,System)
-else()
-    target_link_options(libdyld PRIVATE -lSystem)
 endif()
 
 install(TARGETS libdyld LIBRARY DESTINATION usr/lib/system COMPONENT BaseSystem)

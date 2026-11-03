@@ -89,9 +89,10 @@ if(PUREDARWIN_ARCH MATCHES "^(arm64|aarch64)$")
     set(PUREDARWIN_ARM64 TRUE)
     set(PUREDARWIN_ARM32 FALSE)
 elseif(PUREDARWIN_ARCH MATCHES "^(armv6|armv7|arm)$")
-    # 32-bit ARM currently targets the ARM1176/ARMv6 userland as well as the
-    # BCM2835 kernel.
-    set(PUREDARWIN_ARCH "armv6")
+    # 32-bit ARM: armv6 (ARM1176, BCM2835) or armv7 (Cortex-A7, VIRTA7)
+    if(NOT PUREDARWIN_ARCH STREQUAL "armv7")
+        set(PUREDARWIN_ARCH "armv6")
+    endif()
     set(PUREDARWIN_ARM64 FALSE)
     set(PUREDARWIN_ARM32 TRUE)
 elseif(PUREDARWIN_ARCH MATCHES "^(x86_64|amd64)$")

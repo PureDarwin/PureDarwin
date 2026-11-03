@@ -607,7 +607,9 @@ cpu_machine_idle_init(boolean_t from_boot)
 			wfi_fast = 0;
 		}
 
-		LowExceptionVectorsAddr = (void *)ml_io_map(ml_vtophys((vm_offset_t)gPhysBase), PAGE_SIZE);
+		// the reset vectors live at gPhysBase, where ResetHandlerData is written below and where
+		// a starting core enters; gPhysBase is already a physical address
+		LowExceptionVectorsAddr = (void *)ml_io_map((vm_offset_t)gPhysBase, PAGE_SIZE);
 
 		/* Copy Exception Vectors low, but don't touch the sleep token */
 		bcopy((void *)&ExceptionLowVectorsBase, (void *)LowExceptionVectorsAddr, 0x90);

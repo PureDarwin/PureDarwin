@@ -8,7 +8,8 @@ pd_bootstrap_aligned_free(void *ptr)
     std::free(ptr);
 }
 
-extern "C" __attribute__((visibility("hidden"))) int
+// Weak: a real allocator linked beside this (libSystem's libmalloc) must win
+extern "C" __attribute__((weak, visibility("hidden"))) int
 posix_memalign(void **memptr, size_t alignment, size_t size)
 {
     if (memptr == nullptr || alignment < sizeof(void *) || (alignment & (alignment - 1)) != 0) {

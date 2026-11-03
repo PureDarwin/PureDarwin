@@ -1519,7 +1519,7 @@ vc_serial_record_early(char c)
 	 * the BCM2835. The explicit pd_early_fb_puts() boot marks stay; only the
 	 * per-character mirror goes. The UART carries the same text.
 	 */
-#if !defined(ARM_BOARD_CONFIG_BCM2835)
+#if !defined(ARM_BOARD_CONFIG_BCM2835) && !defined(ARM_BOARD_CONFIG_SUN7I)
 	if (!gc_enabled) {
 		pd_early_fb_putc(c);
 	}

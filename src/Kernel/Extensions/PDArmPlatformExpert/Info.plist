@@ -72,6 +72,23 @@
 			<key>IOProviderClass</key>
 			<string>IOPlatformExpertDevice</string>
 		</dict>
+		<key>PureDarwin generic Cortex-A7 platform</key>
+		<dict>
+			<key>CFBundleIdentifier</key>
+			<string>org.puredarwin.kext.PDArmPlatformExpert</string>
+			<key>IOClass</key>
+			<string>PDArmPlatformExpert</string>
+			<key>IONameMatch</key>
+			<array>
+				<string>puredarwin,virt-a7</string>
+				<string>puredarwin,rv1103</string>
+				<string>puredarwin,rk3506</string>
+			</array>
+			<key>IOProbeScore</key>
+			<string>10000</string>
+			<key>IOProviderClass</key>
+			<string>IOPlatformExpertDevice</string>
+		</dict>
 	</dict>
 	<key>OSBundleLibraries</key>
 	<dict>

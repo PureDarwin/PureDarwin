@@ -320,6 +320,10 @@ pd_start_mark(unsigned slot, uint32_t colour, boot_args *args)
 	volatile uint32_t *fb;
 	uint32_t stride, row, col;
 
+#if defined(ARM_BOARD_CONFIG_SUN7I)
+	/* start.s maps no framebuffer section here; the log ring is enough */
+	return;
+#endif
 	if (args == NULL || args->Video.v_baseAddr == 0 ||
 	    args->Video.v_rowBytes == 0) {
 		return;
@@ -345,6 +349,9 @@ pd_start_mark_late(unsigned slot, uint32_t colour, boot_args *args)
 	uint64_t base;
 	uint32_t stride, row, col;
 
+#if defined(ARM_BOARD_CONFIG_SUN7I)
+	return;
+#endif
 	if (args == NULL || args->Video.v_baseAddr == 0 ||
 	    args->Video.v_rowBytes == 0) {
 		return;

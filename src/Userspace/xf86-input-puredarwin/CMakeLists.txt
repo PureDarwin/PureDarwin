@@ -63,6 +63,9 @@ target_sources(puredarwininput_local_IOKit PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/device_user.c
 )
 target_compile_definitions(puredarwininput_local_IOKit PRIVATE IOKIT=1 KERNEL=0)
+# -DKERNEL=0 still *defines* KERNEL, hiding mach/message.h's userspace mach_msg()
+# decl; the 11.3 SDK hid this by shipping headers with the KERNEL blocks stripped.
+target_compile_options(puredarwininput_local_IOKit PRIVATE -UKERNEL)
 target_include_directories(puredarwininput_local_IOKit
     PUBLIC ${CMAKE_SOURCE_DIR}/src/Libraries/IOKit/include
     PRIVATE

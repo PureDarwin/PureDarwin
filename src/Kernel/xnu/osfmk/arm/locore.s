@@ -1225,6 +1225,14 @@ LEXT(fleh_addrexc)
 	.globl EXT(fleh_irq)
 
 LEXT(fleh_irq)
+#if defined(DW8250_NS_A7)
+	// under op-tee the timer is the one enabled irq, a secure boot takes it as fiq and ipis here
+	// sp and the flags are free until the handlers below set them
+	LOAD_ADDR(sp, pe_gic_timer_irq)
+	ldr		sp, [sp]
+	cmp		sp, #0
+	bne		Lfleh_decirq_irq
+#endif
 	sub		lr, lr, #4
 	
 	cpsie	a									// Re-enable async aborts
@@ -1426,9 +1434,41 @@ L_preemption_count_zero_str:
 	.globl EXT(fleh_decirq)
 
 LEXT(fleh_decirq)
+#if defined(ARM_BOARD_CONFIG_VIRTA7)
+	// Entered as a real FIQ, but the handler below runs in IRQ mode: move LR/SPSR over
+	mrs		sp, spsr
+	// Code running with IRQ masked (IRQ mode, exception entry, cpsid i sections) must not
+	// take the timer: resume it with FIQ masked too, retaken once it unmasks interrupts
+	tst		sp, #PSR_IRQF
+	beq		1f
+	orr		sp, sp, #PSR_FIQF
+	msr		spsr_cxsf, sp
+	subs	pc, lr, #4
+1:
+	// No banked MSR without EL2: carry the values in r0, parked in r10_fiq
+	mov		r10, r0
+	mov		r0, lr
+	cps		#PSR_IRQ_MODE
+	mov		lr, r0
+	cps		#PSR_FIQ_MODE
+	mrs		r0, spsr
+	cps		#PSR_IRQ_MODE
+	msr		spsr_cxsf, r0
+	cps		#PSR_FIQ_MODE
+	mov		r0, r10
+	cps		#PSR_IRQ_MODE
+#endif
+#if defined(DW8250_NS_A7)
+Lfleh_decirq_irq:
+#endif
 	sub		lr, lr, #4
 	
+#if defined(ARM_BOARD_CONFIG_VIRTA7)
+	// A generic timer holds its FIQ until re-armed: unmasking FIQ here re-enters at once
+	cpsie		a								// Re-enable async aborts
+#else
 	cpsie		af								// Re-enable async aborts/FIQ
+#endif
 	
 	mrs		sp, spsr
 	tst		sp, #0x0f							// From user? or kernel?
@@ -2013,5 +2053,8 @@ LEXT(ExceptionVectorPanic)
 
 LOAD_ADDR_GEN_DEF(mach_trap_table)
 LOAD_ADDR_GEN_DEF(kern_invalid)
+#if defined(DW8250_NS_A7)
+LOAD_ADDR_GEN_DEF(pe_gic_timer_irq)
+#endif
 
 /* vim: set ts=4: */

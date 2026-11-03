@@ -72,7 +72,12 @@
 
 #if defined (ARMA7)
 #define __ARM_ARCH__               7
+#if defined(ARM_BOARD_CONFIG_VIRTA7)
+// Plain armv7: this board runs the armv6/armv7 ABI, not the watch's v7k
+#define __ARM_SUB_ARCH__           CPU_ARCH_ARMv7
+#else
 #define __ARM_SUB_ARCH__           CPU_ARCH_ARMv7k
+#endif
 #define __ARM_VMSA__               7
 #define __ARM_VFP__                3
 

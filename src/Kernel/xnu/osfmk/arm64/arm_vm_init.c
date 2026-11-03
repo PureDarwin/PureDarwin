@@ -1185,6 +1185,15 @@ arm_vm_auxkc_init(void)
 	return true;
 }
 
+// kc-tools can emit a fileset whose header is the kernel's own, with every kext's code in __PRELINK_TEXT
+// nothing refines fileset kext protections later, so that range has to stay executable
+static bool
+arm_vm_kc_prelink_text_is_exec(void)
+{
+	return kernel_mach_header_is_in_fileset(&_mh_execute_header) &&
+	       PE_get_kc_header(KCKindPrimary) == &_mh_execute_header;
+}
+
 void
 arm_vm_prot_init(__unused boot_args * args)
 {
@@ -1299,7 +1308,11 @@ arm_vm_prot_init(__unused boot_args * args)
 
 noAuxKC:
 	/* Map coalesced kext TEXT segment RWNX for now */
-	arm_vm_page_granular_RWNX(segPRELINKTEXTB, segSizePRELINKTEXT, ARM64_GRANULE_ALLOW_BLOCK); // Refined in OSKext::readPrelinkedExtensions
+	if (arm_vm_kc_prelink_text_is_exec()) {
+		arm_vm_page_granular_RWX(segPRELINKTEXTB, segSizePRELINKTEXT, ARM64_GRANULE_ALLOW_BLOCK);
+	} else {
+		arm_vm_page_granular_RWNX(segPRELINKTEXTB, segSizePRELINKTEXT, ARM64_GRANULE_ALLOW_BLOCK); // Refined in OSKext::readPrelinkedExtensions
+	}
 
 	/* Map coalesced kext DATA_CONST segment RWNX (could be empty) */
 	arm_vm_page_granular_RWNX(segPLKDATACONSTB, segSizePLKDATACONST, ARM64_GRANULE_ALLOW_BLOCK); // Refined in OSKext::readPrelinkedExtensions
@@ -1592,7 +1605,9 @@ arm_vm_prot_finalize(boot_args * args __unused)
 	}
 
 	/* tighten permissions on kext read only data and code */
-	arm_vm_page_granular_RNX(segPRELINKTEXTB, segSizePRELINKTEXT, ARM64_GRANULE_ALLOW_BLOCK);
+	if (!arm_vm_kc_prelink_text_is_exec()) {
+		arm_vm_page_granular_RNX(segPRELINKTEXTB, segSizePRELINKTEXT, ARM64_GRANULE_ALLOW_BLOCK);
+	}
 	arm_vm_page_granular_RNX(segPLKDATACONSTB, segSizePLKDATACONST, ARM64_GRANULE_ALLOW_BLOCK);
 
 	cpu_stack_alloc(&BootCpuData);
@@ -2014,9 +2029,10 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 		segSizePRELINKDATA = segSizeKCDATA - (segPRELINKDATAB - segKCDATAB);
 
 		// fileset has consolidated PRELINK_TEXT, PRELINK_INFO and LINKEDIT at the kernel collection level
-		assert(segPRELINKTEXTB && !segSizePRELINKTEXT);                        // kernel PRELINK_TEXT must be empty
+		// kc-tools can reuse the kernel's own header as the kc header, then these segments are the kc's
+		assert(segPRELINKTEXTB && (!segSizePRELINKTEXT || kc_mh == &_mh_execute_header)); // kernel PRELINK_TEXT must be empty
 		segPRELINKTEXTB = (vm_offset_t) getsegdatafromheader(kc_mh,            "__PRELINK_TEXT", &segSizePRELINKTEXT);
-		assert(segPRELINKINFOB && !segSizePRELINKINFO);                        // kernel PRELINK_INFO must be empty
+		assert(segPRELINKINFOB && (!segSizePRELINKINFO || kc_mh == &_mh_execute_header)); // kernel PRELINK_INFO must be empty
 		segPRELINKINFOB = (vm_offset_t) getsegdatafromheader(kc_mh,            "__PRELINK_INFO", &segSizePRELINKINFO);
 		segLINKB        = (vm_offset_t) getsegdatafromheader(kc_mh,            "__LINKEDIT", &segSizeLINK);
 	}

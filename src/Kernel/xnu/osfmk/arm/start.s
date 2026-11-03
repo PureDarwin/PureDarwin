@@ -37,8 +37,27 @@
  * use the stack here: _start has not established it yet. r2 and r3 are
  * scratch at each call site below.
  */
+#if defined(DW8250_NS_A7)
+#define EARLY_PL011_BASE	DW8250_UART_BASE_PHYS	// the board's DW 8250 console (not a PL011)
+#elif defined(ARM_BOARD_CONFIG_VIRTA7)
+#define EARLY_PL011_BASE	0x09000000		// QEMU virt PL011
+#else
+#define EARLY_PL011_BASE	0x20201000		// Pi 1 PL011
+#endif
+
+#if defined(DW8250_NS_A7)
 .macro RPI1_EARLY_UART char
-	ldr		r2, =0x20201018				// PL011_UART_FR
+	ldr		r2, =(EARLY_PL011_BASE + 0x14)	// 8250 LSR, registers 4 bytes apart
+1:	ldr		r3, [r2]
+	tst		r3, #0x20					// THR empty
+	beq		1b
+	sub		r2, r2, #0x14				// 8250 THR
+	mov		r3, #\char
+	str		r3, [r2]
+.endm
+#else
+.macro RPI1_EARLY_UART char
+	ldr		r2, =(EARLY_PL011_BASE + 0x18)	// PL011_UART_FR
 1:	ldr		r3, [r2]
 	tst		r3, #0x20					// TX FIFO full
 	bne		1b
@@ -46,6 +65,7 @@
 	mov		r3, #\char
 	str		r3, [r2]
 .endm
+#endif
 
 .macro RPI1_EARLY_TAG first, second
 	RPI1_EARLY_UART \first
@@ -214,6 +234,7 @@ invalidate_tte:
 	orr		r11, r7, r6							// make tte entry value
 	str		r11, [r5]							// store tte
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
 	// Keep the Pi 1 PL011 reachable while executing in the temporary
 	// identity map, so breadcrumbs remain safe after the MMU is enabled.
 	mov		r7, #0x200
@@ -232,10 +253,10 @@ invalidate_tte:
 	orr		r11, r7, r6
 	str		r11, [r5]
 
-	// LK exposes its HDMI framebuffer to the ARM at physical 0x06000000.
-	// Keep that section reachable during bootstrap so arm_init's colored
-	// progress bands can be drawn before arm_vm_init installs final mappings.
-	mov		r7, #0x60
+	// LK exposes its HDMI framebuffer to the ARM at physical 0x30000000, out of
+	// the way of the RAM it hands over. Keep it reachable during bootstrap so
+	// arm_init's colored progress bands can be drawn before arm_vm_init.
+	mov		r7, #0x300
 	add		r5, r4, r7, LSL #2
 	lsl		r7, r7, #ARM_TT_L1_SHIFT
 	orr		r11, r7, r6
@@ -252,6 +273,21 @@ invalidate_tte:
 	add		r7, r7, #ARM_TT_L1_SIZE
 	orr		r11, r7, r6
 	str		r11, [r5]
+#endif /* ARM_BOARD_CONFIG_BCM2835 */
+
+#if defined(ARM_BOARD_CONFIG_VIRTA7)
+	// The early UART's section, so the breadcrumbs work in the identity map
+	ldr		r7, =(EARLY_PL011_BASE >> ARM_TT_L1_SHIFT)
+	add		r5, r4, r7, LSL #2
+	lsl		r7, r7, #ARM_TT_L1_SHIFT
+	orr		r11, r7, r6
+	// Uncached: a real UART behind the default write-back attributes never sees the writes
+	ldr		r7, =ARM_TTE_BLOCK_ATTRINDXMASK
+	bic		r11, r11, r7
+	ldr		r7, =ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_DISABLE)
+	orr		r11, r11, r7
+	str		r11, [r5]
+#endif /* ARM_BOARD_CONFIG_VIRTA7 */
 
 	// Set up the virtual mapping for the kernel using 1Mb direct section TTE entries
 	mov		r7, r8								// Save original phys base

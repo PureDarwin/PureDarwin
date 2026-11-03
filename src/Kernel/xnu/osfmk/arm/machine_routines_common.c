@@ -856,7 +856,12 @@ ml_set_interrupts_enabled(boolean_t enable)
 #else
 		__builtin_arm_wsr("DAIFClr", DAIFSC_STANDARD_DISABLE);
 #endif
+#if defined(ARM_BOARD_CONFIG_VIRTA7)
+	// The generic-timer FIQ can be live while IRQ is masked; splsched must stop it too
+	} else if (!enable && ((state & (PSR_IRQF | PSR_FIQF)) != (PSR_IRQF | PSR_FIQF))) {
+#else
 	} else if (!enable && ((state & INTERRUPT_MASK) == 0)) {
+#endif
 #if __arm__
 		__asm__ volatile ("cpsid if" ::: "memory"); // Mask IRQ FIQ
 #else

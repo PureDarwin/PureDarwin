@@ -698,7 +698,8 @@ vm_compressor_init(void)
 	}
 	compressor_pool_multiplier = 1;
 
-#elif XNU_TARGET_OS_OSX
+// 32-bit ARM builds as macOS too, but only the __arm__ sizing fits its kernel VA
+#elif XNU_TARGET_OS_OSX && !defined(__arm__)
 
 	if (vm_compression_limit == 0) {
 		if (max_mem <= (4ULL * 1024ULL * 1024ULL * 1024ULL)) {

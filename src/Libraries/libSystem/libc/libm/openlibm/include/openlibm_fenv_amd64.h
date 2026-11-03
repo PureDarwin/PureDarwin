@@ -32,7 +32,12 @@
 #include "cdefs-compat.h"
 #include "types-compat.h"
 
-#include "math_private.h"
+/* math_private.h was included here but nothing in this file uses it, and it
+ * drags in openlibm_complex.h whose "#define I" breaks C++ consumers. It also
+ * supplied OLM_DLLEXPORT, so carry just that (same value as openlibm_math.h). */
+#ifndef OLM_DLLEXPORT
+#define OLM_DLLEXPORT __attribute__ ((visibility("default")))
+#endif
 
 #ifndef	__fenv_static
 #define	__fenv_static	static

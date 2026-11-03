@@ -406,6 +406,52 @@ ml_parse_cpu_topology(void)
 	uint32_t cpu_boot_arg;
 	int err;
 
+#if defined(QEMUVIRTA7)
+	// one smp cluster from the loader's /cpus, cpu ids in node order and phys ids from
+	// each reg's aff0, which is also how the low reset vector finds its cpu data
+	cpu_boot_arg = MAX_CPUS;
+	PE_parse_boot_argn("cpus", &cpu_boot_arg, sizeof(cpu_boot_arg));
+	if (cpu_boot_arg == 0 || cpu_boot_arg > MAX_CPUS) {
+		cpu_boot_arg = MAX_CPUS;
+	}
+	topology_info.num_cpus = 0;
+	if (SecureDTLookupEntry(NULL, "/cpus", &entry) == kSuccess &&
+	    SecureDTInitEntryIterator(entry, &iter) == kSuccess) {
+		while (topology_info.num_cpus < cpu_boot_arg &&
+		    SecureDTIterateEntries(&iter, &child) == kSuccess) {
+			uint32_t const *reg;
+			unsigned int size;
+			ml_topology_cpu_t *cpu = &topology_info.cpus[topology_info.num_cpus];
+
+			if (SecureDTGetProperty(child, "reg", (void const **)&reg, &size) != kSuccess ||
+			    size < sizeof(uint32_t)) {
+				continue;
+			}
+			cpu->cpu_id = topology_info.num_cpus;
+			cpu->phys_id = *reg & 0xff;
+			cpu->cluster_id = 0;
+			cpu->cluster_type = CLUSTER_TYPE_SMP;
+			topology_info.num_cpus++;
+		}
+	}
+	if (topology_info.num_cpus == 0) {
+		topology_info.cpus[0].cpu_id = 0;
+		topology_info.cpus[0].phys_id = 0;
+		topology_info.cpus[0].cluster_id = 0;
+		topology_info.cpus[0].cluster_type = CLUSTER_TYPE_SMP;
+		topology_info.num_cpus = 1;
+	}
+	topology_info.max_cpu_id = topology_info.num_cpus - 1;
+	topology_info.num_clusters = 1;
+	topology_info.max_cluster_id = 0;
+	topology_info.clusters[0].cluster_id = 0;
+	topology_info.clusters[0].cluster_type = CLUSTER_TYPE_SMP;
+	topology_info.clusters[0].num_cpus = topology_info.num_cpus;
+	topology_info.clusters[0].first_cpu_id = 0;
+	topology_info.clusters[0].cpu_mask = (1u << topology_info.num_cpus) - 1;
+	return;
+#endif
+
 #if defined(QEMUVIRT) || defined(ARM_BOARD_CONFIG_BCM2835)
        /* QEMU virt and BCM2835 do not expose Apple's EDT CPU-topology schema.
         * Both targets currently boot one CPU; initialize a single SMP cluster

@@ -9,6 +9,7 @@ class PDArmCPU : public IOCPU {
 private:
 	IOCPUInterruptController *cpuIC;
 	bool startCommonCompleted;
+	uint32_t fMPIDR;
 
 public:
 	virtual IOService *probe(IOService *provider, SInt32 *score) APPLE_KEXT_OVERRIDE;
@@ -18,7 +19,14 @@ public:
 	virtual kern_return_t startCPU(vm_offset_t start_paddr, vm_offset_t arg_paddr) APPLE_KEXT_OVERRIDE;
 	virtual void haltCPU(void) APPLE_KEXT_OVERRIDE;
 	virtual const OSSymbol *getCPUName(void) APPLE_KEXT_OVERRIDE;
+	virtual void signalCPU(IOCPU *target) APPLE_KEXT_OVERRIDE;
 	bool startCommon(void);
+#if defined(__arm__) && !defined(__arm64__)
+	// generic a7 smp: every core registered with mach and started through its reset vector
+	enum StartMethod { kStartNone, kStartPSCI, kStartRockchipMailbox };
+	static unsigned startSMP(StartMethod method);
+	void handleIPI(void);
+#endif
 };
 
 class PDArmCPUInterruptController : public IOCPUInterruptController {

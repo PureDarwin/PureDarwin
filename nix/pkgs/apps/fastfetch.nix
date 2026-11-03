@@ -24,6 +24,8 @@
 , withOpenGL ? true
   # Wayland-only image: no X11 libraries exist to name here.
 , withX11 ? true
+  # Modules on IOKit families an xnu-built SDK lacks (storage, graphics, hid, kext, pwr_mgt)
+, withIOKitExtras ? true
 , appleSdk
 }:
 
@@ -203,6 +205,15 @@ LOGOEOF
     sed -i -e '/^    \/\/ PacBSD$/e cat pd-logo-entry.c' src/logo/builtin.c
     rm pd-logo-entry.c
 
+    ${lib.optionalString (!withIOKitExtras) ''
+    for base in battery diskio gamepad keyboard mouse physicaldisk; do
+      sed -i "s#src/detection/$base/''${base}_apple\.[mc]#src/detection/$base/''${base}_nosupport.c#" CMakeLists.txt
+    done
+    sed -i 's#src/detection/gpu/gpu_apple\.c#src/detection/gpu/gpu_nosupport.c#' CMakeLists.txt
+    sed -i '/src\/detection\/gpu\/gpu_apple\.m/d' CMakeLists.txt
+    sed -i 's#src/common/impl/kmod_apple\.c#src/common/impl/kmod_nosupport.c#' CMakeLists.txt
+    ''}
+
     ${lib.optionalString (!withOpenGL) ''
     # opengl_apple.c is in the Apple source list unconditionally - there is no
     # ENABLE_OPENGL flag - so replace it the same way the other _apple files
@@ -216,6 +227,8 @@ const char* ffDetectOpenGL(FF_A_UNUSED FFOpenGLOptions* options, FF_A_UNUSED FFO
 }
 GLEOF
     sed -i 's#src/detection/opengl/opengl_apple\.c#src/detection/opengl/opengl_nosupport.c#' CMakeLists.txt
+    # The shared GL helpers need OpenGL headers and serve only the platform files
+    sed -i '/src\/detection\/opengl\/opengl_shared\.c/d' CMakeLists.txt
     ''}
 
     # sysinfo.pageSize is only ever multiplied by vm_statistics64 counters,
@@ -262,7 +275,8 @@ GPUEOF
     export PATH="${darwinCrossToolchain}/bin:$PATH"
     export NIX_DARWIN_TOOLCHAIN_DIR="${darwinCrossToolchain}/bin"
     export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -F$DARWIN_SDK_ROOT/System/Library/Frameworks ${glFrameworkFlag}-fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${foundation}/usr/lib -L${libobjc}/usr/lib -L${iokit}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup ${glDylibFileFlag}${xDylibFileFlags}${glLinkFlag}-lIOKitCF -lCoreFoundation -lFoundation -lobjc -lSystem"
-    export CFLAGS="-isysroot $DARWIN_SDK_ROOT ${glFrameworkFlag}${glIncludeFlag}-I${libSystem}/usr/include -I${corefoundation}/include -I${foundation}/usr/include -I${libobjc}/usr/include -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
+    # IOKitUser's headers: an SDK built from xnu has only the kernel side of IOKit
+    export CFLAGS="-isysroot $DARWIN_SDK_ROOT -I${../../../src/Libraries/IOKit/iokituser/include} ${glFrameworkFlag}${glIncludeFlag}-I${libSystem}/usr/include -I${corefoundation}/include -I${foundation}/usr/include -I${libobjc}/usr/include -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
   '';
 
   dontFixup = true;

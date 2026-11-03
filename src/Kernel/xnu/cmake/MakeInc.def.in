@@ -31,7 +31,7 @@ else ifneq ($(findstring _host,$(RC_ProjectName)),)
 SUPPORTED_ARM_MACHINE_CONFIGS = NONE
 SUPPORTED_ARM64_MACHINE_CONFIGS = NONE
 else
-SUPPORTED_ARM_MACHINE_CONFIGS = T8002 T8004 BCM2835
+SUPPORTED_ARM_MACHINE_CONFIGS = T8002 T8004 BCM2835 VIRTA7
 SUPPORTED_ARM64_MACHINE_CONFIGS = T7000 T7001 S8000 S8001 T8010 T8011 BCM2837 VIRT
 
 endif
@@ -75,6 +75,17 @@ MACHINE_FLAGS_ARM64_T8011 = -DARM64_BOARD_CONFIG_T8011 -mcpu=apple-a10
 MACHINE_FLAGS_ARM_BCM2835 = -DARM_BOARD_CONFIG_BCM2835 -mcpu=arm1176jzf-s \
 	-DPUREDARWIN_NO_KERNEL_INTEGRITY -DPUREDARWIN_NO_APPLE_PMU \
 	-DPUREDARWIN_EARLY_FB_MARK
+# QEMU virt with a Cortex-A7: the generic ARMv7 board (GICv2, generic timer, PL011).
+# FastISel (used at -O0, i.e. DEBUG) renames each long-call libcall it emits
+# (_memset.1, _memset.2, ...) into symbols nothing defines; keep it off.
+# Without FastISel, clang 21 -O0 splits the stack-guard load across two registers
+# (clobbers an argument, reads the guard through a stale r9): no stack protector.
+# sun7i: its uart output never reaches the header, so the kernel log is recorded
+# and drawn on hdmi when the video console comes up
+MACHINE_FLAGS_ARM_VIRTA7 = -DARM_BOARD_CONFIG_VIRTA7 -mcpu=cortex-a7 \
+	-DPUREDARWIN_NO_KERNEL_INTEGRITY -DPUREDARWIN_NO_APPLE_PMU \
+	-mllvm -fast-isel=false -fno-stack-protector $(PUREDARWIN_BOARD_CFLAGS) \
+	$(if $(findstring SUN7I,$(PUREDARWIN_BOARD_CFLAGS)),-DPUREDARWIN_EARLY_FB_MARK)
 MACHINE_FLAGS_ARM64_BCM2837 = -DARM64_BOARD_CONFIG_BCM2837
 MACHINE_FLAGS_ARM64_VIRT = -DARM64_BOARD_CONFIG_VIRT
 
@@ -277,6 +288,8 @@ BUILD_STATIC_LINK := 1
 
 ifeq ($(CURRENT_MACHINE_CONFIG),BCM2835)
 ARCH_FLAGS_ARM		  = -arch armv6
+else ifeq ($(CURRENT_MACHINE_CONFIG),VIRTA7)
+ARCH_FLAGS_ARM		  = -arch armv7
 else
 ARCH_FLAGS_ARM		  = -arch $(ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG)
 endif

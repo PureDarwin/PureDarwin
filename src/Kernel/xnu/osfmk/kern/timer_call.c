@@ -1983,6 +1983,20 @@ running_timers_expire(processor_t processor, uint64_t now)
 		}
 
 		expired = true;
+#if __arm__
+		// The quantum timer is armed for the running thread. On 32-bit ARM one fired for a
+		// thread already freed (Cortex-A7 bring-up): skip a stale one rather than lock it
+		if (i == RUNNING_TIMER_QUANTUM && call->tc_param1 != (timer_call_param_t)processor->active_thread) {
+			static uint32_t pd_stale_quantum;
+
+			if (pd_stale_quantum++ < 8) {
+				printf("PD-quantum: stale quantum timer param %p, active thread %p, deadline 0x%llx now 0x%llx\n",
+				    call->tc_param1, processor->active_thread, (unsigned long long)deadline, (unsigned long long)now);
+			}
+			call->tc_pqlink.deadline = EndOfAllTime;
+			continue;
+		}
+#endif /* __arm__ */
 		timer_call_trace_expire_entry(call);
 		call->tc_func(call->tc_param0, call->tc_param1);
 		timer_call_trace_expire_return(call);

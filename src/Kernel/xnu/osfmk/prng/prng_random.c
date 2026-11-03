@@ -296,6 +296,11 @@ random_cpu_init(int cpu)
 void
 read_random(void * buffer, u_int numbytes)
 {
+	// No PRNG kext registered (kernel-only arm32 boots): the early DRBG serves
+	if (!prng_ready) {
+		read_erandom(buffer, numbytes);
+		return;
+	}
 	prng_funcs.refresh(prng_ctx);
 	read_random_generate(buffer, numbytes);
 }
@@ -346,7 +351,9 @@ write_random(void * buffer, u_int numbytes)
 	SHA256_Update(&ctx, buffer, numbytes);
 	SHA256_Final(seed, &ctx);
 
-	prng_funcs.reseed(prng_ctx, sizeof(seed), seed);
+	if (prng_ready) {
+		prng_funcs.reseed(prng_ctx, sizeof(seed), seed);
+	}
 	cc_clear(sizeof(seed), seed);
 
 	return 0;

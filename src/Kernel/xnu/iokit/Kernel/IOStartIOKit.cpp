@@ -87,7 +87,7 @@ IOKitInitializeTime( void )
 	t.tv_sec = 30;
 	t.tv_nsec = 0;
 
-// RTC is not present on this target
+// RTC is not present on these targets; arm32 boards get PDArmPlatformExpert's software one
 #if !defined(BCM2837) && !defined(QEMUVIRT)
 	IOService::waitForService(
 		IOService::resourceMatching("IORTC"), &t );

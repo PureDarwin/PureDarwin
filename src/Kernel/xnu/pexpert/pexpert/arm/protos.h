@@ -11,6 +11,10 @@
 extern vm_offset_t pe_arm_get_soc_base_phys(void);
 extern uint32_t pe_arm_init_interrupts(void *args);
 extern void pe_arm_init_debug(void *args);
+// the generic a7 gic, also used by the platform kext for ipis
+extern void pe_gic_init_cpu(void);
+extern vm_offset_t pe_gic_gicd, pe_gic_gicc;
+extern uint32_t pe_gic_timer_irq;
 
 
 #ifdef  PEXPERT_KERNEL_PRIVATE

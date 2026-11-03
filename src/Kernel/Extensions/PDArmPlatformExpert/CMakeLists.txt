@@ -3,6 +3,7 @@ add_kext_bundle(PDArmPlatformExpert INFO_PLIST Info.plist KERNEL_PRIVATE
 
 target_sources(PDArmPlatformExpert PRIVATE
     PDArmPlatformExpert.cpp
+    PDSoftRTC.cpp
     PDArmCPU.cpp
     PDArmGIC.cpp
     PDAppleAIC.cpp

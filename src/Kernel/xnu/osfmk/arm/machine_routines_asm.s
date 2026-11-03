@@ -1143,6 +1143,11 @@ LEXT(fiq_context_init)
 	 * timer.
 	 */
 
+	// No deadline yet: park the compare far out, or the reset value fires at once,
+	// before the interrupt stack exists
+	mvn		r0, #0x80000000								// 0x7fffffff ticks
+	mcr		p15, 0, r0, c14, c3, 0						// Write to CNTV_TVAL
+	isb
 	mov		r0, #1										// Enable Timer
 	mcr		p15, 0, r0, c14, c3, 1						// Write to CNTV_CTL
 

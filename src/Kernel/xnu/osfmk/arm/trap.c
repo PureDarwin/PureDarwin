@@ -61,6 +61,9 @@ extern void IOLog(const char *format, ...) __printflike(1, 2);
 #include <arm/machine_routines.h>
 #include <arm/misc_protos.h>
 #include <arm/setjmp.h>
+
+extern char *proc_name_address(void *p);
+extern int proc_pid(struct proc *);
 #include <arm/proc_reg.h>
 
 /*
@@ -585,7 +588,10 @@ sleh_abort(struct arm_saved_state * regs, int type)
 	 * survives, so report enough to locate the faulting instruction.
 	 */
 	if ((regs->cpsr & PSR_MODE_MASK) == PSR_USER_MODE) {
-		IOLog("user fault: pc 0x%08x lr 0x%08x sp 0x%08x addr 0x%08x fsr 0x%x exc %d code 0x%x\n",
+		void *bp = get_bsdtask_info(current_task());
+
+		IOLog("user fault: %s[%d] pc 0x%08x lr 0x%08x sp 0x%08x addr 0x%08x fsr 0x%x exc %d code 0x%x\n",
+		    bp ? proc_name_address(bp) : "?", bp ? proc_pid((struct proc *)bp) : -1,
 		    (unsigned)regs->pc, (unsigned)regs->lr, (unsigned)regs->sp,
 		    (unsigned)vaddr, (unsigned)status, exc, (unsigned)codes[0]);
 	}

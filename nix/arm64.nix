@@ -606,6 +606,12 @@ let
     llvmSrc = pkgs.llvmPackages_21.libllvm.monorepoSrc;
     llvmVersion = pkgs.llvmPackages_21.llvm.version;
   };
+  compilerRtArmv7Build = pkgs.callPackage ./pkgs/toolchain/compiler-rt-armv6.nix {
+    inherit darwinCrossToolchain nativeLd;
+    llvmSrc = pkgs.llvmPackages_21.libllvm.monorepoSrc;
+    llvmVersion = pkgs.llvmPackages_21.llvm.version;
+    arch = "armv7";
+  };
   llvmCrossArm64Build = mkArm64Build ./pkgs/toolchain/llvm-cross.nix {
     libcxxDylib = libcxxDylibArm64Build;
     libcxxabiDylib = libcxxabiDylibArm64Build;
@@ -1596,6 +1602,15 @@ let
     iokit = iokitArmv6Build;
     compilerRt = compilerRtArmv6Build;
   };
+  launchctlArmv6Build = launchctlBuild.override {
+    darwinCrossToolchain = armv6CrossToolchain;
+    targetTriple = "armv6-apple-darwin20.4";
+    libSystem = libSystemArmv6Build;
+    corefoundation = coreFoundationArmv6Build;
+    iokit = iokitArmv6Build;
+    iokitHeaders = iokitCFStaticArmv6Build;
+    compilerRt = compilerRtArmv6Build;
+  };
   launchdArm64Build = launchdBuild.override {
     darwinCrossToolchain = arm64CrossToolchain;
     targetTriple = "arm64-apple-darwin20.4";
@@ -1635,6 +1650,43 @@ let
 
   xvfbZlibArm64Build = mkArm64Build ./pkgs/x11/xvfb-zlib.nix { inherit (pkgs) zlib; };
   toyboxArm64Build = mkArm64Build ./pkgs/base/toybox.nix { zlib = xvfbZlibArm64Build; };
+
+  # armv6 (Pi Zero / Cortex-A7) counterparts for a shell image: zlib, toybox, ncurses, zsh
+  mkArmv6Build = file: deps:
+  if isDarwin then null else
+  let
+  f = import file;
+  common = {
+    darwinCrossToolchain = armv6CrossToolchain;
+    targetTriple = "armv6-apple-darwin20.4";
+    libSystem = libSystemArmv6Build;
+    inherit nativeLd;
+  };
+  in
+  pkgs.callPackage f
+  (builtins.intersectAttrs (builtins.functionArgs f) common // deps);
+  zlibArmv6Build = mkArmv6Build ./pkgs/x11/xvfb-zlib.nix { inherit (pkgs) zlib; };
+  toyboxArmv6Build = mkArmv6Build ./pkgs/base/toybox.nix { zlib = zlibArmv6Build; };
+  foundationArmv6Build = mkArmv6Build ./pkgs/apple/foundation.nix {
+    libobjc = libobjcArmv6Build;
+    corefoundation = coreFoundationArmv6Build;
+    src = "${foundationSource}/src/Libraries/Foundation";
+  };
+  # The arm64 recipe without GL or X11, for the small arm32 boards
+  pdadbdArmv6Build = mkArmv6Build ./pkgs/apps/pdadbd.nix { };
+  tempArmv6Build = mkArmv6Build ./pkgs/apps/temp.nix { };
+  fastfetchArmv6Build = mkArmv6Build ./pkgs/apps/fastfetch.nix {
+    fastfetch = pkgs.fastfetch;
+    corefoundation = coreFoundationArmv6Build;
+    foundation = foundationArmv6Build;
+    libobjc = libobjcArmv6Build;
+    iokit = iokitArmv6Build;
+    openglFramework = null;
+    mesa = null;
+    withOpenGL = false;
+    withX11 = false;
+    withIOKitExtras = false;
+  };
   xzArm64Build = mkArm64Build ./pkgs/base/xz.nix { };
   fileArm64Build = mkArm64Build ./pkgs/base/file.nix { zlib = xvfbZlibArm64Build; };
   opensslArm64Build = mkArm64Build ./pkgs/base/openssl.nix { };
@@ -2024,6 +2076,18 @@ let
     targetTriple = "arm64-apple-darwin20.4";
     libSystem = libSystemArm64Build;
   };
+  ncursesArmv6Build = ncursesBuild.override {
+    darwinCrossToolchain = armv6CrossToolchain;
+    targetTriple = "armv6-apple-darwin20.4";
+    libSystem = libSystemArmv6Build;
+  };
+  zshArmv6Build = zshBuild.override {
+    darwinCrossToolchain = armv6CrossToolchain;
+    targetTriple = "armv6-apple-darwin20.4";
+    libSystem = libSystemArmv6Build;
+    ncurses = ncursesArmv6Build;
+    noIconv = true;
+  };
   zshArm64Build = zshBuild.override {
     darwinCrossToolchain = arm64CrossToolchain;
     targetTriple = "arm64-apple-darwin20.4";
@@ -2328,6 +2392,124 @@ let
       "-DPUREDARWIN_KERNEL_COMPILER_RT=${compilerRtArmv6Build}/lib/libcompiler_rt.a"
     ];
   };
+  # QEMU virt, Cortex-A7: the generic ARMv7 board
+  kernelArm32VirtA7Build = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm32-virta7";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "DEBUG";
+    puredarwinArch = "armv7";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [
+      "-DPUREDARWIN_ARM32_MACHINE_CONFIG=VIRTA7"
+      "-DPUREDARWIN_KERNEL_COMPILER_RT=${compilerRtArmv7Build}/lib/libcompiler_rt.a"
+    ];
+  };
+  # Luckfox Pico (RV1106/RV1103): the generic A7 board with its GIC, UART and IRQ timer
+  kernelArm32Rv1106Build = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm32-rv1106";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "DEBUG";
+    puredarwinArch = "armv7";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [
+      "-DPUREDARWIN_ARM32_MACHINE_CONFIG=VIRTA7"
+      "-DPUREDARWIN_ARM32_BOARD=RV1106"
+      "-DPUREDARWIN_KERNEL_COMPILER_RT=${compilerRtArmv7Build}/lib/libcompiler_rt.a"
+    ];
+  };
+  # Same board, RELEASE: a smaller kernel for RAM-only USB boots
+  kernelArm32Rv1106ReleaseBuild = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm32-rv1106-release";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "RELEASE";
+    puredarwinArch = "armv7";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [
+      "-DPUREDARWIN_ARM32_MACHINE_CONFIG=VIRTA7"
+      "-DPUREDARWIN_ARM32_BOARD=RV1106"
+      "-DPUREDARWIN_KERNEL_COMPILER_RT=${compilerRtArmv7Build}/lib/libcompiler_rt.a"
+    ];
+  };
+  # Allwinner A20 (sun7i, Banana Pi): the generic A7 board with its GIC, UART and IRQ timer
+  kernelArm32Sun7iBuild = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm32-sun7i";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "DEBUG";
+    puredarwinArch = "armv7";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [
+      "-DPUREDARWIN_ARM32_MACHINE_CONFIG=VIRTA7"
+      "-DPUREDARWIN_ARM32_BOARD=SUN7I"
+      "-DPUREDARWIN_KERNEL_COMPILER_RT=${compilerRtArmv7Build}/lib/libcompiler_rt.a"
+    ];
+  };
+  # Same board, RELEASE
+  kernelArm32Sun7iReleaseBuild = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm32-sun7i-release";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "RELEASE";
+    puredarwinArch = "armv7";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [
+      "-DPUREDARWIN_ARM32_MACHINE_CONFIG=VIRTA7"
+      "-DPUREDARWIN_ARM32_BOARD=SUN7I"
+      "-DPUREDARWIN_KERNEL_COMPILER_RT=${compilerRtArmv7Build}/lib/libcompiler_rt.a"
+    ];
+  };
+  # luckfox lyra (rk3506): the rockchip a7 board class with its own addresses
+  kernelArm32Rk3506Build = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm32-rk3506";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "DEBUG";
+    puredarwinArch = "armv7";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [
+      "-DPUREDARWIN_ARM32_MACHINE_CONFIG=VIRTA7"
+      "-DPUREDARWIN_ARM32_BOARD=RK3506"
+      "-DPUREDARWIN_KERNEL_COMPILER_RT=${compilerRtArmv7Build}/lib/libcompiler_rt.a"
+    ];
+  };
+  # Same board, RELEASE: a smaller kernel for the 128MB board's RAM-only USB boots
+  kernelArm32Rk3506ReleaseBuild = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm32-rk3506-release";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "RELEASE";
+    puredarwinArch = "armv7";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [
+      "-DPUREDARWIN_ARM32_MACHINE_CONFIG=VIRTA7"
+      "-DPUREDARWIN_ARM32_BOARD=RK3506"
+      "-DPUREDARWIN_KERNEL_COMPILER_RT=${compilerRtArmv7Build}/lib/libcompiler_rt.a"
+    ];
+  };
   kernelArm32Bcm2835DevBuild = mkPureDarwinBuild {
     pname = "puredarwin-kernel-arm32-bcm2835-dev";
     src = kernelSource;
@@ -2379,6 +2561,32 @@ let
     inherit arm64CrossToolchain;
     extraCmakeFlags = [
       "-DPUREDARWIN_ARM32_MACHINE_CONFIG=BCM2835"
+      "-DPUREDARWIN_KERNEL_COMPILER_RT=${compilerRtArmv6Build}/lib/libcompiler_rt.a"
+    ];
+  };
+  # Generic Cortex-A7 (QEMU virt) set: the Pi Zero kexts minus its SD host, the
+  # root comes from a ramdisk
+  kextsArm32VirtA7Build = mkPureDarwinBuild {
+    pname = "puredarwin-kexts-arm32-virta7";
+    src = kextsSource;
+    buildTargets = [
+      "corecrypto.kext" "pthread.kext" "ext4.kext"
+      "IOStorageFamily" "Ext4FileSystemDriver.kext" "PDArmPlatformExpert"
+      "PDRockchipSFC.kext" "PDRockchipDWMMC.kext" "PDRockchipDWC3.kext"
+    ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = false;
+    installKexts = true;
+    installKextNames = [
+      "corecrypto.kext" "pthread.kext" "ext4.kext"
+      "IOStorageFamily.kext" "Ext4FileSystemDriver.kext" "PDArmPlatformExpert.kext"
+      "PDRockchipSFC.kext" "PDRockchipDWMMC.kext" "PDRockchipDWC3.kext"
+    ];
+    puredarwinArch = "armv6";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [
+      "-DPUREDARWIN_ARM32_MACHINE_CONFIG=VIRTA7"
       "-DPUREDARWIN_KERNEL_COMPILER_RT=${compilerRtArmv6Build}/lib/libcompiler_rt.a"
     ];
   };
@@ -2880,9 +3088,19 @@ in
     kernelArm64Bcm2837Build
     kernelArm64Bcm2837DebugBuild
     kernelArm32Bcm2835Build
+    kernelArm32VirtA7Build
+    kernelArm32Rv1106Build
+    kernelArm32Rv1106ReleaseBuild
+    kernelArm32Rk3506Build
+    kernelArm32Rk3506ReleaseBuild
+    kernelArm32Sun7iBuild
+    kernelArm32Sun7iReleaseBuild
+    pdadbdArmv6Build
+    tempArmv6Build
     kernelArm32Bcm2835DebugBuild
     kernelArm32Bcm2835DevBuild
     kextsArm32Bcm2835Build
+    kextsArm32VirtA7Build
     compilerRtArmv6Build
     libSystemArmv6Build
     libcxxabiDylibArmv6Build
@@ -2892,6 +3110,13 @@ in
     iokitCFStaticArmv6Build
     iokitArmv6Build
     launchdArmv6Build
+    launchctlArmv6Build
+    zlibArmv6Build
+    toyboxArmv6Build
+    foundationArmv6Build
+    fastfetchArmv6Build
+    ncursesArmv6Build
+    zshArmv6Build
     userlandArm32Bcm2835Build
     kextsArm64Build
     splitBaseSystemArm64VirtMinimal

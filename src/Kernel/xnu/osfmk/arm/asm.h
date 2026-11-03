@@ -364,7 +364,8 @@ SHIM_LABEL(__LINE__):
  * Note the mode switch also changes SP and LR to that mode's banked copies,
  * so nothing between the cps and the restore may touch either.
  */
-#if __ARM_ARCH < 7
+// VIRTA7 too: QEMU's Cortex-A7 has no EL2, so banked MRS is undefined there
+#if __ARM_ARCH < 7 || defined(ARM_BOARD_CONFIG_VIRTA7)
 #define READ_BANKED_LR(dst, modename, modenum, tmp)     \
 	mrs	tmp, cpsr ;                             \
 	cps	#(modenum) ;                            \

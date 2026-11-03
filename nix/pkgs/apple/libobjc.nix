@@ -98,11 +98,14 @@ stdenv.mkDerivation {
     # objc_object::isTaggedPointerOrNil(), whose "!this" is exactly the null
     # check that matters. C++ says "this" is never null, so without this flag
     # clang folds that test away and objc_release(nil) dereferences 0.
+    # armv6: clang defaults 32-bit macOS to the fragile (objc1) runtime; objc4 is objc2 only
     CXXFLAGS="-x objective-c++ -std=gnu++17 -fno-objc-arc -fexceptions \
       -fno-delete-null-pointer-checks \
       -fobjc-exceptions -fPIC -Os -DNDEBUG -DLIBC_NO_LIBCRASHREPORTERCLIENT \
       -D__PUREDARWIN__=1 \
       -Wno-undef-prefix \
+      ${lib.optionalString (lib.hasPrefix "armv6-" targetTriple) "-fobjc-runtime=macosx-11.0"} \
+      -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION -include utility \
       -isysroot $DARWIN_SDK_ROOT \
       -Igenhdr -Iincdir -I$O/runtime -I$PRIV -I${libSystem}/usr/include"
 
@@ -111,6 +114,17 @@ stdenv.mkDerivation {
       ${cc} $CXXFLAGS -c "$O/runtime/$s.mm" -o "$(basename $s).o"
       objs="$objs $(basename $s).o"
     done
+    # the sdk's libc++ has std::function throw bad_function_call, whose vtable and typeinfo come
+    # with its key function in libc++ proper; define that here so libobjc needs only libc++abi
+    cat > genhdr/pd-bad-function-call.mm <<'EOF'
+    #include <functional>
+    namespace std { inline namespace __1 {
+    bad_function_call::~bad_function_call() noexcept {}
+    const char *bad_function_call::what() const noexcept { return "std::bad_function_call"; }
+    } }
+    EOF
+    ${cc} $CXXFLAGS -c genhdr/pd-bad-function-call.mm -o pd-bad-function-call.o
+    objs="$objs pd-bad-function-call.o"
     for s in ${lib.concatStringsSep " " asmSrcs}; do
       ${cc} -isysroot "$DARWIN_SDK_ROOT" -I$O/runtime -c "$O/runtime/$s.s" -o "$(basename $s).o"
       objs="$objs $(basename $s).o"

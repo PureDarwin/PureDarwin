@@ -14,10 +14,7 @@
 
       mkSystem = system:
         let
-          basePkgs = import nixpkgs {
-            inherit system;
-            config.allowUnfreePredicate = pkg: lib.getName pkg == "MacOSX11.3.sdk.tar.xz";
-          };
+          basePkgs = import nixpkgs { inherit system; };
 
           appleSdk = basePkgs.callPackage ./nix/pkgs/toolchain/apple-sdk-pinned.nix { };
           pkgs = basePkgs.extend (_: _: { inherit appleSdk; });
@@ -106,7 +103,8 @@
           armv6CrossToolchain = if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/toolchain.nix {
             inherit nativeLd;
             target = "armv6-apple-darwin20.4";
-            clangTarget = "armv6-apple-darwin20.4";
+            # macosx, not darwin: clang reads darwin on arm as iOS, and libSystem and the kernel are macOS
+            clangTarget = "armv6-apple-macosx11.0";
           };
           nativeUnifdef = pkgs.callPackage ./nix/pkgs/toolchain/unifdef.nix { };
           nativeMigcom = pkgs.callPackage ./nix/pkgs/toolchain/migcom.nix { };
@@ -981,6 +979,7 @@
                 ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang \
                   -dynamiclib -fuse-ld=${nativeLd}/bin/ld -nostdlib \
                   -L${libSystemBuild}/usr/lib \
+                  -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystemBuild}/usr/lib/system/libdyld.dylib \
                   -Wl,-install_name,/usr/lib/libpd_virgl_shim.dylib \
                   -Wl,-platform_version,macos,11.0,11.5 -Wl,-fixup_chains \
                   repack/*.o -lSystem \
@@ -2965,7 +2964,8 @@
             pkgs.callPackage ./nix/pkgs/apple/corefoundation.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
-              inherit (pkgs) icu;
+              # pd's icucore: the oss sdk has no libicucore stub to link against
+              icu = icuCoreBuild;
               src = "${coreFoundationSource}/src/Libraries/CoreFoundation";
               pdCompatInclude = "${coreFoundationSource}/src/Libraries/libSystem/libc/pd-compat-include";
               libobjc = libobjcBuild;
@@ -3753,8 +3753,133 @@
             corefoundation-armv6 = arm64.coreFoundationArmv6Build;
             iokit-armv6 = arm64.iokitArmv6Build;
             launchd-armv6 = arm64.launchdArmv6Build;
+            toybox-armv6 = arm64.toyboxArmv6Build;
+            zsh-armv6 = arm64.zshArmv6Build;
             compiler-rt-armv6 = arm64.compilerRtArmv6Build;
             kernel-arm32-bcm2835 = arm64.kernelArm32Bcm2835Build;
+            kernel-arm32-virta7 = arm64.kernelArm32VirtA7Build;
+            kexts-arm32-virta7 = arm64.kextsArm32VirtA7Build;
+            kernel-arm32-rv1106 = arm64.kernelArm32Rv1106Build;
+            pdadbd-armv6 = arm64.pdadbdArmv6Build;
+            temp-armv6 = arm64.tempArmv6Build;
+            prelinked-arm32-rv1106 = pkgs.callPackage ./nix/pkgs/toolchain/prelinked-arm32-virta7.nix {
+              kernel = arm64.kernelArm32Rv1106Build;
+              kexts = arm64.kextsArm32VirtA7Build;
+              extraKexts = [ "PDRockchipSFC.kext" "PDRockchipDWMMC.kext" "PDRockchipDWC3.kext" ];
+              kcTools = kc-tools.packages.${system}.default;
+            };
+            prelinked-arm32-rv1106-release = pkgs.callPackage ./nix/pkgs/toolchain/prelinked-arm32-virta7.nix {
+              kernel = arm64.kernelArm32Rv1106ReleaseBuild;
+              kexts = arm64.kextsArm32VirtA7Build;
+              extraKexts = [ "PDRockchipSFC.kext" "PDRockchipDWMMC.kext" "PDRockchipDWC3.kext" ];
+              kcTools = kc-tools.packages.${system}.default;
+            };
+            kernel-arm32-rk3506 = arm64.kernelArm32Rk3506Build;
+            prelinked-arm32-rk3506 = pkgs.callPackage ./nix/pkgs/toolchain/prelinked-arm32-virta7.nix {
+              kernel = arm64.kernelArm32Rk3506Build;
+              kexts = arm64.kextsArm32VirtA7Build;
+              extraKexts = [ "PDRockchipSFC.kext" "PDRockchipDWMMC.kext" "PDRockchipDWC3.kext" ];
+              kcTools = kc-tools.packages.${system}.default;
+            };
+            prelinked-arm32-rk3506-release = pkgs.callPackage ./nix/pkgs/toolchain/prelinked-arm32-virta7.nix {
+              kernel = arm64.kernelArm32Rk3506ReleaseBuild;
+              kexts = arm64.kextsArm32VirtA7Build;
+              extraKexts = [ "PDRockchipSFC.kext" "PDRockchipDWMMC.kext" "PDRockchipDWC3.kext" ];
+              kcTools = kc-tools.packages.${system}.default;
+            };
+            # Allwinner A20 (sun7i). No board kexts yet: the sun50i MMC/USB drivers
+            # are sun50iw9 register layouts and still have to be ported to sun7i.
+            kernel-arm32-sun7i = arm64.kernelArm32Sun7iBuild;
+            prelinked-arm32-sun7i = pkgs.callPackage ./nix/pkgs/toolchain/prelinked-arm32-virta7.nix {
+              kernel = arm64.kernelArm32Sun7iBuild;
+              kexts = arm64.kextsArm32VirtA7Build;
+              kcTools = kc-tools.packages.${system}.default;
+            };
+            prelinked-arm32-sun7i-release = pkgs.callPackage ./nix/pkgs/toolchain/prelinked-arm32-virta7.nix {
+              kernel = arm64.kernelArm32Sun7iReleaseBuild;
+              kexts = arm64.kextsArm32VirtA7Build;
+              kcTools = kc-tools.packages.${system}.default;
+            };
+            prelinked-arm32-virta7 = pkgs.callPackage ./nix/pkgs/toolchain/prelinked-arm32-virta7.nix {
+              kernel = arm64.kernelArm32VirtA7Build;
+              kexts = arm64.kextsArm32VirtA7Build;
+              kcTools = kc-tools.packages.${system}.default;
+            };
+            # Minimal A7 image; the arm32 shim needs an xnu-loader with kernel-arm32
+            image-arm32-virta7 = pkgs.callPackage ./nix/pkgs/toolchain/image-arm32-virta7.nix {
+              inherit darwinCrossToolchain appleSdk;
+              libSystem = arm64.libSystemArmv6Build;
+              libobjc = arm64.libobjcArmv6Build;
+              libcxxabi = arm64.libcxxabiDylibArmv6Build;
+              icu = arm64.icuCoreArmv6Build;
+              corefoundation = arm64.coreFoundationArmv6Build;
+              iokit = arm64.iokitArmv6Build;
+              launchd = arm64.launchdArmv6Build;
+              launchctl = arm64.launchctlArmv6Build;
+              zsh = arm64.zshArmv6Build;
+              toybox = arm64.toyboxArmv6Build;
+              userland = arm64.userlandArm32Bcm2835Build;
+              prelinked = pkgs.callPackage ./nix/pkgs/toolchain/prelinked-arm32-virta7.nix {
+                kernel = arm64.kernelArm32VirtA7Build;
+                kexts = arm64.kextsArm32VirtA7Build;
+                kcTools = kc-tools.packages.${system}.default;
+              };
+              shim = xnu-loader.packages.${system}.kernel-arm32;
+              extraBins = [ arm64.fastfetchArmv6Build ];
+              extraLibs = [ arm64.foundationArmv6Build ];
+            };
+            # luckfox lyra (rk3506): the virta7 image with the rk3506 kernel and shim, booted from ram
+            # with pdrkboot's fboot and payload.bin
+            image-arm32-rk3506 = pkgs.callPackage ./nix/pkgs/toolchain/image-arm32-virta7.nix {
+              inherit darwinCrossToolchain appleSdk;
+              libSystem = arm64.libSystemArmv6Build;
+              libobjc = arm64.libobjcArmv6Build;
+              libcxxabi = arm64.libcxxabiDylibArmv6Build;
+              icu = arm64.icuCoreArmv6Build;
+              corefoundation = arm64.coreFoundationArmv6Build;
+              iokit = arm64.iokitArmv6Build;
+              launchd = arm64.launchdArmv6Build;
+              launchctl = arm64.launchctlArmv6Build;
+              zsh = arm64.zshArmv6Build;
+              toybox = arm64.toyboxArmv6Build;
+              userland = arm64.userlandArm32Bcm2835Build;
+              prelinked = self.packages.${system}.prelinked-arm32-rk3506-release;
+              shim = xnu-loader.packages.${system}.arm32-rk3506;
+              extraBins = [ arm64.fastfetchArmv6Build ];
+              extraLibs = [ arm64.foundationArmv6Build ];
+              # 128 MB of ram: the kernel, a 32 MB ramdisk and room to run
+              ramdiskMB = 32;
+              icuDataStub = true;
+              pdrkbootPayload = true;
+              pdadbd = arm64.pdadbdArmv6Build;
+              # pdrkboot writes the host clock over the zeros
+              bootArgs = "debug=0x14e serial=3 -v keepsyms=1 wdt=-1 no_lock_timeouts=1 rd=md0 pdtime=0000000000";
+            };
+            # allwinner a20 (sun7i): the virta7 image with the sun7i kernel and shim,
+            # plus an sd card image u-boot's spl and boot script boot from
+            image-arm32-sun7i = pkgs.callPackage ./nix/pkgs/toolchain/image-arm32-virta7.nix {
+              inherit darwinCrossToolchain appleSdk;
+              libSystem = arm64.libSystemArmv6Build;
+              libobjc = arm64.libobjcArmv6Build;
+              libcxxabi = arm64.libcxxabiDylibArmv6Build;
+              icu = arm64.icuCoreArmv6Build;
+              corefoundation = arm64.coreFoundationArmv6Build;
+              iokit = arm64.iokitArmv6Build;
+              launchd = arm64.launchdArmv6Build;
+              launchctl = arm64.launchctlArmv6Build;
+              zsh = arm64.zshArmv6Build;
+              toybox = arm64.toyboxArmv6Build;
+              userland = arm64.userlandArm32Bcm2835Build;
+              # debug: release compiles kprintf out, and its log is all there is to see here
+              prelinked = self.packages.${system}.prelinked-arm32-sun7i;
+              shim = xnu-loader.packages.${system}.arm32-a20;
+              extraBins = [ arm64.fastfetchArmv6Build ];
+              extraLibs = [ arm64.foundationArmv6Build ];
+              uboot = pkgs.pkgsCross.armv7l-hf-multiplatform.ubootBananaPi;
+              # serial_video_mirror: the replayed early log and all later serial output on hdmi
+              bootArgs = "debug=0x14e serial=3 serial_video_mirror=1 -v keepsyms=1 wdt=-1 no_lock_timeouts=1 rd=md0";
+            };
+            fastfetch-armv6 = arm64.fastfetchArmv6Build;
             kernel-arm32-bcm2835-debug = arm64.kernelArm32Bcm2835DebugBuild;
             kernel-arm32-bcm2835-dev = arm64.kernelArm32Bcm2835DevBuild;
             kexts-arm32-bcm2835 = arm64.kextsArm32Bcm2835Build;

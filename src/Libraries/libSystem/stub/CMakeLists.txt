@@ -78,6 +78,9 @@ if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32)
             "^(__Unwind_(Backtrace|RaiseException|Find_FDE|Resume)|__dyld_find_unwind_sections|___gxx_personality_v0|___cxa_pure_virtual|__longjmp|___(u?divti3|u?modti3|fixdfti|floattidf))$")
         list(FILTER _libsystem_export_lines EXCLUDE REGEX
             "^_(isnormal|isfinite|isnan|scalbn)l$")
+        # What programs used to reach through libdyld's unrestricted export of its libc copy
+        file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/libSystem.arm32-from-libdyld.exports _pd_arm32_extra)
+        list(APPEND _libsystem_export_lines ${_pd_arm32_extra})
     endif()
     # The SDK headers use the unsuffixed ARM64 spellings for these syscalls,
     # while the shared export file only lists their x86 ABI variants.
@@ -94,6 +97,22 @@ if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32)
             _sys_icache_invalidate _sys_dcache_flush)
     endif()
     set(_libsystem_exports_for_link ${CMAKE_CURRENT_BINARY_DIR}/libSystem.arm64.exports)
+    file(WRITE ${_libsystem_exports_for_link} "")
+    foreach(_line ${_libsystem_export_lines})
+        file(APPEND ${_libsystem_exports_for_link} "${_line}\n")
+    endforeach()
+endif()
+if(NOT PUREDARWIN_ARM32)
+    # libkernel's init hooks and globals that programs used to take from libdyld's export of
+    # its private copy; libdyld now exports only the dyld API
+    set(_libsystem_from_libdyld ${CMAKE_CURRENT_SOURCE_DIR}/libSystem.from-libdyld.exports)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_libsystem_from_libdyld})
+    file(STRINGS ${_libsystem_from_libdyld} _pd_from_libdyld)
+    list(APPEND _libsystem_export_lines ${_pd_from_libdyld})
+    if(NOT PUREDARWIN_ARM64)
+        list(APPEND _libsystem_export_lines __get_cpu_capabilities)
+    endif()
+    set(_libsystem_exports_for_link ${CMAKE_CURRENT_BINARY_DIR}/libSystem.link.exports)
     file(WRITE ${_libsystem_exports_for_link} "")
     foreach(_line ${_libsystem_export_lines})
         file(APPEND ${_libsystem_exports_for_link} "${_line}\n")

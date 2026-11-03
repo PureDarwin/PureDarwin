@@ -36,6 +36,39 @@ static uint32_t gTCFG0Value;
 
 static uint32_t pe_arm_init_timer(void *args);
 
+// the gic, shared with the platform kext for ipis, mapped by the boot cpu
+// exported on every arm32 board, so defined on all of them (zero without a gic, as on the bcm2835)
+vm_offset_t pe_gic_gicd, pe_gic_gicc;
+// set under op-tee, where only group 1 is ours: the timer is then the one irq and there are no ipis
+uint32_t pe_gic_timer_irq;
+
+#if defined(QEMUVIRTA7)
+
+// banked per cpu: the timer ppi in group 0 as fiq, sgi 0 in group 1 as irq for ipis
+void
+pe_gic_init_cpu(void)
+{
+	vm_offset_t gicd = pe_gic_gicd, gicc = pe_gic_gicc;
+
+	if (gicd == 0 || gicc == 0) {
+		return;
+	}
+	*(volatile uint32_t *)(gicd + 0x180) = ~0u;                                        /* ICENABLER0 */
+	*(volatile uint8_t *)(gicd + 0x400 + QEMUVIRTA7_TIMER_PPI_VIRT) = 0x00;            /* highest priority */
+	if (pe_gic_timer_irq) {
+		*(volatile uint32_t *)(gicd + 0x100) = 1u << QEMUVIRTA7_TIMER_PPI_VIRT;        /* ISENABLER0 */
+		*(volatile uint32_t *)(gicc + 0x004) = 0xf0;                                   /* PMR */
+		*(volatile uint32_t *)(gicc + 0x000) = 0x1;                                    /* NS: group 1 on */
+		return;
+	}
+	*(volatile uint32_t *)(gicd + 0x080) = ~(1u << QEMUVIRTA7_TIMER_PPI_VIRT);        /* IGROUPR0 */
+	*(volatile uint8_t *)(gicd + 0x400 + 0) = 0x80;                                     /* sgi 0 */
+	*(volatile uint32_t *)(gicd + 0x100) = (1u << QEMUVIRTA7_TIMER_PPI_VIRT) | 1u;     /* ISENABLER0 */
+	*(volatile uint32_t *)(gicc + 0x004) = 0xf0;                                       /* PMR */
+	*(volatile uint32_t *)(gicc + 0x000) = 0x1 | 0x2 | 0x4 | 0x8;                      /* Grp0, Grp1, AckCtl, FIQEn */
+}
+#endif
+
 #if DEVELOPMENT || DEBUG
 decl_simple_lock_data(, panic_hook_lock);
 #endif
@@ -89,6 +122,33 @@ pe_identify_machine(boot_args * bootArgs)
 			timer_frequency = 62500000;
 		}
 
+		bzero((void *)&gPEClockFrequencyInfo, sizeof(clock_frequency_info_t));
+		gPEClockFrequencyInfo.timebase_frequency_hz = timer_frequency;
+		gPEClockFrequencyInfo.dec_clock_rate_hz = timer_frequency;
+		gPEClockFrequencyInfo.fix_frequency_hz = timer_frequency;
+		gPEClockFrequencyInfo.bus_frequency_hz = timer_frequency;
+		gPEClockFrequencyInfo.bus_frequency_min_hz = timer_frequency;
+		gPEClockFrequencyInfo.bus_frequency_max_hz = timer_frequency;
+		gPEClockFrequencyInfo.cpu_frequency_hz = timer_frequency;
+		gPEClockFrequencyInfo.cpu_frequency_min_hz = timer_frequency;
+		gPEClockFrequencyInfo.cpu_frequency_max_hz = timer_frequency;
+		gPEClockFrequencyInfo.bus_clock_rate_hz = timer_frequency;
+		gPEClockFrequencyInfo.cpu_clock_rate_hz = timer_frequency;
+		gPEClockFrequencyInfo.bus_clock_rate_num = timer_frequency;
+		gPEClockFrequencyInfo.bus_clock_rate_den = 1;
+		gPEClockFrequencyInfo.bus_to_cpu_rate_num = 1;
+		gPEClockFrequencyInfo.bus_to_cpu_rate_den = 1;
+		gPEClockFrequencyInfo.bus_to_dec_rate_num = 1;
+		gPEClockFrequencyInfo.bus_to_dec_rate_den = 1;
+		return;
+#elif defined(QEMUVIRTA7)
+		/* Cortex-A7 generic timer: CNTFRQ is what firmware (QEMU) programmed */
+		uint32_t timer_frequency;
+
+		__asm__ volatile ("mrc p15, 0, %0, c14, c0, 0" : "=r"(timer_frequency));
+		if (timer_frequency == 0) {
+			timer_frequency = 62500000;
+		}
 		bzero((void *)&gPEClockFrequencyInfo, sizeof(clock_frequency_info_t));
 		gPEClockFrequencyInfo.timebase_frequency_hz = timer_frequency;
 		gPEClockFrequencyInfo.dec_clock_rate_hz = timer_frequency;
@@ -542,6 +602,9 @@ PE_init_cpu(void)
 	}
 
 	pe_init_fiq();
+#if defined(QEMUVIRTA7)
+	pe_gic_init_cpu();
+#endif
 }
 
 #else
@@ -552,6 +615,9 @@ void
 PE_init_cpu(void)
 {
 	pe_init_fiq();
+#if defined(QEMUVIRTA7)
+	pe_gic_init_cpu();
+#endif
 }
 
 #endif  // DEVELOPMENT || DEBUG
@@ -571,7 +637,7 @@ pe_arm_init_debug(void *args)
 	uintptr_t const *reg_prop;
 	uint32_t        prop_size;
 
-#if defined(QEMUVIRT)
+#if defined(QEMUVIRT) || defined(QEMUVIRTA7)
 	/* QEMU virt has no Apple cpu-debug-interface. */
 	(void)args;
 	return;
@@ -695,7 +761,7 @@ pe_arm_init_interrupts(void *args)
 {
 	kprintf("pe_arm_init_interrupts: args: %p\n", args);
 
-	#if defined(QEMUVIRT)
+	#if defined(QEMUVIRT) || defined(QEMUVIRTA7)
 	/* QEMU virt has no Apple arm-io interrupt-controller or timer nodes.
 	 * Its GIC and architectural timer are accessed through system registers. */
 	return pe_arm_init_timer(args);
@@ -733,6 +799,50 @@ pe_arm_init_timer(void *args)
 	pic_base = gPicBase;
 	timer_base = gTimerBase;
 	soc_phys = gSocPhys;
+
+#if defined(QEMUVIRTA7)
+	/*
+	 * GICv2 without security extensions: Group 0 is ours, and with FIQEn it is
+	 * signalled as FIQ, which is where __ARM_TIME__ expects the CNTV timer. The
+	 * PPI is level-triggered, so re-arming the timer drops it without IAR/EOI.
+	 */
+	if (pe_gic_gicd == 0) {
+		pe_gic_gicd = ml_io_map(QEMUVIRTA7_GICD_BASE_PHYS, QEMUVIRTA7_GIC_SIZE);
+		pe_gic_gicc = ml_io_map(QEMUVIRTA7_GICC_BASE_PHYS, QEMUVIRTA7_GIC_SIZE);
+	}
+	if (pe_gic_gicd == 0 || pe_gic_gicc == 0) {
+		panic("pe_arm_init_timer: could not map the GICv2");
+	}
+	{
+		vm_offset_t gicd = pe_gic_gicd;
+		uint32_t nlines = ((*(volatile uint32_t *)(gicd + 0x004) & 0x1f) + 1) * 32;
+
+#if defined(DW8250_NS_A7)
+		// group registers only take writes from the secure side: under op-tee only group 1
+		// is ours and the timer has to be an irq, booted secure it can be a fiq as on qemu
+		*(volatile uint32_t *)(gicd + 0x080) = ~0u;
+		pe_gic_timer_irq = (*(volatile uint32_t *)(gicd + 0x080) == 0);
+#endif
+		// no spi is in use: mask and clear them all
+		for (uint32_t i = 1; i < nlines / 32; i++) {
+			*(volatile uint32_t *)(gicd + 0x180 + 4 * i) = ~0u;                       /* ICENABLER */
+			*(volatile uint32_t *)(gicd + 0x280 + 4 * i) = ~0u;                       /* ICPENDR */
+		}
+		if (pe_gic_timer_irq) {
+			*(volatile uint32_t *)(gicd + 0x000) = 0x1;                                /* NS: group 1 on */
+		} else {
+			*(volatile uint32_t *)(gicd + 0x000) = 0x3;                                /* both groups on */
+		}
+		pe_gic_init_cpu();
+		kprintf("VIRTA7: GIC at 0x%lx/0x%lx, timer PPI %d as %s\n",
+		    (unsigned long)pe_gic_gicd, (unsigned long)pe_gic_gicc, QEMUVIRTA7_TIMER_PPI_VIRT,
+		    pe_gic_timer_irq ? "IRQ" : "FIQ, IPIs as IRQ");
+	}
+	if (args != NULL) {
+		ml_init_timebase(args, &empty_funcs, 0, 0);
+	}
+	return 1;
+#endif /* QEMUVIRTA7 */
 
 #if defined(ARM_BOARD_CONFIG_BCM2835)
 	/*

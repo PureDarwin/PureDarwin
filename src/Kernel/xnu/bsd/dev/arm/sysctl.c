@@ -177,6 +177,21 @@ make_brand_string SYSCTL_HANDLER_ARGS
 		break;
 	}
 	char buf[80];
+	/* Name ARM's own cores by their MIDR part number */
+	static const struct { uint32_t part; const char *name; } arm_cores[] = {
+		{ 0xb76, "ARM1176" }, { 0xc05, "Cortex-A5" }, { 0xc07, "Cortex-A7" },
+		{ 0xc08, "Cortex-A8" }, { 0xc09, "Cortex-A9" }, { 0xc0d, "Cortex-A12" },
+		{ 0xc0e, "Cortex-A17" }, { 0xc0f, "Cortex-A15" }, { 0xd03, "Cortex-A53" },
+		{ 0xd07, "Cortex-A57" }, { 0xd08, "Cortex-A72" },
+	};
+	if (cpuid_info()->arm_info.arm_implementor == CPU_VID_ARM) {
+		for (unsigned i = 0; i < sizeof(arm_cores) / sizeof(arm_cores[0]); i++) {
+			if (arm_cores[i].part == cpuid_info()->arm_info.arm_part) {
+				snprintf(buf, sizeof(buf), "ARM %s", arm_cores[i].name);
+				return SYSCTL_OUT(req, buf, strlen(buf) + 1);
+			}
+		}
+	}
 	snprintf(buf, sizeof(buf), "%s processor", impl);
 	return SYSCTL_OUT(req, buf, strlen(buf) + 1);
 }

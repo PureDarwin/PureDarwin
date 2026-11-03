@@ -62,7 +62,7 @@ function(mig filename)
         # for, so an ILP32 target cannot use the LP64 default: vm_address_t and
         # friends come out the wrong width and out-parameters return garbage.
         # arm64 is LP64 like x86_64, which is why this only shows up on ARM32.
-        if(PUREDARWIN_ARCH STREQUAL "armv6")
+        if(PUREDARWIN_ARM32)
             set(MIG_ARCH ${PUREDARWIN_ARCH})
         else()
             set(MIG_ARCH x86_64)

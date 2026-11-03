@@ -1,0 +1,10 @@
+--- !tapi-tbd
+tbd-version: 4
+targets: [ x86_64-macos, arm64-macos ]
+install-name: '/usr/lib/libm.dylib'
+current-version: 1292.100.5
+compatibility-version: 1
+reexported-libraries:
+  - targets: [ x86_64-macos, arm64-macos ]
+    libraries: [ '/usr/lib/libSystem.B.dylib' ]
+...

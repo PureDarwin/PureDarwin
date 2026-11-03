@@ -103,6 +103,40 @@ unix_syscall(
 	uthread_reset_proc_refcount(uthread);
 
 	code = arm_get_syscall_number(state);
+#if defined(__arm__)
+	// PID 1 exiting cleanly out of nowhere: say who called exit, with a little of the user stack
+	if (code == SYS_exit && proc_pid(proc) == 1) {
+		uint32_t stk[8] = { 0 };
+
+		(void)copyin(state->sp, stk, sizeof(stk));
+		printf("PD-exit1: exit(%u) pc 0x%x lr 0x%x sp 0x%x r7 0x%x stack %x %x %x %x %x %x %x %x\n",
+		    state->r[0], state->pc, state->lr, state->sp, state->r[7],
+		    stk[0], stk[1], stk[2], stk[3], stk[4], stk[5], stk[6], stk[7]);
+		// Code bytes at pc, lr and each r7-chain return address, to find them in the dylibs
+		uint32_t at[8] = { state->pc & ~1u, state->lr & ~1u }, fp = state->r[7];
+		int n = 2;
+
+		while (n < 8 && fp != 0) {
+			uint32_t fr[2];
+
+			if (copyin(fp, fr, sizeof(fr)) != 0) {
+				break;
+			}
+			at[n++] = fr[1] & ~1u;
+			if (fr[0] <= fp) {
+				break;
+			}
+			fp = fr[0];
+		}
+		for (int i = 0; i < n; i++) {
+			uint32_t w[6] = { 0 };
+
+			(void)copyin(at[i] - 12, w, sizeof(w));
+			printf("PD-exit1: #%d 0x%x code %08x %08x %08x|%08x %08x %08x\n", i, at[i],
+			    w[0], w[1], w[2], w[3], w[4], w[5]);
+		}
+	}
+#endif
 
 #define unix_syscall_kprintf(x...)      /* kprintf("unix_syscall: " x) */
 

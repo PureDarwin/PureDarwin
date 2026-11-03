@@ -8,6 +8,8 @@
 , zsh
 , ncurses
 , appleSdk
+# the oss sdk has no iconv.h, but configure (dynamic_lookup) still finds iconv
+, noIconv ? true
 }:
 
 let
@@ -72,6 +74,10 @@ stdenv.mkDerivation {
       -e 's/^#define HAVE_SETRESUID .*/#undef HAVE_SETRESUID/' \
       -e 's/^#define HAVE_SYS_PRCTL_H .*/#undef HAVE_SYS_PRCTL_H/' \
       config.h
+    ${lib.optionalString noIconv ''
+      sed -i -e 's/^#define HAVE_ICONV\b.*/#undef HAVE_ICONV/' -e 's/^#define HAVE_ICONV_H .*/#undef HAVE_ICONV_H/' \
+        -e 's/^#define ICONV_FROM_LIBICONV .*/#undef ICONV_FROM_LIBICONV/' config.h
+    ''}
 
     substituteInPlace Src/init.c \
       --replace-fail 'opts[MONITOR] = 2;   /* may be unset in init_io() */' \

@@ -389,7 +389,7 @@ PE_lockdown_iokit(void)
 	 */
 	StartIOKitMatching();
 
-#if defined(ARM64_BOARD_CONFIG_BCM2837) || defined(ARM64_BOARD_CONFIG_QEMUVIRT)
+#if defined(ARM64_BOARD_CONFIG_BCM2837) || defined(ARM64_BOARD_CONFIG_QEMUVIRT) || defined(QEMUVIRTA7)
 	/*
 	 * Upstream this is reached via IOCPUInterruptController::initCPUInterruptController(),
 	 * which the platform expert kext calls once every CPU has registered. These
@@ -427,6 +427,12 @@ PE_init_platform(boolean_t vm_initialized, void *args)
 		 * page tables expose it through the kernel's phys-to-virt window; the
 		 * raw low address is deliberately not identity mapped. */
 		PE_state.deviceTreeHead = (void *)ml_static_ptovirt((vm_offset_t)boot_args_ptr->deviceTreeP);
+#if defined(__arm64__)
+		// newer xnu-loader hands over a kernel va like iboot does, so only translate physical addresses
+		if ((vm_offset_t)boot_args_ptr->deviceTreeP >= VM_MIN_KERNEL_ADDRESS) {
+			PE_state.deviceTreeHead = boot_args_ptr->deviceTreeP;
+		}
+#endif
 #else
 		PE_state.deviceTreeHead = boot_args_ptr->deviceTreeP;
 #endif

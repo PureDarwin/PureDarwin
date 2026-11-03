@@ -186,6 +186,7 @@ stdenv.mkDerivation {
 
     ${cc} -isysroot "$DARWIN_SDK_ROOT" -I${libSystem}/usr/include \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib \
+      -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -Wl,-platform_version,macos,11.0,11.5 -Wl,-fixup_chains \
       -lSystem -o gsbase-test gsbase-test.c
     runHook postBuild

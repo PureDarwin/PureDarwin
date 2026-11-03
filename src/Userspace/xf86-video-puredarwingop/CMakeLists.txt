@@ -125,6 +125,8 @@ else()
         ${CMAKE_CURRENT_BINARY_DIR}/device_user.c
     )
     target_compile_definitions(pdgop_local_IOKit PRIVATE IOKIT=1 KERNEL=0)
+    # See xf86-input-puredarwin: -DKERNEL=0 still defines KERNEL.
+    target_compile_options(pdgop_local_IOKit PRIVATE -UKERNEL)
     target_include_directories(pdgop_local_IOKit
         PUBLIC ${CMAKE_SOURCE_DIR}/src/Libraries/IOKit/include
         PRIVATE
