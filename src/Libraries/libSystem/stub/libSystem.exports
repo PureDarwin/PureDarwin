@@ -745,6 +745,8 @@ _acct
 _flock
 _lchflags
 _fchflags
+_strtofflags
+_fflagstostr
 _fsctl
 _getsectbynamefromheader_64
 _mk_timer_create

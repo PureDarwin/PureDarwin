@@ -161,6 +161,7 @@ target_sources(libc_static PRIVATE
     stdlib/FreeBSD/reallocf.c    # _reallocf (ld64 self-host)
     gen/FreeBSD/mkpath_np.c      # _mkpath_np/mkpath_np (ld64 self-host; real Apple Libc source, was only excluded in cctools' copy assuming real macOS already has it)
     gen/FreeBSD/getmntinfo.c     # real getmntinfo over getfsstat (df)
+    gen/strtofflags.c            # _strtofflags/_fflagstostr (Claude Code)
     stdio/FreeBSD/tmpfile.c      # _tmpfile (i3/pango)
     stdio/FreeBSD/open_memstream.c # _open_memstream (zsh)
     stdio/FreeBSD/open_wmemstream.c # _open_wmemstream (needs libmalloc/private)
