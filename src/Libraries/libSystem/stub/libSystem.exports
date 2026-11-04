@@ -1180,6 +1180,10 @@ _err_set_exit
 _err_set_file
 _hstrerror
 _inet_ntoa
+_htonl
+_htons
+_ntohl
+_ntohs
 _localtime_r
 _memchr
 _regcomp
