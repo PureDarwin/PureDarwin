@@ -47,7 +47,6 @@ target_sources(openlibm_static PRIVATE
     src/s_floor.c src/s_floorf.c
     src/s_fma.c src/s_fmaf.c
     src/s_fmax.c src/s_fmaxf.c src/s_fmin.c src/s_fminf.c
-    src/s_fpclassify.c
     src/s_frexp.c src/s_frexpf.c
     src/s_ilogb.c src/s_ilogbf.c
     src/s_isinf.c src/s_isfinite.c src/s_isnormal.c src/s_isnan.c

@@ -1391,6 +1391,7 @@ _select$1050
 _pselect$1050
 _sendfile
 ___fpclassifyd
+___fpclassifyf
 _CCCryptorCreate
 _CCCryptorCreateWithMode
 _CCCryptorRelease
