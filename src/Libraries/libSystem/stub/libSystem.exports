@@ -1668,6 +1668,7 @@ _tmpfile
 _open_memstream
 _nftw$INODE64
 _close$NOCANCEL
+_openat$NOCANCEL
 _poll$NOCANCEL
 _pread$NOCANCEL
 _preadv$NOCANCEL

@@ -1197,18 +1197,6 @@ creat(const char *path, mode_t mode)
 }
 
 /*
- * close$NOCANCEL: the non-cancelable variant glib picks up from the SDK
- * headers. PD's close is not a pthread cancellation point anyway, so the
- * plain syscall wrapper is exactly the right behavior.
- */
-int __pd_close_nocancel(int fd) __asm("_close$NOCANCEL");
-int
-__pd_close_nocancel(int fd)
-{
-    return close(fd);
-}
-
-/*
  * realpath: stdlib.h decorates the definition in stdlib/FreeBSD/realpath.c
  * as _realpath$DARWIN_EXTSN, but ICU (built against a plain-POSIX profile)
  * imports the undecorated _realpath. Forward one to the other.
