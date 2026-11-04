@@ -29,6 +29,7 @@ target_sources(XPC_libinfo_static PRIVATE
     # Real mbr_* membership API. Without opendirectoryd (DS_AVAILABLE unset) it
     # answers from getpwuid/getgrgid with Apple's compatibility UUIDs.
     membership.subproj/membership.c
+    util.subproj/hton.c
 )
 
 target_compile_definitions(XPC_libinfo_static PRIVATE __DARWIN_ONLY_UNIX_CONFORMANCE=1 PRIVATE=1)
