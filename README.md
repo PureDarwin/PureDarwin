@@ -18,7 +18,7 @@ nix build .#image-minimal
 nix run .#vm
 ```
 
-The Apple SDK is proprietary and cannot be redistributed, so you have to supply it yourself; the build tells you this if it is missing. Removing that requirement is on the roadmap.
+The Apple SDK is proprietary and cannot be redistributed, so you have to supply it yourself; the build tells you this if it is missing. Removing that requirement is on the roadmap.We have now removed this requirement from the latest development branch.
 
 macOS hosts build components, including the kernel and libSystem, but not images, kernel collections or the QEMU runners; finishing that path is on the roadmap. Building the tree by invoking `cmake` directly is not supported.
 
