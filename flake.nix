@@ -1746,6 +1746,7 @@
               windowserver = windowserverBuild;
               openglFramework = openglFrameworkNoxBuild;
               mesa = mesaNoxBuild;
+              carbon = carbonBuild;
               src = ./src/Userspace/Settings;
             };
           # the hardware report behind About PureDarwin's More Info
