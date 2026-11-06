@@ -1,7 +1,7 @@
 { stdenv, lib, fetchurl, darwinCrossToolchain, nativeLd, appleSdk, libSystem
 , corefoundation, foundation, libobjc, appkit, onyx2d, coretext, quartzcore
 , coregraphics, applicationservices, coreservices, windowserver, openglFramework, mesa
-, librsvg, iokit, audiotoolbox
+, librsvg, iokit, audiotoolbox, carbon
 , accountsSrc ? ../../../src/Userspace/loginwindow
 
 , src ? ../../../src/Userspace/Settings
@@ -39,6 +39,7 @@ stdenv.mkDerivation {
         -I${coregraphics}/usr/include -I${coreservices}/usr/include \
         -I${windowserver}/usr/include -I${mesa}/usr/include \
         -F${appkit}/System/Library/Frameworks -F${audiotoolbox}/System/Library/Frameworks -F${openglFramework}/System/Library/Frameworks \
+        -F${carbon}/System/Library/Frameworks \
         -c "$f" -o "objs/$(basename "$f" .m).o"
     done
     pcc_wait
@@ -51,8 +52,11 @@ stdenv.mkDerivation {
       -L${windowserver}/usr/lib -F${iokit}/System/Library/Frameworks \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -Wl,-platform_version,macos,26.5,26.5 \
+      -F${carbon}/System/Library/Frameworks \
+      -Wl,-dylib_file,/System/Library/Frameworks/Carbon.framework/Versions/A/Frameworks/HIToolbox.framework/Versions/A/HIToolbox:${carbon}/System/Library/Frameworks/Carbon.framework/Versions/A/Frameworks/HIToolbox.framework/Versions/A/HIToolbox \
+      -Wl,-dylib_file,/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices:${coreservices}/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices \
       objs/*.o \
-      -lAppKit -lQuartzCore -lCoreText -lCoreGraphics -lOnyx2D -lWindowServer \
+      -framework Carbon -lAppKit -lQuartzCore -lCoreText -lCoreGraphics -lOnyx2D -lWindowServer \
       -lFoundation -framework IOKit -F${audiotoolbox}/System/Library/Frameworks -framework CoreAudio -lCoreFoundation -lobjc -lSystem \
       -o Settings
 
