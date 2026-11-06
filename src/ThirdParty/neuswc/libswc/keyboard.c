@@ -321,10 +321,10 @@ keyboard_set_keymap(struct keyboard *keyboard, struct xkb_rule_names *names)
 
 	wl_resource_for_each(resource, &keyboard->focus.active)
 	    wl_keyboard_send_keymap(resource, WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1,
-	                            next.keymap.fd, next.keymap.size - 1);
+	                            next.keymap.fd, next.keymap.size);
 	wl_resource_for_each(resource, &keyboard->focus.inactive)
 	    wl_keyboard_send_keymap(resource, WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1,
-	                            next.keymap.fd, next.keymap.size - 1);
+	                            next.keymap.fd, next.keymap.size);
 	client_handle_modifiers(keyboard, &keyboard->modifier_state);
 	return true;
 }
@@ -417,11 +417,10 @@ keyboard_bind(struct keyboard *keyboard,
 	wl_resource_set_implementation(
 	    client_resource, &keyboard_impl, keyboard, &unbind);
 
-	/* Subtract one to remove terminating NULL character. */
 	wl_keyboard_send_keymap(client_resource,
 	                        WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1,
 	                        keyboard->xkb.keymap.fd,
-	                        keyboard->xkb.keymap.size - 1);
+	                        keyboard->xkb.keymap.size);
 
 	input_focus_add_resource(&keyboard->focus, client_resource);
 
