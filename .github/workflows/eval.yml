@@ -10,9 +10,9 @@ name: Evaluate
 
 on:
   pull_request:
-    branches: [next, main]
+    branches: [upstream-xnu-12377, main]
   push:
-    branches: [next]
+    branches: [upstream-12377-xnu]
   workflow_dispatch:
 
 concurrency:
@@ -29,7 +29,7 @@ jobs:
 
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
