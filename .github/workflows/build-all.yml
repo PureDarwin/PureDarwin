@@ -1,4 +1,5 @@
-name:Build all images
+
+name : Build all images
 
 # Full multi-target image build. Complements eval.yml (evaluation-only):
 # this one actually builds. A pure-eval gate (job `eval`) evaluates every
