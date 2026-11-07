@@ -9,6 +9,7 @@
 #import "SettingsView.h"
 #import "SettingsData.h"
 #import "PDWiFiUI.h"
+#include <Carbon/Carbon.h>
 
 // sizes from the demo's settings window
 #define TB_H 38
@@ -1499,8 +1500,28 @@ static void drawCapsule(NSRect b, BOOL primary)
 
     for (NSArray *d in PDInputDevices())
         [rows addObject:[self valueRow:d[0] value:d[1]]];
-    [rows addObject:[self valueRow:NSLocalizedString(@"Keyboard layout", @"") value:NSLocalizedString(@"U.S.", @"")]];
+    [rows addObject:[self keyboardLayoutRow]];
     return [self card:rows at:y];
+}
+
+// Carbon's keyboard layouts, choosing one selects it for every app and the compositor
+- (NSDictionary *)keyboardLayoutRow
+{
+    NSArray *sources = [(NSArray *)TISCreateInputSourceList(NULL, false) autorelease];
+    NSMutableArray *names = [NSMutableArray array];
+    NSUInteger selected = 0;
+
+    for (NSUInteger i = 0; i < [sources count]; i++) {
+        TISInputSourceRef source = (TISInputSourceRef)sources[i];
+
+        [names addObject:NSLocalizedString((NSString *)TISGetInputSourceProperty(source, kTISPropertyLocalizedName), @"")];
+        if (CFBooleanGetValue(TISGetInputSourceProperty(source, kTISPropertyInputSourceIsSelected)))
+            selected = i;
+    }
+    return [self popupRow:NSLocalizedString(@"Keyboard layout", @"") items:names selected:selected pick:^(NSUInteger i) {
+        TISSelectInputSource((TISInputSourceRef)sources[i]);
+        [self setNeedsDisplay:YES];
+    }];
 }
 
 - (CGFloat)drawClockAt:(CGFloat)y
