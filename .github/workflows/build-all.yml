@@ -155,13 +155,13 @@ jobs:
     name: Build ${{ matrix.target }}
     needs: plan
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 3600
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # The runner image ships ~25 GB of preinstalled SDKs we do not need;
       # image closures (Wayland/XFCE ones especially) are large, so reclaim
@@ -189,12 +189,11 @@ jobs:
       # jobs skip everything already built. Requires secrets CACHIX_BINARY_CACHE
       # and CACHIX_AUTH_TOKEN; uncomment the step to activate (it no-ops while
       # the secret is unset).
-      # - name: Push to Cachix
-      #   if: ${{ secrets.CACHIX_AUTH_TOKEN != '' }}
-      #   uses: cachix/cachix-action@v16
-      #   with:
-      #     name: ${{ secrets.CACHIX_BINARY_CACHE }}
-      #     authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - name: Push to Cachix
+        uses: cachix/cachix-action@v16
+        with:
+           name: ${{ secrets.CACHIX_BINARY_CACHE }}
+           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
 
       - name: Build ${{ matrix.target }}
         env:
