@@ -168,7 +168,7 @@ jobs:
     timeout-minutes: 600
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
@@ -249,7 +249,7 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - name: Check out
-        uses: actions/checkout@v7.1
+        uses: actions/checkout@v7
 
       # The runner image ships ~25 GB of preinstalled SDKs we do not need;
       # image closures (Wayland/XFCE ones especially) are large, so reclaim
@@ -322,7 +322,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7.1
+        uses: actions/upload-artifact@v7
         with:
           name: puredarwin-${{ matrix.target }}
           path: artifacts/${{ matrix.target }}/
