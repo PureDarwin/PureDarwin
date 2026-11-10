@@ -283,6 +283,7 @@ let
     chmod u+w "$_d"
     install -m644 ${source.path} "$sdk/${source.target}"
   '';
+  armHost = !stdenvNoCC.buildPlatform.isx86;
 in
 stdenvNoCC.mkDerivation {
   pname = "puredarwin-oss-sdk";
@@ -477,10 +478,11 @@ stdenvNoCC.mkDerivation {
     # pre-generated. Skipped for the base SDK that builds migcom itself.
     ${lib.optionalString (migcom != null) ''
       export MIGCOM=${migcom}/bin/migcom
-      # mig.sh always passes -arch, which only a Darwin-targeting clang accepts.
+      # mig.sh always passes -arch, which only a Darwin-targeting clang accepts. Off x86 it is unwrapped, as the
+      # wrapper adds the build host's hardening flags (aarch64's -fzero-call-used-regs) that a Darwin target refuses
       cat > "$TMPDIR/migcc" <<EOF
 #!/bin/sh
-exec ${clang}/bin/clang -target x86_64-apple-darwin25.5 "\$@"
+exec ${if armHost then clang.cc else clang}/bin/clang -target x86_64-apple-darwin25.5 "\$@"
 EOF
       chmod +x "$TMPDIR/migcc"
       export MIGCC="$TMPDIR/migcc"
@@ -493,7 +495,8 @@ EOF
         # Apple generates the installed header, otherwise every routine gets the _kernelrpc_ prefix
         extra=""
         case "$d" in mach_port|task) extra="-DLIBSYSCALL_INTERFACE" ;; esac
-        bash ${root}/tools/mig/mig.sh -novouchers $extra \
+        # mig.sh takes uname -m otherwise, aarch64 on an arm build host
+        bash ${root}/tools/mig/mig.sh -novouchers ${lib.optionalString armHost "-arch x86_64 "}$extra \
           -I"$sdk/usr/include" -isysroot "$sdk" \
           -user /dev/null -server /dev/null \
           -header "$sdk/usr/include/mach/$d.h" "$defs" || exit 1
