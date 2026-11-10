@@ -651,7 +651,7 @@ CF_EXPORT Boolean _CFExtensionUniCharsIsValidToAppend(const UniChar *uchars, CFI
 CF_EXPORT Boolean _CFExtensionIsValidToAppend(CFStringRef extension) API_AVAILABLE(macosx(10.12), ios(10.0), watchos(3.0), tvos(10.0));
 
 
-#if !DEPLOYMENT_RUNTIME_OBJC
+#if !DEPLOYMENT_RUNTIME_OBJC || TARGET_OS_LINUX
 
 // https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html
 // Version 0.8

@@ -293,6 +293,7 @@ add_framework(CoreFoundation
                 # AppServices
                 AppServices.subproj/CFNotificationCenter_PureDarwin.c
                 URL.subproj/CFURLResources_PureDarwin.c
+                URL.subproj/CFURLBookmark_PureDarwin.c
                 # Collections
                 Collections.subproj/CFBinaryHeap.c
                 Collections.subproj/CFBitVector.c
@@ -352,6 +353,7 @@ add_framework(CoreFoundation
                 RunLoop.subproj/CFMachPort.c
                 RunLoop.subproj/CFMachPort_Lifetime.c
                 RunLoop.subproj/CFMessagePort.c
+                RunLoop.subproj/CFMessagePort_Argon.c
                 RunLoop.subproj/CFRunLoop.c
                 AppServices.subproj/CFUserNotification.c
                 RunLoop.subproj/CFFileDescriptor.c

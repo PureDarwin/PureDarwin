@@ -1199,7 +1199,7 @@ CF_PRIVATE void _CFIterateDirectory(CFStringRef directoryPath, Boolean appendSla
 #endif
 }
 
-#if !DEPLOYMENT_RUNTIME_OBJC
+ #if !DEPLOYMENT_RUNTIME_OBJC || TARGET_OS_LINUX
 
 // https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html
 // Version 0.8

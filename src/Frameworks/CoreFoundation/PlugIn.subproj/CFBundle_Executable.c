@@ -89,7 +89,8 @@ static CFURLRef _CFBundleCopyExecutableURLRaw(CFURLRef urlPath, CFStringRef exeN
             }
         }
     }
-#elif TARGET_OS_MAC
+#elif TARGET_OS_MAC || defined(ARGON_LIBOBJC2)
+    // argon on linux builds with the objc runtime and looks for executables as the Mac does
     const uint8_t *image_suffix = (uint8_t *)__CFgetenvIfNotRestricted("DYLD_IMAGE_SUFFIX");
     
     if (image_suffix) {

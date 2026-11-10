@@ -4,7 +4,8 @@
  
     All of the functions in this file exist to orchestrate the exact time/circumstances we decrement the port references.
  */
-
+// Mach ports are Darwin only, Argon on Linux builds CoreFoundation without them
+#if __has_include(<mach/mach.h>) && !ARGON_LIBOBJC2
 #include "CFMachPort_Lifetime.h"
 #include <mach/mach.h>
 #include "CFInternal.h"
@@ -291,3 +292,4 @@ void _cfmp_record_nsmachport_deallocation(_CFMPLifetimeClient const client, mach
         _cfmp_cleanup(R);
     }
 }
+#endif

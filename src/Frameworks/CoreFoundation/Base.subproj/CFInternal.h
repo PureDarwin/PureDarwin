@@ -757,8 +757,17 @@ extern void _CFRuntimeSetInstanceTypeIDAndIsa(CFTypeRef cf, CFTypeID newTypeID);
 // an undeclared array length is only valid with extern, but CF_PRIVATE may or may not include extern as part of its expansion. Redefine the visibility attribute so we can explicitly make it an extern declaration.
 extern _CF_VISIBILITY_HIDDEN_ATTRIBUTE uintptr_t __CFRuntimeObjCClassTable[];
 
+#if ARGON_LIBOBJC2
+// libobjc2 has no future classes, a bridge class from a library loaded after CF is found by name on first use
+CF_PRIVATE uintptr_t __CFResolveObjCClass(CFTypeID typeID);
+#endif
+
 CF_INLINE uintptr_t __CFISAForTypeID(CFTypeID typeID) {
-    return (typeID < __CFRuntimeClassTableSize) ? __CFRuntimeObjCClassTable[typeID] : 0;
+    if (typeID >= __CFRuntimeClassTableSize) return 0;
+#if ARGON_LIBOBJC2
+    if (__CFRuntimeObjCClassTable[typeID] == 0) return __CFResolveObjCClass(typeID);
+#endif
+    return __CFRuntimeObjCClassTable[typeID];
 }
 
 #if DEPLOYMENT_RUNTIME_OBJC

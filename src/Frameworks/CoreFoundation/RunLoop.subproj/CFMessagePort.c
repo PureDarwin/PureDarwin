@@ -7,7 +7,8 @@
 	See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 	Responsibility: Christopher Kane
 */
-
+// Mach ports are Darwin only, Argon on Linux builds CoreFoundation without them
+#if __has_include(<mach/mach.h>) && !ARGON_LIBOBJC2
 #include <CoreFoundation/CFBase.h>
 #include <CoreFoundation/CFMessagePort.h>
 #include <CoreFoundation/CFRunLoop.h>
@@ -1242,3 +1243,4 @@ void CFMessagePortSetDispatchQueue(CFMessagePortRef ms, dispatch_queue_t queue) 
     }
     __CFMessagePortUnlock(ms);
 }
+#endif

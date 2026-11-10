@@ -31,6 +31,33 @@ extern Class objc_initializeClassPair(Class superclass, const char *name, Class 
     return (id)_Block_copy((const void *)self);
 }
 
+#if ARGON_LIBOBJC2
+// libobjc2 keeps the block classes empty until a root is chosen for them, NSBlock is it.
+// a block is counted by the Blocks runtime, which also leaves stack and global blocks alone
+extern BOOL objc_create_block_classes_as_subclasses_of(Class super);
+
++ (void)load {
+    objc_create_block_classes_as_subclasses_of(self);
+}
+
+- (id)retain {
+    return (id)_Block_copy((const void *)self);
+}
+
+- (oneway void)release {
+    _Block_release((const void *)self);
+}
+
+- (id)autorelease {
+    extern id objc_autorelease(id);
+    return objc_autorelease(self);
+}
+
+- (NSUInteger)retainCount {
+    return 1;
+}
+#endif
+
 @end
 
 // a stack block is promoted to the heap by retain, and release must not free stack memory
@@ -67,6 +94,8 @@ static void __NSMallocBlockRelease(id self, SEL _cmd) {
     _Block_release((const void *)self);
 }
 
+// libobjc2 builds the block classes itself, objc4 leaves that to us
+#if !ARGON_LIBOBJC2
 // the class objects live in libSystem's arrays where the ABI puts them, their metaclasses here
 static void *__NSStackBlockMeta[32];
 static void *__NSGlobalBlockMeta[32];
@@ -105,3 +134,4 @@ static void __NSBlockClassesInit(void) {
         objc_registerClassPair(cls);
     }
 }
+#endif

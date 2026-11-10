@@ -31,6 +31,9 @@
 #include <CoreFoundation/CFUUID.h>
 #include <CoreFoundation/CFCalendar.h>
 #include <CoreFoundation/CFURLComponents.h>
+#if TARGET_OS_LINUX
+#include <dlfcn.h>
+#endif
 #if TARGET_OS_MAC
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
@@ -360,6 +363,24 @@ static void __CFAddCFOwnedClass(uintptr_t cls) {
     atomic_store(&__CFOwnedClassCount, n + 1);
 }
 
+#if ARGON_LIBOBJC2
+// NSObject's retain and release on Linux hand CF's own instances back to CF, see linux/objc-compat
+struct argon_cf_hooks {
+    int (*owns)(const void *object);
+    const void *(*retain)(const void *object);
+    void (*release)(const void *object);
+    long (*retain_count)(const void *object);
+};
+extern struct argon_cf_hooks argon_cf;
+static int __CFArgonOwns(const void *object) {
+    return object != NULL && ((uintptr_t)object & 7) == 0 && __CFIsCFOwnedClass(((const CFRuntimeBase *)object)->_cfisa);
+}
+// a CF-owned class is not ObjC to CFRetain, so these take CF's own path
+static const void *__CFArgonRetain(const void *object) { return CFRetain((CFTypeRef)object); }
+static void __CFArgonRelease(const void *object) { CFRelease((CFTypeRef)object); }
+static long __CFArgonRetainCount(const void *object) { return (long)CFGetRetainCount((CFTypeRef)object); }
+#endif
+
 CF_PRIVATE Boolean __CFIsCFOwnedClass(uintptr_t cls) {
     int n = atomic_load(&__CFOwnedClassCount);
 
@@ -370,9 +391,37 @@ CF_PRIVATE Boolean __CFIsCFOwnedClass(uintptr_t cls) {
     return false;
 }
 
+#if ARGON_LIBOBJC2
+static const char *__CFRuntimeObjCClassNames[__CFRuntimeClassTableSize];
+
+CF_PRIVATE uintptr_t __CFResolveObjCClass(CFTypeID typeID) {
+    const char *name = __CFRuntimeObjCClassNames[typeID];
+    Class cls = name ? objc_getClass(name) : Nil;
+
+    if (cls != Nil) {
+        __CFLock(&__CFBigRuntimeFunnel);
+        __CFRuntimeObjCClassTable[typeID] = (uintptr_t)cls;
+        __CFAddCFOwnedClass((uintptr_t)cls);
+        __CFUnlock(&__CFBigRuntimeFunnel);
+    }
+    return (uintptr_t)cls;
+}
+#endif
+
 void _CFRuntimeBridgeClasses(CFTypeID cf_typeID, const char *cls_name) {
     __CFLock(&__CFBigRuntimeFunnel);
+#if ARGON_LIBOBJC2
+    Class cls_ref = objc_getClass(cls_name);
+    if (cls_ref == Nil) {
+        // registered later by the library that defines it
+        __CFRuntimeObjCClassNames[cf_typeID] = cls_name;
+        __CFRuntimeObjCClassTable[cf_typeID] = 0;
+        __CFUnlock(&__CFBigRuntimeFunnel);
+        return;
+    }
+#else
     Class cls_ref = objc_getFutureClass(cls_name);
+#endif
     __CFRuntimeObjCClassTable[cf_typeID] = (uintptr_t)cls_ref;
     __CFAddCFOwnedClass((uintptr_t)cls_ref);
     __CFUnlock(&__CFBigRuntimeFunnel);
@@ -917,6 +966,10 @@ CFTypeRef CFAutorelease(CFTypeRef __attribute__((cf_consumed)) cf) {
 #if DEPLOYMENT_RUNTIME_OBJC
     if (CFTYPE_IS_OBJC(cf)) return (CFTypeRef)__CFObjCGeneric(cf, objc_autorelease((id)cf), _objc_rootAutorelease((id)cf));
 #endif
+#if ARGON_LIBOBJC2
+    // a CF-owned object still goes in the pool, whose -release reaches CFRelease through argon_cf
+    if (argon_cf.owns != NULL && argon_cf.owns(cf)) return (CFTypeRef)objc_autorelease((id)cf);
+#endif
     return cf;
 }
 
@@ -1143,6 +1196,13 @@ CFStringRef CFCopyDescription(CFTypeRef cf) {
 // Definition: if type produces a formatting description, return that string, otherwise NULL
 CF_PRIVATE CFStringRef __CFCopyFormattingDescription(CFTypeRef cf, CFDictionaryRef formatOptions) {
     if (NULL == cf) return NULL;
+#if ARGON_LIBOBJC2
+    // libobjc2 string literals and other ObjC objects reach CF's own formats, they describe themselves
+    if (CFTYPE_IS_OBJC(cf)) {
+        CFStringRef description = ((CFStringRef (*)(const void *, SEL))objc_msgSend)(cf, sel_registerName("description"));
+        return description ? CFStringCreateCopy(kCFAllocatorSystemDefault, description) : NULL;
+    }
+#endif
     __CFGenericAssertIsCF(cf);
     if (NULL != __CFRuntimeClassTable[__CFGenericTypeID_inline(cf)]->copyFormattingDesc) {
 	return __CFRuntimeClassTable[__CFGenericTypeID_inline(cf)]->copyFormattingDesc(cf, formatOptions);
@@ -1383,6 +1443,9 @@ void __CFInitialize(void) {
         // later _CFRuntimeBridgeClasses() call, same as NSCFString does.
         // the classes of CF's statically initialized objects (allocators, booleans, numbers, null)
         __CFLock(&__CFBigRuntimeFunnel);
+#if ARGON_LIBOBJC2
+        argon_cf = (struct argon_cf_hooks){ __CFArgonOwns, __CFArgonRetain, __CFArgonRelease, __CFArgonRetainCount };
+#endif
         __CFAddCFOwnedClass((uintptr_t)STATIC_CLASS_REF(__NSCFType));
         __CFAddCFOwnedClass((uintptr_t)STATIC_CLASS_REF(__NSCFBoolean));
         __CFAddCFOwnedClass((uintptr_t)STATIC_CLASS_REF(__NSCFNumber));

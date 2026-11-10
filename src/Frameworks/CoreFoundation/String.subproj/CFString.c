@@ -40,6 +40,47 @@
 #include <unistd.h>
 #endif
 
+
+#if ARGON_LIBOBJC2
+#include <pthread.h>
+// libobjc2 literals (NSConstantString, NSTinyString) and other NSStrings are not laid out like a CFString,
+// so CF reads a CFString copy. a literal lives forever, its copy is made once and kept
+static CFMutableDictionaryRef __CFStringLiteralCopies = NULL;
+static pthread_mutex_t __CFStringLiteralLock = PTHREAD_MUTEX_INITIALIZER;
+extern id objc_autorelease(id);
+
+static CFStringRef __CFStringNormalize(CFStringRef str) {
+    if (str == NULL || !CF_IS_OBJC(_kCFRuntimeIDCFString, str)) return str;
+    const char *cls = object_getClassName((id)str);
+    Boolean literal = cls && (strcmp(cls, "NSConstantString") == 0 || strcmp(cls, "NSTinyString") == 0);
+    CFStringRef copy = NULL;
+
+    if (literal) {
+        pthread_mutex_lock(&__CFStringLiteralLock);
+        if (__CFStringLiteralCopies) copy = (CFStringRef)CFDictionaryGetValue(__CFStringLiteralCopies, str);
+        pthread_mutex_unlock(&__CFStringLiteralLock);
+        if (copy) return copy;
+    }
+    CFIndex length = CFStringGetLength(str);
+    UniChar stackBuffer[256], *buffer = length <= 256 ? stackBuffer : (UniChar *)malloc(length * sizeof(UniChar));
+    CFStringGetCharacters(str, CFRangeMake(0, length), buffer);
+    copy = CFStringCreateWithCharacters(kCFAllocatorSystemDefault, buffer, length);
+    if (buffer != stackBuffer) free(buffer);
+    if (literal) {
+        pthread_mutex_lock(&__CFStringLiteralLock);
+        if (__CFStringLiteralCopies == NULL)
+            __CFStringLiteralCopies = CFDictionaryCreateMutable(kCFAllocatorSystemDefault, 0, NULL, &kCFTypeDictionaryValueCallBacks);
+        CFDictionarySetValue(__CFStringLiteralCopies, str, copy);
+        pthread_mutex_unlock(&__CFStringLiteralLock);
+        CFRelease(copy);
+        return copy;
+    }
+    return (CFStringRef)objc_autorelease((id)copy);
+}
+#else
+#define __CFStringNormalize(str) (str)
+#endif
+
 #if defined(__GNUC__)
 #define LONG_DOUBLE_SUPPORT 1
 #else
@@ -1661,6 +1702,7 @@ CFStringRef  _CFStringCreateWithFormatAndArgumentsAux(CFAllocatorRef alloc, CFSt
 }
 
 CFStringRef  CFStringCreateWithFormat(CFAllocatorRef alloc, CFDictionaryRef formatOptions, CFStringRef format, ...) {
+    format = __CFStringNormalize(format);
     CFStringRef result;
     va_list argList;
 
@@ -1672,6 +1714,7 @@ CFStringRef  CFStringCreateWithFormat(CFAllocatorRef alloc, CFDictionaryRef form
 }
 
 CFStringRef CFStringCreateWithSubstring(CFAllocatorRef alloc, CFStringRef str, CFRange range) {
+    str = __CFStringNormalize(str);
     CF_SWIFT_FUNCDISPATCHV(_kCFRuntimeIDCFString, CFStringRef, (CFSwiftRef)str, NSString._createSubstringWithRange, range);
     CF_OBJC_FUNCDISPATCHV(_kCFRuntimeIDCFString, CFStringRef , (NSString *)str, _createSubstringWithRange:NSMakeRange(range.location, range.length));
 
@@ -1715,6 +1758,7 @@ CF_PRIVATE CFStringRef _CFStringCopyBundleUnloadingProtectedString(CFStringRef s
 
 
 CFStringRef CFStringCreateCopy(CFAllocatorRef alloc, CFStringRef str) {
+    str = __CFStringNormalize(str);
     CF_SWIFT_FUNCDISPATCHV(_kCFRuntimeIDCFString, CFStringRef, (CFSwiftRef)str, NSString.copy);
     CF_OBJC_FUNCDISPATCHV(_kCFRuntimeIDCFString, CFStringRef, (NSString *)str, copy);
 
@@ -1994,6 +2038,7 @@ CFMutableStringRef CFStringCreateMutable(CFAllocatorRef alloc, CFIndex maxLength
 }
 
 CFMutableStringRef  CFStringCreateMutableCopy(CFAllocatorRef alloc, CFIndex maxLength, CFStringRef string) {
+    string = __CFStringNormalize(string);
     CFMutableStringRef newString;
 
     CF_OBJC_FUNCDISPATCHV(_kCFRuntimeIDCFString, CFMutableStringRef, (NSString *)string, mutableCopy);
@@ -2101,6 +2146,7 @@ int _CFStringCheckAndGetCharacters(CFStringRef str, CFRange range, UniChar *buff
 
 
 CFIndex CFStringGetBytes(CFStringRef str, CFRange range, CFStringEncoding encoding, uint8_t lossByte, Boolean isExternalRepresentation, uint8_t *buffer, CFIndex maxBufLen, CFIndex *usedBufLen) {
+    str = __CFStringNormalize(str);
 #if DEPLOYMENT_RUNTIME_SWIFT
     if (CF_IS_SWIFT(CFStringGetTypeID(), str) && __CFSwiftBridge.NSString.__getBytes != NULL) {
         return __CFSwiftBridge.NSString.__getBytes(str, encoding, range, buffer, maxBufLen, usedBufLen);
@@ -2146,6 +2192,7 @@ ConstStringPtr CFStringGetPascalStringPtr (CFStringRef str, CFStringEncoding enc
 
 
 const char * CFStringGetCStringPtr(CFStringRef str, CFStringEncoding encoding) {
+    str = __CFStringNormalize(str);
 
     if (encoding != __CFStringGetEightBitStringEncoding() && (kCFStringEncodingASCII != __CFStringGetEightBitStringEncoding() || !__CFStringEncodingIsSupersetOfASCII(encoding))) return NULL;
     // ??? Also check for encoding = SystemEncoding and perhaps bytes are all ASCII?
@@ -2168,6 +2215,7 @@ const char * CFStringGetCStringPtr(CFStringRef str, CFStringEncoding encoding) {
 
 
 const UniChar *CFStringGetCharactersPtr(CFStringRef str) {
+    str = __CFStringNormalize(str);
     CF_SWIFT_FUNCDISPATCHV(_kCFRuntimeIDCFString, const UniChar *, (CFSwiftRef)str, NSString._fastCharacterContents);
     CF_OBJC_FUNCDISPATCHV(_kCFRuntimeIDCFString, const UniChar *, (NSString *)str, _fastCharacterContents);
     
@@ -2222,6 +2270,7 @@ Boolean CFStringGetPascalString(CFStringRef str, Str255 buffer, CFIndex bufferSi
 }
                                    
 Boolean CFStringGetCString(CFStringRef str, char *buffer, CFIndex bufferSize, CFStringEncoding encoding) {
+    str = __CFStringNormalize(str);
     const uint8_t *contents;
     CFIndex len;
 
@@ -2572,6 +2621,8 @@ static bool __CFStringFillCharacterSetInlineBuffer(CFCharacterSetInlineBuffer *b
 #define kCFStringStackBufferLength (__kCFStringInlineBufferLength)
 
 CFComparisonResult CFStringCompareWithOptionsAndLocale(CFStringRef string, CFStringRef string2, CFRange rangeToCompare, CFStringCompareFlags compareOptions, CFLocaleRef locale) {
+    string = __CFStringNormalize(string);
+    string2 = __CFStringNormalize(string2);
     /* No objc dispatch needed here since CFStringInlineBuffer works with both CFString and NSString */
     UTF32Char strBuf1[kCFStringStackBufferLength];
     UTF32Char strBuf2[kCFStringStackBufferLength];
@@ -2924,10 +2975,14 @@ CFComparisonResult CFStringCompareWithOptionsAndLocale(CFStringRef string, CFStr
 CFComparisonResult CFStringCompareWithOptions(CFStringRef string, CFStringRef string2, CFRange rangeToCompare, CFStringCompareFlags compareOptions) { return CFStringCompareWithOptionsAndLocale(string, string2, rangeToCompare, compareOptions, NULL); }
 
 CFComparisonResult CFStringCompare(CFStringRef string, CFStringRef str2, CFStringCompareFlags options) {
+    string = __CFStringNormalize(string);
+    str2 = __CFStringNormalize(str2);
     return CFStringCompareWithOptions(string, str2, CFRangeMake(0, CFStringGetLength(string)), options);
 }
 
 Boolean CFStringFindWithOptionsAndLocale(CFStringRef string, CFStringRef stringToFind, CFRange rangeToSearch, CFStringCompareFlags compareOptions, CFLocaleRef locale, CFRange *result)  {
+    string = __CFStringNormalize(string);
+    stringToFind = __CFStringNormalize(stringToFind);
     /* No objc dispatch needed here since CFStringInlineBuffer works with both CFString and NSString */
     CFIndex findStrLen = CFStringGetLength(stringToFind);
     Boolean didFind = false;
@@ -3426,10 +3481,14 @@ CFRange CFStringFind(CFStringRef string, CFStringRef stringToFind, CFStringCompa
 }
 
 Boolean CFStringHasPrefix(CFStringRef string, CFStringRef prefix) {
+    string = __CFStringNormalize(string);
+    prefix = __CFStringNormalize(prefix);
     return CFStringFindWithOptions(string, prefix, CFRangeMake(0, CFStringGetLength(string)), kCFCompareAnchored, NULL);
 }
 
 Boolean CFStringHasSuffix(CFStringRef string, CFStringRef suffix) {
+    string = __CFStringNormalize(string);
+    suffix = __CFStringNormalize(suffix);
     return CFStringFindWithOptions(string, suffix, CFRangeMake(0, CFStringGetLength(string)), kCFCompareAnchored|kCFCompareBackwards, NULL);
 }
 
@@ -4320,6 +4379,7 @@ CFRange CFStringGetRangeOfCharacterClusterAtIndex(CFStringRef string, CFIndex ch
 }
 
 CFRange CFStringGetRangeOfComposedCharactersAtIndex(CFStringRef theString, CFIndex theIndex) {
+    theString = __CFStringNormalize(theString);
     return CFStringGetRangeOfCharacterClusterAtIndex(theString, theIndex, kCFStringComposedCharacterCluster);
 }
 
@@ -4354,6 +4414,7 @@ CFRange CFStringGetRangeOfComposedCharactersAtIndex(CFStringRef theString, CFInd
 #define SURROGATE_END 0xDFFF
 
 CF_EXPORT Boolean CFStringFindCharacterFromSet(CFStringRef theString, CFCharacterSetRef theSet, CFRange rangeToSearch, CFStringCompareFlags searchOptions, CFRange *result) {
+    theString = __CFStringNormalize(theString);
     CFStringInlineBuffer stringBuffer;
     CFCharacterSetInlineBuffer csetBuffer;
     UniChar ch;
@@ -4514,17 +4575,20 @@ static void __CFStringGetLineOrParagraphBounds(CFStringRef string, CFRange range
 }
 
 void CFStringGetLineBounds(CFStringRef string, CFRange range, CFIndex *lineBeginIndex, CFIndex *lineEndIndex, CFIndex *contentsEndIndex) {
+    string = __CFStringNormalize(string);
     CF_OBJC_FUNCDISPATCHV(_kCFRuntimeIDCFString, void, (NSString *)string, getLineStart:(NSUInteger *)lineBeginIndex end:(NSUInteger *)lineEndIndex contentsEnd:(NSUInteger *)contentsEndIndex forRange:NSMakeRange(range.location, range.length));
     __CFStringGetLineOrParagraphBounds(string, range, lineBeginIndex, lineEndIndex, contentsEndIndex, true);
 }
 
 void CFStringGetParagraphBounds(CFStringRef string, CFRange range, CFIndex *parBeginIndex, CFIndex *parEndIndex, CFIndex *contentsEndIndex) {
+    string = __CFStringNormalize(string);
     CF_OBJC_FUNCDISPATCHV(_kCFRuntimeIDCFString, void, (NSString *)string, getParagraphStart:(NSUInteger *)parBeginIndex end:(NSUInteger *)parEndIndex contentsEnd:(NSUInteger *)contentsEndIndex forRange:NSMakeRange(range.location, range.length));
     __CFStringGetLineOrParagraphBounds(string, range, parBeginIndex, parEndIndex, contentsEndIndex, false);
 }
 
 
 CFStringRef CFStringCreateByCombiningStrings(CFAllocatorRef alloc, CFArrayRef array, CFStringRef separatorString) {
+    separatorString = __CFStringNormalize(separatorString);
     CFIndex numChars;
     CFIndex separatorNumByte;
     CFIndex stringCount = CFArrayGetCount(array);
@@ -4600,6 +4664,8 @@ CFStringRef CFStringCreateByCombiningStrings(CFAllocatorRef alloc, CFArrayRef ar
 
 
 CFArrayRef CFStringCreateArrayBySeparatingStrings(CFAllocatorRef alloc, CFStringRef string, CFStringRef separatorString) {
+    string = __CFStringNormalize(string);
+    separatorString = __CFStringNormalize(separatorString);
     CFArrayRef separatorRanges;
     CFIndex length = CFStringGetLength(string);
     /* No objc dispatch needed here since CFStringCreateArrayWithFindResults() works with both CFString and NSString */
@@ -4638,6 +4704,7 @@ CFStringRef CFStringCreateFromExternalRepresentation(CFAllocatorRef alloc, CFDat
 
 
 CFDataRef CFStringCreateExternalRepresentation(CFAllocatorRef alloc, CFStringRef string, CFStringEncoding encoding, uint8_t lossByte) {
+    string = __CFStringNormalize(string);
     CFIndex length;
     CFIndex guessedByteLength;
     uint8_t *bytes;
@@ -4692,6 +4759,7 @@ CFDataRef CFStringCreateExternalRepresentation(CFAllocatorRef alloc, CFStringRef
 
 
 CFStringEncoding CFStringGetSmallestEncoding(CFStringRef str) {
+    str = __CFStringNormalize(str);
     CFIndex len;
     if (CF_IS_SWIFT(_kCFRuntimeIDCFString, str)) {
         return kCFStringEncodingUnicode;
@@ -4708,6 +4776,7 @@ CFStringEncoding CFStringGetSmallestEncoding(CFStringRef str) {
 
 
 CFStringEncoding CFStringGetFastestEncoding(CFStringRef str) {
+    str = __CFStringNormalize(str);
     if (CF_IS_SWIFT(_kCFRuntimeIDCFString, str)) {
         return kCFStringEncodingUnicode;
     }
@@ -4754,6 +4823,7 @@ void CFStringSetExternalCharactersNoCopy(CFMutableStringRef string, UniChar *cha
 
 
 void CFStringInsert(CFMutableStringRef str, CFIndex idx, CFStringRef insertedStr) {
+    insertedStr = __CFStringNormalize(insertedStr);
     CF_SWIFT_FUNCDISPATCHV(_kCFRuntimeIDCFString, void, (CFSwiftRef)str, NSMutableString.insertString, idx, (CFSwiftRef)insertedStr);
     CF_OBJC_FUNCDISPATCHV(_kCFRuntimeIDCFString, void, (NSMutableString *)str, insertString:(NSString *)insertedStr atIndex:(NSUInteger)idx);
     __CFAssertIsStringAndMutable(str);
@@ -4772,6 +4842,7 @@ void CFStringDelete(CFMutableStringRef str, CFRange range) {
 
 
 void CFStringReplace(CFMutableStringRef str, CFRange range, CFStringRef replacement) {
+    replacement = __CFStringNormalize(replacement);
     CF_SWIFT_FUNCDISPATCHV(_kCFRuntimeIDCFString, void, (CFSwiftRef)str, NSMutableString.replaceCharactersInRange, range, (CFSwiftRef)replacement);
     CF_OBJC_FUNCDISPATCHV(_kCFRuntimeIDCFString, void, (NSMutableString *)str, replaceCharactersInRange:NSMakeRange(range.location, range.length) withString:(NSString *)replacement);
     __CFAssertIsStringAndMutable(str);
@@ -4789,6 +4860,7 @@ void CFStringReplaceAll(CFMutableStringRef str, CFStringRef replacement) {
 
 
 void CFStringAppend(CFMutableStringRef str, CFStringRef appended) {
+    appended = __CFStringNormalize(appended);
     CF_SWIFT_FUNCDISPATCHV(_kCFRuntimeIDCFString, void, (CFSwiftRef)str, NSMutableString.appendString, (CFSwiftRef)appended);
     CF_OBJC_FUNCDISPATCHV(_kCFRuntimeIDCFString, void, (NSMutableString *)str, appendString:(NSString *)appended);
     __CFAssertIsStringAndMutable(str);
@@ -4915,6 +4987,7 @@ void CFStringAppendCString(CFMutableStringRef str, const char *cStr, CFStringEnc
 
 
 void CFStringAppendFormat(CFMutableStringRef str, CFDictionaryRef formatOptions, CFStringRef format, ...) {
+    format = __CFStringNormalize(format);
     va_list argList;
 
     va_start(argList, format);
@@ -5057,6 +5130,7 @@ void CFStringPad(CFMutableStringRef string, CFStringRef padString, CFIndex lengt
 }
 
 void CFStringTrim(CFMutableStringRef string, CFStringRef trimString) {
+    trimString = __CFStringNormalize(trimString);
     CFRange range;
     CFIndex newStartIndex;
     CFIndex length;

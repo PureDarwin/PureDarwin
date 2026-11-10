@@ -8,7 +8,8 @@
 	Original Author: Doug Davidson
 	Responsibility: Kevin Perry
 */
-
+// Mach ports are Darwin only, Argon on Linux builds CoreFoundation without them
+#if __has_include(<mach/mach.h>) && !ARGON_LIBOBJC2
 #include <CoreFoundation/CFUserNotification.h>
 #include <CoreFoundation/CFPropertyList.h>
 #include <CoreFoundation/CFNumber.h>
@@ -455,4 +456,4 @@ CF_EXPORT SInt32 CFUserNotificationDisplayAlert(CFTimeInterval timeout, CFOption
 #undef MESSAGE_TIMEOUT
 #undef MAX_PORT_NAME_LENGTH
 #undef NOTIFICATION_PORT_NAME_SUFFIX
-
+#endif

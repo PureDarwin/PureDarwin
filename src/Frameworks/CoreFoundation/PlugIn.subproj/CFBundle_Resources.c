@@ -326,6 +326,9 @@ CF_PRIVATE CFStringRef _CFBundleGetPlatformExecutablesSubdirectoryName(void) {
 #elif TARGET_OS_LINUX
 #if TARGET_OS_CYGWIN
     return CFSTR("Cygwin");
+#elif defined(ARGON_LIBOBJC2)
+    // argon apps keep the Darwin X.app/Contents/MacOS/X layout
+    return CFSTR("MacOS");
 #else
     return CFSTR("Linux");
 #endif

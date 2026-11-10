@@ -732,6 +732,11 @@ CF_EXPORT void *_CFCreateArrayStorage(size_t numPointers, Boolean zeroed, size_t
 // malloc_zone_t and recurse into malloc_zone_malloc via its own bootstrap
 // path until the stack overflowed.
 
+#if ARGON_LIBOBJC2
+// libobjc2's v2 ABI names a class ._OBJC_CLASS_<name>, which only an asm label can spell
+#define DECLARE_STATIC_CLASS_REF(CLASSNAME) extern char __CFStaticClass_##CLASSNAME __asm__("._OBJC_CLASS_" #CLASSNAME)
+#define STATIC_CLASS_REF(CLASSNAME) &(__CFStaticClass_##CLASSNAME)
+#else
 #define STATIC_CLASS_PREFIX OBJC_CLASS_$_
 
 #define STATIC_CLASS_NAME_CONCAT_INNER(x,y) x ## y
@@ -739,6 +744,7 @@ CF_EXPORT void *_CFCreateArrayStorage(size_t numPointers, Boolean zeroed, size_t
 
 #define DECLARE_STATIC_CLASS_REF(CLASSNAME) extern void STATIC_CLASS_NAME_CONCAT(STATIC_CLASS_PREFIX, CLASSNAME)
 #define STATIC_CLASS_REF(CLASSNAME) &(STATIC_CLASS_NAME_CONCAT(STATIC_CLASS_PREFIX, CLASSNAME))
+#endif
 
 #else // if !DEPLOYMENT_RUNTIME_SWIFT
 

@@ -15,7 +15,9 @@
 #include <CoreFoundation/CFPreferences.h>
 #include "CFInternal.h"
 #include "CFRuntime_Internal.h"
+#if __has_include(<mach/mach.h>) && !ARGON_LIBOBJC2
 #include "CFMachPort_Internal.h"
+#endif
 #include <math.h>
 #include <stdio.h>
 #include <limits.h>

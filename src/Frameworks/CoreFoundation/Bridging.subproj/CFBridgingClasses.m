@@ -13,12 +13,9 @@
 
 @implementation NSNull
 
+// the singleton is CF's kCFNull, whose class is NSNull, as on Apple's platforms
 + (NSNull *)null {
-    static NSNull *shared = nil;
-    if (shared == nil) {
-        shared = [[self alloc] init];
-    }
-    return shared;
+    return (NSNull *)kCFNull;
 }
 
 - (NSString *)description {
@@ -125,6 +122,11 @@
 
 - (NSUInteger)retainCount {
     return (NSUInteger)CFGetRetainCount((CFTypeRef)self);
+}
+
+// immutable, so a copy is the same number (NSCell copies its object value)
+- (id)copyWithZone:(void *)zone {
+    return [self retain];
 }
 
 - (double)doubleValue {

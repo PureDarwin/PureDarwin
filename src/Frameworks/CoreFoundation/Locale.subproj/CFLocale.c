@@ -60,6 +60,7 @@ uameasfmt_getUnitsForUsage( const char*     locale,
 CF_PRIVATE CFCalendarRef _CFCalendarCreateCoWWithIdentifier(CFStringRef identifier);
 
 CONST_STRING_DECL(kCFLocaleCurrentLocaleDidChangeNotification, "kCFLocaleCurrentLocaleDidChangeNotification")
+CONST_STRING_DECL(NSCurrentLocaleDidChangeNotification, "kCFLocaleCurrentLocaleDidChangeNotification")
 
 
 static const char * const kCalendarKeyword = "calendar";

@@ -5448,6 +5448,14 @@ CONST_STRING_DECL(kCFURLUbiquitousItemDownloadingStatusCurrent, "NSURLUbiquitous
  * block is Swift-runtime glue (_CFSwiftRetain) that does not apply. */
 #if !DEPLOYMENT_RUNTIME_SWIFT
 
+// Foundation's names for the keys, which CoreFoundation exports on macOS
+CONST_STRING_DECL(NSURLIsAliasFileKey, "NSURLIsAliasFileKey");
+CONST_STRING_DECL(NSURLIsDirectoryKey, "NSURLIsDirectoryKey");
+CONST_STRING_DECL(NSURLIsReadableKey, "NSURLIsReadableKey");
+CONST_STRING_DECL(NSURLIsSymbolicLinkKey, "NSURLIsSymbolicLinkKey");
+CONST_STRING_DECL(NSURLTagNamesKey, "NSURLTagNamesKey");
+CONST_STRING_DECL(NSURLVolumeIdentifierKey, "NSURLVolumeIdentifierKey");
+
 CONST_STRING_DECL(kCFURLKeysOfUnsetValuesKey, "NSURLKeysOfUnsetValuesKey");
 CONST_STRING_DECL(kCFURLNameKey, "NSURLNameKey");
 CONST_STRING_DECL(kCFURLLocalizedNameKey, "NSURLLocalizedNameKey");

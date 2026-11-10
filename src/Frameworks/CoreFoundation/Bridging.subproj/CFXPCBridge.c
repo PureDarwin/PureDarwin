@@ -1,7 +1,8 @@
 /*
  * CFXPCBridge.c - conversion between CF objects and XPC objects.
  */
-
+// XPC exists on Darwin only, Argon on Linux builds CoreFoundation without the bridge
+#if __has_include(<xpc/xpc.h>)
 #include <CoreFoundation/CFXPCBridge.h>
 
 #include <CoreFoundation/CFArray.h>
@@ -314,3 +315,4 @@ CFTypeRef _CFXPCCreateCFObjectFromXPCObject(xpc_object_t xpc)
 
     return NULL;
 }
+#endif
