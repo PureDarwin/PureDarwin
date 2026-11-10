@@ -1,0 +1,72 @@
+/* No comment provided by engineer. */
+"%d Seconds" = "%d Sekunden";
+
+/* No comment provided by engineer. */
+"About %@" = "Über %@";
+
+/* No comment provided by engineer. */
+"Capture" = "Aufnehmen";
+
+/* No comment provided by engineer. */
+"Clipboard" = "Zwischenablage";
+
+/* No comment provided by engineer. */
+"Copied to Clipboard" = "In die Zwischenablage kopiert";
+
+/* No comment provided by engineer. */
+"Desktop" = "Schreibtisch";
+
+/* No comment provided by engineer. */
+"Documents" = "Dokumente";
+
+/* No comment provided by engineer. */
+"Entire Screen" = "Ganzer Bildschirm";
+
+/* No comment provided by engineer. */
+"Hide %@" = "%@ ausblenden";
+
+/* No comment provided by engineer. */
+"Minimize" = "Im Dock ablegen";
+
+/* No comment provided by engineer. */
+"None" = "Keine";
+
+/* No comment provided by engineer. */
+"Options" = "Optionen";
+
+/* No comment provided by engineer. */
+"Pictures" = "Bilder";
+
+/* No comment provided by engineer. */
+"Quit %@" = "%@ beenden";
+
+/* No comment provided by engineer. */
+"Save to" = "Sichern in";
+
+/* No comment provided by engineer. */
+"Screenshot" = "Bildschirmfoto";
+
+/* No comment provided by engineer. */
+"Screenshot %@.png" = "Bildschirmfoto %@.png";
+
+/* No comment provided by engineer. */
+"Selection" = "Auswahl";
+
+/* No comment provided by engineer. */
+"Show Capture Bar" = "Aufnahmeleiste einblenden";
+
+/* No comment provided by engineer. */
+"Show Mouse Pointer" = "Mauszeiger einblenden";
+
+/* No comment provided by engineer. */
+"Show Screenshots Folder" = "Ordner für Bildschirmfotos zeigen";
+
+/* No comment provided by engineer. */
+"Timer" = "Selbstauslöser";
+
+/* No comment provided by engineer. */
+"Window" = "Fenster";
+
+/* No comment provided by engineer. */
+"Zoom" = "Zoomen";
+
