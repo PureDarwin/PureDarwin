@@ -21,6 +21,10 @@ let
       url = "https://download.swift.org/swift-${version}-release/ubuntu2404/swift-${version}-RELEASE/swift-${version}-RELEASE-ubuntu24.04.tar.gz";
       hash = "sha256-2oJypf3czWWxUp7Q5S4EUm4urdQjfVjWIg7+uXPGzRk=";
     };
+    aarch64-linux = {
+      url = "https://download.swift.org/swift-${version}-release/ubuntu2404-aarch64/swift-${version}-RELEASE/swift-${version}-RELEASE-ubuntu24.04-aarch64.tar.gz";
+      hash = "sha256-RxJjlUKWU/p2jTcGVYduwbaPapXHiE9eTxeXABQcm38=";
+    };
   };
   src = tarballs.${stdenv.hostPlatform.system}
     or (throw "swift-toolchain: no swift.org tarball wired for ${stdenv.hostPlatform.system}");
@@ -51,6 +55,6 @@ stdenv.mkDerivation {
     description = "swift.org Swift ${version} toolchain (host compiler for the PD Swift runtime)";
     homepage = "https://www.swift.org";
     license = lib.licenses.asl20;
-    platforms = [ "x86_64-linux" ];
+    platforms = [ "x86_64-linux" "aarch64-linux" ];
   };
 }
