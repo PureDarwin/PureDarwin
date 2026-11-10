@@ -15,6 +15,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #include <pthread.h>
 
 NSString *const NSPasteboardTypeString = @"public.utf8-plain-text";
+NSString *const NSPasteboardURLReadingFileURLsOnlyKey = @"NSPasteboardURLReadingFileURLsOnlyKey";
+NSString *const NSPasteboardURLReadingContentsConformToTypesKey = @"NSPasteboardURLReadingContentsConformToTypesKey";
 NSString *const NSPasteboardTypePDF = @"com.adobe.pdf";
 NSString *const NSPasteboardTypeTIFF = @"public.tiff";
 NSString *const NSPasteboardTypeRTF = @"public.rtf";
@@ -530,6 +532,7 @@ static void PDSendSelection(const char *mimeType,int fd) {
 @end
 
 NSString * const NSPasteboardNameFind=@"NSFindPboard";
+NSString * const NSPasteboardNameDrag=@"NSDragPboard";
 NSString * const NSPasteboardTypePNG=@"public.png";
 NSString * const NSPasteboardTypeSound=@"com.apple.cocoa.pasteboard.sound";
 NSString * const NSPasteboardTypeMultipleTextSelection=@"com.apple.cocoa.pasteboard.multiple-text-selection";

@@ -49,3 +49,17 @@ void PDDrawFocusRing(PDDrawContext c, NSRect frame, CGFloat radius);
 BOOL PDLayoutFlipped(NSView *view);
 int PDBeginCellDrawing(void);
 void PDEndCellDrawing(int saved);
+
+// the remaining bezel styles, numbered as NSBezelStyle, the inline style is 15
+NSRect PDBezelStyleBody(PDDrawContext c, NSRect frame, NSUInteger style);
+void PDDrawBezelStyle(PDDrawContext c, NSRect frame, NSUInteger style, BOOL on, BOOL pressed, BOOL enabled);
+void PDDrawDisclosure(PDDrawContext c, NSRect frame, BOOL open, BOOL enabled);
+NSRect PDDrawHelpButton(PDDrawContext c, NSRect frame, BOOL pressed);
+void PDDrawTableHeader(PDDrawContext c, NSRect frame, BOOL highlighted);
+BOOL PDDrawSegmentAccent(PDDrawContext c, NSRect segment, BOOL enabled);
+
+// tracing for PD_APPKIT_TRACE=1, PD_TRACE costs one cached check when off
+BOOL PDTraceOn(void);
+void PDTrace(NSString *format, ...);
+NSString *PDTraceAppearance(NSView *view);
+#define PD_TRACE(...) do { if(PDTraceOn()) PDTrace(__VA_ARGS__); } while(0)

@@ -25,6 +25,19 @@ typedef unsigned NSFontSymbolicTraits;
 
 APPKIT_EXPORT NSString *const NSFontSymbolicTrait;
 APPKIT_EXPORT NSString *const NSFontWeightTrait;
+
+typedef CGFloat NSFontWeight;
+APPKIT_EXPORT const NSFontWeight NSFontWeightUltraLight;
+APPKIT_EXPORT const NSFontWeight NSFontWeightThin;
+APPKIT_EXPORT const NSFontWeight NSFontWeightLight;
+APPKIT_EXPORT const NSFontWeight NSFontWeightRegular;
+APPKIT_EXPORT const NSFontWeight NSFontWeightMedium;
+APPKIT_EXPORT const NSFontWeight NSFontWeightSemibold;
+APPKIT_EXPORT const NSFontWeight NSFontWeightBold;
+APPKIT_EXPORT const NSFontWeight NSFontWeightHeavy;
+APPKIT_EXPORT const NSFontWeight NSFontWeightBlack;
+
+APPKIT_EXPORT NSString *const NSFontSetChangedNotification;
 APPKIT_EXPORT NSString *const NSFontWidthTrait;
 APPKIT_EXPORT NSString *const NSFontSlantTrait;
 

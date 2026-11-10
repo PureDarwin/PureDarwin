@@ -5,13 +5,16 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
+#import <AppKit/NSModernAppKit.h>
 #import <AppKit/NSOpenPanel.h>
 #import <AppKit/NSApplication.h>
 #import <AppKit/NSDisplay.h>
+#import <AppKit/NSFilePanelController.h>
 #import <Foundation/NSURL.h>
 
-@interface NSSavePanel (Private) 
+@interface NSSavePanel (Private)
 -(void)_setFilename:(NSString*)filename;
++(NSString *)_initialDirectory;
 @end
 
 @implementation NSOpenPanel
@@ -23,8 +26,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 -init {
    [super init];
    _filenames=[NSArray new];
-   [_dialogTitle release];
-   _dialogTitle= [NSLocalizedStringFromTableInBundle(@"Open", nil, [NSBundle bundleForClass: [NSOpenPanel class]], @"The title of the open panel") copy];
+   [self setTitle:NSLocalizedStringFromTableInBundle(@"Open", nil, [NSBundle bundleForClass: [NSOpenPanel class]], @"The title of the open panel")];
    _allowsMultipleSelection=NO;
    _canChooseDirectories=NO;
    _canChooseFiles=YES;
@@ -68,11 +70,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(int)runModalForDirectory:(NSString *)directory file:(NSString *)file {
-   return [self runModalForDirectory:directory file:file types:nil];
+   return [self runModalForDirectory:directory file:file types:[self allowedFileTypes]];
 }
 
 -(int)runModal {
-   return [self runModalForDirectory:nil file:nil types:nil];
+   return [self runModalForDirectory:nil file:nil types:[self allowedFileTypes]];
 }
 
 -(BOOL)allowsMultipleSelection {
@@ -91,6 +93,21 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return _resolvesAliases;
 }
 
+// there is no cloud storage, so every file is already local
+-(BOOL)canDownloadUbiquitousContents {
+   return YES;
+}
+
+-(void)setCanDownloadUbiquitousContents:(BOOL)flag {
+}
+
+-(BOOL)canResolveUbiquitousConflicts {
+   return NO;
+}
+
+-(void)setCanResolveUbiquitousConflicts:(BOOL)flag {
+}
+
 -(void)setAllowsMultipleSelection:(BOOL)flag {
    _allowsMultipleSelection=flag;
 }
@@ -107,52 +124,23 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    _resolvesAliases=value;
 }
 
-#pragma mark -
-#pragma mark Sheet methods
-- (void)beginSheetForDirectory:(NSString *)path
-                          file:(NSString *)name 
-                         types:(NSArray *)fileTypes
-                modalForWindow:(NSWindow *)docWindow
-                 modalDelegate:(id)modalDelegate 
-                didEndSelector:(SEL)didEndSelector 
-                   contextInfo:(void *)contextInfo
+-(void)beginSheetForDirectory:(NSString *)path
+                         file:(NSString *)name
+                        types:(NSArray *)fileTypes
+               modalForWindow:(NSWindow *)docWindow
+                modalDelegate:(id)modalDelegate
+               didEndSelector:(SEL)didEndSelector
+                  contextInfo:(void *)contextInfo
 {
-	id inv=[NSInvocation invocationWithMethodSignature:[self methodSignatureForSelector:@selector(_background_beginSheetForDirectory:file:types:modalForWindow:modalDelegate:didEndSelector:contextInfo:)]];
-	[inv setTarget:self];
-	[inv setSelector:@selector(_background_beginSheetForDirectory:file:types:modalForWindow:modalDelegate:didEndSelector:contextInfo:)];
-	[inv setArgument:&path atIndex:2];
-	[inv setArgument:&name atIndex:3];
-   [inv setArgument:&fileTypes atIndex:4];
-	[inv setArgument:&docWindow atIndex:5];
-	[inv setArgument:&modalDelegate atIndex:6];
-	[inv setArgument:&didEndSelector atIndex:7];
-	[inv setArgument:&contextInfo atIndex:8];
-	[inv retainArguments];
-	[inv performSelectorInBackground:@selector(invoke) withObject:nil];
+   if(fileTypes!=nil)
+    [self setAllowedFileTypes:fileTypes];
+   [self beginSheetForDirectory:path file:name modalForWindow:docWindow modalDelegate:modalDelegate didEndSelector:didEndSelector contextInfo:contextInfo];
 }
 
-- (void)_background_beginSheetForDirectory:(NSString *)path
-                                      file:(NSString *)name 
-                                     types:(NSArray *)fileTypes
-                            modalForWindow:(NSWindow *)docWindow
-                             modalDelegate:(id)modalDelegate 
-                            didEndSelector:(SEL)didEndSelector 
-                               contextInfo:(void *)contextInfo
-{
-	id pool=[NSAutoreleasePool new];
-	int ret=[self runModalForDirectory:path file:name types:fileTypes];
-	
-	id inv=[NSInvocation invocationWithMethodSignature:[self methodSignatureForSelector:@selector(_selector_savePanelDidEnd:returnCode:contextInfo:)]];
-	
-	[inv setTarget:modalDelegate];
-	[inv setSelector:didEndSelector];
-	[inv setArgument:&self atIndex:2];
-	[inv setArgument:&ret atIndex:3];
-	[inv setArgument:&contextInfo atIndex:4];
-	[inv retainArguments];
-	
-	[inv performSelectorOnMainThread:@selector(invoke) withObject:nil waitUntilDone:NO];
-   [pool release];
+-(void)beginForDirectory:(NSString *)path file:(NSString *)name types:(NSArray *)fileTypes modelessDelegate:(id)delegate didEndSelector:(SEL)didEndSelector contextInfo:(void *)contextInfo {
+   if(fileTypes!=nil)
+    [self setAllowedFileTypes:fileTypes];
+   [self beginSheetForDirectory:path file:name modalForWindow:nil modalDelegate:delegate didEndSelector:didEndSelector contextInfo:contextInfo];
 }
 
 @end

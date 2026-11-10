@@ -6,10 +6,15 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 #import <AppKit/NSSavePanel.h>
+#import <AppKit/NSOpenPanel.h>
 #import <AppKit/NSView.h>
 #import <AppKit/NSApplication.h>
 #import <AppKit/NSDisplay.h>
 #import <AppKit/NSRaise.h>
+#import <AppKit/NSFilePanelController.h>
+#import <objc/runtime.h>
+
+static char NSSavePanelCanCreateDirectoriesKey, NSSavePanelAllowsOtherFileTypesKey;
 
 @implementation NSSavePanel
 
@@ -17,15 +22,31 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return [[self new] autorelease];
 }
 
+// a new panel starts where the last one in this application was confirmed
++(NSString *)_initialDirectory {
+   NSString *last=[[NSUserDefaults standardUserDefaults] stringForKey:@"NSNavLastRootDirectory"];
+   BOOL      isDirectory=NO;
+
+   last=[last stringByExpandingTildeInPath];
+   if([last length]>0 && [[NSFileManager defaultManager] fileExistsAtPath:last isDirectory:&isDirectory] && isDirectory)
+    return last;
+
+   return NSHomeDirectory();
+}
+
 -init {
-   [super initWithContentRect:NSMakeRect(0,0,1,1) styleMask:NSTitledWindowMask|NSResizableWindowMask backing:NSBackingStoreBuffered defer:YES];
+   [super initWithContentRect:NSMakeRect(0,0,430,160) styleMask:NSTitledWindowMask|NSResizableWindowMask backing:NSBackingStoreBuffered defer:YES];
 
    _dialogTitle=[NSLocalizedStringFromTableInBundle(@"Save", nil, [NSBundle bundleForClass:[NSSavePanel class]], @"save panel title") copy];
+   [super setTitle:_dialogTitle];
    _filename=@"";
-   _directory=[NSHomeDirectory() copy];
+   _directory=[[NSSavePanel _initialDirectory] copy];
    _requiredFileType=@"";
+   _message=@"";
    _treatsFilePackagesAsDirectories=NO;
    _accessoryView=nil;
+   [self setReleasedWhenClosed:NO];
+   [self setHidesOnDeactivate:NO];
    return self;
 }
 
@@ -34,6 +55,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    [_filename release];
    [_directory release];
    [_requiredFileType release];
+   [_message release];
+   [_prompt release];
    [_accessoryView release];
    [super dealloc];
 }
@@ -50,8 +73,14 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    }
 }
 
+// a save panel's URL is its folder and the name in the field, also before and after a cancel
 -(NSURL *)URL {
-   return [NSURL fileURLWithPath:[self filename]];
+   NSString *path=[self filename];
+
+   if([path length]==0)
+    return nil;
+
+   return [NSURL fileURLWithPath:path];
 }
 
 -(NSString *)filename {
@@ -60,17 +89,22 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 	{
 		ret=[[_filename copy] autorelease];
 	}
+   if([ret length]==0 && ![self isKindOfClass:[NSOpenPanel class]] && [_directory length]>0)
+    ret=[_directory stringByAppendingPathComponent:[self _liveNameFieldValue]];
    return ret;
 }
 
+// the older calls take the start directory and name, then run the same panel as runModal
 -(int)runModalForDirectory:(NSString *)directory file:(NSString *)file {
-   [self _setFilename:file];
-   [self setDirectory:directory];
-   return [[NSDisplay currentDisplay] savePanel:self runModalForDirectory:directory file:file];
+   if(directory!=nil)
+    [self setDirectory:directory];
+   if(file!=nil)
+    [self _setNameFieldValue:file];
+   return [self runModal];
 }
 
 -(int)runModal {
-   return [[NSDisplay currentDisplay] savePanel:self runModalForDirectory:[self directory] file:@""];
+   return [self _runFilePanelModal];
 }
 
 -(NSString *)directory {
@@ -89,6 +123,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    title=[title copy];
    [_dialogTitle release];
    _dialogTitle=title;
+   [super setTitle:title?title:@""];
 }
 
 -(void)setDirectory:(NSString *)directory {
@@ -104,6 +139,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 		[_requiredFileType release];
 		_requiredFileType=type;
 	}
+   [self setAllowedFileTypes:[type length]>0?[NSArray arrayWithObject:type]:nil];
 }
 
 -(NSString*)requiredFileType
@@ -123,7 +159,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 		if(_message!=message)
 		{
 			[_message release];
-			_message=[message copy];
+			_message=[(message?message:@"") copy];
 		}
 	}
 }
@@ -150,6 +186,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 	}
 }
 
+// with no prompt set the button reads Save, or Open in an open panel
 -(NSString*)prompt;
 {
 	id ret=nil;
@@ -157,9 +194,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 	{
 		ret=[[_prompt copy] autorelease];
 	}
+	if(ret==nil)
+	 ret=[self isKindOfClass:[NSOpenPanel class]]?@"Open":@"Save";
 	return ret;
 }
-
 
 -(void)setTreatsFilePackagesAsDirectories:(BOOL)flag {
    _treatsFilePackagesAsDirectories=flag;
@@ -172,10 +210,6 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(void)setCanCreateDirectories:(BOOL)value {
-   NSUnimplementedMethod();
-}
-
--(void)setAllowedFileTypes:(NSArray *)value {
    NSUnimplementedMethod();
 }
 

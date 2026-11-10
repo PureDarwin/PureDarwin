@@ -10,13 +10,19 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSGraphicsContext.h>
 #import <AppKit/NSRaise.h>
 #import <AppKit/NSView.h>
+#import <QuartzCore/CALayer.h>
 #import <AppKit/NSWindow-Private.h>
 #import <OpenGL/OpenGL.h>
 #import <OpenGL/gl.h>
 #import <ApplicationServices/ApplicationServices.h>
 #include <stdlib.h>
+#import <objc/runtime.h>
 #include <string.h>
+#include <dispatch/dispatch.h>
 #import <Foundation/NSThread-Private.h>
+
+// OpenGL.framework: swaps a view's pbuffer pair and names the shown one with an IOSurface
+extern void *CGLPDPresentDrawable(CGLContextObj context);
 
 @interface NSOpenGLContext(private)
 -(void)_clearCurrentContext;
@@ -65,6 +71,21 @@ static inline void _clearCurrentContext(){
    if((error=CGLCreateContext([_pixelFormat CGLPixelFormatObj],[shareContext CGLContextObj],(CGLContextObj *)&_glContext))!=kCGLNoError)
     NSLog(@"CGLCreateContext failed with %d in %s %d",error,__FILE__,__LINE__);
         
+   return self;
+}
+
+// wraps a context created with CGL directly, Wine's winemac makes its own and hands it in here
+-initWithCGLContextObj:(void *)context {
+   CGLPixelFormatObj format;
+
+   if(context==NULL){
+    [self dealloc];
+    return nil;
+   }
+   _glContext=CGLRetainContext(context);
+   format=CGLGetPixelFormat(context);
+   if(format!=NULL)
+    _pixelFormat=[[NSOpenGLPixelFormat alloc] initWithCGLPixelFormatObj:format];
    return self;
 }
 
@@ -275,23 +296,67 @@ static CGImageRef _createImageFromDrawable(CGLContextObj context) {
    return image;
 }
 
+// the layer tree and the window belong to the main thread, a frame flushed on a render thread is handed over
+static void _setLayerContents(NSView *view,CALayer *layer,CFTypeRef contents) {
+   if([NSThread isMainThread]){
+    [layer setContents:(id)contents];
+    [[view window] flushWindow];
+    return;
+   }
+   [view retain];
+   [layer retain];
+   CFRetain(contents);
+   dispatch_async(dispatch_get_main_queue(),^{
+    [layer setContents:(id)contents];
+    [[view window] flushWindow];
+    CFRelease(contents);
+    [layer release];
+    [view release];
+   });
+}
+
 // there is no GL surface in the window here: the frame is read back and drawn into the view like any other content
 -(void)flushBuffer {
    CGLContextObj previous=CGLGetCurrentContext();
    CGImageRef    image;
    BOOL          focused;
+   void         *surface=NULL;
 
-   CGLFlushDrawable(_glContext);
-   if(_view==nil || [_view window]==nil)
+   if(_view==nil || [_view window]==nil){
+    CGLFlushDrawable(_glContext);
     return;
+   }
 
+   // a layer-backed view shows its layer's contents, a frame drawn under lockFocus never reaches the screen
+   CALayer *layer=[_view layer];
+
+   // the view's own drawing must not replace the frame in the layer
+   if(layer!=nil && objc_getAssociatedObject(layer,@selector(flushBuffer))==nil)
+    objc_setAssociatedObject(layer,@selector(flushBuffer),[NSNumber numberWithBool:YES],OBJC_ASSOCIATION_RETAIN);
    if(previous!=_glContext)
     CGLSetCurrentContext(_glContext);
-   image=_createImageFromDrawable(_glContext);
+   CGLFlushDrawable(_glContext);
+   // the layer samples the pbuffer the frame was drawn in, so nothing is read back
+   if(layer!=nil)
+    surface=CGLPDPresentDrawable(_glContext);
+   image=surface==NULL ? _createImageFromDrawable(_glContext) : NULL;
    if(previous!=_glContext)
     CGLSetCurrentContext(previous);
+
+   if(surface!=NULL){
+    if(getenv("PD_GL_TRACE"))
+     NSLog(@"flushBuffer presents surface %p",surface);
+    _setLayerContents(_view,layer,surface);
+    return;
+   }
    if(image==NULL)
     return;
+
+   if(layer!=nil){
+    _setLayerContents(_view,layer,image);
+    CGImageRelease(image);
+    return;
+   }
 
    focused=([NSView focusView]==_view);
    if(focused || [_view lockFocusIfCanDraw]){

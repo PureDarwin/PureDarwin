@@ -18,6 +18,13 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return self;
 }
 
+// wraps a pixel format someone already chose, as winemac does with the formats it builds itself
+-initWithCGLPixelFormatObj:(void *)format {
+   _cglPixelFormat=CGLRetainPixelFormat(format);
+   _numberOfVirtualScreens=1;
+   return self;
+}
+
 -(void)dealloc {
    CGLReleasePixelFormat(_cglPixelFormat);
    [super dealloc];

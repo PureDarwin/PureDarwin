@@ -792,25 +792,27 @@ static BOOL drawToggleGlyph(NSImage *image,NSRect rect,BOOL enabled,BOOL mixed) 
    }
 }
 
+// the corner above a vertical scroller continues the header, in light and dark
 -(void)drawTableViewCornerInRect:(NSRect)rect {
-   NSDrawButton(rect,rect);
+   [self drawTableViewHeaderInRect:rect highlighted:NO];
 }
 
 @end
 
 @implementation NSGraphicsStyle (NSBox)
 
+// box borders are the separator hairline macOS 15 draws, whatever the border type
 -(void)drawBoxWithLineInRect:(NSRect)rect {
-   [[NSColor blackColor] setStroke];
+   [[NSColor colorWithCalibratedWhite:drawingDark() ? 1 : 0 alpha:drawingDark() ? 0.16 : 0.12] set];
    NSFrameRect(rect);
 }
 
 -(void)drawBoxWithBezelInRect:(NSRect)rect clipRect:(NSRect)clipRect {
-   NSDrawGrayBezel(rect,clipRect);
+   [self drawBoxWithLineInRect:rect];
 }
 
 -(void)drawBoxWithGrooveInRect:(NSRect)rect clipRect:(NSRect)clipRect {
-   NSDrawGroove(rect,clipRect);
+   [self drawBoxWithLineInRect:rect];
 }
 
 @end

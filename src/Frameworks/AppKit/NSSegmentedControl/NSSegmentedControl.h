@@ -23,6 +23,7 @@ enum {
     NSSegmentStyleTexturedSquare = 4,
     NSSegmentStyleCapsule = 5,
     NSSegmentStyleSmallSquare = 6,
+    NSSegmentStyleSeparated = 8,
 };
 typedef NSInteger NSSegmentStyle;
 

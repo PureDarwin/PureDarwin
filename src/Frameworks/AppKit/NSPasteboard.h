@@ -10,6 +10,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/AppKitExport.h>
 
 APPKIT_EXPORT NSString *const NSPasteboardNameFind;
+APPKIT_EXPORT NSString *const NSPasteboardNameDrag;
 APPKIT_EXPORT NSString *const NSPasteboardTypePNG;
 APPKIT_EXPORT NSString *const NSPasteboardTypeSound;
 APPKIT_EXPORT NSString *const NSPasteboardTypeMultipleTextSelection;
@@ -19,6 +20,9 @@ APPKIT_EXPORT NSString *const NSHTMLPboardType;
 // New Pasteboard Types (added in 10.6) and interchangeable with the old pasteboard types in Cocotron
 APPKIT_EXPORT NSString *const NSPasteboardTypeString;
 APPKIT_EXPORT NSString *const NSPasteboardTypeFileURL;
+// the options of -readObjectsForClasses:options:
+APPKIT_EXPORT NSString *const NSPasteboardURLReadingFileURLsOnlyKey;
+APPKIT_EXPORT NSString *const NSPasteboardURLReadingContentsConformToTypesKey;
 APPKIT_EXPORT NSString *const NSPasteboardTypeURL;
 APPKIT_EXPORT NSString *const NSPasteboardTypePDF;
 APPKIT_EXPORT NSString *const NSPasteboardTypeTIFF;

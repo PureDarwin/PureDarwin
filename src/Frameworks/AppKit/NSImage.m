@@ -6,6 +6,7 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
+#import <AppKit/PDControlDrawing.h>
 #import <sys/param.h>
 #import <AppKit/NSImage.h>
 #import <AppKit/NSApplication.h>
@@ -810,6 +811,8 @@ NSString *const NSImageNameApplicationIcon=@"NSApplicationIcon";
 }
 
 -(void)drawInRect:(NSRect)rect fromRect:(NSRect)source operation:(NSCompositingOperation)operation fraction:(CGFloat)fraction {
+   if([self name]!=nil)
+    PD_TRACE(@"%@ drawInRect name=%@ rect=%@",[self class],[self name],NSStringFromRect(rect));
 
         // Keep a lid on any intermediate allocations while producing caches
         NSAutoreleasePool *pool=[NSAutoreleasePool new];
@@ -914,6 +917,8 @@ NSString *const NSImageNameApplicationIcon=@"NSApplicationIcon";
 
 // like Cocoa, only these honour a flipped view, the plain fromRect: form draws in the view's raw coordinates
 -(void)drawInRect:(NSRect)rect fromRect:(NSRect)source operation:(NSCompositingOperation)operation fraction:(CGFloat)fraction respectFlipped:(BOOL)respectFlipped hints:(NSDictionary *)hints {
+   if([self name]!=nil)
+    PD_TRACE(@"%@ drawInRect name=%@ rect=%@",[self class],[self name],NSStringFromRect(rect));
    CGContextRef context=NSCurrentGraphicsPort();
 
    if(!respectFlipped || ![[NSGraphicsContext currentContext] isFlipped] || context==NULL) {
@@ -928,6 +933,8 @@ NSString *const NSImageNameApplicationIcon=@"NSApplicationIcon";
 }
 
 -(void)drawInRect:(NSRect)rect {
+   if([self name]!=nil)
+    PD_TRACE(@"%@ drawInRect name=%@ rect=%@",[self class],[self name],NSStringFromRect(rect));
    [self drawInRect:rect fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1 respectFlipped:YES hints:nil];
 }
 

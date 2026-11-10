@@ -34,6 +34,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - (void)setCanChooseFiles:(BOOL)flag;
 - (void)setResolvesAliases:(BOOL)value;
 
+- (BOOL)canDownloadUbiquitousContents;
+- (void)setCanDownloadUbiquitousContents:(BOOL)flag;
+- (BOOL)canResolveUbiquitousConflicts;
+- (void)setCanResolveUbiquitousConflicts:(BOOL)flag;
+
 - (void)beginSheetForDirectory:(NSString *)path
                           file:(NSString *)name
                          types:(NSArray *)fileTypes

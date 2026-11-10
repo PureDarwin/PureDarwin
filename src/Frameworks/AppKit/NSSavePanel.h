@@ -8,7 +8,17 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 #import <AppKit/NSPanel.h>
 
-@class NSView;
+@class NSView, NSURL, NSError, NSSavePanel;
+
+@protocol NSOpenSavePanelDelegate <NSObject>
+@optional
+- (BOOL)panel:(id)sender shouldEnableURL:(NSURL *)url;
+- (BOOL)panel:(id)sender validateURL:(NSURL *)url error:(NSError **)outError;
+- (void)panel:(id)sender didChangeToDirectoryURL:(NSURL *)url;
+- (NSString *)panel:(id)sender userEnteredFilename:(NSString *)filename confirmed:(BOOL)okFlag;
+- (void)panel:(id)sender willExpand:(BOOL)expanding;
+- (void)panelSelectionDidChange:(id)sender;
+@end
 
 enum {
     NSFileHandlingPanelCancelButton = NSCancelButton,
@@ -49,7 +59,6 @@ enum {
 
 - (void)setAccessoryView:(NSView *)view;
 - (void)setCanCreateDirectories:(BOOL)value;
-- (void)setAllowedFileTypes:(NSArray *)value;
 - (void)setAllowsOtherFileTypes:(BOOL)value;
 
 - (void)setMessage:(NSString *)message;

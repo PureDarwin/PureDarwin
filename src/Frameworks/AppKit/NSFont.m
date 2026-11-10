@@ -158,12 +158,15 @@ static NSLock *_cacheLock=nil;
     [_cacheLock unlock];
 }
 
+// by identity: another font of the same name and size, or one that failed to load, must keep its slot
 +(void)removeFontFromCache:(NSFont *)font {
-    [_cacheLock lock];
-   unsigned long i=[self _cacheIndexOfFontWithName:[font fontName] size:[font pointSize]];
+   unsigned long i;
 
-   if(i!=NSNotFound)
-    _fontCache[i]=nil;
+    [_cacheLock lock];
+   for(i=0;i<_fontCacheSize;i++){
+    if(_fontCache[i]==font)
+     _fontCache[i]=nil;
+   }
     [_cacheLock unlock];
 }
 
@@ -276,9 +279,21 @@ static NSLock *_cacheLock=nil;
    return [self messageFontOfSize:size];
 }
 
-// the UI font has a regular and a bold face here, medium and up use the bold one
+// the weights macOS names, medium 0.23, semibold 0.3 and bold 0.4, picked from the installed Inter faces
 +(NSFont *)systemFontOfSize:(CGFloat)size weight:(CGFloat)weight {
-   return weight>=0.23 ? [self boldSystemFontOfSize:size] : [self systemFontOfSize:size];
+   NSString *face=nil;
+   NSFont *font;
+
+   if(weight>=0.35)
+    return [self boldSystemFontOfSize:size];
+   if(weight>=0.265)
+    face=@"Inter-SemiBold";
+   else if(weight>=0.115)
+    face=@"Inter-Medium";
+   if(face==nil)
+    return [self systemFontOfSize:size];
+   font=[self fontWithName:face size:(size==0)?[self systemFontSize]:size];
+   return font?:[self boldSystemFontOfSize:size];
 }
 
 +(NSFont *)monospacedSystemFontOfSize:(CGFloat)size weight:(CGFloat)weight {

@@ -10,6 +10,10 @@
 #import <AppKit/NSView.h>
 #import <AppKit/NSWindow.h>
 #import <math.h>
+#import <stdio.h>
+#import <stdlib.h>
+#import <string.h>
+#import <stdarg.h>
 
 BOOL PDContextIsFlipped(void) {
    return [[NSGraphicsContext currentContext] isFlipped];
@@ -20,7 +24,8 @@ PDDrawContext PDCurrentDrawContext(NSView *controlView) {
    NSWindow *window=[controlView window];
 
    c.flipped=PDContextIsFlipped();
-   c.dark=[[NSAppearance currentDrawingAppearance] _isDark];
+   // the view's own appearance counts too, a toolkit may set it without making it the drawing appearance
+   c.dark=[[NSAppearance currentDrawingAppearance] _isDark] || (controlView!=nil && [[controlView effectiveAppearance] _isDark]);
    // a window that is not key draws its controls in grey, a cell outside any window draws as active
    c.active=(window==nil || [window isKeyWindow] || [window isMainWindow]);
    return c;
@@ -131,7 +136,8 @@ void PDDrawPushBezel(PDDrawContext c, NSRect bezel, BOOL defaulted, BOOL pressed
      fillRoundedGradient(c,body,radius-1,top,bottom);
     }
     else
-     fillGrey(body,radius-1,1,enabled ? (pressed ? 0.36 : 0.25) : 0.12);
+     // a window that is not key keeps its dark buttons dimmer
+     fillGrey(body,radius-1,1,enabled ? (pressed ? 0.36 : (c.active ? 0.25 : 0.12)) : 0.12);
     return;
    }
 
@@ -403,10 +409,11 @@ void PDDrawProgressBar(PDDrawContext c, NSRect frame, double fraction, BOOL inde
     addRoundedRect(port(),bar,h/2);
     CGContextFillPath(port());
    }
-   else if(fraction>0){
+   else {
     NSRect bar=track;
 
-    bar.size.width=MAX(h,round(track.size.width*MIN(1.0,fraction)));
+    // an empty bar still shows a dot at its leading end
+    bar.size.width=MAX(h,round(track.size.width*MIN(1.0,MAX(0.0,fraction))));
     CGContextBeginPath(port());
     addRoundedRect(port(),bar,h/2);
     CGContextFillPath(port());
@@ -559,4 +566,193 @@ int PDBeginCellDrawing(void) {
 
 void PDEndCellDrawing(int saved) {
    sLayoutFlipped=saved;
+}
+
+// the other bezel styles, rects taken from the frame's visual top as macOS 15 draws them
+NSRect PDBezelStyleBody(PDDrawContext c, NSRect frame, NSUInteger style) {
+   switch(style){
+    case 8:  return PDRectFromTop(NSInsetRect(frame,1,0),c.flipped,1,MIN(21,frame.size.height-2));
+    case 11: return PDRectFromTop(NSInsetRect(frame,1,0),c.flipped,1,MIN(20,frame.size.height-2));
+    case 10: return PDRectFromTop(frame,c.flipped,1,MIN(22,frame.size.height-1));
+    case 6:  return PDRectFromTop(frame,c.flipped,0,MIN(24,frame.size.height));
+    case 13:
+    case 12:
+    case 15: return PDRectFromTop(frame,c.flipped,0,MIN(18,frame.size.height));
+   }
+   return frame;
+}
+
+static void strokeRounded(CGRect r, CGFloat radius, CGFloat white, CGFloat alpha) {
+   CGContextRef ctx=port();
+
+   CGContextBeginPath(ctx);
+   addRoundedRect(ctx,NSInsetRect(r,0.5,0.5),MAX(0,radius-0.5));
+   CGContextSetRGBStrokeColor(ctx,white,white,white,alpha);
+   CGContextSetLineWidth(ctx,1);
+   CGContextStrokePath(ctx);
+}
+
+void PDDrawBezelStyle(PDDrawContext c, NSRect frame, NSUInteger style, BOOL on, BOOL pressed, BOOL enabled) {
+   NSRect body=PDBezelStyleBody(c,frame,style);
+   CGFloat top[3]={ 1, 1, 1 },bottom[3]={ 0.96, 0.96, 0.96 };
+   CGFloat ink=c.dark ? 1 : 0;
+
+   if(pressed){
+    int i;
+
+    for(i=0;i<3;i++){
+     top[i]-=0.08;
+     bottom[i]-=0.08;
+    }
+   }
+   // dark textured bezels are a dim grey, the square ones lighter
+   if(c.dark){
+    CGFloat level=(style==8) ? 0.25 : 0.38;
+
+    for(int i=0;i<3;i++){
+     top[i]=level+0.03;
+     bottom[i]=level;
+    }
+   }
+   switch(style){
+    // textured square, a light gradient under a hairline that darkens along the bottom
+    case 8:
+     fillGrey(down(c,body,0.5),4,0,0.12);
+     fillGrey(body,4,ink,0.08);
+     fillRoundedGradient(c,NSInsetRect(body,1,1),3,top,bottom);
+     break;
+
+    // textured rounded, only a faint outline
+    case 11:
+     if(pressed || on)
+      fillGrey(body,5,ink,0.08);
+     strokeRounded(body,5,ink,0.05);
+     break;
+
+    // small square, a square gradient box inside a grey line
+    case 10:
+     fillGrey(body,0,ink,0.24);
+     fillRoundedGradient(c,NSInsetRect(body,1,1),0,top,bottom);
+     break;
+
+    // shadowless square, a gradient lightening towards the bottom
+    case 6: {
+     CGFloat t[3]={ 0.89, 0.89, 0.89 },b[3]={ 0.97, 0.97, 0.97 };
+
+     if(pressed){
+      t[0]=t[1]=t[2]=0.8;
+      b[0]=b[1]=b[2]=0.86;
+     }
+     fillGrey(body,0,ink,0.26);
+     fillRoundedGradient(c,NSInsetRect(body,1,1),0,c.dark ? top : t,c.dark ? bottom : b);
+     break;
+    }
+
+    // recessed, a grey capsule only while on or pressed
+    case 13:
+     if(on || pressed)
+      fillGrey(body,6,ink,c.dark ? 0.2 : 0.15);
+     break;
+
+    // round rect, an outline with no fill
+    case 12:
+     if(pressed)
+      fillGrey(body,6,ink,0.1);
+     strokeRounded(body,6,ink,0.3);
+     break;
+
+    // inline, a filled capsule
+    case 15:
+     fillGrey(body,body.size.height/2,ink,0.05);
+     break;
+   }
+   (void)enabled;
+}
+
+// the disclosure chevron, pointing right when closed and down when open
+void PDDrawDisclosure(PDDrawContext c, NSRect frame, BOOL open, BOOL enabled) {
+   CGContextRef ctx=port();
+   CGFloat cx=NSMidX(frame),cy=NSMidY(frame);
+   CGFloat s=c.flipped ? 1 : -1;
+   CGFloat ink=c.dark ? 0.75 : 0.5;
+
+   CGContextBeginPath(ctx);
+   if(open){
+    CGContextMoveToPoint(ctx,cx-4,cy-2*s);
+    CGContextAddLineToPoint(ctx,cx,cy+2*s);
+    CGContextAddLineToPoint(ctx,cx+4,cy-2*s);
+   }
+   else {
+    CGContextMoveToPoint(ctx,cx-2,cy-4*s);
+    CGContextAddLineToPoint(ctx,cx+2,cy);
+    CGContextAddLineToPoint(ctx,cx-2,cy+4*s);
+   }
+   strokePath(ctx,1.5,ink,ink,ink,enabled ? 1 : 0.4);
+}
+
+// the help button, a 21 point white disc with a shadow
+NSRect PDDrawHelpButton(PDDrawContext c, NSRect frame, BOOL pressed) {
+   CGFloat d=MIN(21,MIN(frame.size.width,frame.size.height)-2);
+   NSRect disc=PDRectFromTop(NSMakeRect(NSMidX(frame)-d/2,frame.origin.y,d,frame.size.height),c.flipped,1,d);
+
+   fillGrey(down(c,disc,0.5),d/2,0,0.22);
+   fillGrey(disc,d/2,0,0.06);
+   fillGrey(NSInsetRect(disc,0.5,0.5),d/2-0.5,c.dark ? (pressed ? 0.5 : 0.42) : (pressed ? 0.92 : 1),1);
+   return disc;
+}
+
+// the table header background, white with a hairline under it and on its trailing edge
+void PDDrawTableHeader(PDDrawContext c, NSRect frame, BOOL highlighted) {
+   NSRect line=PDRectFromTop(frame,c.flipped,frame.size.height-1,1);
+   NSRect edge=NSMakeRect(NSMaxX(frame)-1,frame.origin.y+3,1,frame.size.height-6);
+
+   fillGrey(frame,0,c.dark ? 0.18 : 1,1);
+   if(highlighted)
+    fillGrey(frame,0,c.dark ? 1 : 0,0.06);
+   fillGrey(line,0,c.dark ? 1 : 0,0.1);
+   fillGrey(edge,0,c.dark ? 1 : 0,0.1);
+}
+
+// a selected separated segment, returns whether the title goes white on it
+BOOL PDDrawSegmentAccent(PDDrawContext c, NSRect segment, BOOL enabled) {
+   CGFloat top[3],bottom[3];
+
+   if(!enabled){
+    PDDrawSegmentSelection(c,segment);
+    return NO;
+   }
+   accentGradient(c,top,bottom);
+   fillRounded(down(c,segment,0.5),5,0,0.35,0.75,c.dark ? 0 : 0.2);
+   fillRoundedGradient(c,segment,5,top,bottom);
+   return YES;
+}
+
+// PD_APPKIT_TRACE=1 logs control drawing to stderr, read once
+BOOL PDTraceOn(void) {
+   static int on=-1;
+
+   if(on<0){
+    const char *value=getenv("PD_APPKIT_TRACE");
+
+    on=(value!=NULL && strcmp(value,"1")==0);
+   }
+   return on;
+}
+
+void PDTrace(NSString *format, ...) {
+   va_list arguments;
+   NSString *line;
+
+   va_start(arguments,format);
+   line=[[NSString alloc] initWithFormat:format arguments:arguments];
+   va_end(arguments);
+   fprintf(stderr,"pdtrace %s\n",[line UTF8String]);
+   [line release];
+}
+
+NSString *PDTraceAppearance(NSView *view) {
+   NSString *current=[[NSAppearance currentDrawingAppearance] name];
+   NSString *effective=[[view effectiveAppearance] name];
+
+   return [NSString stringWithFormat:@"drawing=%@ view=%@",current,effective];
 }

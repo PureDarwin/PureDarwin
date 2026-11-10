@@ -223,6 +223,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(void)setStyle:(NSProgressIndicatorStyle)value {
+   PD_TRACE(@"NSProgressIndicator %p set %s=%d",self,"style",(int)value);
    _style=value;
    [self sizeToFit];
    [self setNeedsDisplay:YES];
@@ -250,16 +251,19 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(void)setMinValue:(double)value {
+   PD_TRACE(@"NSProgressIndicator %p set %s=%g",self,"minValue",value);
     _minValue = value;
     [self setNeedsDisplay:YES];
 }
 
 -(void)setMaxValue:(double)value {
+   PD_TRACE(@"NSProgressIndicator %p set %s=%g",self,"maxValue",value);
     _maxValue = value;
     [self setNeedsDisplay:YES];
 }
 
 -(void)setDoubleValue:(double)value {
+   PD_TRACE(@"NSProgressIndicator %p set %s=%g",self,"doubleValue",value);
    if(value<_minValue)
     value=_minValue;
    if(value>_maxValue)
@@ -276,6 +280,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(void)setIndeterminate:(BOOL)flag {
+   PD_TRACE(@"NSProgressIndicator %p set %s=%d",self,"indeterminate",(int)flag);
    _isIndeterminate = flag;
    [self setNeedsDisplay:YES];
 }
@@ -318,6 +323,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(void)startAnimation:sender {
+   PD_TRACE(@"NSProgressIndicator %p startAnimation",self);
     if (!_isIndeterminate)
         return;
 
@@ -330,6 +336,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(void)stopAnimation:sender {
+   PD_TRACE(@"NSProgressIndicator %p stopAnimation",self);
 
     if (!_isIndeterminate)
         return;

@@ -12,6 +12,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSPasteboard.h>
 #import <AppKit/NSGraphicsContextFunctions.h>
 #import <AppKit/NSRaise.h>
+#import <AppKit/NSGraphicsContext.h>
 
 @implementation NSImageRep
 
@@ -369,6 +370,22 @@ static NSArray *typesForExtensions(NSArray *extensions) {
    result=[self draw];
    CGContextRestoreGState(context);
    
+   return result;
+}
+
+// the whole rep into rect, upright in a flipped context when respectFlipped asks for it
+-(BOOL)drawInRect:(NSRect)rect fromRect:(NSRect)fromRect operation:(NSCompositingOperation)operation fraction:(CGFloat)fraction respectFlipped:(BOOL)respectFlipped hints:(NSDictionary *)hints {
+   CGContextRef context=NSCurrentGraphicsPort();
+   BOOL         result;
+
+   CGContextSaveGState(context);
+   CGContextSetAlpha(context,fraction);
+   if(respectFlipped && [[NSGraphicsContext currentContext] isFlipped]){
+    CGContextTranslateCTM(context,0,NSMaxY(rect)+NSMinY(rect));
+    CGContextScaleCTM(context,1,-1);
+   }
+   result=[self drawInRect:rect];
+   CGContextRestoreGState(context);
    return result;
 }
 

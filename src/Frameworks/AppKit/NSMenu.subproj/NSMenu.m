@@ -493,6 +493,7 @@ static NSUInteger PDItemModifiers(NSMenuItem *item) {
     if (_autoenablesItems)
         [self update];
     
+
     for(i=0;i<count;i++){
         NSMenuItem *item=[_itemArray objectAtIndex:i];
         NSString *key=[item keyEquivalent];

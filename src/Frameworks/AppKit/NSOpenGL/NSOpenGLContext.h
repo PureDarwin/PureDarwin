@@ -33,6 +33,7 @@ typedef enum {
 + (void)clearCurrentContext;
 
 - initWithFormat:(NSOpenGLPixelFormat *)pixelFormat shareContext:(NSOpenGLContext *)shareContext;
+- initWithCGLContextObj:(void *)context;
 
 - (NSView *)view;
 - (NSOpenGLPixelBuffer *)pixelBuffer;

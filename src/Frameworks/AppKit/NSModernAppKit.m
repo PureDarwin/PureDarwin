@@ -6,17 +6,26 @@
 #import <AppKit/NSMenuItem.h>
 #import <AppKit/NSMenuView.h>
 #import <AppKit/NSNib.h>
+#import <AppKit/NSOpenPanel.h>
+#import <AppKit/NSFilePanelController.h>
 #import <AppKit/NSAccessibility.h>
 #import <objc/runtime.h>
 #import <math.h>
 
-@interface NSSavePanel (PDPrivate)
-- (void)_setFilename:(NSString *)filename;
-@end
 
 @interface NSMenu (PDPrivate)
 + (void)_pdCancelTracking;
 @end
+
+// names newer apps bind directly, valued as on macOS
+NSString *const NSPasteboardNameGeneral = @"NSGeneralPboard";
+NSString *const NSWorkspaceScreensDidSleepNotification = @"NSWorkspaceScreensDidSleepNotification";
+NSString *const NSWorkspaceScreensDidWakeNotification = @"NSWorkspaceScreensDidWakeNotification";
+NSString *const NSApplicationLaunchUserNotificationKey = @"NSApplicationLaunchUserNotificationKey";
+NSString *const NSWritingDirectionAttributeName = @"NSWritingDirection";
+NSString *const NSAccessibilityRequiredAttribute = @"AXRequired";
+NSString *const NSAccessibilityChildrenInNavigationOrderAttribute = @"AXChildrenInNavigationOrder";
+NSString *const NSAccessibilityLayoutChangedNotification = @"AXLayoutChanged";
 
 NSString *const NSImageHintCTM = @"ctm";
 NSString *const NSImageHintInterpolation = @"interpolation";
@@ -440,12 +449,12 @@ static char PDCanSelectHiddenExtensionKey, PDExtensionHiddenKey, PDShowsHiddenFi
 
 - (NSString *)nameFieldStringValue
 {
-    return [[self filename] lastPathComponent] ?: @"";
+    return [self _liveNameFieldValue];
 }
 
 - (void)setNameFieldStringValue:(NSString *)name
 {
-    [self _setFilename:name];
+    [self _setNameFieldValue:name];
 }
 
 - (NSURL *)directoryURL
@@ -469,9 +478,10 @@ static char PDCanSelectHiddenExtensionKey, PDExtensionHiddenKey, PDShowsHiddenFi
     PDSetInteger(self, &PDCanSelectHiddenExtensionKey, flag);
 }
 
+// macOS hides extensions in a save panel until told otherwise
 - (BOOL)isExtensionHidden
 {
-    return PDGetInteger(self, &PDExtensionHiddenKey, NO);
+    return PDGetInteger(self, &PDExtensionHiddenKey, ![self isKindOfClass:[NSOpenPanel class]]);
 }
 
 - (void)setExtensionHidden:(BOOL)flag
@@ -489,24 +499,15 @@ static char PDCanSelectHiddenExtensionKey, PDExtensionHiddenKey, PDShowsHiddenFi
     PDSetInteger(self, &PDShowsHiddenFilesKey, flag);
 }
 
-// the panel runs modally, the handler gets its result on the next turn of the main queue as macOS delivers it
+// both return at once, the handler runs when the person confirms or cancels
 - (void)beginWithCompletionHandler:(void (^)(NSInteger result))handler
 {
-    NSInteger result = [self runModalForDirectory:[self directory] file:[self nameFieldStringValue]];
-    void (^copy)(NSInteger) = [handler copy];
-
-    [self retain];
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (copy != nil)
-            copy(result);
-        [copy release];
-        [self release];
-    });
+    [self _beginFilePanelForWindow:nil handler:handler];
 }
 
 - (void)beginSheetModalForWindow:(NSWindow *)window completionHandler:(void (^)(NSInteger result))handler
 {
-    [self beginWithCompletionHandler:handler];
+    [self _beginFilePanelForWindow:window handler:handler];
 }
 
 @end
@@ -655,6 +656,23 @@ static BOOL PDSubstitutionDefault(NSString *key, BOOL fallback)
 + (NSScrollerStyle)preferredScrollerStyle
 {
     return NSScrollerStyleLegacy;
+}
+
+// the regular width is the display's, smaller sizes scale it as macOS's 15, 11 and 9 points do
++ (CGFloat)scrollerWidthForControlSize:(NSControlSize)controlSize scrollerStyle:(NSScrollerStyle)scrollerStyle
+{
+    CGFloat width = [self scrollerWidth];
+
+    if (controlSize == NSSmallControlSize)
+        return width * 11 / 15;
+    if (controlSize == NSMiniControlSize)
+        return width * 9 / 15;
+    return width;
+}
+
++ (CGFloat)scrollerWidthForControlSize:(NSControlSize)controlSize
+{
+    return [self scrollerWidthForControlSize:controlSize scrollerStyle:[self preferredScrollerStyle]];
 }
 
 @end
@@ -940,6 +958,274 @@ static char PDHideAnchorKey;
 - (void)startDictation:(id)sender
 {
     NSBeep();
+}
+
+@end
+
+static char PDTabbingModeKey, PDTabbingIdentifierKey;
+
+// windows are never merged into tabs here, the mode and identifier are kept for the app to read back
+@implementation NSWindow (Tabbing)
+
+- (NSWindowTabbingMode)tabbingMode
+{
+    return PDGetInteger(self, &PDTabbingModeKey, NSWindowTabbingModeAutomatic);
+}
+
+- (void)setTabbingMode:(NSWindowTabbingMode)mode
+{
+    PDSetInteger(self, &PDTabbingModeKey, mode);
+}
+
+- (NSString *)tabbingIdentifier
+{
+    return PDGet(self, &PDTabbingIdentifierKey) ?: [[self class] description];
+}
+
+- (void)setTabbingIdentifier:(NSString *)identifier
+{
+    PDSet(self, &PDTabbingIdentifierKey, [[identifier copy] autorelease]);
+}
+
+@end
+
+static char PDAllowedTouchTypesKey;
+
+// views here have no alignment insets, so the alignment rect is the frame
+@implementation NSView (AlignmentAndTouches)
+
+- (NSRect)alignmentRectForFrame:(NSRect)frame
+{
+    return frame;
+}
+
+- (NSRect)frameForAlignmentRect:(NSRect)alignmentRect
+{
+    return alignmentRect;
+}
+
+- (NSTouchTypeMask)allowedTouchTypes
+{
+    return PDGetInteger(self, &PDAllowedTouchTypesKey, NSTouchTypeMaskIndirect);
+}
+
+- (void)setAllowedTouchTypes:(NSTouchTypeMask)types
+{
+    PDSetInteger(self, &PDAllowedTouchTypesKey, types);
+}
+
+@end
+
+// the global domain keeps both in 15 ms ticks, the defaults are macOS's
+static NSTimeInterval PDKeyRepeatPreference(CFStringRef key, NSInteger fallback)
+{
+    CFPropertyListRef value;
+    NSInteger ticks = fallback;
+
+    CFPreferencesAppSynchronize(kCFPreferencesAnyApplication);
+    value = CFPreferencesCopyAppValue(key, kCFPreferencesAnyApplication);
+    if (value != NULL) {
+        if ([(id)value respondsToSelector:@selector(integerValue)])
+            ticks = [(id)value integerValue];
+        CFRelease(value);
+    }
+    return ticks * 0.015;
+}
+
+// pointer events come from mice, which carry no tablet data and no touches
+@implementation NSEvent (TabletAndTouches)
+
++ (NSTimeInterval)keyRepeatDelay
+{
+    return PDKeyRepeatPreference(CFSTR("InitialKeyRepeat"), 15);
+}
+
++ (NSTimeInterval)keyRepeatInterval
+{
+    return PDKeyRepeatPreference(CFSTR("KeyRepeat"), 2);
+}
+
+- (NSSet *)touchesMatchingPhase:(NSTouchPhase)phase inView:(NSView *)view
+{
+    return [NSSet set];
+}
+
+- (NSInteger)absoluteZ
+{
+    return 0;
+}
+
+- (NSPointingDeviceType)pointingDeviceType
+{
+    return NSPointingDeviceTypeUnknown;
+}
+
+- (NSUInteger)vendorPointingDeviceType
+{
+    return 0;
+}
+
+- (NSUInteger)buttonMask
+{
+    return 0;
+}
+
+- (NSUInteger)capabilityMask
+{
+    return 0;
+}
+
+- (NSUInteger)deviceID
+{
+    return 0;
+}
+
+- (unsigned long long)uniqueID
+{
+    return 0;
+}
+
+@end
+
+static char PDScrollerStyleKey, PDKnobStyleKey;
+
+@implementation NSScroller (StyleProperties)
+
+- (NSScrollerStyle)scrollerStyle
+{
+    return PDGetInteger(self, &PDScrollerStyleKey, [[self class] preferredScrollerStyle]);
+}
+
+- (void)setScrollerStyle:(NSScrollerStyle)style
+{
+    PDSetInteger(self, &PDScrollerStyleKey, style);
+}
+
+- (NSScrollerKnobStyle)knobStyle
+{
+    return PDGetInteger(self, &PDKnobStyleKey, NSScrollerKnobStyleDefault);
+}
+
+- (void)setKnobStyle:(NSScrollerKnobStyle)style
+{
+    PDSetInteger(self, &PDKnobStyleKey, style);
+}
+
+- (void)setKnobProportion:(CGFloat)proportion
+{
+    [self setFloatValue:[self floatValue] knobProportion:proportion];
+}
+
+@end
+
+static char PDDestructiveActionKey;
+
+@implementation NSMenuItem (DestructiveAction)
+
+- (BOOL)hasDestructiveAction
+{
+    return PDGetInteger(self, &PDDestructiveActionKey, NO);
+}
+
+- (void)setHasDestructiveAction:(BOOL)flag
+{
+    PDSetInteger(self, &PDDestructiveActionKey, flag);
+}
+
+@end
+
+static char PDAllowedFileTypesKey, PDAllowedContentTypesKey, PDNameFieldLabelKey, PDAccessoryDisclosedKey;
+
+// the open panel offers the allowed types, content types count by their filename extensions
+@implementation NSSavePanel (ContentTypes)
+
+- (NSArray *)allowedFileTypes
+{
+    return PDGet(self, &PDAllowedFileTypesKey);
+}
+
+- (void)setAllowedFileTypes:(NSArray *)types
+{
+    PDSet(self, &PDAllowedFileTypesKey, [[types copy] autorelease]);
+}
+
+- (NSArray *)allowedContentTypes
+{
+    return PDGet(self, &PDAllowedContentTypesKey) ?: [NSArray array];
+}
+
+- (void)setAllowedContentTypes:(NSArray *)types
+{
+    NSMutableArray *extensions = [NSMutableArray array];
+
+    for (id type in types) {
+        NSString *extension = [type respondsToSelector:@selector(preferredFilenameExtension)] ?
+            [type performSelector:@selector(preferredFilenameExtension)] : nil;
+
+        if ([extension length])
+            [extensions addObject:extension];
+    }
+    PDSet(self, &PDAllowedContentTypesKey, [[types copy] autorelease]);
+    [self setAllowedFileTypes:[extensions count] ? extensions : nil];
+}
+
+- (NSString *)nameFieldLabel
+{
+    return PDGet(self, &PDNameFieldLabelKey) ?: @"Save As:";
+}
+
+- (void)setNameFieldLabel:(NSString *)label
+{
+    PDSet(self, &PDNameFieldLabelKey, [[label copy] autorelease]);
+}
+
+- (BOOL)isAccessoryViewDisclosed
+{
+    return PDGetInteger(self, &PDAccessoryDisclosedKey, NO);
+}
+
+- (void)setAccessoryViewDisclosed:(BOOL)flag
+{
+    PDSetInteger(self, &PDAccessoryDisclosedKey, flag);
+}
+
+@end
+
+@implementation NSWorkspace (ContentTypeIcons)
+
+- (NSImage *)iconForContentType:(id)contentType
+{
+    NSString *extension = [contentType respondsToSelector:@selector(preferredFilenameExtension)] ?
+        [contentType performSelector:@selector(preferredFilenameExtension)] : nil;
+
+    return [self iconForFileType:extension ?: @""];
+}
+
+@end
+
+// ICC profiles cannot be read here, so no space is made from one, which callers check for
+@implementation NSColorSpace (ICCProfiles)
+
+- (instancetype)initWithICCProfileData:(NSData *)iccData
+{
+    [self release];
+    return nil;
+}
+
+@end
+
+@implementation NSApplication (WindowEnumeration)
+
+- (void)enumerateWindowsWithOptions:(NSWindowListOptions)options usingBlock:(void (^)(NSWindow *window, BOOL *stop))block
+{
+    NSArray *windows = (options & NSWindowListOrderedFrontToBack) ? [self orderedWindows] : [self windows];
+    BOOL stop = NO;
+
+    for (NSWindow *window in [[windows copy] autorelease]) {
+        block(window, &stop);
+        if (stop)
+            break;
+    }
 }
 
 @end

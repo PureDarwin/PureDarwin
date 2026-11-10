@@ -19,6 +19,9 @@
 #import <AppKit/NSSpellChecker.h>
 #import <AppKit/NSEvent.h>
 #import <AppKit/NSScroller.h>
+#import <AppKit/NSWorkspace.h>
+#import <AppKit/NSMenuItem.h>
+#import <AppKit/NSEvent.h>
 #import <AppKit/NSCell.h>
 #import <AppKit/NSLayoutConstraint.h>
 #import <AppKit/NSStatusItem.h>
@@ -200,6 +203,8 @@ typedef NS_ENUM(NSInteger, NSLayoutConstraintOrientation) {
 
 @interface NSScroller (ModernStyle)
 + (NSScrollerStyle)preferredScrollerStyle;
++ (CGFloat)scrollerWidthForControlSize:(NSControlSize)controlSize scrollerStyle:(NSScrollerStyle)scrollerStyle;
++ (CGFloat)scrollerWidthForControlSize:(NSControlSize)controlSize;
 @end
 
 @interface NSColor (SystemColors)
@@ -263,4 +268,95 @@ typedef NS_ENUM(NSInteger, NSLayoutConstraintOrientation) {
 - (void)moveParagraphForwardAndModifySelection:(id)sender;
 - (void)moveParagraphBackwardAndModifySelection:(id)sender;
 - (void)startDictation:(id)sender;
+@end
+
+typedef NS_ENUM(NSInteger, NSWindowTabbingMode) {
+    NSWindowTabbingModeAutomatic = 0,
+    NSWindowTabbingModePreferred = 1,
+    NSWindowTabbingModeDisallowed = 2,
+};
+
+@interface NSWindow (Tabbing)
+@property NSWindowTabbingMode tabbingMode;
+@property(copy) NSString *tabbingIdentifier;
+@end
+
+typedef NS_OPTIONS(NSUInteger, NSTouchTypeMask) {
+    NSTouchTypeMaskDirect = 1 << 0,
+    NSTouchTypeMaskIndirect = 1 << 1,
+};
+
+typedef NS_OPTIONS(NSUInteger, NSTouchPhase) {
+    NSTouchPhaseBegan = 1 << 0,
+    NSTouchPhaseMoved = 1 << 1,
+    NSTouchPhaseStationary = 1 << 2,
+    NSTouchPhaseEnded = 1 << 3,
+    NSTouchPhaseCancelled = 1 << 4,
+    NSTouchPhaseTouching = NSTouchPhaseBegan | NSTouchPhaseMoved | NSTouchPhaseStationary,
+    NSTouchPhaseAny = NSUIntegerMax,
+};
+
+@interface NSView (AlignmentAndTouches)
+- (NSRect)alignmentRectForFrame:(NSRect)frame;
+- (NSRect)frameForAlignmentRect:(NSRect)alignmentRect;
+@property NSTouchTypeMask allowedTouchTypes;
+@end
+
+typedef NS_ENUM(NSUInteger, NSPointingDeviceType) {
+    NSPointingDeviceTypeUnknown = 0,
+    NSPointingDeviceTypePen = 1,
+    NSPointingDeviceTypeCursor = 2,
+    NSPointingDeviceTypeEraser = 3,
+};
+
+@interface NSEvent (TabletAndTouches)
++ (NSTimeInterval)keyRepeatDelay;
++ (NSTimeInterval)keyRepeatInterval;
+- (NSSet *)touchesMatchingPhase:(NSTouchPhase)phase inView:(NSView *)view;
+@property(readonly) NSInteger absoluteZ;
+@property(readonly) NSPointingDeviceType pointingDeviceType;
+@property(readonly) NSUInteger vendorPointingDeviceType;
+@property(readonly) NSUInteger buttonMask;
+@property(readonly) NSUInteger capabilityMask;
+@property(readonly) NSUInteger deviceID;
+@property(readonly) unsigned long long uniqueID;
+@end
+
+typedef NS_ENUM(NSInteger, NSScrollerKnobStyle) {
+    NSScrollerKnobStyleDefault = 0,
+    NSScrollerKnobStyleDark = 1,
+    NSScrollerKnobStyleLight = 2,
+};
+
+@interface NSScroller (StyleProperties)
+@property NSScrollerStyle scrollerStyle;
+@property NSScrollerKnobStyle knobStyle;
+- (void)setKnobProportion:(CGFloat)proportion;
+@end
+
+@interface NSMenuItem (DestructiveAction)
+@property BOOL hasDestructiveAction;
+@end
+
+@interface NSSavePanel (ContentTypes)
+@property(copy) NSArray *allowedFileTypes;
+@property(copy) NSArray *allowedContentTypes;
+@property(copy) NSString *nameFieldLabel;
+@property(getter=isAccessoryViewDisclosed) BOOL accessoryViewDisclosed;
+@end
+
+@interface NSWorkspace (ContentTypeIcons)
+- (NSImage *)iconForContentType:(id)contentType;
+@end
+
+@interface NSColorSpace (ICCProfiles)
+- (instancetype)initWithICCProfileData:(NSData *)iccData;
+@end
+
+typedef NS_OPTIONS(NSUInteger, NSWindowListOptions) {
+    NSWindowListOrderedFrontToBack = 1 << 0,
+};
+
+@interface NSApplication (WindowEnumeration)
+- (void)enumerateWindowsWithOptions:(NSWindowListOptions)options usingBlock:(void (^)(NSWindow *window, BOOL *stop))block;
 @end

@@ -23,6 +23,18 @@ NSString * const NSFontVisibleNameAttribute=@"NSFontVisibleNameAttribute";
 
 NSString * const NSFontSymbolicTrait = @"NSFontSymbolicTrait";
 NSString * const NSFontWeightTrait = @"NSFontWeightTrait";
+
+const NSFontWeight NSFontWeightUltraLight = -0.8;
+const NSFontWeight NSFontWeightThin = -0.6;
+const NSFontWeight NSFontWeightLight = -0.4;
+const NSFontWeight NSFontWeightRegular = 0.0;
+const NSFontWeight NSFontWeightMedium = 0.23;
+const NSFontWeight NSFontWeightSemibold = 0.3;
+const NSFontWeight NSFontWeightBold = 0.4;
+const NSFontWeight NSFontWeightHeavy = 0.56;
+const NSFontWeight NSFontWeightBlack = 0.62;
+
+NSString * const NSFontSetChangedNotification = @"NSFontSetChangedNotification";
 NSString * const NSFontWidthTrait = @"NSFontWidthTrait";
 NSString * const NSFontSlantTrait = @"NSFontSlantTrait";
 
