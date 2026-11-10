@@ -81,16 +81,24 @@ FcConfig *O2FontSharedFontConfig() {
     pat=FcNameParse((unsigned char*)[pattern UTF8String]);
    }
 
-   FcObjectSet *props=FcObjectSetBuild(FC_FILE, NULL);
+   FcObjectSet *props=FcObjectSetBuild(FC_FILE, FC_VARIABLE, NULL);
 
    FcFontSet *set = FcFontList (O2FontSharedFontConfig(), pat, props);
    NSString* ret=NULL;
-   for(i = 0; i < set->nfont && !ret; i++) {
+   // only a file name goes back, and a variable font opened by name alone is its default
+   // instance, so a static face with the same name wins (Inter-Bold would come out regular)
+   for(int pass = 0; pass < 2 && !ret; pass++) {
+    for(i = 0; i < set->nfont && !ret; i++) {
       FcChar8 *filename;
+      FcBool variable = FcFalse;
 
+      FcPatternGetBool(set->fonts[i], FC_VARIABLE, 0, &variable);
+      if (pass == 0 && variable)
+         continue;
       if (FcPatternGetString (set->fonts[i], FC_FILE, 0, &filename) == FcResultMatch) {
          ret=[NSString stringWithUTF8String:(char*)filename];
       }
+    }
    }
 
    FcPatternDestroy(pat);

@@ -136,6 +136,10 @@ typedef NSUInteger NSWindowSharingType;
 typedef int NSSelectionDirection;
 
 APPKIT_EXPORT NSString *const NSWindowDidBecomeKeyNotification;
+APPKIT_EXPORT NSString *const NSWindowDidChangeBackingPropertiesNotification;
+APPKIT_EXPORT NSString *const NSWindowDidChangeScreenNotification;
+APPKIT_EXPORT NSString *const NSWindowDidEnterFullScreenNotification;
+APPKIT_EXPORT NSString *const NSWindowDidExitFullScreenNotification;
 APPKIT_EXPORT NSString *const NSWindowDidChangeOcclusionStateNotification;
 APPKIT_EXPORT NSString *const NSWindowDidResignKeyNotification;
 APPKIT_EXPORT NSString *const NSWindowDidBecomeMainNotification;
@@ -293,6 +297,10 @@ APPKIT_EXPORT NSString *const NSWindowDidEndLiveResizeNotification;
     NSPoint _mouseDownLocationInWindow;
 
     NSScreen *_preferredScreen;
+
+    // what changed since the last flush, in window coordinates, sent with kWSWindowFlush
+    NSRect _damage;
+    BOOL _damageFull;
 }
 
 + (NSWindowDepth)defaultDepthLimit;
@@ -422,6 +430,9 @@ APPKIT_EXPORT NSString *const NSWindowDidEndLiveResizeNotification;
 - (void)setContentAspectRatio:(NSSize)value;
 - (void)setHasShadow:(BOOL)value;
 - (void)setIgnoresMouseEvents:(BOOL)value;
+// keeps the pointer inside a rect in window coordinates while the window is key, NSZeroRect for none
+- (NSRect)mouseConfinementRect;
+- (void)setMouseConfinementRect:(NSRect)rect;
 - (void)setAspectRatio:(NSSize)value;
 - (void)setAutorecalculatesKeyViewLoop:(BOOL)value;
 - (void)setCanHide:(BOOL)value;
@@ -465,7 +476,7 @@ APPKIT_EXPORT NSString *const NSWindowDidEndLiveResizeNotification;
 - (id)windowController;
 - (NSArray *)drawers;
 
-- (int)windowNumber;
+- (NSInteger)windowNumber;
 - (int)gState;
 - (NSScreen *)screen;
 - (NSScreen *)deepestScreen;

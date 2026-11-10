@@ -3,6 +3,8 @@
 
 #define PDMenuServerName @"org.puredarwin.MenuServer"
 #define PDMenuClientNameFormat @"org.puredarwin.MenuClient.%d"
+// posted by a menu bar that has just started serving, so running apps publish to it again
+#define PDMenuServerStartedNotification @"org.puredarwin.MenuServer.started"
 
 // menuData is a plist tree of title and items, each item has title, isSeparator, enabled, state,
 // keyEquivalent, keyEquivalentModifierMask and an optional submenu
@@ -21,4 +23,6 @@
                             forWindow:(NSNumber *)windowId;
 - (oneway void)requestMenuUpdateForWindow:(NSNumber *)windowId;
 - (bycopy id)validateMenuStateForWindow:(NSNumber *)windowId;
+// the Dock asks a running app to come forward, it raises its front window
+- (oneway void)activateApplicationFromDock;
 @end

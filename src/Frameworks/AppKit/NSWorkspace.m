@@ -20,8 +20,14 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <Foundation/NSPathUtilities.h>
 #import <Foundation/NSValue.h>
 #include <sys/param.h>
+#if defined(__linux__)
+#include <mntent.h>
+#include <sys/statvfs.h>
+#include <sys/mount.h>
+#else
 #include <sys/ucred.h>
 #include <sys/mount.h>
+#endif
 #import <AppKit/NSRaise.h>
 
 NSString * const NSWorkspaceWillPowerOffNotification=@"NSWorkspaceWillPowerOffNotification";
@@ -30,6 +36,7 @@ NSString * const NSWorkspaceDidMountNotification=@"NSWorkspaceDidMountNotificati
 NSString * const NSWorkspaceWillUnmountNotification=@"NSWorkspaceWillUnmountNotification";
 NSString * const NSWorkspaceDidUnmountNotification=@"NSWorkspaceDidUnmountNotification";
 NSString * const NSWorkspaceDidLaunchApplicationNotification=@"NSWorkspaceDidLaunchApplicationNotification";
+NSString * const NSWorkspaceDidActivateApplicationNotification=@"NSWorkspaceDidActivateApplicationNotification";
 NSString * const NSWorkspaceDidTerminateApplicationNotification=@"NSWorkspaceDidTerminateApplicationNotification";
 NSString * const NSWorkspaceWillLaunchApplicationNotification=@"NSWorkspaceWillLaunchApplicationNotification";
 
@@ -352,7 +359,14 @@ static NSImage *pdGenericIcon(BOOL isDirectory) {
      postNotificationName:@"GWSelectFileNotification"
                    object:nil
                  userInfo:[NSDictionary dictionaryWithObject:path forKey:@"path"]];
-   return YES;
+   // the file viewer keeps its Finder bundle path for compatibility, it shows as Files
+   return [self openFile:path withApplication:@"/System/Library/CoreServices/Finder.app"];
+}
+
+-(void)activateFileViewerSelectingURLs:(NSArray *)fileURLs {
+   for(NSURL *url in fileURLs)
+    if([url isFileURL])
+     [self selectFile:[url path] inFileViewerRootedAtPath:@""];
 }
 
 -(void)slideImage:(NSImage *)image from:(NSPoint)from to:(NSPoint)to {
@@ -406,7 +420,50 @@ static NSImage *pdGenericIcon(BOOL isDirectory) {
    return YES;
 }
 
+#if defined(__linux__)
+// Linux keeps the mount table in /proc, the entry for a path is the longest mount point it sits under
+static BOOL argonMountForPath(const char *path, char *source, size_t sourceSize, char *type, size_t typeSize) {
+   FILE *table=setmntent("/proc/self/mounts","r");
+   struct mntent *entry;
+   size_t best=0;
+
+   if(table==NULL)
+    return NO;
+   while((entry=getmntent(table))!=NULL){
+    size_t length=strlen(entry->mnt_dir);
+    BOOL under=strncmp(path,entry->mnt_dir,length)==0 && (path[length]=='/' || path[length]=='\0' || length==1);
+
+    if(under && length>=best){
+     best=length;
+     snprintf(source,sourceSize,"%s",entry->mnt_fsname);
+     snprintf(type,typeSize,"%s",entry->mnt_type);
+    }
+   }
+   endmntent(table);
+   return best>0;
+}
+#endif
+
 -(BOOL)getFileSystemInfoForPath:(NSString *)path isRemovable:(BOOL *)isRemovable isWritable:(BOOL *)isWritable isUnmountable:(BOOL *)isUnmountable description:(NSString **)description type:(NSString **)type {
+#if defined(__linux__)
+   struct statvfs vfs;
+   char source[PATH_MAX]="", fstype[64]="";
+
+   if(path==nil || statvfs([path fileSystemRepresentation],&vfs)!=0)
+    return NO;
+   argonMountForPath([path fileSystemRepresentation],source,sizeof(source),fstype,sizeof(fstype));
+   if(isRemovable!=NULL)
+    *isRemovable=NO;
+   if(isWritable!=NULL)
+    *isWritable=(vfs.f_flag&ST_RDONLY)?NO:YES;
+   if(isUnmountable!=NULL)
+    *isUnmountable=strcmp([path fileSystemRepresentation],"/")!=0;
+   if(description!=NULL)
+    *description=[NSString stringWithUTF8String:source];
+   if(type!=NULL)
+    *type=[NSString stringWithUTF8String:fstype];
+   return YES;
+#else
    struct statfs info;
 
    if(path==nil || statfs([path fileSystemRepresentation],&info)!=0)
@@ -424,6 +481,7 @@ static NSImage *pdGenericIcon(BOOL isDirectory) {
     *type=[NSString stringWithUTF8String:info.f_fstypename];
 
    return YES;
+#endif
 }
 
 -(BOOL)getInfoForFile:(NSString *)path application:(NSString **)application type:(NSString **)type {
@@ -465,6 +523,20 @@ static NSImage *pdGenericIcon(BOOL isDirectory) {
 }
 
 -(NSArray *)mountedRemovableMedia {
+#if defined(__linux__)
+   // removable media are the udisks mounts under /run/media and /media
+   NSMutableArray *result=[NSMutableArray array];
+   FILE *table=setmntent("/proc/self/mounts","r");
+   struct mntent *entry;
+
+   while(table!=NULL && (entry=getmntent(table))!=NULL){
+    if(strncmp(entry->mnt_dir,"/run/media/",11)==0 || strncmp(entry->mnt_dir,"/media/",7)==0)
+     [result addObject:[NSString stringWithUTF8String:entry->mnt_dir]];
+   }
+   if(table!=NULL)
+    endmntent(table);
+   return result;
+#else
    struct statfs *mounts=NULL;
    int count=getmntinfo(&mounts,MNT_NOWAIT);
    NSMutableArray *result=[NSMutableArray arrayWithCapacity:0];
@@ -474,9 +546,21 @@ static NSImage *pdGenericIcon(BOOL isDirectory) {
      [result addObject:[NSString stringWithUTF8String:mounts[i].f_mntonname]];
 
    return result;
+#endif
 }
 
 -(NSArray *)mountedLocalVolumePaths {
+#if defined(__linux__)
+   NSMutableArray *result=[NSMutableArray array];
+   FILE *table=setmntent("/proc/self/mounts","r");
+   struct mntent *entry;
+
+   while(table!=NULL && (entry=getmntent(table))!=NULL)
+    [result addObject:[NSString stringWithUTF8String:entry->mnt_dir]];
+   if(table!=NULL)
+    endmntent(table);
+   return result;
+#else
    struct statfs *mounts=NULL;
    int count=getmntinfo(&mounts,MNT_NOWAIT);
    NSMutableArray *result=[NSMutableArray arrayWithCapacity:count>0?count:0];
@@ -485,6 +569,7 @@ static NSImage *pdGenericIcon(BOOL isDirectory) {
     [result addObject:[NSString stringWithUTF8String:mounts[i].f_mntonname]];
 
    return result;
+#endif
 }
 
 -(BOOL)unmountAndEjectDeviceAtPath:(NSString *)path {

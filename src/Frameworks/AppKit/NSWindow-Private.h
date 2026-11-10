@@ -44,4 +44,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - (BOOL)validateMenuItem:(NSMenuItem *)item;
 - (void)dirtyRect:(NSRect)rect;
 - (int)_resizeEdgesAtPoint:(NSPoint)point;
+
+// adds a changed area, in window coordinates, to what the next flush tells the window server
+-(void)_addDamage:(NSRect)rect;
+-(void)_addFullDamage;
+-(BOOL)_isBackingContext:(CGContextRef)port;
 @end

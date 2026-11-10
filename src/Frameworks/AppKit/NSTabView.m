@@ -17,6 +17,15 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <Foundation/NSKeyedArchiver.h>
 #import <AppKit/NSGraphicsStyle.h>
 #import <AppKit/NSRaise.h>
+#import <AppKit/PDControlDrawing.h>
+
+#import <AppKit/NSBezierPath.h>
+
+// the strip sits over the pane edge, so it is filled with the window colour under its track
+static void fillStripBackground(NSRect strip) {
+   [[NSColor windowBackgroundColor] setFill];
+   [[NSBezierPath bezierPathWithRoundedRect:strip xRadius:6 yRadius:6] fill];
+}
 
 @interface NSTabViewItem(NSTabViewItem_private)
 -(void)setTabView:(NSTabView *)tabView;
@@ -38,7 +47,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     _drawsBackground=[keyed decodeBoolForKey:@"NSDrawsBackground"];
     _controlSize=(flags&0x18000000)>>27;
     if (_font==nil)
-     _font=[[NSFont boldSystemFontOfSize:13-_controlSize*2] retain];
+     _font=[[NSFont systemFontOfSize:[NSFont systemFontSizeForControlSize:_controlSize]] retain];
     _type=(flags&0x7);
 
    switch (_type) {
@@ -90,8 +99,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    [super initWithFrame:frame];
    _items=[NSMutableArray new];
    _selectedItem=nil;
-// should probably be boldUserFont
-   _font=[[NSFont boldSystemFontOfSize:0] retain];
+// tab labels use the regular system font on macOS 15
+   _font=[[NSFont systemFontOfSize:0] retain];
    _type=NSTopTabsBezelBorder;
    _allowsTruncatedLabels=NO;
    return self;
@@ -231,22 +240,29 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     return [_items objectAtIndex:index];
 }
 
+// the tabs are a segmented strip centred on the pane top, each segment its label plus twenty points
+-(CGFloat)_segmentWidthAtIndex:(unsigned)index {
+   return ceil([[_items objectAtIndex:index] sizeOfLabel:NO].width)+20;
+}
+
+-(NSRect)rectForItemBorderAtIndex:(unsigned)index {
+   int     i,count=[_items count];
+   CGFloat total=0,x;
+   NSRect  bounds=[self bounds];
+
+   for(i=0;i<count;i++)
+    total+=[self _segmentWidthAtIndex:i];
+   x=floor(NSMidX(bounds)-total/2);
+   for(i=0;i<count && i<index;i++)
+    x+=[self _segmentWidthAtIndex:i];
+   return PDRectFromTop(NSMakeRect(x,bounds.origin.y,[self _segmentWidthAtIndex:index],bounds.size.height),[self isFlipped],6,22);
+}
+
 -(NSRect)rectForItemLabelAtIndex:(unsigned)index {
-   int            i,count=[_items count];
-    NSPoint        base=NSMakePoint(0,[self bounds].size.height-22);
-   NSSize         size;
+   NSRect border=[self rectForItemBorderAtIndex:index];
+   NSSize size=[[_items objectAtIndex:index] sizeOfLabel:NO];
 
-    base.x+=6;
-    for(i=0;i<count && i<index;i++){
-     size=[[_items objectAtIndex:i] sizeOfLabel:NO];
-
-     base.x+=size.width;
-     base.x+=8;
-    }
-
-    size=[[_items objectAtIndex:index] sizeOfLabel:NO];
-
-    return NSMakeRect(base.x,base.y,size.width,size.height);
+   return NSMakeRect(floor(NSMidX(border)-size.width/2),floor(NSMidY(border)-size.height/2),size.width,size.height);
 }
 
 -(NSTabViewItem *)tabViewItemAtPoint:(NSPoint)point {
@@ -254,7 +270,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
    for(i=0;i<count;i++){
     NSTabViewItem *item=[_items objectAtIndex:i];
-    NSRect         rect=[self rectForItemLabelAtIndex:i];
+    NSRect         rect=[self rectForItemBorderAtIndex:i];
 
     if(NSMouseInRect(point,rect,[self isFlipped]))
      return item;
@@ -411,18 +427,41 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
         [self selectTabViewItemAtIndex:[[sender cells] indexOfObject:[sender selectedCell]]];
 }
 
--(NSRect)rectForItemBorderAtIndex:(unsigned)index {
-   NSRect result=[self rectForItemLabelAtIndex:index];
+// the macOS 15 tab view, a rounded pane under a segmented strip with the selected tab white
+-(BOOL)_drawModernTabs {
+   PDDrawContext c=PDCurrentDrawContext(self);
+   NSRect bounds=[self bounds];
+   NSRect pane=PDRectFromTop(NSInsetRect(bounds,7,0),c.flipped,17,MAX(0,bounds.size.height-17-11));
+   int    i,count=[_items count];
+   NSRect strip;
 
-   result=NSInsetRect(result,-4,0);
-   result.origin.y=[self bounds].size.height-24-_controlSize;
-   result.size.height=24-_controlSize;
+   if(_type!=NSTopTabsBezelBorder || count==0)
+    return NO;
+   PDDrawBoxFill(c,pane);
+   strip=NSUnionRect([self rectForItemBorderAtIndex:0],[self rectForItemBorderAtIndex:count-1]);
+   fillStripBackground(strip);
+   PDDrawSegmentTrack(c,strip);
+   for(i=0;i<count;i++){
+    NSTabViewItem *item=[_items objectAtIndex:i];
+    NSRect border=[self rectForItemBorderAtIndex:i];
 
-   return result;
+    if(item==_selectedItem)
+     PDDrawSegmentSelection(c,PDRectFromTop(NSInsetRect(border,i==0 ? 1 : 0,0),c.flipped,1,border.size.height-2));
+    else if(i>0 && [_items objectAtIndex:i-1]!=_selectedItem)
+     PDDrawSegmentDivider(c,strip,NSMinX(border));
+    [item drawLabel:_allowsTruncatedLabels inRect:[self rectForItemLabelAtIndex:i]];
+   }
+   if(_selectedItem!=nil)
+    [[_selectedItem view] setNeedsDisplay:YES];
+   return YES;
 }
 
 -(void)drawRect:(NSRect)rect {
+    PD_TRACE(@"NSTabView type=%d items=%d selected=\"%@\" bounds=%@ flipped=%d %@",(int)_type,(int)[_items count],[_selectedItem label],NSStringFromRect([self bounds]),PDContextIsFlipped(),PDTraceAppearance(self));
     NSGraphicsStyle *style=[self graphicsStyle];
+
+    if([self _drawModernTabs])
+     return;
 
     switch (_type) {
         case NSTopTabsBezelBorder:

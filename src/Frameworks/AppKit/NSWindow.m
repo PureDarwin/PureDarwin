@@ -129,6 +129,7 @@ const float WSWindowEdgePad = 2;
 -(void)_setMainWindow:(NSWindow *)window;
 -(void)_setKeyWindow:(NSWindow *)window;
 -(void)_menuBarActivateWindow:(NSWindow *)window;
+-(void)_serverFocusWindow:(NSWindow *)window gained:(BOOL)gained;
 @end
 
 @interface _NSKeyViewPosition : NSObject {
@@ -385,16 +386,17 @@ static BOOL _allowsAutomaticWindowTabbing=YES;
     _isMiniaturized = NO;
 
     buffer = NULL;
-    bundleID = [[NSBundle mainBundle] bundleIdentifier];
+    bundleID = [[[NSBundle mainBundle] bundleIdentifier] retain];
     if(bundleID == nil)
-        bundleID = [NSString stringWithFormat:@"unix.%u", getpid()];
+        bundleID = [[NSString alloc] initWithFormat:@"unix.%u", getpid()];
     /* Must match what the window server opens; see wsWindowShmPath. */
     {
         char shmName[64];
 
         wsWindowShmPath([bundleID cString], (unsigned)getpid(),
                         (unsigned)_number, shmName, sizeof(shmName));
-        shmPath = [NSString stringWithUTF8String:shmName];
+        // kept for the life of the window, -createCGContextIfNeeded and -dealloc open it again
+        shmPath = [[NSString alloc] initWithUTF8String:shmName];
     }
 
     _context = [self cgContext];
@@ -420,6 +422,8 @@ static BOOL _allowsAutomaticWindowTabbing=YES;
     if(buffer && bufsize)
         munmap(buffer, bufsize);
     shm_unlink([shmPath cString]);
+    [shmPath release];
+    [bundleID release];
     //if(_cglContext)
     //    [_cglContext release];
     //if(_caContext)
@@ -484,6 +488,11 @@ static BOOL _allowsAutomaticWindowTabbing=YES;
                 bitsPerComponent:8 bytesPerRow:4*pixelsWide colorSpace:colorSpace
                 bitmapInfo:kO2BitmapByteOrder32Little|kCGImageAlphaPremultipliedFirst];
         _context = [[O2Context_builtin_FT alloc] initWithSurface:surface flipped:NO];
+        // a new backing store holds nothing the window server has seen
+        _damageFull = YES;
+        // the context keeps its own references, without these every window leaked its surface
+        [surface release];
+        O2ColorSpaceRelease(colorSpace);
 
         /* +currentContext is not owned by us; releasing it frees a context
          * that is still held by the autorelease pool, which then faults on a
@@ -1024,7 +1033,20 @@ static char dockTileKey;
     [self setFrame:newFrame display:display animate:animate tellWS:YES];
 }
 
+// set while a compositor configure resizes the window, main thread only
+static BOOL _inServerConfigure;
+
 -(void)setFrame:(NSRect)newFrame display:(BOOL)display animate:(BOOL)animate tellWS:(BOOL)tellWS {
+    // an app frame other than the zoomed one leaves zoom, as on macOS, so the compositor stops maximising
+    if (tellWS && _isZoomed && !_inServerConfigure && !NSEqualRects(newFrame, [self zoomedFrame])) {
+       if (getenv("PD_EVENT_TRACE"))
+          fprintf(stderr,"PD-EVENT unzoom %p for app frame\n",self);
+       _isZoomed = NO;
+       [self _updateWSState];
+    }
+    if (getenv("PD_EVENT_TRACE"))
+       fprintf(stderr,"PD-EVENT setFrame %s %p {%g,%g %gx%g} visible {%g,%g %gx%g}\n",object_getClassName(self),self,newFrame.origin.x,newFrame.origin.y,newFrame.size.width,newFrame.size.height,
+        NSMinX([[NSScreen mainScreen] visibleFrame]),NSMinY([[NSScreen mainScreen] visibleFrame]),NSWidth([[NSScreen mainScreen] visibleFrame]),NSHeight([[NSScreen mainScreen] visibleFrame]));
     if (NSEqualSizes([self minSize], NSMakeSize(0, 0)) == NO) {
        newFrame.size.width = MAX(NSWidth(newFrame), [self minSize].width);
        newFrame.size.height = MAX(NSHeight(newFrame), [self minSize].height);
@@ -1378,8 +1400,34 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
        (int)_number, value ? 1 : 0
    };
 
+   if(getenv("PD_EVENT_TRACE"))
+    fprintf(stderr,"PD-EVENT setIgnoresMouseEvents %d window %s %p number %ld\n",value,object_getClassName(self),self,(long)_number);
    _ignoresMouseEvents=value;
    _windowServerRPC(&data, sizeof(data), NULL, NULL);
+}
+
+static char mouseConfinementRectKey;
+
+-(NSRect)mouseConfinementRect {
+   NSValue *value=objc_getAssociatedObject(self,&mouseConfinementRectKey);
+
+   return value!=nil ? [value rectValue] : NSZeroRect;
+}
+
+// the window server confines the pointer to the rect while the window has keyboard focus
+-(void)setMouseConfinementRect:(NSRect)rect {
+   struct wsRPCWindow data;
+
+   memset(&data,0,sizeof(data));
+   data.base.code=kWSWindowSetConfinement;
+   data.base.len=sizeof(data)-sizeof(struct wsRPCBase);
+   data.windowID=(int)_number;
+   data.x=rect.origin.x;
+   data.y=rect.origin.y;
+   data.w=rect.size.width;
+   data.h=rect.size.height;
+   objc_setAssociatedObject(self,&mouseConfinementRectKey,[NSValue valueWithRect:rect],OBJC_ASSOCIATION_RETAIN);
+   _windowServerRPC(&data,sizeof(data),NULL,NULL);
 }
 
 -(void)setAspectRatio:(NSSize)value {
@@ -1478,18 +1526,6 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 
 // a view drawn where the title bar would be starts the same compositor move the title bar does
 // the compositor has no pointer confinement yet, so the rect is kept for callers to read back and the pointer stays free
-static char mouseConfinementKey;
-
--(NSRect)mouseConfinementRect {
-   NSValue *rect=objc_getAssociatedObject(self,&mouseConfinementKey);
-
-   return rect ? [rect rectValue] : NSZeroRect;
-}
-
--(void)setMouseConfinementRect:(NSRect)rect {
-   objc_setAssociatedObject(self,&mouseConfinementKey,NSIsEmptyRect(rect) ? nil : [NSValue valueWithRect:rect],OBJC_ASSOCIATION_RETAIN);
-}
-
 -(void)performWindowDragWithEvent:(NSEvent *)event {
    [self requestMove:event];
 }
@@ -1616,7 +1652,7 @@ static char mouseConfinementKey;
     return _drawers;
 }
 
--(int)windowNumber {
+-(NSInteger)windowNumber {
     return _number;
 }
 
@@ -1794,6 +1830,10 @@ static char mouseConfinementKey;
    if (NSMinY(rect) < NSMinY(visRect)) {
     rect.origin.y = NSMinY(visRect);
    }
+   // a window taller than the screen keeps its title bar under the menu bar, as on macOS
+   if (NSMaxY(rect) > NSMaxY(visRect)) {
+    rect.origin.y = NSMaxY(visRect) - rect.size.height;
+   }
    return rect;
 }
 
@@ -1934,6 +1974,7 @@ static char mouseConfinementKey;
    if([self canBecomeKeyWindow] && ![self isKeyWindow])
     [self makeKeyWindow];
    [NSApp _menuBarActivateWindow:self];
+   [NSApp _serverFocusWindow:self gained:YES];
    // this arrives as a queued call, not an event, so nothing else would repaint the lights
    [self displayIfNeeded];
 }
@@ -1943,6 +1984,7 @@ static char mouseConfinementKey;
     [NSApp _setKeyWindow:nil];
     [self resignKeyWindow];
    }
+   [NSApp _serverFocusWindow:self gained:NO];
    [self displayIfNeeded];
 }
 
@@ -1951,12 +1993,23 @@ static char mouseConfinementKey;
    NSSize size=[value sizeValue];
    NSRect frame=[self frame];
 
-   if(!(_styleMask&NSResizableWindowMask) || NSEqualSizes(size,frame.size))
+   // clamped before the top edge is kept, -setFrame: would clamp after and move the top instead
+   size.width=MAX(size.width,[self minSize].width);
+   size.height=MAX(size.height,[self minSize].height);
+   size.width=MIN(size.width,[self maxSize].width);
+   size.height=MIN(size.height,[self maxSize].height);
+   // a fullscreen window takes the compositor size whatever its style
+   if(!(_styleMask&(NSResizableWindowMask|NSFullScreenWindowMask)) || NSEqualSizes(size,frame.size))
     return;
 
    frame.origin.y+=frame.size.height-size.height;
    frame.size=size;
+   // a maximised window fills the usable area, which is the zoomed frame
+   if(_isZoomed && NSEqualSizes(size,[self zoomedFrame].size))
+    frame=[self zoomedFrame];
+   _inServerConfigure=YES;
    [self setFrame:frame display:YES];
+   _inServerConfigure=NO;
 }
 
 // the compositor placed the window, value is its top left in screen coordinates counted from the top
@@ -2153,6 +2206,51 @@ static char mouseConfinementKey;
    _flushDisabled--;
 }
 
+-(void)_addDamage:(NSRect)rect {
+   if(_damageFull || NSIsEmptyRect(rect))
+    return;
+   _damage=NSIsEmptyRect(_damage)?rect:NSUnionRect(_damage,rect);
+}
+
+-(void)_addFullDamage {
+   _damageFull=YES;
+}
+
+-(BOOL)_isBackingContext:(CGContextRef)port {
+   return port!=NULL && port==(CGContextRef)_context;
+}
+
+// buffer rows run top down, window coordinates bottom up, one pixel of slack for antialiasing
+-(void)_fillFlushDamage:(struct wsRPCWindow *)flush {
+   static int fullOnly=-1;
+   int width=(int)_frame.size.width,height=(int)_frame.size.height;
+
+   if(fullOnly<0)
+    fullOnly=getenv("ARGON_DAMAGE_FULL")!=NULL;
+   flush->damageValid=1;
+   if(_damageFull || fullOnly){
+    flush->damageX=0;
+    flush->damageY=0;
+    flush->damageW=width;
+    flush->damageH=height;
+   }
+   else if(NSIsEmptyRect(_damage))
+    flush->damageW=flush->damageH=0;
+   else {
+    int x0=MAX(0,(int)floor(NSMinX(_damage))-1);
+    int x1=MIN(width,(int)ceil(NSMaxX(_damage))+1);
+    int y0=MAX(0,height-(int)ceil(NSMaxY(_damage))-1);
+    int y1=MIN(height,height-(int)floor(NSMinY(_damage))+1);
+
+    flush->damageX=x0;
+    flush->damageY=y0;
+    flush->damageW=MAX(0,x1-x0);
+    flush->damageH=MAX(0,y1-y0);
+   }
+   _damage=NSZeroRect;
+   _damageFull=NO;
+}
+
 -(void)flushWindow {
     if(_flushDisabled > 0)
         _flushNeeded=YES;
@@ -2169,6 +2267,7 @@ static char mouseConfinementKey;
                 _number, _frame.origin.x, _frame.origin.y,
                 _frame.size.width, _frame.size.height, _styleMask, 0, {'\0'}, _level
             };
+            [self _fillFlushDamage:&flush];
             _windowServerRPC(&flush, sizeof(flush), NULL, NULL);
         }
     }
@@ -2377,6 +2476,19 @@ static char mouseConfinementKey;
 // The move notifications are sent under unknown conditions around orderFront: in the Apple AppKit, we do them all the time here until it's figured out. I suspect it is a side effect of off-screen windows being at off-screen coordinates (as opposed to just being hidden)
    [self postNotificationName:NSWindowWillMoveNotification];
 
+   // macOS moves a titled window being shown so its title bar is below the menu bar
+   if(!wasVisible && place!=NSWindowOut && (_styleMask & NSTitledWindowMask)){
+    NSScreen *screen=[self screen] ? [self screen] : [NSScreen mainScreen];
+    NSRect    visible=[screen visibleFrame];
+
+    if(screen!=nil && NSMaxY(_frame)>NSMaxY(visible)){
+     NSRect frame=_frame;
+
+     frame.origin.y=NSMaxY(visible)-frame.size.height;
+     [self setFrame:frame display:NO];
+    }
+   }
+
    switch(place){
     case NSWindowAbove:
      [self update];
@@ -2478,6 +2590,14 @@ static char mouseConfinementKey;
     // Some events can cause our window to be destroyed
     // So make sure self lives at least through this current run loop...
     [[self retain] autorelease];
+
+    // PD_EVENT_TRACE=1: where mouse and key events go, for apps that ignore clicks
+    if(getenv("PD_EVENT_TRACE") && [event type]!=NSMouseMoved && [event type]!=NSAppKitDefined && [event type]!=NSPeriodic){
+     NSView *hit=[_backgroundView hitTest:[event locationInWindow]];
+
+     fprintf(stderr,"PD-EVENT type %d window %s %p key %d main %d active %d clicks %ld dy %g sheet %d at %g,%g hit %s first %s\n",(int)[event type],object_getClassName(self),self,[self isKeyWindow],[self isMainWindow],[NSApp isActive],(long)[event clickCount],[event type]==NSScrollWheel ? [event deltaY] : 0.0,
+      _sheetContext!=nil,[event locationInWindow].x,[event locationInWindow].y,hit ? object_getClassName(hit) : "nil",object_getClassName([self firstResponder]));
+    }
 
     if (_sheetContext != nil) {
         NSView *view = [_backgroundView hitTest:[event locationInWindow]];
@@ -2942,6 +3062,8 @@ static char restorableKey, fullScreenFrameKey;
         shouldZoom = [self windowShouldZoom: self toFrame: zoomedFrame];
     }
 
+    if (getenv("PD_EVENT_TRACE"))
+       fprintf(stderr,"PD-EVENT zoom %p zooming %d should %d\n",self,zooming,shouldZoom);
     if (shouldZoom) {
         if(zooming)
             _savedFrame = [self frame];

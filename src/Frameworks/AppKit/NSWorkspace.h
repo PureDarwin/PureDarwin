@@ -19,6 +19,7 @@ APPKIT_EXPORT NSString *const NSWorkspaceDidMountNotification;
 APPKIT_EXPORT NSString *const NSWorkspaceWillUnmountNotification;
 APPKIT_EXPORT NSString *const NSWorkspaceDidUnmountNotification;
 APPKIT_EXPORT NSString *const NSWorkspaceDidLaunchApplicationNotification;
+APPKIT_EXPORT NSString *const NSWorkspaceDidActivateApplicationNotification;
 APPKIT_EXPORT NSString *const NSWorkspaceDidTerminateApplicationNotification;
 APPKIT_EXPORT NSString *const NSWorkspaceWillLaunchApplicationNotification;
 
@@ -65,6 +66,7 @@ APPKIT_EXPORT NSString *const NSWorkspaceDuplicateOperation;
 - (BOOL)openURL:(NSURL *)url;
 
 - (BOOL)selectFile:(NSString *)path inFileViewerRootedAtPath:(NSString *)rootedAtPath;
+- (void)activateFileViewerSelectingURLs:(NSArray *)fileURLs;
 - (void)slideImage:(NSImage *)image from:(NSPoint)from to:(NSPoint)to;
 - (BOOL)performFileOperation:(NSString *)operation source:(NSString *)source destination:(NSString *)destination files:(NSArray *)files tag:(int *)tag;
 

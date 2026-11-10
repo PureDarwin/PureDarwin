@@ -7,6 +7,7 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
+#import <AppKit/PDControlDrawing.h>
 #import <AppKit/NSView.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -526,6 +527,7 @@ static inline void buildTransformsIfNeeded(NSView *self) {
 }
 
 -(void)cacheDisplayInRect:(NSRect)rect toBitmapImageRep:(NSBitmapImageRep *)imageRep {
+   PD_TRACE(@"%@ cacheDisplayInRect rect=%@ %@",[self class],NSStringFromRect(rect),PDTraceAppearance(self));
    NSGraphicsContext *context=[NSGraphicsContext graphicsContextWithBitmapImageRep:imageRep];
 
    if(context==nil)
@@ -1700,6 +1702,7 @@ static CGFloat backingScale(NSView *self){
     CGImageRelease(image);
     return;
    }
+   [[self window] _addDamage:[self convertRect:[self visibleRect] toView:nil]];
    CGContextSaveGState(port);
    CGContextResetClip(port);
    CGContextSetCTM(port,[self transformToWindow]);
@@ -2105,8 +2108,21 @@ static NSGraphicsContext *graphicsContextForView(NSView *view){
    return [[view window] graphicsContext];
 }
 
+// the rect -displayRectIgnoringOpacity: is drawing, so focus reports that and not the whole view
+static const NSRect *focusDamage;
+
 -(void)_lockFocusInContext:(NSGraphicsContext *)context {
     CGContextRef graphicsPort=[context graphicsPort];
+    NSWindow    *window=[self window];
+
+    // drawing straight into the window's backing store is what the window server has to recopy
+    if(_layer==nil && [window _isBackingContext:graphicsPort]){
+     NSRect changed=[self visibleRect];
+
+     if(focusDamage!=NULL)
+      changed=NSIntersectionRect(changed,*focusDamage);
+     [window _addDamage:[self convertRect:changed toView:nil]];
+    }
     [NSGraphicsContext saveGraphicsState];
     [NSGraphicsContext setCurrentContext:context];
     [[context focusStack] addObject:self];
@@ -2384,7 +2400,9 @@ static NSGraphicsContext *graphicsContextForView(NSView *view){
    }
    else if ([self canDraw]) {
       // This view must be locked/unlocked prior to drawing subviews otherwise gState changes may affect subviews.
+      focusDamage=&rect;
       [self lockFocus];
+      focusDamage=NULL;
 
       NSGraphicsContext *context=[NSGraphicsContext currentContext];
       CGContextRef       graphicsPort=[context graphicsPort];
@@ -2404,7 +2422,11 @@ static NSGraphicsContext *graphicsContextForView(NSView *view){
            NSRectFill(rect);
        }
       else
-           _NSAppearanceDrawView(self, ^{ [self drawRect:rect]; });
+           // a layer-backed view that updates its layer itself gets -updateLayer in place of -drawRect:
+           if(_layer!=nil && [self wantsUpdateLayer])
+               [self updateLayer];
+           else
+               _NSAppearanceDrawView(self, ^{ [self drawRect:rect]; });
 
       [self unlockFocus];
 
@@ -2474,6 +2496,7 @@ static void displayIntoContext(NSView *self,NSRect rect,NSGraphicsContext *conte
 }
 
 -(void)displayRectIgnoringOpacity:(NSRect)rect inContext:(NSGraphicsContext *)context {
+   PD_TRACE(@"%@ displayRectIgnoringOpacity:inContext: rect=%@ flipped=%d %@",[self class],NSStringFromRect(rect),[context isFlipped],PDTraceAppearance(self));
    NSGraphicsContext *saved=[NSGraphicsContext currentContext];
 
    rect=NSIntersectionRect(rect,[self bounds]);

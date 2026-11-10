@@ -8,6 +8,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/AppKit.h>
 #import <AppKit/NSGraphicsStyle.h>
 #import <AppKit/NSRaise.h>
+#import <AppKit/PDControlDrawing.h>
 
 @implementation NSTableHeaderCell
 
@@ -28,9 +29,13 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 - (void)drawWithFrame:(NSRect)cellFrame inView:(NSView *)controlView {
+   PD_TRACE(@"NSTableHeaderCell title=\"%@\" frame=%@ highlighted=%d flipped=%d %@ controlView=%@",[self stringValue],NSStringFromRect(cellFrame),[self isHighlighted],PDContextIsFlipped(),PDTraceAppearance(controlView),controlView ? NSStringFromClass([controlView class]) : @"nil");
+   PDDrawContext c=PDCurrentDrawContext(controlView);
+   NSRect titleRect=PDRectFromTop(NSInsetRect(cellFrame,6,0),c.flipped,MAX(0,floor((cellFrame.size.height-16)/2)),MIN(16,cellFrame.size.height));
+
    _controlView=controlView;
-   [[controlView graphicsStyle] drawTableViewHeaderInRect:cellFrame highlighted:[self isHighlighted]];
-   [[self attributedStringValue] _clipAndDrawInRect:[self titleRectForBounds:cellFrame] truncatingTail:(_lineBreakMode > NSLineBreakByClipping)];
+   PDDrawTableHeader(c,cellFrame,[self isHighlighted]);
+   [[self attributedStringValue] _clipAndDrawInRect:titleRect truncatingTail:(_lineBreakMode > NSLineBreakByClipping)];
 }
 
 @end
