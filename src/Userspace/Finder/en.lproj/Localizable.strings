@@ -29,10 +29,10 @@
 "Hide Sidebar" = "Hide Sidebar";
 
 /* No comment provided by engineer. */
-"Finder" = "Finder";
+"Finder" = "Files";
 
 /* No comment provided by engineer. */
-"About Finder" = "About Finder";
+"About Finder" = "About Files";
 
 /* No comment provided by engineer. */
 "Settings…" = "Settings…";
@@ -41,13 +41,13 @@
 "Empty Trash…" = "Empty Trash…";
 
 /* No comment provided by engineer. */
-"Quit Finder" = "Quit Finder";
+"Quit Finder" = "Quit Files";
 
 /* No comment provided by engineer. */
 "File" = "File";
 
 /* No comment provided by engineer. */
-"New Finder Window" = "New Finder Window";
+"New Finder Window" = "New Window";
 
 /* No comment provided by engineer. */
 "New Folder" = "New Folder";
@@ -112,3 +112,45 @@
 /* No comment provided by engineer. */
 "%lu items" = "%lu items";
 
+/* file operations */
+"You don’t have permission to do this." = "You don’t have permission to do this.";
+"There isn’t enough space on the disk." = "There isn’t enough space on the disk.";
+"An item with that name already exists." = "An item with that name already exists.";
+"The disk is read-only." = "The disk is read-only.";
+"OK" = "OK";
+"The folder “%@” can’t be opened." = "The folder “%@” can’t be opened.";
+"“%@” couldn’t be moved to the Trash." = "“%@” couldn’t be moved to the Trash.";
+"“%@” couldn’t be put back." = "“%@” couldn’t be put back.";
+"Are you sure you want to delete “%@”?" = "Are you sure you want to delete “%@”?";
+"Are you sure you want to delete these %lu items?" = "Are you sure you want to delete these %lu items?";
+"This item will be deleted immediately. You can’t undo this action." = "This item will be deleted immediately. You can’t undo this action.";
+"Delete" = "Delete";
+"Cancel" = "Cancel";
+"“%@” couldn’t be deleted." = "“%@” couldn’t be deleted.";
+"Rename “%@”" = "Rename “%@”";
+"Enter a new name." = "Enter a new name.";
+"Rename" = "Rename";
+"The name “%@” can’t be used." = "The name “%@” can’t be used.";
+"Names can’t contain “/” or start with a dot." = "Names can’t contain “/” or start with a dot.";
+"“%@” couldn’t be renamed." = "“%@” couldn’t be renamed.";
+"“%@” can’t be copied into itself." = "“%@” can’t be copied into itself.";
+"“%@” couldn’t be moved." = "“%@” couldn’t be moved.";
+"“%@” couldn’t be copied." = "“%@” couldn’t be copied.";
+"copy" = "copy";
+"Application" = "Application";
+"Folder" = "Folder";
+"Document" = "Document";
+"%@ Info" = "%@ Info";
+"Kind: %1$@\nSize: %2$@\nWhere: %3$@\nCreated: %4$@\nModified: %5$@\nOwner: %6$@\nPermissions: %7$@" = "Kind: %1$@\nSize: %2$@\nWhere: %3$@\nCreated: %4$@\nModified: %5$@\nOwner: %6$@\nPermissions: %7$@";
+"%llu bytes" = "%llu bytes";
+"Get Info" = "Get Info";
+"Rename…" = "Rename…";
+"Duplicate" = "Duplicate";
+"Move to Trash" = "Move to Trash";
+"Delete Immediately…" = "Delete Immediately…";
+"Put Back" = "Put Back";
+"Move Item Here" = "Move Item Here";
+"Trash" = "Trash";
+"Are you sure you want to permanently erase the items in the Trash?" = "Are you sure you want to permanently erase the items in the Trash?";
+"You can’t undo this action." = "You can’t undo this action.";
+"Empty Trash" = "Empty Trash";

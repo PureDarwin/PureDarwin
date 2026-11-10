@@ -71,7 +71,10 @@
 "Action" = "Action";
 
 /* No comment provided by engineer. */
-"New Finder Window" = "New Finder Window";
+"New Finder Window" = "New Files Window";
+
+/* No comment provided by engineer. */
+"Files" = "Files";
 
 /* No comment provided by engineer. */
 "Action" = "Action";
@@ -124,3 +127,8 @@
 /* No comment provided by engineer. */
 "Wi-Fi Settings…" = "Wi-Fi Settings…";
 
+/* beak menu, ends the session of the person named */
+"Log Out %@\U2026" = "Log Out %@\U2026";
+
+/* the desktop environment the session runs, from XDG_CURRENT_DESKTOP */
+"Desktop" = "Desktop";

@@ -8,9 +8,12 @@
 
 #import "MenuBarView.h"
 #import "WiFiMenu.h"
+#import "SoundMenu.h"
 #import "PDWiFiUI.h"
 #import "AboutPanel.h"
 #include <math.h>
+#include <pwd.h>
+#include <signal.h>
 
 @interface NSMenu (PDCancelTracking)
 + (void)_pdSetTrackingExitRects:(NSArray *)rects;
@@ -425,12 +428,20 @@ static NSImage *loadImage(NSString *name)
     _open = NoMenu;
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(wifiChanged:) name:PDWiFiChangedNotification object:nil];
     [PDWiFi shared];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(wifiChanged:) name:SoundChangedNotification object:nil];
+    [SoundMenu shared];
     return self;
 }
 
 - (void)wifiChanged:(NSNotification *)note
 {
     [self setNeedsDisplay:YES];
+}
+
+// the left edge of the speaker's slot, the first image of the status items
+- (CGFloat)volumeX
+{
+    return NSWidth([self bounds]) - ItemPad - [self widthOfText:[self clockText] bold:NO] - [_status count] * (IconSize + 2 * ItemPad);
 }
 
 // the left edge of the wi-fi glyph's slot, the first status item left of the image ones
@@ -583,7 +594,14 @@ static NSImage *loadImage(NSString *name)
     [self drawText:clock bold:NO atX:x];
     for (NSImage *image in [_status reverseObjectEnumerator]) {
         x -= IconSize + 2 * ItemPad;
-        drawIcon(image, NSMakeRect(x + ItemPad, (MenuBarHeight - IconSize) / 2, IconSize, IconSize));
+        // the speaker is highlighted while its menu is open and faint when the output is silent
+        if (image == [_status firstObject] && [[SoundMenu shared] isOpen])
+            [self drawHighlight:NSMakeRect(x, 0, IconSize + 2 * ItemPad, MenuBarHeight)];
+        if (image == [_status firstObject] && [[SoundMenu shared] silent])
+            [image drawInRect:NSMakeRect(x + ItemPad, (MenuBarHeight - IconSize) / 2, IconSize, IconSize) fromRect:NSZeroRect
+                    operation:NSCompositeSourceOver fraction:0.35];
+        else
+            drawIcon(image, NSMakeRect(x + ItemPad, (MenuBarHeight - IconSize) / 2, IconSize, IconSize));
     }
     // the signal of the joined network, faint with the radio off, nothing without the hardware
     PDWiFi *wifi = [PDWiFi shared];
@@ -714,14 +732,17 @@ static NSImage *loadImage(NSString *name)
                                         @"icon": [ws iconForFile:@"/Applications/Calculator.app"] ?: [NSNull null] }];
 
     for (NSDictionary *app in [self lookoutApplications]) {
-        NSInteger score = lookoutScore(app[@"name"], query);
+        // Finder.app is shown as Files, its bundle keeps the Finder name for compatibility
+        BOOL isFinder = [app[@"name"] isEqualToString:@"Finder"];
+        NSString *shown = isFinder ? NSLocalizedString(@"Files", @"") : app[@"name"];
+        NSInteger score = MAX(lookoutScore(shown, query), isFinder ? lookoutScore(@"Files", query) : 0);
 
         if ([app[@"name"] isEqualToString:@"Terminal"])
             terminal = app[@"path"];
-        if ([app[@"name"] isEqualToString:@"Finder"])
+        if (isFinder)
             finder = app[@"path"];
         if (score > 0)
-            [apps addObject:@{ @"name": app[@"name"], @"path": app[@"path"], @"kind": NSLocalizedString(@"Application", @""), @"action": @"open",
+            [apps addObject:@{ @"name": shown, @"path": app[@"path"], @"kind": NSLocalizedString(@"Application", @""), @"action": @"open",
                                @"score": @(score), @"icon": [ws iconForFile:app[@"path"]] }];
     }
     for (NSArray *verb in @[ @[ NSLocalizedString(@"About PureDarwin", @""), @"about", NSLocalizedString(@"System", @"") ], @[ NSLocalizedString(@"New Terminal Window", @""), @"open", NSLocalizedString(@"Action", @""), terminal ?: @"" ],
@@ -897,7 +918,25 @@ static NSImage *loadImage(NSString *name)
     [menu addItem:[NSMenuItem separatorItem]];
     for (NSString *title in @[ NSLocalizedString(@"Sleep", @""), NSLocalizedString(@"Restart\u2026", @""), NSLocalizedString(@"Shut Down\u2026", @"") ])
         [[menu addItemWithTitle:title action:NULL keyEquivalent:@""] setEnabled:NO];
+
+    // a session loginwindow started belongs to a person, the root desktop has nobody to log out
+    if (getuid() != 0) {
+        struct passwd *pw = getpwuid(getuid());
+        NSString *who = pw && pw->pw_gecos && pw->pw_gecos[0] ? [NSString stringWithUTF8String:pw->pw_gecos] :
+                        pw ? [NSString stringWithUTF8String:pw->pw_name] : @"";
+
+        [menu addItem:[NSMenuItem separatorItem]];
+        item = [menu addItemWithTitle:[NSString stringWithFormat:NSLocalizedString(@"Log Out %@\u2026", @""), who]
+                               action:@selector(logOut:) keyEquivalent:@""];
+        [item setTarget:self];
+    }
     return menu;
+}
+
+// the session is one process group, so ending the group ends every app in it and loginwindow comes back
+- (void)logOut:(id)sender
+{
+    kill(0, SIGTERM);
 }
 
 - (void)openAbout:(id)sender
@@ -968,6 +1007,12 @@ static NSImage *loadImage(NSString *name)
                     - (IconSize + 2 * ItemPad);
     if (p.x >= searchX && p.x < searchX + IconSize + 2 * ItemPad) {
         [self openLookout:nil];
+        return;
+    }
+    if ([_status count] == 3 && p.x >= [self volumeX] && p.x < [self volumeX] + IconSize + 2 * ItemPad) {
+        NSPoint screen = [[self window] convertBaseToScreen:[self convertPoint:NSMakePoint([self volumeX], 0) toView:nil]];
+        [[SoundMenu shared] toggleAtX:screen.x];
+        [self setNeedsDisplay:YES];
         return;
     }
     if ([PDWiFi shared].hardware && p.x >= [self wifiX] && p.x < [self wifiX] + IconSize + 2 * ItemPad) {

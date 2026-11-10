@@ -7,6 +7,9 @@
  */
 
 #import "FinderView.h"
+#include <errno.h>
+#include <pwd.h>
+#include <sys/stat.h>
 
 // sizes from the demo's finder window
 #define SIDE_W 180
@@ -94,6 +97,7 @@ static NSFont *font(NSString *name, CGFloat size)
 }
 
 // the icon images, 128px for the grid and 32px for the sidebar, loaded once
+// an absolute path is an app's own icon from its bundle
 static NSImage *iconImage(NSString *name, BOOL small)
 {
     static NSMutableDictionary *cache;
@@ -104,7 +108,7 @@ static NSImage *iconImage(NSString *name, BOOL small)
         cache = [[NSMutableDictionary alloc] init];
     image = [cache objectForKey:key];
     if (image == nil) {
-        NSString *png = [[NSBundle mainBundle] pathForResource:key ofType:@"png"];
+        NSString *png = [name isAbsolutePath] ? name : [[NSBundle mainBundle] pathForResource:key ofType:@"png"];
 
         image = png != nil ? [[[NSImage alloc] initWithContentsOfFile:png] autorelease] : nil;
         if (image == nil)
@@ -147,7 +151,252 @@ static NSString *iconForPath(NSString *path)
     return icon != nil ? icon : @"folder";
 }
 
+NSString *FinderTrashPath(void)
+{
+    NSString *trash = [NSHomeDirectory() stringByAppendingPathComponent:@".Trash"];
+
+    [[NSFileManager defaultManager] createDirectoryAtPath:trash withIntermediateDirectories:YES
+                                               attributes:@{ NSFilePosixPermissions: @0700 } error:NULL];
+    return trash;
+}
+
+void FinderShowError(NSWindow *window, NSString *message, NSError *error)
+{
+    NSAlert *alert = [[[NSAlert alloc] init] autorelease];
+    NSString *reason = [error localizedDescription];
+    int code = [[error domain] isEqualToString:NSPOSIXErrorDomain] ? (int)[error code] : 0;
+
+    // the errors people hit most get a plain sentence, anything else shows the system's reason
+    if (code == EACCES || code == EPERM)
+        reason = NSLocalizedString(@"You don’t have permission to do this.", @"");
+    else if (code == ENOSPC)
+        reason = NSLocalizedString(@"There isn’t enough space on the disk.", @"");
+    else if (code == EEXIST)
+        reason = NSLocalizedString(@"An item with that name already exists.", @"");
+    else if (code == EROFS)
+        reason = NSLocalizedString(@"The disk is read-only.", @"");
+    [alert setAlertStyle:NSWarningAlertStyle];
+    [alert setMessageText:message];
+    [alert setInformativeText:reason ?: @""];
+    [alert addButtonWithTitle:NSLocalizedString(@"OK", @"")];
+    FinderRunSheet(alert, window, nil);
+}
+
+// a dialog shown above a Finder window: PD's AppKit crashes in both its app-modal run
+// (_hideMenuViewIfNeeded) and its sheets (sheetOrderFrontFromFrame:), so Finder draws its own
+@interface FinderDialog : NSObject {
+@public
+    NSPanel *panel;
+    void (^done)(NSInteger);
+}
+@end
+
+static NSMutableSet *openDialogs;
+
+@implementation FinderDialog
+
+- (void)pressed:(NSButton *)sender
+{
+    void (^handler)(NSInteger) = [done retain];
+
+    [[self retain] autorelease];
+    [panel orderOut:nil];
+    [openDialogs removeObject:self];
+    if (handler != nil)
+        handler(NSAlertFirstButtonReturn + [sender tag]);
+    [handler release];
+}
+
+- (void)dealloc
+{
+    [panel release];
+    [done release];
+    [super dealloc];
+}
+
+@end
+
+static NSTextField *label(NSString *text, NSFont *f, NSRect frame)
+{
+    NSTextField *field = [[[NSTextField alloc] initWithFrame:frame] autorelease];
+
+    [field setStringValue:text ?: @""];
+    [field setFont:f];
+    [field setBezeled:NO];
+    [field setBordered:NO];
+    [field setEditable:NO];
+    [field setSelectable:NO];
+    [field setDrawsBackground:NO];
+    [[field cell] setWraps:YES];
+    return field;
+}
+
+// lines a text needs at this width, counting its own line breaks
+static CGFloat textHeight(NSString *text, NSFont *f, CGFloat width)
+{
+    NSDictionary *attrs = @{ NSFontAttributeName: f };
+    CGFloat lineH = ceil([@"Ag" sizeWithAttributes:attrs].height) + 2;
+    NSUInteger lines = 0;
+
+    for (NSString *line in [text componentsSeparatedByString:@"\n"])
+        lines += MAX(1, (NSUInteger)ceil([line sizeWithAttributes:attrs].width / width));
+    return [text length] ? lines * lineH : 0;
+}
+
+void FinderRunSheet(NSAlert *alert, NSWindow *window, void (^done)(NSInteger))
+{
+    const CGFloat W = 380, pad = 20, gap = 8, buttonH = 28;
+    NSFont *title = [NSFont boldSystemFontOfSize:13], *body = [NSFont systemFontOfSize:11];
+    NSString *message = [alert messageText], *info = [alert informativeText];
+    NSView *accessory = [alert accessoryView];
+    NSArray *buttons = [alert buttons];
+    CGFloat textW = W - 2 * pad, titleH = textHeight(message, title, textW), infoH = textHeight(info, body, textW);
+    CGFloat accH = accessory ? NSHeight([accessory frame]) + gap : 0;
+    CGFloat H = pad + titleH + (infoH ? gap + infoH : 0) + (accH ? gap + accH : 0) + gap * 2 + buttonH + pad;
+    FinderDialog *dialog = [[[FinderDialog alloc] init] autorelease];
+    NSView *content;
+    NSRect frame;
+    CGFloat y = H - pad, x = W - pad;
+
+    window = window ?: [NSApp keyWindow] ?: [NSApp mainWindow];
+    if (openDialogs == nil)
+        openDialogs = [[NSMutableSet alloc] init];
+    // centred over the window's top, where a sheet would hang
+    frame = NSMakeRect(0, 0, W, H);
+    if (window != nil) {
+        frame.origin.x = floor(NSMidX([window frame]) - W / 2);
+        frame.origin.y = floor(NSMaxY([window frame]) - 60 - H);
+    } else {
+        NSRect screen = [[NSScreen mainScreen] visibleFrame];
+        frame.origin = NSMakePoint(floor(NSMidX(screen) - W / 2), floor(NSMidY(screen)));
+    }
+    dialog->panel = [[NSPanel alloc] initWithContentRect:frame styleMask:NSTitledWindowMask
+                                                 backing:NSBackingStoreBuffered defer:NO];
+    [dialog->panel setTitle:@""];
+    [dialog->panel setLevel:NSFloatingWindowLevel];
+    [dialog->panel setReleasedWhenClosed:NO];
+    dialog->done = [done copy];
+    content = [dialog->panel contentView];
+
+    y -= titleH;
+    [content addSubview:label(message, title, NSMakeRect(pad, y, textW, titleH))];
+    if (infoH) {
+        y -= gap + infoH;
+        [content addSubview:label(info, body, NSMakeRect(pad, y, textW, infoH))];
+    }
+    if (accessory) {
+        y -= gap + NSHeight([accessory frame]);
+        [accessory setFrame:NSMakeRect(pad, y, textW, NSHeight([accessory frame]))];
+        [content addSubview:accessory];
+        // Return in a text field answers with the default button
+        if ([accessory isKindOfClass:[NSTextField class]]) {
+            [(NSTextField *)accessory setTag:0];
+            [(NSTextField *)accessory setTarget:dialog];
+            [(NSTextField *)accessory setAction:@selector(pressed:)];
+        }
+    }
+    // buttons right to left in the order they were added, the first is the default
+    for (NSUInteger i = 0; i < [buttons count]; i++) {
+        NSString *t = [[buttons objectAtIndex:i] title];
+        CGFloat bw = MAX(80, ceil([t sizeWithAttributes:@{ NSFontAttributeName: body }].width) + 28);
+        NSButton *b = [[[NSButton alloc] initWithFrame:NSMakeRect(x - bw, pad, bw, buttonH)] autorelease];
+
+        [b setTitle:t];
+        [b setBezelStyle:NSRoundedBezelStyle];
+        [b setTag:(NSInteger)i];
+        [b setTarget:dialog];
+        [b setAction:@selector(pressed:)];
+        if (i == 0)
+            [b setKeyEquivalent:@"\r"];
+        else if ([t isEqualToString:NSLocalizedString(@"Cancel", @"")])
+            [b setKeyEquivalent:@"\e"];
+        [content addSubview:b];
+        x -= bw + gap;
+    }
+    [openDialogs addObject:dialog];
+    [dialog->panel makeKeyAndOrderFront:nil];
+    if (accessory)
+        [dialog->panel makeFirstResponder:accessory];
+}
+
+// where trashed items came from, so Put Back knows where to return them
+static NSString *putBackListPath(void)
+{
+    return [FinderTrashPath() stringByAppendingPathComponent:@".PutBack.plist"];
+}
+
+static NSMutableDictionary *readPutBackList(void)
+{
+    NSMutableDictionary *list = [NSMutableDictionary dictionaryWithContentsOfFile:putBackListPath()];
+
+    return list ?: [NSMutableDictionary dictionary];
+}
+
+// "name", then "name 2", "name 3" in folder, the extension kept at the end
+static NSString *freeName(NSString *folder, NSString *name, NSString *suffix)
+{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *ext = [name pathExtension], *base = [name stringByDeletingPathExtension];
+    NSString *candidate;
+    int n = 1;
+
+    for (;;) {
+        NSString *stem = base;
+
+        if (suffix != nil)
+            stem = n == 1 ? [NSString stringWithFormat:@"%@ %@", base, suffix] : [NSString stringWithFormat:@"%@ %@ %d", base, suffix, n];
+        else if (n > 1)
+            stem = [NSString stringWithFormat:@"%@ %d", base, n];
+        candidate = [folder stringByAppendingPathComponent:[ext length] ? [stem stringByAppendingPathExtension:ext] : stem];
+        if (![fm fileExistsAtPath:candidate])
+            return candidate;
+        n++;
+    }
+}
+
+// one character per item, enabled or not, through every submenu
+static NSString *menuState(NSMenu *menu)
+{
+    NSMutableString *state = [NSMutableString string];
+
+    for (NSMenuItem *item in [menu itemArray]) {
+        [state appendString:[item isEnabled] ? @"1" : @"0"];
+        if ([item submenu] != nil)
+            [state appendFormat:@"(%@)", menuState([item submenu])];
+    }
+    return state;
+}
+
+@interface NSApplication (FinderMenuBar)
+- (oneway void)requestMenuUpdateForWindow:(NSNumber *)windowId;
+@end
+
 @implementation FinderView
+
+// every selection or folder change redraws, which is also when the File menu's state changes.
+// PD's menu bar only takes enabled states at publish time, so revalidate and publish again
+- (void)setNeedsDisplay:(BOOL)flag
+{
+    static BOOL pending;
+
+    [super setNeedsDisplay:flag];
+    if (!flag || pending)
+        return;
+    pending = YES;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        static NSString *published;
+        NSString *state;
+
+        pending = NO;
+        [[NSApp mainMenu] update];
+        state = menuState([NSApp mainMenu]);
+        if ([state isEqualToString:published] || ![NSApp respondsToSelector:@selector(requestMenuUpdateForWindow:)])
+            return;
+        [published release];
+        published = [state retain];
+        [NSApp requestMenuUpdateForWindow:nil];
+    });
+}
 
 - (instancetype)initWithFrame:(NSRect)frame path:(NSString *)path delegate:(id<FinderViewDelegate>)delegate
 {
@@ -214,9 +463,17 @@ static NSString *iconForPath(NSString *path)
 // visible entries of a folder, folders and files mixed and sorted by name like Finder
 - (NSArray *)entriesAtPath:(NSString *)path
 {
+    return [self entriesAtPath:path error:NULL];
+}
+
+- (NSArray *)entriesAtPath:(NSString *)path error:(NSError **)error
+{
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray *names = [[fm contentsOfDirectoryAtPath:path error:NULL] sortedArrayUsingSelector:@selector(caseInsensitiveCompare:)];
+    NSArray *names = [[fm contentsOfDirectoryAtPath:path error:error] sortedArrayUsingSelector:@selector(caseInsensitiveCompare:)];
     NSMutableArray *entries = [NSMutableArray array];
+
+    if (names == nil)
+        return nil;
 
     for (NSString *n in names) {
         FinderEntry *e;
@@ -237,7 +494,7 @@ static NSString *iconForPath(NSString *path)
             else if ([e->name isEqualToString:@"Finder"])
                 e->icon = @"files";
             else
-                e->icon = @"settings";
+                e->icon = [[e->full stringByAppendingPathComponent:@"Contents/Resources/AppIcon.png"] retain];
         } else if (dir) {
             e->kind = KindFolder;
             e->icon = [iconForPath(e->full) retain];
@@ -265,9 +522,17 @@ static NSString *iconForPath(NSString *path)
 {
     BOOL dir = NO;
 
+    NSError *error = nil;
+
     path = [path stringByStandardizingPath];
     if ([path isEqualToString:_path] || ![[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&dir] || !dir)
         return;
+    // an unreadable folder reports the error
+    if ([self entriesAtPath:path error:&error] == nil) {
+        FinderShowError([self window], [NSString stringWithFormat:NSLocalizedString(@"The folder “%@” can’t be opened.", @""),
+                                        [path lastPathComponent]], error);
+        return;
+    }
     if (_path != nil)
         [_back addObject:_path];
     [_forward removeAllObjects];
@@ -385,7 +650,7 @@ static NSString *iconForPath(NSString *path)
     NSRect b = [self bounds];
     CGFloat x = [self mainX];
     NSDictionary *title = @{ NSFontAttributeName: font(@"Inter-Bold", 14), NSForegroundColorAttributeName: rgb(0x1b, 0x1b, 0x1b) };
-    NSString *name = [_path isEqualToString:@"/"] ? @"PureDarwin" : [_path lastPathComponent];
+    NSString *name = [_path isEqualToString:@"/"] ? @"PureDarwin" : [self inTrash] ? NSLocalizedString(@"Trash", @"") : [_path lastPathComponent];
     NSSize size = [name sizeWithAttributes:title];
     CGFloat tx = NSMaxX([self forwardButtonRect]) + 4 + 6;
 
@@ -543,8 +808,8 @@ static NSString *iconForPath(NSString *path)
         [self goToPath:e->full];
     else if (e->kind == KindApp)
         [_delegate finderView:self openApplication:e->full];
-    else
-        NSLog(@"Finder: nothing opens %@ yet", e->full);
+    else if (![[NSWorkspace sharedWorkspace] openFile:e->full])
+        NSBeep();
 }
 
 - (void)mouseDown:(NSEvent *)event
@@ -575,9 +840,21 @@ static NSString *iconForPath(NSString *path)
         return;
 
     i = [self itemAtPoint:p];
-    [_selection removeAllIndexes];
-    if (i >= 0)
-        [_selection addIndex:i];
+    // command toggles one item, shift extends from the first selected, a plain click picks one
+    if (([event modifierFlags] & NSCommandKeyMask) && i >= 0) {
+        if ([_selection containsIndex:i])
+            [_selection removeIndex:i];
+        else
+            [_selection addIndex:i];
+    } else if (([event modifierFlags] & NSShiftKeyMask) && i >= 0 && [_selection count] > 0) {
+        NSUInteger from = MIN((NSUInteger)i, [_selection firstIndex]), to = MAX((NSUInteger)i, [_selection lastIndex]);
+
+        [_selection addIndexesInRange:NSMakeRange(from, to - from + 1)];
+    } else {
+        [_selection removeAllIndexes];
+        if (i >= 0)
+            [_selection addIndex:i];
+    }
     [self setNeedsDisplay:YES];
     if (i >= 0 && [event clickCount] == 2)
         [self openEntry:[_entries objectAtIndex:i]];
@@ -668,6 +945,354 @@ static NSString *iconForPath(NSString *path)
     [self setNeedsDisplay:YES];
 }
 
+// Return renames the selected item, as in Finder
+- (void)keyDown:(NSEvent *)event
+{
+    NSString *chars = [event charactersIgnoringModifiers];
+    NSUInteger mods = [event modifierFlags] & (NSCommandKeyMask | NSAlternateKeyMask | NSShiftKeyMask);
+    unichar c = [chars length] == 1 ? [chars characterAtIndex:0] : 0;
+
+    // the Delete key sends 0x7f, which PD's menus don't match against the \b equivalents
+    if ((c == 0x7f || c == '\b') && mods == NSCommandKeyMask && [_selection count] > 0)
+        [self moveToTrash:nil];
+    else if ((c == 0x7f || c == '\b') && mods == (NSCommandKeyMask | NSAlternateKeyMask) && [_selection count] > 0)
+        [self deleteImmediately:nil];
+    else if ((c == 0x7f || c == '\b') && mods == (NSCommandKeyMask | NSShiftKeyMask))
+        [NSApp sendAction:@selector(emptyTrash:) to:nil from:self];
+    else if ([chars length] == 1 && ([chars characterAtIndex:0] == '\r' || [chars characterAtIndex:0] == 3) &&
+        ([event modifierFlags] & NSCommandKeyMask) == 0 && [_selection count] == 1)
+        [self renameSelection:nil];
+    else
+        [super keyDown:event];
+}
+
+- (NSArray *)selectedPaths
+{
+    NSMutableArray *paths = [NSMutableArray array];
+
+    [_selection enumerateIndexesUsingBlock:^(NSUInteger i, BOOL *stop) {
+        [paths addObject:((FinderEntry *)[_entries objectAtIndex:i])->full];
+    }];
+    return paths;
+}
+
+// rereads the folder after a change, keeping the given items selected
+- (void)reloadSelecting:(NSArray *)paths
+{
+    NSError *error = nil;
+    NSArray *entries = [self entriesAtPath:_path error:&error];
+    NSUInteger i;
+
+    // the folder itself went away or became unreadable, step out to the nearest one that works
+    if (entries == nil) {
+        NSString *up = _path;
+
+        while (![up isEqualToString:@"/"] && (entries = [self entriesAtPath:(up = [up stringByDeletingLastPathComponent]) error:NULL]) == nil)
+            ;
+        [_path release];
+        _path = [up copy];
+        [_delegate finderView:self didChangePath:_path];
+    }
+    [_entries release];
+    _entries = [entries ?: @[] retain];
+    [_selection removeAllIndexes];
+    for (i = 0; i < [_entries count]; i++) {
+        if ([paths containsObject:((FinderEntry *)[_entries objectAtIndex:i])->full])
+            [_selection addIndex:i];
+    }
+    [self setNeedsDisplay:YES];
+}
+
+- (void)reload
+{
+    [self reloadSelecting:[self selectedPaths]];
+}
+
+- (BOOL)inTrash
+{
+    return [[_path stringByStandardizingPath] isEqualToString:[FinderTrashPath() stringByStandardizingPath]];
+}
+
+- (IBAction)moveToTrash:(id)sender
+{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableDictionary *putBack = readPutBackList();
+    NSString *trash = FinderTrashPath();
+
+    // already in the Trash, the only way further is deleting for good
+    if ([self inTrash]) {
+        [self deleteImmediately:sender];
+        return;
+    }
+    for (NSString *path in [self selectedPaths]) {
+        NSString *dest = freeName(trash, [path lastPathComponent], nil);
+        NSError *error = nil;
+
+        if (![fm moveItemAtPath:path toPath:dest error:&error]) {
+            FinderShowError([self window], [NSString stringWithFormat:NSLocalizedString(@"“%@” couldn’t be moved to the Trash.", @""),
+                                            [path lastPathComponent]], error);
+            break;
+        }
+        [putBack setObject:path forKey:[dest lastPathComponent]];
+    }
+    [putBack writeToFile:putBackListPath() atomically:YES];
+    [self reloadSelecting:@[]];
+}
+
+- (IBAction)putBack:(id)sender
+{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableDictionary *putBack = readPutBackList();
+
+    for (NSString *path in [self selectedPaths]) {
+        NSString *origin = [putBack objectForKey:[path lastPathComponent]];
+        NSError *error = nil;
+
+        if (origin == nil)
+            continue;
+        // the original place may have a new item of the same name by now
+        if ([fm fileExistsAtPath:origin])
+            origin = freeName([origin stringByDeletingLastPathComponent], [origin lastPathComponent], nil);
+        if (![fm moveItemAtPath:path toPath:origin error:&error]) {
+            FinderShowError([self window], [NSString stringWithFormat:NSLocalizedString(@"“%@” couldn’t be put back.", @""),
+                                            [path lastPathComponent]], error);
+            break;
+        }
+        [putBack removeObjectForKey:[path lastPathComponent]];
+    }
+    [putBack writeToFile:putBackListPath() atomically:YES];
+    [self reloadSelecting:@[]];
+}
+
+- (IBAction)deleteImmediately:(id)sender
+{
+    NSArray *paths = [self selectedPaths];
+    NSAlert *alert;
+    NSMutableDictionary *putBack = readPutBackList();
+
+    if ([paths count] == 0)
+        return;
+    alert = [[[NSAlert alloc] init] autorelease];
+    [alert setAlertStyle:NSWarningAlertStyle];
+    [alert setMessageText:[paths count] == 1
+        ? [NSString stringWithFormat:NSLocalizedString(@"Are you sure you want to delete “%@”?", @""), [paths[0] lastPathComponent]]
+        : [NSString stringWithFormat:NSLocalizedString(@"Are you sure you want to delete these %lu items?", @""), (unsigned long)[paths count]]];
+    [alert setInformativeText:NSLocalizedString(@"This item will be deleted immediately. You can’t undo this action.", @"")];
+    [alert addButtonWithTitle:NSLocalizedString(@"Delete", @"")];
+    [alert addButtonWithTitle:NSLocalizedString(@"Cancel", @"")];
+    FinderRunSheet(alert, [self window], ^(NSInteger code) {
+        NSString *failed = nil;
+        NSError *error = nil;
+
+        if (code != NSAlertFirstButtonReturn)
+            return;
+        for (NSString *path in paths) {
+            if (![[NSFileManager defaultManager] removeItemAtPath:path error:&error]) {
+                failed = path;
+                break;
+            }
+            [putBack removeObjectForKey:[path lastPathComponent]];
+        }
+        if ([self inTrash])
+            [putBack writeToFile:putBackListPath() atomically:YES];
+        [self reloadSelecting:@[]];
+        // the confirmation sheet is still closing, the error gets the window next turn
+        if (failed != nil) {
+            NSString *message = [NSString stringWithFormat:NSLocalizedString(@"“%@” couldn’t be deleted.", @""), [failed lastPathComponent]];
+            [error retain];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                FinderShowError([self window], message, error);
+                [error release];
+            });
+        }
+    });
+}
+
+- (IBAction)renameSelection:(id)sender
+{
+    NSString *path = [[self selectedPaths] firstObject], *name, *dest;
+    NSTextField *field;
+    NSAlert *alert;
+    NSError *error = nil;
+
+    if (path == nil || [_selection count] != 1)
+        return;
+    field = [[[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 260, 22)] autorelease];
+    // starts empty with the old name as placeholder, focusing a field holding text crashes
+    // NSTextStorage_concrete, which lacks addAttributes:range:
+    [[field cell] setPlaceholderString:[path lastPathComponent]];
+    [field setFont:[NSFont systemFontOfSize:13]];
+    alert = [[[NSAlert alloc] init] autorelease];
+    [alert setMessageText:[NSString stringWithFormat:NSLocalizedString(@"Rename “%@”", @""), [path lastPathComponent]]];
+    [alert setInformativeText:NSLocalizedString(@"Enter a new name.", @"")];
+    [alert setAccessoryView:field];
+    [alert addButtonWithTitle:NSLocalizedString(@"Rename", @"")];
+    [alert addButtonWithTitle:NSLocalizedString(@"Cancel", @"")];
+    FinderRunSheet(alert, [self window], ^(NSInteger code) {
+        if (code != NSAlertFirstButtonReturn)
+            return;
+        // the result shows after the rename sheet has gone
+        NSString *wanted = [[field stringValue] copy];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self finishRename:path to:wanted];
+            [wanted release];
+        });
+    });
+}
+
+- (void)finishRename:(NSString *)path to:(NSString *)wanted
+{
+    NSString *name = [wanted stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]], *dest;
+    NSError *error = nil;
+
+    if ([name length] == 0 || [name isEqualToString:[path lastPathComponent]])
+        return;
+    if ([name rangeOfString:@"/"].location != NSNotFound || [name hasPrefix:@"."]) {
+        NSAlert *bad = [[[NSAlert alloc] init] autorelease];
+
+        [bad setMessageText:[NSString stringWithFormat:NSLocalizedString(@"The name “%@” can’t be used.", @""), name]];
+        [bad setInformativeText:NSLocalizedString(@"Names can’t contain “/” or start with a dot.", @"")];
+        [bad addButtonWithTitle:NSLocalizedString(@"OK", @"")];
+        FinderRunSheet(bad, [self window], nil);
+        return;
+    }
+    dest = [[path stringByDeletingLastPathComponent] stringByAppendingPathComponent:name];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:dest]) {
+        error = [NSError errorWithDomain:NSPOSIXErrorDomain code:EEXIST userInfo:nil];
+    } else if ([[NSFileManager defaultManager] moveItemAtPath:path toPath:dest error:&error]) {
+        [self reloadSelecting:@[ dest ]];
+        return;
+    }
+    FinderShowError([self window], [NSString stringWithFormat:NSLocalizedString(@"“%@” couldn’t be renamed.", @""),
+                                    [path lastPathComponent]], error);
+}
+
+// copies paths into the current folder, a name already there gets a number, or "copy" for a duplicate
+- (NSArray *)copyPaths:(NSArray *)paths into:(NSString *)folder suffix:(NSString *)suffix move:(BOOL)move
+{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray *made = [NSMutableArray array];
+
+    for (NSString *path in paths) {
+        NSString *dest = [folder stringByAppendingPathComponent:[path lastPathComponent]];
+        NSError *error = nil;
+        BOOL ok;
+
+        if (move && [[path stringByDeletingLastPathComponent] isEqualToString:folder])
+            continue;
+        // a folder can't go inside itself
+        if ([[folder stringByAppendingString:@"/"] hasPrefix:[path stringByAppendingString:@"/"]]) {
+            FinderShowError([self window], [NSString stringWithFormat:NSLocalizedString(@"“%@” can’t be copied into itself.", @""),
+                                            [path lastPathComponent]], nil);
+            break;
+        }
+        if (suffix != nil || [fm fileExistsAtPath:dest])
+            dest = freeName(folder, [path lastPathComponent], suffix);
+        ok = move ? [fm moveItemAtPath:path toPath:dest error:&error] : [fm copyItemAtPath:path toPath:dest error:&error];
+        if (!ok) {
+            FinderShowError([self window], [NSString stringWithFormat:move ? NSLocalizedString(@"“%@” couldn’t be moved.", @"")
+                                                                           : NSLocalizedString(@"“%@” couldn’t be copied.", @""),
+                                            [path lastPathComponent]], error);
+            // a half-written copy is worse than none
+            if (!move)
+                [fm removeItemAtPath:dest error:NULL];
+            break;
+        }
+        [made addObject:dest];
+    }
+    return made;
+}
+
+- (IBAction)duplicate:(id)sender
+{
+    [self reloadSelecting:[self copyPaths:[self selectedPaths] into:_path suffix:NSLocalizedString(@"copy", @"") move:NO]];
+}
+
+// the selected items go on the pasteboard as file names, as Finder puts them
+- (IBAction)copy:(id)sender
+{
+    NSPasteboard *pb = [NSPasteboard generalPasteboard];
+    NSArray *paths = [self selectedPaths];
+
+    if ([paths count] == 0)
+        return;
+    [pb declareTypes:@[ NSFilenamesPboardType, NSStringPboardType ] owner:nil];
+    [pb setPropertyList:paths forType:NSFilenamesPboardType];
+    [pb setString:[paths componentsJoinedByString:@"\n"] forType:NSStringPboardType];
+    // Paste becomes available
+    [self setNeedsDisplay:YES];
+}
+
+- (NSArray *)pasteboardPaths
+{
+    NSPasteboard *pb = [NSPasteboard generalPasteboard];
+    id list;
+
+    // asking for a type the pasteboard doesn't hold logs an error, so look first
+    if (![[pb types] containsObject:NSFilenamesPboardType])
+        return nil;
+    list = [pb propertyListForType:NSFilenamesPboardType];
+    return [list isKindOfClass:[NSArray class]] ? list : nil;
+}
+
+- (IBAction)paste:(id)sender
+{
+    [self reloadSelecting:[self copyPaths:[self pasteboardPaths] into:_path suffix:nil move:NO]];
+}
+
+// Move Item Here, option-command-V, moves what was copied
+- (IBAction)moveItemsHere:(id)sender
+{
+    [self reloadSelecting:[self copyPaths:[self pasteboardPaths] into:_path suffix:nil move:YES]];
+}
+
+static unsigned long long sizeOfPath(NSString *path)
+{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSDictionary *attrs = [fm attributesOfItemAtPath:path error:NULL];
+    unsigned long long total;
+
+    if (attrs == nil)
+        return 0;
+    total = [attrs fileSize];
+    if ([[attrs fileType] isEqualToString:NSFileTypeDirectory]) {
+        for (NSString *child in [fm contentsOfDirectoryAtPath:path error:NULL])
+            total += sizeOfPath([path stringByAppendingPathComponent:child]);
+    }
+    return total;
+}
+
+- (IBAction)getInfo:(id)sender
+{
+    NSString *path = [[self selectedPaths] firstObject] ?: _path;
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:NULL];
+    NSDateFormatter *dates = [[[NSDateFormatter alloc] init] autorelease];
+    NSAlert *alert = [[[NSAlert alloc] init] autorelease];
+    BOOL dir = [[attrs fileType] isEqualToString:NSFileTypeDirectory];
+    unsigned long long size = dir ? sizeOfPath(path) : [attrs fileSize];
+    NSString *kind = dir ? ([[path pathExtension] isEqualToString:@"app"] ? NSLocalizedString(@"Application", @"") : NSLocalizedString(@"Folder", @""))
+                         : NSLocalizedString(@"Document", @"");
+
+    // dates, owner and mode come from lstat, PD's attributesOfItemAtPath: leaves them out. ext4 has no birth time
+    struct stat st;
+    BOOL haveStat = lstat([path fileSystemRepresentation], &st) == 0;
+    struct passwd *owner = haveStat ? getpwuid(st.st_uid) : NULL;
+
+    [dates setDateStyle:NSDateFormatterLongStyle];
+    [dates setTimeStyle:NSDateFormatterShortStyle];
+    [alert setMessageText:[NSString stringWithFormat:NSLocalizedString(@"%@ Info", @""), [path lastPathComponent]]];
+    [alert setInformativeText:[NSString stringWithFormat:NSLocalizedString(@"Kind: %1$@\nSize: %2$@\nWhere: %3$@\nCreated: %4$@\nModified: %5$@\nOwner: %6$@\nPermissions: %7$@", @""),
+        kind,
+        [NSString stringWithFormat:NSLocalizedString(@"%llu bytes", @""), size],
+        [path stringByDeletingLastPathComponent],
+        haveStat && st.st_birthtimespec.tv_sec > 0 ? [dates stringFromDate:[NSDate dateWithTimeIntervalSince1970:st.st_birthtimespec.tv_sec]] : @"—",
+        haveStat ? [dates stringFromDate:[NSDate dateWithTimeIntervalSince1970:st.st_mtimespec.tv_sec]] : @"—",
+        owner ? [NSString stringWithUTF8String:owner->pw_name] : haveStat ? [NSString stringWithFormat:@"%u", st.st_uid] : @"—",
+        haveStat ? [NSString stringWithFormat:@"%03o", st.st_mode & 07777] : @"—"]];
+    [alert addButtonWithTitle:NSLocalizedString(@"OK", @"")];
+    FinderRunSheet(alert, [self window], nil);
+}
+
 - (IBAction)toggleSidebar:(id)sender
 {
     _sidebarHidden = !_sidebarHidden;
@@ -684,8 +1309,15 @@ static NSString *iconForPath(NSString *path)
         return [_forward count] > 0;
     if (action == @selector(goEnclosingFolder:))
         return ![_path isEqualToString:@"/"];
-    if (action == @selector(openSelection:))
+    if (action == @selector(openSelection:) || action == @selector(moveToTrash:) || action == @selector(deleteImmediately:) ||
+        action == @selector(duplicate:) || action == @selector(copy:))
         return [_selection count] > 0;
+    if (action == @selector(renameSelection:))
+        return [_selection count] == 1;
+    if (action == @selector(putBack:))
+        return [self inTrash] && [_selection count] > 0;
+    if (action == @selector(paste:) || action == @selector(moveItemsHere:))
+        return [[self pasteboardPaths] count] > 0;
     if (action == @selector(toggleSidebar:))
         [item setTitle:_sidebarHidden ? NSLocalizedString(@"Show Sidebar", @"") : NSLocalizedString(@"Hide Sidebar", @"")];
     return YES;

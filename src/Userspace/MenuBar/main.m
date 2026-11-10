@@ -6,10 +6,15 @@
  * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
  */
 
+#include <dispatch/dispatch.h>
+#include <pthread.h>
 #import <AppKit/AppKit.h>
 #import "PDMenuServer.h"
 #import "MenuBarView.h"
 #include <dlfcn.h>
+#include <errno.h>
+#include <dispatch/dispatch.h>
+#include <pthread.h>
 #include <stdint.h>
 #if __has_include(<notify.h>)
 #include <notify.h>
@@ -24,6 +29,7 @@ uint32_t notify_get_state(int token, uint64_t *state64);
 uint32_t notify_cancel(int token);
 #endif
 #include <execinfo.h>
+#include <errno.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <sys/ucontext.h>
@@ -112,11 +118,37 @@ static void pushWindowStyle(void)
     [_connection setRootObject:self];
     if (![_connection registerName:PDMenuServerName])
         NSLog(@"MenuBar: could not register %@", PDMenuServerName);
-    else
+    else {
         NSLog(@"MenuBar: serving %@", PDMenuServerName);
+        [[NSDistributedNotificationCenter defaultCenter] postNotificationName:PDMenuServerStartedNotification
+                                                                       object:nil userInfo:nil deliverImmediately:YES];
+    }
 
     _clock = [[NSTimer scheduledTimerWithTimeInterval:10 target:_view selector:@selector(tick:)
                                              userInfo:nil repeats:YES] retain];
+    [NSTimer scheduledTimerWithTimeInterval:1 target:self selector:@selector(dropExitedClients:) userInfo:nil repeats:YES];
+}
+
+// an app that exits without a word, killed or crashed, takes its menus with it
+- (void)dropExitedClients:(NSTimer *)timer
+{
+    NSString *prefix = [PDMenuClientNameFormat stringByReplacingOccurrencesOfString:@"%d" withString:@""];
+
+    for (NSString *client in [_menus allKeys]) {
+        pid_t pid = [client hasPrefix:prefix] ? (pid_t)[[client substringFromIndex:[prefix length]] intValue] : 0;
+
+        if (pid <= 0 || kill(pid, 0) == 0 || errno != ESRCH)
+            continue;
+        [_menus removeObjectForKey:client];
+        [_windows removeObjectsForKeys:[_windows allKeysForObject:client]];
+        if ([_active isEqualToString:client]) {
+            [_active release];
+            [_activeWindow release];
+            _active = nil;
+            _activeWindow = nil;
+            [self showActive];
+        }
+    }
 }
 
 - (void)showActive
@@ -124,10 +156,17 @@ static void pushWindowStyle(void)
     [_view setMenuData:_active ? [_menus objectForKey:_active] : nil];
 }
 
+// distributed objects calls arrive on the connection's queue, the bar draws on the main thread,
+// so the menus change there. Swapping them mid-draw indexed a shorter array (CFArray HALT)
 - (oneway void)updateMenuForWindow:(bycopy NSNumber *)windowId
                           menuData:(bycopy NSDictionary *)menuData
                         clientName:(bycopy NSString *)clientName
 {
+    // the connection delivers on its own thread, the menus and the bar belong to the main one
+    if (!pthread_main_np()) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self updateMenuForWindow:windowId menuData:menuData clientName:clientName]; });
+        return;
+    }
     if (clientName == nil || menuData == nil)
         return;
     NSLog(@"MenuBar: %@ published %lu menus", clientName, (unsigned long)[[menuData objectForKey:@"items"] count]);
@@ -145,6 +184,12 @@ static void pushWindowStyle(void)
 
 - (oneway void)activateClient:(bycopy NSString *)clientName forWindow:(bycopy NSNumber *)windowId
 {
+    if (!pthread_main_np()) {
+        // the open menu's tracking loop polls this flag, so it closes without waiting for the main queue
+        [NSMenu _pdCancelTracking];
+        dispatch_async(dispatch_get_main_queue(), ^{ [self activateClient:clientName forWindow:windowId]; });
+        return;
+    }
     // a click in another app's window ends any open menu, as on macOS
     [NSMenu _pdCancelTracking];
     if (clientName == nil || [_active isEqualToString:clientName])
@@ -185,7 +230,10 @@ static void crashed(int sig, siginfo_t *info, void *context)
     int count = backtrace(frames, 48);
 
     ucontext_t *uc = context;
-#if defined(__x86_64__)
+    // glibc keeps the registers in an array, Darwin in the thread state
+#if defined(__linux__)
+    void *pc = (void *)uc->uc_mcontext.gregs[REG_RIP];
+#elif defined(__x86_64__)
     void *pc = (void *)uc->uc_mcontext->__ss.__rip;
 #else
     // arm64 names them pc and fp
@@ -200,7 +248,9 @@ static void crashed(int sig, siginfo_t *info, void *context)
     else
         fprintf(stderr, "  pc %p\n", pc);
     // callers from the saved frame pointers
-#if defined(__x86_64__)
+#if defined(__linux__)
+    void **fp = (void **)uc->uc_mcontext.gregs[REG_RBP];
+#elif defined(__x86_64__)
     void **fp = (void **)uc->uc_mcontext->__ss.__rbp;
 #else
     void **fp = (void **)uc->uc_mcontext->__ss.__fp;
@@ -243,6 +293,10 @@ int main(int argc, const char *argv[])
     sigaction(SIGSEGV, &action, NULL);
     sigaction(SIGBUS, &action, NULL);
     sigaction(SIGABRT, &action, NULL);
+    // CF's HALT and __builtin_trap raise SIGILL, they were the crashes that went unreported
+    sigaction(SIGILL, &action, NULL);
+    sigaction(SIGTRAP, &action, NULL);
+    sigaction(SIGFPE, &action, NULL);
     NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
     MenuBarServer *server;
 

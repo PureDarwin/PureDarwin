@@ -38,4 +38,21 @@
 - (IBAction)openSelection:(id)sender;
 - (IBAction)newFolder:(id)sender;
 - (IBAction)toggleSidebar:(id)sender;
+- (IBAction)moveToTrash:(id)sender;
+- (IBAction)deleteImmediately:(id)sender;
+- (IBAction)putBack:(id)sender;
+- (IBAction)renameSelection:(id)sender;
+- (IBAction)duplicate:(id)sender;
+- (IBAction)copy:(id)sender;
+- (IBAction)paste:(id)sender;
+- (IBAction)moveItemsHere:(id)sender;
+- (IBAction)getInfo:(id)sender;
+- (void)reload;
 @end
+
+// the Trash every Finder window shares, made on first use
+NSString *FinderTrashPath(void);
+// shows an alert for a failed file operation, the error says why
+void FinderShowError(NSWindow *window, NSString *message, NSError *error);
+// runs an alert as a sheet on window, done gets the button
+void FinderRunSheet(NSAlert *alert, NSWindow *window, void (^done)(NSInteger code));

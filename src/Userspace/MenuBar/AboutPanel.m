@@ -187,6 +187,7 @@ static NSString *startupDisk(void)
 @interface AboutView : NSView {
     NSArray *_rows;
     NSString *_version;
+    NSString *_product;
     NSRect _button;
     BOOL _pressed;
 }
@@ -200,14 +201,22 @@ static NSString *startupDisk(void)
 
     if ((self = [super initWithFrame:frame]) == nil)
         return nil;
+    // the product the plist names, PureDarwin on PD and Argon on Linux
+    _product = [sv[@"ProductName"] ?: @"PureDarwin" copy];
     _version = [[NSString alloc] initWithFormat:NSLocalizedString(@"Version %1$@ (%2$@)", @""), sv[@"ProductVersion"] ?: @"?", sv[@"ProductBuildVersion"] ?: @"?"];
-    _rows = [@[
-        @[ NSLocalizedString(@"Kernel", @""), kernelVersion() ],
+    NSMutableArray *rows = [NSMutableArray arrayWithObject:@[ NSLocalizedString(@"Kernel", @""), kernelVersion() ]];
+    const char *desktop = getenv("XDG_CURRENT_DESKTOP");
+
+    // the session names its desktop, Argon under argon-session
+    if (desktop != NULL && desktop[0] != '\0')
+        [rows addObject:@[ NSLocalizedString(@"Desktop", @""), [NSString stringWithUTF8String:desktop] ]];
+    [rows addObjectsFromArray:@[
         @[ NSLocalizedString(@"Processor", @""), processor() ],
         @[ NSLocalizedString(@"Memory", @""), memory() ],
         @[ NSLocalizedString(@"Graphics", @""), graphics() ],
         @[ NSLocalizedString(@"Startup Disk", @""), startupDisk() ],
-    ] retain];
+    ]];
+    _rows = [rows copy];
     return self;
 }
 
@@ -215,6 +224,7 @@ static NSString *startupDisk(void)
 {
     [_rows release];
     [_version release];
+    [_product release];
     [super dealloc];
 }
 
@@ -245,7 +255,7 @@ static NSString *startupDisk(void)
     NSRectFill([self bounds]);
 
     [logo drawInRect:NSMakeRect((PANEL_W - 96) / 2, 40, 96, 96) fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1 respectFlipped:YES hints:nil];
-    [self drawCentered:@"PureDarwin" at:146 attributes:@{ NSFontAttributeName: font(@"Inter-Bold", 22), NSForegroundColorAttributeName: grey(0x1b) }];
+    [self drawCentered:_product at:146 attributes:@{ NSFontAttributeName: font(@"Inter-Bold", 22), NSForegroundColorAttributeName: grey(0x1b) }];
     [self drawCentered:_version at:176 attributes:@{ NSFontAttributeName: font(@"Inter-Regular", 11), NSForegroundColorAttributeName: grey(0x6e) }];
 
     // two columns, names right-aligned against the values, the pair centred like the demo's grid

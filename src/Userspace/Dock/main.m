@@ -7,6 +7,7 @@
  */
 
 #import <AppKit/AppKit.h>
+#import "PDMenuServer.h"
 #include <sys/sysctl.h>
 #include <dlfcn.h>
 #include <execinfo.h>
@@ -354,6 +355,12 @@ static BOOL magnify = YES;
         @[ NSLocalizedString(@"Maps", @""), @"maps", @"/Applications/Maps.app" ],
         @[ NSLocalizedString(@"Settings", @""), @"settings", @"/Applications/Settings.app" ],
         @[ NSLocalizedString(@"Terminal", @""), @"terminal", @"/Applications/Utilities/Terminal.app" ],
+        @[ NSLocalizedString(@"Text Editor", @""), @"texteditor", @"/Applications/Text Editor.app" ],
+        @[ NSLocalizedString(@"Activity", @""), @"activity", @"/Applications/Utilities/Activity.app" ],
+        @[ NSLocalizedString(@"Logs", @""), @"logs", @"/Applications/Utilities/Logs.app" ],
+        @[ NSLocalizedString(@"Image Viewer", @""), @"imageviewer", @"/Applications/Image Viewer.app" ],
+        @[ NSLocalizedString(@"Screenshot", @""), @"screenshot", @"/Applications/Utilities/Screenshot.app" ],
+        @[ NSLocalizedString(@"Disks", @""), @"disks", @"/Applications/Utilities/Disks.app" ],
         [NSNull null],
         @[ NSLocalizedString(@"Trash", @""), @"trash", @"" ],
     ];
@@ -489,7 +496,6 @@ static BOOL magnify = YES;
         BOOL running = pid != nil;
 
         item->pid = [pid intValue];
-
         if (running != item->running) {
             item->running = running;
             changed = YES;
@@ -511,7 +517,10 @@ static BOOL magnify = YES;
             [self reopenProcess:item->pid];
         return;
     }
-    [[NSWorkspace sharedWorkspace] launchApplication:item->path];
+    if (![[NSWorkspace sharedWorkspace] launchApplication:item->path]) {
+        NSLog(@"Dock: could not launch %@ at %@", item->label, item->path);
+        return;
+    }
     item->running = YES;
     [_bar setNeedsDisplay:YES];
 }
@@ -579,7 +588,10 @@ static void crashed(int sig, siginfo_t *info, void *context)
     int count = backtrace(frames, 48);
 
     ucontext_t *uc = context;
-#if defined(__x86_64__)
+    // glibc keeps the registers in an array, Darwin in the thread state
+#if defined(__linux__)
+    void *pc = (void *)uc->uc_mcontext.gregs[REG_RIP];
+#elif defined(__x86_64__)
     void *pc = (void *)uc->uc_mcontext->__ss.__rip;
 #else
     // arm64 names them pc and fp
@@ -594,7 +606,9 @@ static void crashed(int sig, siginfo_t *info, void *context)
     else
         fprintf(stderr, "  pc %p\n", pc);
     // callers from the saved frame pointers
-#if defined(__x86_64__)
+#if defined(__linux__)
+    void **fp = (void **)uc->uc_mcontext.gregs[REG_RBP];
+#elif defined(__x86_64__)
     void **fp = (void **)uc->uc_mcontext->__ss.__rbp;
 #else
     void **fp = (void **)uc->uc_mcontext->__ss.__fp;
@@ -637,6 +651,10 @@ int main(int argc, const char *argv[])
     sigaction(SIGSEGV, &action, NULL);
     sigaction(SIGBUS, &action, NULL);
     sigaction(SIGABRT, &action, NULL);
+    // CF's HALT and __builtin_trap raise SIGILL, they were the crashes that went unreported
+    sigaction(SIGILL, &action, NULL);
+    sigaction(SIGTRAP, &action, NULL);
+    sigaction(SIGFPE, &action, NULL);
     // the apps the Dock launches are its children, ignoring SIGCHLD lets the kernel reap them as they quit
     signal(SIGCHLD, SIG_IGN);
 

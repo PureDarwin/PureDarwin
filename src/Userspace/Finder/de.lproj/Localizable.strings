@@ -29,10 +29,10 @@
 "Hide Sidebar" = "Seitenleiste ausblenden";
 
 /* No comment provided by engineer. */
-"Finder" = "Finder";
+"Finder" = "Dateien";
 
 /* No comment provided by engineer. */
-"About Finder" = "Über Finder";
+"About Finder" = "Über Dateien";
 
 /* No comment provided by engineer. */
 "Settings…" = "Einstellungen …";
@@ -41,13 +41,13 @@
 "Empty Trash…" = "Papierkorb entleeren …";
 
 /* No comment provided by engineer. */
-"Quit Finder" = "Finder beenden";
+"Quit Finder" = "Dateien beenden";
 
 /* No comment provided by engineer. */
 "File" = "Ablage";
 
 /* No comment provided by engineer. */
-"New Finder Window" = "Neues Finder-Fenster";
+"New Finder Window" = "Neues Fenster";
 
 /* No comment provided by engineer. */
 "New Folder" = "Neuer Ordner";
@@ -112,3 +112,45 @@
 /* No comment provided by engineer. */
 "%lu items" = "%lu Objekte";
 
+/* file operations */
+"You don’t have permission to do this." = "Du hast nicht die nötigen Rechte dafür.";
+"There isn’t enough space on the disk." = "Auf dem Volume ist nicht genügend Platz.";
+"An item with that name already exists." = "Es gibt bereits ein Objekt mit diesem Namen.";
+"The disk is read-only." = "Das Volume ist schreibgeschützt.";
+"OK" = "OK";
+"The folder “%@” can’t be opened." = "Der Ordner „%@“ kann nicht geöffnet werden.";
+"“%@” couldn’t be moved to the Trash." = "„%@“ konnte nicht in den Papierkorb gelegt werden.";
+"“%@” couldn’t be put back." = "„%@“ konnte nicht zurückgelegt werden.";
+"Are you sure you want to delete “%@”?" = "Möchtest du „%@“ wirklich löschen?";
+"Are you sure you want to delete these %lu items?" = "Möchtest du diese %lu Objekte wirklich löschen?";
+"This item will be deleted immediately. You can’t undo this action." = "Das Objekt wird sofort gelöscht. Dieser Vorgang kann nicht widerrufen werden.";
+"Delete" = "Löschen";
+"Cancel" = "Abbrechen";
+"“%@” couldn’t be deleted." = "„%@“ konnte nicht gelöscht werden.";
+"Rename “%@”" = "„%@“ umbenennen";
+"Enter a new name." = "Gib einen neuen Namen ein.";
+"Rename" = "Umbenennen";
+"The name “%@” can’t be used." = "Der Name „%@“ kann nicht verwendet werden.";
+"Names can’t contain “/” or start with a dot." = "Namen dürfen kein „/“ enthalten und nicht mit einem Punkt beginnen.";
+"“%@” couldn’t be renamed." = "„%@“ konnte nicht umbenannt werden.";
+"“%@” can’t be copied into itself." = "„%@“ kann nicht in sich selbst kopiert werden.";
+"“%@” couldn’t be moved." = "„%@“ konnte nicht bewegt werden.";
+"“%@” couldn’t be copied." = "„%@“ konnte nicht kopiert werden.";
+"copy" = "Kopie";
+"Application" = "Programm";
+"Folder" = "Ordner";
+"Document" = "Dokument";
+"%@ Info" = "Informationen zu „%@“";
+"Kind: %1$@\nSize: %2$@\nWhere: %3$@\nCreated: %4$@\nModified: %5$@\nOwner: %6$@\nPermissions: %7$@" = "Art: %1$@\nGröße: %2$@\nOrt: %3$@\nErstellt: %4$@\nGeändert: %5$@\nEigentümer: %6$@\nZugriffsrechte: %7$@";
+"%llu bytes" = "%llu Byte";
+"Get Info" = "Informationen";
+"Rename…" = "Umbenennen …";
+"Duplicate" = "Duplizieren";
+"Move to Trash" = "In den Papierkorb legen";
+"Delete Immediately…" = "Sofort löschen …";
+"Put Back" = "Zurücklegen";
+"Move Item Here" = "Objekt hierher bewegen";
+"Trash" = "Papierkorb";
+"Are you sure you want to permanently erase the items in the Trash?" = "Möchtest du die Objekte im Papierkorb wirklich endgültig löschen?";
+"You can’t undo this action." = "Dieser Vorgang kann nicht widerrufen werden.";
+"Empty Trash" = "Papierkorb entleeren";

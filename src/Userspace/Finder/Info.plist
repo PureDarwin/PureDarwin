@@ -12,8 +12,10 @@
 	<string>org.puredarwin.Finder</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<key>CFBundleDisplayName</key>
+	<string>Files</string>
 	<key>CFBundleName</key>
-	<string>Finder</string>
+	<string>Files</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
