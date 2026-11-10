@@ -96,6 +96,7 @@ PLIST
     ln -s A "$frameworkDir/Versions/Current"
     ln -s Versions/Current/OpenGL "$frameworkDir/OpenGL"
     ln -s Versions/Current/Headers "$frameworkDir/Headers"
+    ln -s Versions/Current/Resources "$frameworkDir/Resources"
 
     # libGL and libGLU where macOS keeps them, SDL opens Libraries/libGL.dylib and Wine links Libraries/libGLU.dylib
     mkdir -p "$frameworkDir/Versions/A/Libraries"

@@ -1,0 +1,10 @@
+Placeholder for the pd-sb-key flake input. Secure Boot images need the PureDarwin MOK key pair,
+which never goes in the repo. Build them with
+
+  nix build .#image-gpu-sb --override-input pd-sb-key path:/path/to/keydir
+
+where keydir holds MOK.key, MOK.pem and MOK.cer, made once with
+
+  openssl req -new -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
+    -subj "/CN=PureDarwin Secure Boot MOK/" -keyout MOK.key -out MOK.pem
+  openssl x509 -in MOK.pem -outform DER -out MOK.cer

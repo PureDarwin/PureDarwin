@@ -531,7 +531,6 @@ let
   wlrootsArm64Build = mkArm64Build ./pkgs/wayland/wlroots.nix {
     nativeMesonTools = nativeMesonToolsDir;
     iokit = iokitArm64Build;
-    iokitHeaders = iokitCFStaticArm64Build;
     pdgopSource = ../src/Libraries/PDGOP;
     pdVirglShim = pdVirglShimArm64Build;
     libdrm = libdrmArm64Build;
@@ -689,8 +688,6 @@ let
     pdVirglShim = pdVirglShimArm64Build;
     virglWinsysSrc = ./pkgs/mesa/virgl-puredarwin;
     virglAbiHeader = ../src/Kernel/Extensions/IOVirtIOGPU/IOVirtIOGPU3DShared.h;
-    radeonWinsysSrc = ./pkgs/mesa/radeon-puredarwin;
-    radeonAbiHeader = ../src/Kernel/Extensions/PDRadeonFramebuffer/PDRadeonRenderShared.h;
     corefoundation = coreFoundationArm64Build;
     iokit = iokitArm64Build;
     inherit (pkgs) meson ninja pkg-config python3 bison flex xorgproto xtrans;
@@ -826,7 +823,6 @@ let
   };
   pddecorMsmArm64Build = mkArm64Build ./pkgs/apps/pddecor.nix ({
     iokit = iokitArm64Build;
-    iokitHeaders = iokitCFStaticArm64Build;
     wayland = waylandArm64Build;
     waylandScanner = pkgs.wayland-scanner;
     src = ../src/Userspace/pddecor;
@@ -840,7 +836,6 @@ let
   menubarMsmArm64Build = mkArm64Build ./pkgs/apps/menubar.nix ({
     librsvg = pkgs.librsvg;
     iokit = iokitArm64Build;
-    iokitHeaders = iokitCFStaticArm64Build;
     src = ../src/Userspace/MenuBar;
   } // argonAppDeps);
   terminalMsmArm64Build = mkArm64Build ./pkgs/apps/terminal.nix ({
@@ -852,7 +847,6 @@ let
   } // argonAppDeps);
   calculatorMsmArm64Build = mkArm64Build ./pkgs/apps/calculator.nix ({
     iokit = iokitArm64Build;
-    iokitHeaders = iokitCFStaticArm64Build;
     src = ../src/Userspace/Calculator;
   } // argonAppDeps);
   # argon's desktop for the stick, on top of argonMsmArm64Bundle and pdroot's own Foundation
@@ -874,7 +868,7 @@ let
     find $out -path '*/Headers' -prune -exec rm -rf {} +
     find $out -type f -path '*/bin/*' -exec chmod 755 {} +
     find $out -type f \( -name '*.dylib' -o -path '*/MacOS/*' -o -path '*.framework/*' \) -exec chmod 755 {} + 2>/dev/null || true
-    chmod 755 $out/usr/libexec/pd-wayland-session 2>/dev/null || true
+    chmod 755 $out/usr/libexec/argon-session 2>/dev/null || true
   '';
   # what every AppKit app above links
   argonAppDeps = {
@@ -977,7 +971,6 @@ let
     fontconfig = fontconfigArm64Build;
     freetype = freetype2Arm64Build;
     iokit = iokitArm64Build;
-    iokitHeaders = iokitCFStaticArm64Build;
     neuwld = neuwldMsmArm64Build;
     mesaNox = mesaMsmArm64Build;
     pdsurface = pdsurfaceArm64Build;
@@ -988,6 +981,37 @@ let
     xkbcommon = xkbcommonArm64NoxBuild;
     src = ../src/ThirdParty/neuswc;
   };
+  # gallium nouveau (nvc0) on PDDRMnouveau through /dev/dri, for the jetson tx1's gm20b
+  libdrmNouveauArm64Build = libdrmArm64Build.override { amdgpu = true; nouveau = true; };
+  mesaNouveauArm64Build = mesaArm64Build.override {
+    withNouveauDrm = true;
+    withX11 = false;
+    libdrmAmdgpu = libdrmNouveauArm64Build;
+  };
+  pdgltriNouveauArm64Build = mkArm64Build ./pkgs/gpu/pdgltri.nix { mesa = mesaNouveauArm64Build; };
+  # the tx1 sd root's gl stack: mesa's dylibs, libdrm, libLLVM for llvmpipe and pdgltri
+  tx1GlRootArm64Bundle = pkgs.runCommand "puredarwin-tx1-gl-root-arm64" { } ''
+    mkdir -p $out/usr/lib $out/usr/sbin
+    cp -P ${mesaNouveauArm64Build}/usr/lib/*.dylib $out/usr/lib/
+    cp -P ${libdrmNouveauArm64Build}/lib/*.dylib $out/usr/lib/
+    cp -P ${llvmCrossArm64Build}/usr/lib/libLLVM.dylib ${llvmCrossArm64Build}/usr/lib/libLLVM-21.dylib $out/usr/lib/
+    cp -r --no-preserve=mode ${mesaNouveauArm64Build}/usr/share $out/usr/
+    cp ${pdgltriNouveauArm64Build}/usr/sbin/pdgltri $out/usr/sbin/
+    # libEGL asks for /lib/libwayland-client.0.dylib
+    mkdir -p $out/lib
+    cp -P ${waylandArm64Build}/lib/libwayland-client*.dylib $out/lib/
+  '';
+  # the tx1 sd root's desktop: argon from the stick bundles, composited on the cpu into PDTegraDisplay
+  tx1DesktopArm64Bundle = pkgs.runCommand "puredarwin-tx1-desktop-arm64" { } ''
+    mkdir -p $out/etc
+    # fontconfig's conf.d links are relative and some dangle, so links are kept as they are
+    cp -rP --no-preserve=mode ${argonMsmArm64Bundle}/. $out/
+    cp -rP --no-preserve=mode ${argonDesktopMsmArm64Bundle}/. $out/
+    chmod 755 $out/bin/* $out/usr/bin/* $out/usr/libexec/* 2>/dev/null || true
+    find $out -type f \( -name '*.dylib' -o -path '*/MacOS/*' \) -exec chmod 755 {} +
+    # pdtegradisp comes up late, the log stays readable from the acm shell
+    printf '%s\n' 'NEUSWC_ENV="ARGON_GFX=cpu SWC_WAIT_HW_FB=120"' 'NEUSWC_LOG=/var/log/neuswc.log' > $out/etc/neuswc.env
+  '';
   # the powervr vulkan driver for PDPowerVR, on the mesa release the linux reference runs
   mesaPowervrVersion = "26.0.3";
   mesaPowervrSrc = pkgs.fetchurl {
@@ -1475,7 +1499,6 @@ let
   iomediacheckArm64Build = mkArm64Build ./pkgs/apple/iomediacheck.nix {
     corefoundation = coreFoundationArm64Build;
     iokit = iokitArm64Build;
-    iokitHeaders = iokitCFStaticArm64Build;
   };
   pdsurfaceArm64Build = mkArm64Build ./pkgs/x11/pdsurface.nix {
     corefoundation = coreFoundationArm64Build;
@@ -1530,6 +1553,7 @@ let
         runHook postInstall
       '';
     });
+  opensslThreadsArm64Build = opensslArm64Build.override { withThreads = true; };
   securityArm64Build = mkArm64Build ./pkgs/apple/security.nix {
     pname = "puredarwin-security-arm64";
     puredarwinArch = "arm64";
@@ -1539,6 +1563,8 @@ let
     foundation = foundationArm64Build;
     sqlite = sqliteArm64Build;
     src = securitySource;
+    openssl = opensslThreadsArm64Build;
+    libz = libzDylibArm64Build;
   };
   symptomReporterArm64Build =
     if symptomReporterBuild == null then null
@@ -2152,6 +2178,7 @@ let
     extraCmakeFlags = [
       "-DPUREDARWIN_ENABLE_IOKITCF=ON"
       "-DPUREDARWIN_COREFOUNDATION_PREFIX=${coreFoundationArmv6Build}"
+      "-DPUREDARWIN_LIBOBJC_PREFIX=${libobjcArmv6Build}"
       "-DCMAKE_OSX_ARCHITECTURES=armv6"
       "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY"
     ];
@@ -2212,6 +2239,7 @@ let
 
   xvfbZlibArm64Build = mkArm64Build ./pkgs/x11/xvfb-zlib.nix { inherit (pkgs) zlib; };
   toyboxArm64Build = mkArm64Build ./pkgs/base/toybox.nix { zlib = xvfbZlibArm64Build; };
+  pdadbdArm64Build = mkArm64Build ./pkgs/apps/pdadbd.nix { };
   xzArm64Build = mkArm64Build ./pkgs/base/xz.nix { };
   fileArm64Build = mkArm64Build ./pkgs/base/file.nix { zlib = xvfbZlibArm64Build; };
   opensslArm64Build = mkArm64Build ./pkgs/base/openssl.nix { };
@@ -2617,7 +2645,7 @@ let
     inherit arm64CrossToolchain;
     prebuiltLibSystem = libSystemArm64Build;
     xorgDriverIncludes = null;
-    buildTargets = [ "sw_vers" "ps" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" "pdkext" "sh" "gpt" ]
+    buildTargets = [ "sw_vers" "doubleagentd" "ps" "killall" "pkill" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" "pd-dmesg-save" "pdkext" "sh" "gpt" ]
       ++ [ "basename" "chown" "dirname" "echo" "false" "getopt" "hostname" "jot" "kill" "logname" "mktemp" "nice" "nohup" "passwd" "printenv" "pwd" "renice" "seq" "shlock" "sleep" "tee" "test_cmd" "true" "tsort" "uname" "yes" "uuencode" "uudecode" ]
       ++ [ "banner" "cat" "colrm" "comm" "cut" "expand" "fold" "head" "lam" "look" "nl" "paste" "rev" "split" "tail" "tr" "unexpand" "uniq" "wc" ];
   };
@@ -2969,6 +2997,56 @@ let
     inherit arm64CrossToolchain;
     extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=T8010" ];
   };
+  # Apple A9 (S8000) - iPhone 6s, for the Inferno emulator's s8000 machine
+  kernelArm64S8000Build = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm64-s8000";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "RELEASE";
+    puredarwinArch = "arm64";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=S8000" ];
+  };
+  kernelArm64S8000DebugBuild = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm64-s8000-debug";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "DEBUG";
+    puredarwinArch = "arm64";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=S8000" ];
+  };
+  # Apple M1 (T8103) - Mac mini, for darwin-vm's qemu
+  kernelArm64T8103Build = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm64-t8103";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "RELEASE";
+    puredarwinArch = "arm64";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=T8103" ];
+  };
+  kernelArm64T8103DebugBuild = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm64-t8103-debug";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "DEBUG";
+    puredarwinArch = "arm64";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=T8103" ];
+  };
   kernelArm64Sc8280xpBuild = mkPureDarwinBuild {
     pname = "puredarwin-kernel-arm64-sc8280xp";
     src = kernelSource;
@@ -3086,18 +3164,21 @@ let
       "RavynHDAudio.kext" "PDE1000.kext" "PDRealtek8111.kext"
       "PDFBSDem.kext" "PDFBSDigc.kext" "PDFBSDrge.kext"
       "IO80211Family.kext" "PDQwx.kext"
-      "PDBcm2835SD.kext" "PDSun50iMMC.kext" "PDSg2002SD.kext" "PDSg2002Eth.kext"
+      "PDBcm2835SD.kext" "PDTegraSDMMC.kext" "PDSg2002SD.kext" "PDSg2002Eth.kext"
       "PDI2CFamily.kext" "PDQcomTLMM.kext" "PDQcomGeniI2C.kext" "PDGadgetFamily.kext" "PDQcomUSB.kext" "PDTegraUSB.kext" "PDI2CHID.kext"
-      "PDPowerVR.kext" "PDSun60iDisplay.kext"
+      "PDPowerVR.kext" "PDSun60iDisplay.kext" "PDTegraDisplay.kext" "PDTegraXUSB.kext"
+      # the bundle ids Inferno's s8000 kernel patcher looks up
+      "PDStubAppleMobileFileIntegrity.kext" "PDStubAppleImage4.kext" "PDStubImage4.kext" "PDStubAppleFirmwareUpdateKext.kext" "PDStubAppleS5L8960XWatchDogTimer.kext"
     ];
     enableUserspace = false;
     installUserland = false;
     installKernel = false;
     installKexts = true;
     installKextNames = [
-      "PDBcm2835SD.kext" "PDSun50iMMC.kext" "PDSg2002SD.kext" "PDSg2002Eth.kext"
+      "PDStubAppleMobileFileIntegrity.kext" "PDStubAppleImage4.kext" "PDStubImage4.kext" "PDStubAppleFirmwareUpdateKext.kext" "PDStubAppleS5L8960XWatchDogTimer.kext"
+      "PDBcm2835SD.kext" "PDTegraSDMMC.kext" "PDSg2002SD.kext" "PDSg2002Eth.kext"
       "PDI2CFamily.kext" "PDQcomTLMM.kext" "PDQcomGeniI2C.kext" "PDGadgetFamily.kext" "PDQcomUSB.kext" "PDTegraUSB.kext" "PDI2CHID.kext"
-      "PDPowerVR.kext" "PDSun60iDisplay.kext"
+      "PDPowerVR.kext" "PDSun60iDisplay.kext" "PDTegraDisplay.kext" "PDTegraXUSB.kext"
       "IOPCIFamily.kext" "IOStorageFamily.kext" "IOCDStorageFamily.kext"
       "IODVDStorageFamily.kext" "IOBDStorageFamily.kext" "IOVirtIOFamily.kext"
       "IOVirtIONet.kext" "IONetworkingFamily.kext" "IOHIDFamily.kext"
@@ -3524,6 +3605,7 @@ in
     mkArm64Build
     xvfbZlibArm64Build
     toyboxArm64Build
+    pdadbdArm64Build
     xzArm64Build
     fileArm64Build
     opensslArm64Build
@@ -3585,9 +3667,13 @@ in
     libdrmPdpvrArm64Build
     libdrmDriArm64Build
     mesaMsmArm64Build
+    mesaNouveauArm64Build
+    tx1GlRootArm64Bundle
+    pdgltriNouveauArm64Build
     neuwldMsmArm64Build
     neuswcMsmArm64Build
     argonMsmArm64Bundle
+    tx1DesktopArm64Bundle
     footArm64Build
     iosurfaceArm64Build
     gluMsmArm64Build
@@ -3657,6 +3743,10 @@ in
     kernelArm64VirtAmpBuild
     kernelArm64T8010Build
     kernelArm64T8010DebugBuild
+    kernelArm64S8000Build
+    kernelArm64S8000DebugBuild
+    kernelArm64T8103Build
+    kernelArm64T8103DebugBuild
     kernelArm64Bcm2837Build
     kernelArm64Bcm2837DebugBuild
     kernelArm64Virt4kDebugBuild

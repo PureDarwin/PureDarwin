@@ -4,6 +4,8 @@
 , libobjc
 , foundation
 , sqlite
+, openssl
+, libz
 , src
 , pname ? "puredarwin-security"
 # Set both together for the arm64 flavour, the same way DiskArbitration and
@@ -28,7 +30,8 @@ in
 (mkPureDarwinBuild ({
   inherit pname src;
   version = "59754.120.12";
-  buildTargets = [ "Security" ];
+  buildTargets = [ "Security" "trustd" "pdtlscheck" ];
+  ninjaFlags = [ "-k" "0" ];
   enableProjects = false;
   enableKernel = false;
   enableUserspace = false;
@@ -40,6 +43,8 @@ in
     "-DPUREDARWIN_LIBOBJC_PREFIX=${libobjc}"
     "-DPUREDARWIN_FOUNDATION_PREFIX=${foundation}"
     "-DPUREDARWIN_SQLITE_PREFIX=${sqlite}"
+    "-DPUREDARWIN_OPENSSL_PREFIX=${openssl}"
+    "-DPUREDARWIN_ZLIB_PREFIX=${libz}"
   ];
 } // lib.optionalAttrs (puredarwinArch != null) {
   inherit puredarwinArch arm64CrossToolchain;
@@ -51,6 +56,13 @@ in
     mkdir -p "$fw/Versions/A/Headers"
     cp build-nix/src/Libraries/Security/libSecurity.dylib \
       "$fw/Versions/A/Security"
+
+    # trustd serves trust evaluation, pdtlscheck tests it
+    install -Dm755 build-nix/src/Libraries/Security/trustd "$out/usr/libexec/trustd"
+    install -Dm755 build-nix/src/Libraries/Security/pdtlscheck "$out/usr/bin/pdtlscheck"
+    # Apple's own launchd job for the system trustd, the per-user agent waits for LaunchAgents
+    install -Dm644 src/Libraries/Security/apple/trust/trustd/macOS/com.apple.trustd.plist \
+      "$out/System/Library/LaunchDaemons/com.apple.trustd.plist"
 
     # Header set comes from nix/lib/security-headers.nix; see there for why
     # base/Security.h is excluded and what the second group is for.
@@ -71,7 +83,7 @@ in
     ln -s Versions/Current/Headers "$fw/Headers"
 
     # Some consumers link -lSecurity against .../usr/lib rather than -F the
-    # frameworks directory, as they do for CoreFoundation and IOKitCF.
+    # frameworks directory, as they do for CoreFoundation.
     mkdir -p "$out/usr/lib"
     ln -s "../../System/Library/Frameworks/Security.framework/Versions/A/Security" \
       "$out/usr/lib/libSecurity.dylib"

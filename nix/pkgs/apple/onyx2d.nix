@@ -71,14 +71,16 @@ stdenv.mkDerivation {
     "
 
     objs=""
+    source ${../../lib/pcc.sh}
     for s in *.m; do
       case " ${lib.concatStringsSep " " excludedSrcs} " in
         *" $s "*) continue ;;
       esac
       echo "  CC $s"
-      $cc $cflags -c "$s" -o "''${s%.m}.o"
+      pcc $cc $cflags -c "$s" -o "''${s%.m}.o"
       objs="$objs ''${s%.m}.o"
     done
+    pcc_wait
 
     $cc \
       -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \

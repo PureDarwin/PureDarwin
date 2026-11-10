@@ -78,6 +78,15 @@ stdenv.mkDerivation {
 
     objects=""
     failed=""
+    # a source that does not compile is skipped, each job leaves its log and an ok mark beside its object
+    compile_one() {
+      if $cc $cflags -c "$1" -o "$2" 2> "$2.log"; then
+        touch "$2.ok"
+      fi
+    }
+    source ${../../lib/pcc.sh}
+    sources=""
+    mkdir -p objs
     for source in $(find . -name '*.m' | sed 's|^\./||' | sort); do
       skip=
       for dir in ${lib.concatStringsSep " " excludedDirs}; do
@@ -87,12 +96,18 @@ stdenv.mkDerivation {
 
       object="objs/$(echo "$source" | tr '/' '_')"
       object="''${object%.m}.o"
-      mkdir -p objs
-      if $cc $cflags -c "$source" -o "$object" 2> "compile.log"; then
+      pcc compile_one "$source" "$object"
+      sources="$sources $source"
+    done
+    pcc_wait
+    for source in $sources; do
+      object="objs/$(echo "$source" | tr '/' '_')"
+      object="''${object%.m}.o"
+      if [ -e "$object.ok" ]; then
         objects="$objects $object"
       else
         echo "  SKIP $source"
-        sed 's/^/      /' compile.log | grep -m2 "error:" || true
+        sed 's/^/      /' "$object.log" | grep -m2 "error:" || true
         failed="$failed $source"
       fi
     done

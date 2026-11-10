@@ -49,9 +49,11 @@ stdenv.mkDerivation {
     $CC $LDFLAGS $(fw CoreAudio) AudioHardware.o AudioDeviceIO.o -lCoreFoundation -lSystem -o CoreAudio
     ln -s CoreAudio libCoreAudio.dylib
 
+    source ${../../lib/pcc.sh}
     for f in AudioQueue AudioConverter AudioUnit AudioFormat AUGraph; do
-      $CC $CFLAGS -c $src/$f.c -o $f.o
+      pcc $CC $CFLAGS -c $src/$f.c -o $f.o
     done
+    pcc_wait
     $CC $LDFLAGS $(fw AudioToolbox) AudioQueue.o AudioConverter.o AudioUnit.o AudioFormat.o AUGraph.o \
       -lCoreAudio -lCoreFoundation -lSystem -o AudioToolbox
 

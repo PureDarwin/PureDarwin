@@ -16,7 +16,6 @@
 , nativeLd
 , foundationSource
 , coreFoundationBuild
-, iokitCFStaticBuild
 , iokitBuild
 , launchdBuild
 , launchctlBuild
@@ -146,23 +145,16 @@ let
     notifyInclude = ../src/Libraries/XPC/notify;
     src = "${foundationSource}/src/Frameworks/Foundation";
   };
-  # IOKitCF compiles against these headers, so they have to be the riscv64 ones too
-  iokitCFStaticRiscv64Build = iokitCFStaticBuild.override {
+  iokitRiscv64Build = iokitBuild.override {
     puredarwinArch = "riscv64";
     inherit riscv64CrossToolchain;
     extraCmakeFlags = [
-      "-DPUREDARWIN_ENABLE_IOKITCF=ON"
+      "-DPUREDARWIN_ENABLE_IOKIT=ON"
       "-DPUREDARWIN_COREFOUNDATION_PREFIX=${coreFoundationRiscv64Build}"
       "-DPUREDARWIN_LIBOBJC_PREFIX=${libobjcRiscv64Build}"
       "-DPUREDARWIN_FOUNDATION_PREFIX=${foundationRiscv64Build}"
     ];
   };
-  iokitRiscv64Build = iokitBuild.override (riscv64Userland // {
-    corefoundation = coreFoundationRiscv64Build;
-    iokitCFStatic = iokitCFStaticRiscv64Build;
-    libobjc = libobjcRiscv64Build;
-    foundation = foundationRiscv64Build;
-  });
   launchdRiscv64Build = launchdBuild.override (riscv64Userland // {
     corefoundation = coreFoundationRiscv64Build;
     iokit = iokitRiscv64Build;
@@ -178,7 +170,7 @@ let
     inherit riscv64CrossToolchain;
     prebuiltLibSystem = libSystemRiscv64Build;
     xorgDriverIncludes = null;
-    buildTargets = [ "sw_vers" "ps" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" "pdkext" "sh" "gpt" ]
+    buildTargets = [ "sw_vers" "doubleagentd" "ps" "killall" "pkill" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" "pd-dmesg-save" "pdkext" "sh" "gpt" ]
       ++ [ "basename" "chown" "dirname" "echo" "false" "getopt" "hostname" "jot" "kill" "logname" "mktemp" "nice" "nohup" "passwd" "printenv" "pwd" "renice" "seq" "shlock" "sleep" "tee" "test_cmd" "true" "tsort" "uname" "yes" "uuencode" "uudecode" ]
       ++ [ "banner" "cat" "colrm" "comm" "cut" "expand" "fold" "head" "lam" "look" "nl" "paste" "rev" "split" "tail" "tr" "unexpand" "uniq" "wc" ];
   };
@@ -314,7 +306,6 @@ in
     libffiRiscv64Build
     libxml2Riscv64Build
     foundationRiscv64Build
-    iokitCFStaticRiscv64Build
     iokitRiscv64Build
     launchdRiscv64Build
     launchctlRiscv64Build

@@ -31,12 +31,12 @@ stdenv.mkDerivation {
     # PD's IOStorageFamily has no unmap options and refuses any bit, so wipefs' whole-disk hint is 0
     CXXFLAGS="$CFLAGS -nostdinc++ -I${libcxxDylib}/usr/include/c++/v1 -std=c++17 -DkIOStorageUnmapOptionWhole=0"
     # no -undefined dynamic_lookup, a missing symbol has to fail here
-    LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${iokit}/usr/lib -L${libcxxDylib}/usr/lib -L${libcxxabiDylib}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,26.5,26.5"
+    LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -F${iokit}/System/Library/Frameworks -L${libcxxDylib}/usr/lib -L${libcxxabiDylib}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,26.5,26.5"
 
     $CXX $CXXFLAGS -c wipefs/wipefs.cpp -o wipefs.o
     $CXX $CXXFLAGS -c wipefs/ExtentManager.cpp -o ExtentManager.o
     $CC $CFLAGS -c newfs_msdos/newfs_msdos.c -o newfs_msdos.o
-    $CC $LDFLAGS -o newfs_msdos.bin newfs_msdos.o wipefs.o ExtentManager.o -lIOKitCF -lCoreFoundation -lc++ -lc++abi -lSystem
+    $CC $LDFLAGS -o newfs_msdos.bin newfs_msdos.o wipefs.o ExtentManager.o -framework IOKit -lCoreFoundation -lc++ -lc++abi -lSystem
 
     objs=""
     for f in fsck_msdos/*.c; do

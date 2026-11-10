@@ -119,14 +119,16 @@ stdenv.mkDerivation {
       -I${src}/src/Libraries/libunwind/include"
 
     objs=""
+    source ${../../lib/pcc.sh}
     for s in ${lib.concatStringsSep " " mmSrcs}; do
-      ${cc} $CXXFLAGS -c "$O/runtime/$s.mm" -o "$(basename $s).o"
+      pcc ${cc} $CXXFLAGS -c "$O/runtime/$s.mm" -o "$(basename $s).o"
       objs="$objs $(basename $s).o"
     done
     for s in ${lib.concatStringsSep " " asmSrcs}; do
-      ${cc} -isysroot "$DARWIN_SDK_ROOT" -I$O/runtime -c "$O/runtime/$s.s" -o "$(basename $s).o"
+      pcc ${cc} -isysroot "$DARWIN_SDK_ROOT" -I$O/runtime -c "$O/runtime/$s.s" -o "$(basename $s).o"
       objs="$objs $(basename $s).o"
     done
+    pcc_wait
 
     # Link. Flags mirror objc.xcconfig; -fixup_chains is PD's eager-bind fix.
     ${cc} -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \
@@ -146,9 +148,10 @@ stdenv.mkDerivation {
 
     tobjs=""
     for s in ${lib.concatStringsSep " " trampSrcs}; do
-      ${cc} -isysroot "$DARWIN_SDK_ROOT" -I$O/runtime -c "$O/runtime/$s.s" -o "$s.o"
+      pcc ${cc} -isysroot "$DARWIN_SDK_ROOT" -I$O/runtime -c "$O/runtime/$s.s" -o "$s.o"
       tobjs="$tobjs $s.o"
     done
+    pcc_wait
     if [ -n "$tobjs" ]; then
       ${cc} -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \
         -fuse-ld=${nativeLd}/bin/ld -nostdlib \

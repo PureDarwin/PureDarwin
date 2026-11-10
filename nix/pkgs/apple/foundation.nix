@@ -31,6 +31,7 @@ let
     "Numeric.subproj/NSNumber"
     "Date.subproj/NSDate"
     "Date.subproj/NSTimer"
+    "Date.subproj/NSDateInterval"
     "URL.subproj/NSURL"
     "Coding.subproj/NSCoder"
     "Coding.subproj/NSKeyedUnarchiver"
@@ -63,6 +64,7 @@ let
     "Runtime.subproj/NSInvocation"
     "Date.subproj/NSCalendar"
     "Formatters.subproj/NSNumberFormatter"
+    "Formatters.subproj/NSByteCountFormatter"
     "RunLoop.subproj/NSSocket_bsd"
     "RunLoop.subproj/NSSelectInputSource"
     "RunLoop.subproj/NSRunLoop"
@@ -74,6 +76,7 @@ let
     "Stream.subproj/NSStream"
     "Runtime.subproj/NSObjCRuntime"
     "Runtime.subproj/NSGeometry"
+    "Runtime.subproj/NSRange"
     "Runtime.subproj/NSAffineTransform"
     "Runtime.subproj/NSException"
     "Runtime.subproj/NSValue"
@@ -110,6 +113,9 @@ let
     "URL.subproj/NSURLRequest"
     "URL.subproj/NSURLFileTypeMappings"
     "URL.subproj/NSURLSession"
+    "URL.subproj/NSURLProtocol"
+    "URL.subproj/NSURLAuthenticationChallenge"
+    "URL.subproj/NSURLComponents"
     "Runtime.subproj/NSProgress"
     "Runtime.subproj/NSUserActivity"
     "Runtime.subproj/NSUserNotification"
@@ -156,11 +162,13 @@ stdenv.mkDerivation {
       -I${notifyInclude}"
 
     objs=""
+    source ${../../lib/pcc.sh}
     for s in ${lib.concatStringsSep " " mmSrcs}; do
       objfile="$(basename $s).o"
-      ${cc} $CFLAGS -c "$s.m" -o "$objfile"
+      pcc ${cc} $CFLAGS -c "$s.m" -o "$objfile"
       objs="$objs $objfile"
     done
+    pcc_wait
 
     ${cc} -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \

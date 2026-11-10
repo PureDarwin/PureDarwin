@@ -38,9 +38,8 @@ stdenv.mkDerivation {
       -I${libSystem}/pd-xpc-dev/include \
       -I${corefoundation}/include \
       -F${corefoundation}/System/Library/Frameworks \
-      -I${iokit}/include \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
-      -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${iokit}/usr/lib \
+      -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -F${iokit}/System/Library/Frameworks \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -Wl,-platform_version,macos,26.5,26.5 \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_libxpc_static.a \
@@ -50,7 +49,7 @@ stdenv.mkDerivation {
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_libinfo_static.a \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_libnv_static.a \
       -Wl,-fixup_chains \
-      -lCoreFoundation -lIOKitCF -lSystem \
+      -lCoreFoundation -framework IOKit -lSystem \
       ${src}/src/Libraries/XPC/launchctl/launchctl.c \
       ${libSystem}/pd-xpc-dev/lib/libXPC_launchd_mig_static.a \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libCrashReporterClient.a \

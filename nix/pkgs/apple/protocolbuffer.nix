@@ -51,10 +51,12 @@ stdenv.mkDerivation {
       -I${foundation}/usr/include"
 
     objs=""
+    source ${../../lib/pcc.sh}
     for s in ${lib.concatStringsSep " " mSrcs}; do
-      ${cc} $CFLAGS -c "$s.m" -o "$s.o"
+      pcc ${cc} $CFLAGS -c "$s.m" -o "$s.o"
       objs="$objs $s.o"
     done
+    pcc_wait
 
     ${cc} -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \

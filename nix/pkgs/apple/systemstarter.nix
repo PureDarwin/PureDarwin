@@ -29,9 +29,8 @@ stdenv.mkDerivation {
       -I${src}/src/Libraries/XPC/launchd/SystemStarter \
       -I${libSystem}/pd-xpc-dev/include \
       -I${corefoundation}/include \
-      -I${iokit}/include \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
-      -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${iokit}/usr/lib \
+      -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -F${iokit}/System/Library/Frameworks \
       -Wl,-platform_version,macos,26.5,26.5 \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_libxpc_static.a \
       -Wl,-U,_OBJC_CLASS_\$_NSObject \
@@ -40,7 +39,7 @@ stdenv.mkDerivation {
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_libinfo_static.a \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_libnv_static.a \
       -Wl,-fixup_chains \
-      -lCoreFoundation -lIOKitCF -lSystem \
+      -lCoreFoundation -framework IOKit -lSystem \
       ${src}/src/Libraries/XPC/launchd/SystemStarter/SystemStarter.c \
       ${src}/src/Libraries/XPC/launchd/SystemStarter/StartupItems.c \
       ${src}/src/Libraries/XPC/launchd/SystemStarter/IPC.c \

@@ -53,10 +53,12 @@ stdenv.mkDerivation {
     objs=""
 
     # the exception globals are per thread here, this dylib is the process's only c++ abi
+    source ${../../lib/pcc.sh}
     for s in ${lib.concatStringsSep " " abiSrcs}; do
-      ${cc} $ABI_FLAGS -c "$ABI/src/$s.cpp" -o "$s.o"
+      pcc ${cc} $ABI_FLAGS -c "$ABI/src/$s.cpp" -o "$s.o"
       objs="$objs $s.o"
     done
+    pcc_wait
 
     # the unwinder lives in libSystem and libc++ owns every std:: library symbol,
     # this dylib is the c++ abi only and imports _Unwind_* from libSystem

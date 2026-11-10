@@ -37,6 +37,7 @@
 , mpsNoxBuild
 , audiotoolboxBuild
 , pcmplayBuild
+, utilityAppBuilds ? [ ]
 , pdMetalSurfaceBuild
 , coreaudiodBuild
 , carbonBuild
@@ -61,6 +62,7 @@
 , coredataBuild
 , cgScreenDemoBuild
 , systemFontsBuild
+, sharedMimeInfoBuild
 , cairoNoxBuild
 , pdEpollShimBuild
 , tllistBuild
@@ -140,6 +142,10 @@
 , kernelArm64VirtAmpBuild
 , kernelArm64T8010Build
 , kernelArm64T8010DebugBuild
+, kernelArm64S8000Build
+, kernelArm64S8000DebugBuild
+, kernelArm64T8103Build
+, kernelArm64T8103DebugBuild
 , kernelArm64Bcm2837Build
 , kernelArm64Bcm2837DebugBuild
 , kernelArm64Sun50iBuild
@@ -157,6 +163,12 @@
 , kernelSource
 , kextsArm64Build
 , drmMsmArm64Build ? null
+, drmNouveauArm64Build ? null
+, nouveauFirmwareGm20b ? null
+, tegra210XusbFirmware ? null
+, tegra210Dtb ? null
+, tx1GlRootArm64Bundle ? null
+, tx1DesktopArm64Bundle ? null
 , kextsBuild
 , launchctlBuild
 , launchdBuild
@@ -181,6 +193,7 @@
 , calculatorBuild
 , installerBuild
 , pddecorBuild
+, loginwindowBuild
 , localeDataBuild
 , settingsBuild
 , waylandSessionBuild
@@ -257,6 +270,7 @@
 , pkgs
 , pythonBuild
 , securityBuild
+, certificatesBundleBuild
 , symptomReporterBuild
 , splitBaseSystemArm64VirtMinimal
 , splitBaseSystemArm64VirtMinimalRelease
@@ -334,12 +348,16 @@
 , yajlBuild
 , asmjitTestArm64Build
 , zshArm64Build
+, pdadbdArm64Build ? null
 , zshBuild
 , bashBuild
 # the drm drivers (amdgpu, i915) in the aux KC by default with their firmware, the GOP
 # framebuffer stays the fallback when none attaches
 , kcGpuBuild
 , gpuDefaultPackages
+, mesaDefaultBuild
+, libdrmAmdgpuBuild
+, libelfBuild
 }:
 
 let
@@ -624,6 +642,7 @@ let
     coredata = coredataBuild;
     cg-screen-demo = cgScreenDemoBuild;
     system-fonts = systemFontsBuild;
+    shared-mime-info = sharedMimeInfoBuild;
     icucore = icuCoreBuild;
     libcxxabi-dylib = libcxxabiDylibBuild;
     libcxx-dylib = libcxxDylibBuild;
@@ -646,6 +665,7 @@ let
     iokit = iokitBuild;
     coreServices = coreServicesBuild;
     security = securityBuild;
+    certificates-bundle = certificatesBundleBuild;
     symptomReporter = symptomReporterBuild;
     systemConfiguration = systemConfigurationBuild;
     diskArbitration = diskArbitrationBuild;
@@ -743,6 +763,10 @@ let
     kernel-arm64-virt = kernelArm64VirtBuild;
     kernel-arm64-virt-debug = kernelArm64VirtDebugBuild;
     kernel-arm64-t8010 = kernelArm64T8010Build;
+    kernel-arm64-s8000 = kernelArm64S8000Build;
+    kernel-arm64-s8000-debug = kernelArm64S8000DebugBuild;
+    kernel-arm64-t8103 = kernelArm64T8103Build;
+    kernel-arm64-t8103-debug = kernelArm64T8103DebugBuild;
     kernel-arm64-t8010-debug = kernelArm64T8010DebugBuild;
     kernel-arm64-bcm2837 = kernelArm64Bcm2837Build;
     kernel-arm64-bcm2837-debug = kernelArm64Bcm2837DebugBuild;
@@ -884,6 +908,9 @@ let
         inherit kernelSource;
         kexts = kextsBuild;
         kcTools = kc-tools.packages.${system}.default;
+        # each fbsdkpi nic links its own copy of the layer, together they pushed this kc past the
+        # loader's 63 MiB span, PDE1000 and PDRealtek8111 still cover the common nics here
+        excludeKexts = [ "PDFBSDem.kext" "PDFBSDigc.kext" "PDFBSDrge.kext" ];
       };
       kcDebugBuild = pkgs.callPackage ./pkgs/toolchain/kc.nix {
         kernel = kernelDebugBuild;
@@ -910,13 +937,34 @@ let
         kexts = kextsArm64Build;
         kcTools = kc-tools.packages.${system}.default;
       };
-      kcArm64T8010DebugBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64-t8010.nix {
-        kernel = kernelArm64T8010DebugBuild;
+      # M1 for darwin-vm: the virt collection's kexts over the T8103 kernel, same large-memory base
+      kcArm64T8103DebugBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
+        kernel = kernelArm64T8103DebugBuild;
+        inherit kernelSource;
         kexts = kextsArm64Build;
         kcTools = kc-tools.packages.${system}.default;
       };
+      kcArm64T8010DebugBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64-t8010.nix {
+        kernel = kernelArm64T8010DebugBuild;
+        inherit kernelSource;
+        kexts = kextsArm64Build;
+        kcTools = kc-tools.packages.${system}.default;
+      };
+      # the A9 (S8000) collection for Inferno's s8000 machine, the same kext set as T8010
+      kcArm64S8000DebugBuild = (pkgs.callPackage ./pkgs/toolchain/kc-arm64-t8010.nix {
+        kernel = kernelArm64S8000DebugBuild;
+        inherit kernelSource;
+        kexts = kextsArm64Build;
+        # Inferno patches the apfs kext and needs it present
+        extraKexts = [ "pthread" "Sandbox" "amfi" "apfs" "PDStubAppleMobileFileIntegrity" "PDStubAppleImage4" "PDStubImage4"
+          "PDStubAppleFirmwareUpdateKext" "PDStubAppleS5L8960XWatchDogTimer" ];
+        # Apple's arm64 layout: collection header at ARM64_KC_BASE, then the kexts, then the kernel
+        kcBase = "fffffff006000000";
+        kcTools = kc-tools.packages.${system}.default;
+      }).overrideAttrs { pname = "puredarwin-kc-arm64-s8000"; };
       kcArm64T8010ReleaseBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64-t8010.nix {
         kernel = kernelArm64T8010Build;
+        inherit kernelSource;
         kexts = kextsArm64Build;
         kcTools = kc-tools.packages.${system}.default;
       };
@@ -959,6 +1007,27 @@ let
           "${drmMsmArm64Build}/System/Library/Extensions/PDDRMmsm.kext"
           # no display: neuswc draws into ram, pdfbd streams it out over usb
           "${kextsArm64Build}/System/Library/Extensions/PDVirtualFramebuffer.kext"
+        ];
+      };
+      # the sun50i collection plus the drm layer and nouveau, for the jetson tx1's gm20b
+      kcArm64Tegra210Build = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
+        kernel = kernelArm64Sun50iBuild;
+        inherit kernelSource;
+        kexts = kextsArm64Build;
+        kcTools = kc-tools.packages.${system}.default;
+        kcBase = "fffffff006000000";
+        extraKexts = [
+          "${drmNouveauArm64Build}/System/Library/Extensions/PDDRMDri.kext"
+          "${drmNouveauArm64Build}/System/Library/Extensions/PDDRMnouveau.kext"
+        ];
+        # nouveau needs about 6.7 MB, so drivers for other boards and unused filesystems make room
+        omitKexts = [
+          "hfs" "HFSEncodings" "apfs" "ApfsFileSystemDriver" "msdosfs" "IONVMEFamily" "RavynAHCIPort"
+          "PDPowerVR" "PDSun60iDisplay" "PDSg2002SD" "PDSg2002Eth"
+          "IOVirtIOFamily" "IOVirtIOGPU" "IOVirtIOBlock" "IOVirtIONet"
+          "PDQcomTLMM" "PDQcomGeniI2C" "PDI2CHID" "AppleUSBOHCI"
+          # the usb host stays: PDTegraXUSB hands the xusb xhci to RavynXHCIPort for hid input
+          "AppleUSBEHCI" "PDDiskImages2" "IOGOPFramebuffer" "PDEcamPCI" "PDI2CFamily"
         ];
       };
       kcArm64Sun50iDebugBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
@@ -1007,6 +1076,20 @@ let
         xnuLoader = xnuLoaderDefault;
         apfsprogs = pkgs.apfsprogs;
         #testAudioFile = /home/vali/development/darwin/stillalive.pcm;
+      };
+      # image-store-minimal plus Nix and a toolchain, a PD guest that builds natively
+      builderPackageSet = {
+        inherit (imageExtraPackageSet)
+          nix llvm bash zsh toybox file openssl curl libcurl-dylib libz-dylib openssh git xz unzip bzip2
+          gnumake bmake ninja cmake clang meson pkgconf gnum4 autoconf automake bison flex
+          python migcomDarwin dsymutil libcxx-dylib libcxxabi-dylib libiconv nano xxd kc-tools-guest
+          corefoundation systemConfiguration icucore libobjc;
+        cctools = cctoolsBuild;
+      };
+      imageBuilderBuild = imageStoreMinimalBuild.override {
+        extraPackages = strippedExtraPackages ++ lib.attrValues builderPackageSet;
+        imageFileName = "puredarwin-builder.img";
+        rootMB = 16384;
       };
       legacyBoot = xnu-loader.packages.${system}.legacy-boot.override {
         stage2Lba = 34;
@@ -1178,15 +1261,39 @@ let
         efiBinary = "BOOTAA64.EFI";
         netbootOnly = true;
         useRamdisk = true;
-        # The pruned tree is ~98MB (mostly libicudata, which CoreFoundation
-        # needs), so this leaves the running system ~55MB to write into. Both
-        # pongoOS limits had to be raised to carry it: the 128MB upload cap and
-        # the 64MB static-region cap.
+        # the pruned tree is ~98MB, mostly libicudata for CoreFoundation, leaving ~55MB to write into
+        # pongoOS's 128MB upload cap and 64MB static-region cap were raised to carry it
         ramdiskMB = 160;
-        # The kernel is chainloaded by pongoOS, never read from the filesystem,
-        # so the ~100MB of kernels and their link archives are dead weight
-        # here; the rest is headers and static libraries for building against
-        # the system, which nothing on a first boot needs.
+        # pongoOS chainloads the kernel, so the kernels and link archives go, with the headers and static
+        # libraries nothing on a first boot needs
+        ramdiskPrune = [
+          "System/Library/Kernels"
+          "include"
+          "usr/include"
+          "usr/local/include"
+          "pd-guest-headers"
+          "pd-xpc-dev"
+          "lib/pkgconfig"
+          "usr/lib/pkgconfig"
+          "applets.txt"
+        ];
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 serial_video_mirror=1 no_interrupt_masked_debug=1 rd=md0";
+      };
+      # the same minimal root for Inferno's s8000, md0 from the initrd
+      ramdiskArm64S8000Build = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystemArm64VirtMinimal;
+        extraPackages = [ zshArm64Build libiconvArm64Build toyboxArm64Build ];
+        kc = kcArm64S8000DebugBuild;
+        xnuLoader = xnuLoaderArm64;
+        apfsprogs = pkgs.apfsprogs;
+        efiBinary = "BOOTAA64.EFI";
+        netbootOnly = true;
+        useRamdisk = true;
+        # the pruned tree is ~98MB, mostly libicudata for CoreFoundation, leaving ~55MB to write into
+        # pongoOS's 128MB upload cap and 64MB static-region cap were raised to carry it
+        ramdiskMB = 160;
+        # pongoOS chainloads the kernel, so the kernels and link archives go, with the headers and static
+        # libraries nothing on a first boot needs
         ramdiskPrune = [
           "System/Library/Kernels"
           "include"
@@ -1204,6 +1311,33 @@ let
       ramdiskArm64Sun50iBuild = ramdiskArm64T8010Build.override {
         kc = kcArm64Sun50iReleaseBuild;
       };
+      # the sun50i collection carries the tegra210 drivers too, plus adb over the jetson tx1's usb port
+      ramdiskArm64Tegra210Build = ramdiskArm64T8010Build.override {
+        kc = kcArm64Tegra210Build;
+        extraPackages = [ zshArm64Build libiconvArm64Build toyboxArm64Build ]
+          ++ lib.optional (pdadbdArm64Build != null) pdadbdArm64Build
+          ++ lib.optional (nouveauFirmwareGm20b != null) nouveauFirmwareGm20b
+          ++ lib.optional (tegra210XusbFirmware != null) tegra210XusbFirmware;
+      };
+      # the same root on the sd card, with mesa (nouveau and llvmpipe) and pdgltri, too big for the blob
+      ramdiskArm64Tegra210SdBuild = ramdiskArm64Tegra210Build.override {
+        extraPackages = [ zshArm64Build libiconvArm64Build toyboxArm64Build ]
+          ++ lib.optional (pdadbdArm64Build != null) pdadbdArm64Build
+          ++ lib.optional (nouveauFirmwareGm20b != null) nouveauFirmwareGm20b
+          ++ lib.optional (tegra210XusbFirmware != null) tegra210XusbFirmware
+          ++ lib.optional (tx1GlRootArm64Bundle != null) tx1GlRootArm64Bundle;
+        ramdiskMB = 512;
+      };
+      # the sd root plus the argon desktop, started by launchd on the PDTegraDisplay framebuffer
+      ramdiskArm64Tegra210SdDesktopBuild = ramdiskArm64Tegra210SdBuild.override (old: {
+        # fastfetch for the desktop terminal, with the foundation it links and no second mesa
+        extraPackages = old.extraPackages ++ lib.optional (tx1DesktopArm64Bundle != null) tx1DesktopArm64Bundle
+          ++ [ fastfetchNoGLArm64Build foundationArm64Build ];
+        ramdiskMB = 1536;
+      });
+      # mainline device trees in place of cboot's l4t tree, off by default since cboot's memory and carveout fixups are lost
+      ramdiskArm64Tegra210MainlineDtbBuild = ramdiskArm64Tegra210Build.override { boardDtb = tegra210Dtb; };
+      ramdiskArm64Tegra210SdMainlineDtbBuild = ramdiskArm64Tegra210SdBuild.override { boardDtb = tegra210Dtb; };
       ramdiskArm64Sc8280xpBuild = ramdiskArm64T8010Build.override {
         kc = kcArm64Sc8280xpReleaseBuild;
         xnuLoader = xnuLoaderArm64Sc8280xp;
@@ -1288,31 +1422,40 @@ let
           tllist = tllistBuild;
           pd-epoll-shim = pdEpollShimBuild;
           dbus = dbusNoxBuild;
-          mesa = mesaNoxBuild;
+          # the one mesa with every gpu driver, the loader picks by render node, else virgl or llvmpipe
+          mesa = mesaDefaultBuild;
+          libdrm-gpu = libdrmAmdgpuBuild;
+          libelf = libelfBuild;
     glu = gluNoxBuild;
           opengl-framework = openglFrameworkNoxBuild;
           mesa-demos = mesaDemosNoxBuild;
           librsvg = librsvgNoxBuild;
         };
-      # the desktop session: neuswc with pdwm, the AppKit apps and org.puredarwin.wayland-session to start them
-      waylandDesktopPackages = lib.filter lib.isDerivation [
+      # the desktop session: neuswc with pdwm, the AppKit apps and org.puredarwin.argon to start them
+      waylandDesktopPackages = lib.filter lib.isDerivation ([
           localeDataBuild foundationBuild freetype2Build fontconfigBuild libpngBuild libjpegBuild xvfbZlibBuild
           xvfbFontsBuild pdsurfaceBuild onyx2dBuild coregraphicsBuild coretextBuild
           waylandBuild xkbcommonNoxBuild xkeyboardConfigBuild neuswcBuild
           quartzcoreBuild corevideoBuild applicationservicesBuild windowserverBuild appkitBuild coredataBuild cocoaBuild appFrameworksBuild carbonBuild mpsNoxBuild
-          openglFrameworkNoxBuild mesaNoxBuild gluNoxBuild llvmCrossBuild pdVirglShimBuild
-          terminalBuild menubarBuild pddecorBuild dockBuild finderBuild systemInformationBuild calculatorBuild settingsBuild waylandSessionBuild psOnlyBuild diagToolsBuild
+          openglFrameworkNoxBuild mesaDefaultBuild libdrmAmdgpuBuild libelfBuild gluNoxBuild llvmCrossBuild pdVirglShimBuild
+          terminalBuild menubarBuild pddecorBuild loginwindowBuild dockBuild finderBuild systemInformationBuild calculatorBuild settingsBuild waylandSessionBuild psOnlyBuild diagToolsBuild
+          # the built-in utilities: text editor, activity, logs, image viewer, screenshot and disks
+        ] ++ utilityAppBuilds ++ [
           # Inter and the other system faces the window chrome and menu bar are drawn in
           systemFontsBuild
+          # the mime database glib reads, so gtk and webkit can tell what a file or response is
+          sharedMimeInfoBuild
           # something full-screen to run in it
           ncursesBuild nanoBuild fastfetchNoxBuild
           # vulkan on the host gpu with PUREDARWIN_VM_VENUS=1 (venus virtio-gpu)
           vulkanLoaderNoxBuild mesaVenusWaylandBuild pdMetalSurfaceBuild libdrmVirtgpuBuild vulkanToolsNoxBuild venusTestsNoxBuild
           # the Metal demos: pdmtl and Indium tests (metal-pd), Metal.framework (metal-objc), Apple's samples
           glfwPdBuild metalPdNoxBuild metalObjcPdNoxBuild metalAppleSamplesNoxBuild spirvCrossPdBuild
-          # mslc compiles newLibraryWithSource: on a cache miss, through the image's clang
+          # mslc compiles newLibraryWithSource: on a cache miss, through the image clang
           mslcPdBuild
-      ];
+          # eglinfo and peglgears, to tell a gpu GL apart from the compositor on testers machines
+          mesaDemosNoxBuild
+      ]);
       imageWaylandBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemWayland;
         # the same desktop session as image-wayland-minimal, over the full userland
@@ -1322,7 +1465,6 @@ let
         xnuLoader = xnuLoaderDefault;
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-wayland.img";
-        # the aux KC is not SIP protected on ext4, allow unrestricted fs and untrusted kexts
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1 ahci_debug=1 csr-active-config=0x3";
       };
       # wifi firmware the drivers load from /Library/Firmware/<driver>, kept out
@@ -1338,6 +1480,40 @@ let
           fi
         done
         cp ${pkgs.linux-firmware.src}/LICENSES/LICENCE.rtlwifi_firmware.txt $fw/LICENCE.rtlwifi_firmware.txt
+      '';
+      # realtek usb wifi firmware for PDFBSDrtwn from linux-firmware, under the names rtwn asks for
+      rtwnFirmwareBuild = pkgs.runCommand "puredarwin-rtwn-firmware" { } ''
+        fw=$out/Library/Firmware
+        mkdir -p $fw
+        while read name src; do
+          from=${pkgs.linux-firmware}/lib/firmware/$src
+          if [ -e "$from.zst" ]; then ${pkgs.zstd}/bin/zstd -dqf "$from.zst" -o $fw/$name
+          elif [ -e "$from.xz" ]; then ${pkgs.xz}/bin/xz -dc "$from.xz" > $fw/$name
+          elif [ -e "$from" ]; then cp -L "$from" $fw/$name
+          else echo "rtwn firmware: no $src in linux-firmware" >&2; exit 1
+          fi
+        done <<EOF
+        rtwn-rtl8188eufw rtlwifi/rtl8188eufw.bin
+        rtwn-rtl8192cfwT rtlwifi/rtl8192cufw_TMSC.bin
+        rtwn-rtl8192cfwU rtlwifi/rtl8192cufw_A.bin
+        rtwn-rtl8192eufw rtlwifi/rtl8192eu_nic.bin
+        rtwn-rtl8723bufw rtlwifi/rtl8723bu_nic.bin
+        rtwn-rtl8812aufw rtw88/rtw8812a_fw.bin
+        rtwn-rtl8821aufw rtw88/rtw8821a_fw.bin
+        EOF
+        cp ${pkgs.linux-firmware.src}/LICENSES/LICENCE.rtlwifi_firmware.txt $fw/LICENCE.rtwn_firmware.txt
+      '';
+      # rt2870.bin for PDFBSDrun, as the runfw image firmware(9) asks for: rt2870 in its first 4 KB, rt3071 in the rest
+      runFirmwareBuild = pkgs.runCommand "puredarwin-run-firmware" { } ''
+        fw=$out/Library/Firmware
+        mkdir -p $fw
+        from=${pkgs.linux-firmware}/lib/firmware/rt2870.bin
+        if [ -e "$from.zst" ]; then ${pkgs.zstd}/bin/zstd -dqf "$from.zst" -o $fw/runfw
+        elif [ -e "$from.xz" ]; then ${pkgs.xz}/bin/xz -dc "$from.xz" > $fw/runfw
+        else cp -L "$from" $fw/runfw
+        fi
+        [ "$(stat -c %s $fw/runfw)" = 8192 ] || { echo "runfw is not 8 KB" >&2; exit 1; }
+        cp ${pkgs.linux-firmware.src}/LICENSES/LICENCE.ralink-firmware.txt $fw/LICENCE.runfw.txt
       '';
       # WCN6855 firmware for PDQwx from linux-firmware, under the names qwx(4) asks for
       qwxFirmwareBuild = pkgs.runCommand "puredarwin-qwx-firmware" { } ''
@@ -1364,6 +1540,8 @@ let
       strippedExtraPackages = lib.filter lib.isDerivation (
         [
           rtw89FirmwareBuild
+          rtwnFirmwareBuild
+          runFirmwareBuild
           qwxFirmwareBuild
           localeDataBuild
           coreFoundationBuild
@@ -1441,6 +1619,19 @@ let
         ]);
         imageFileName = "puredarwin-frameworks-test.img";
         rootMB = 2048;
+      };
+      # image-minimal with the example out-of-tree kext linked into an auxiliary KC
+      imageAuxTestBuild = imageMinimalBuild.override {
+        kc = kcBuild.override { auxKexts = [ "PDAuxHello.kext" ]; };
+        auxLoad = [ "org.puredarwin.example.AuxHello" ];
+        imageFileName = "puredarwin-aux-test.img";
+      };
+      # image-minimal with the system tree in /nix/store, the Apple paths link through /run/current-system
+      imageStoreMinimalBuild = imageMinimalBuild.override {
+        nixStore = true;
+        extraPackages = strippedExtraPackages ++ [ imageExtraPackageSet.nix ];
+        imageFileName = "puredarwin-store-minimal.img";
+        rootMB = 1024;
       };
       # The minimal system on an APFS root. Same contents as image-minimal, so
       # a boot failure here is the APFS path rather than anything in userland.
@@ -1572,17 +1763,22 @@ let
         cp "$(find ${userlandNoxBuild} -path '*/bin/dmesg' | head -n 1)" $out/bin/dmesg
         cp "$(find ${userlandNoxBuild} -path '*/usr/sbin/wifiutil' | head -n 1)" $out/usr/sbin/wifiutil
         cp "$(find ${userlandNoxBuild} -path '*/usr/sbin/pdpowerd' | head -n 1)" $out/usr/sbin/pdpowerd
+        mkdir -p $out/usr/libexec
+        cp "$(find ${userlandNoxBuild} -path '*/usr/libexec/pd-dmesg-save' | head -n 1)" $out/usr/libexec/pd-dmesg-save
         cp "$(find ${userlandNoxBuild} -name org.puredarwin.pdpowerd.plist | head -n 1)" $out/System/Library/LaunchDaemons/
+        # the AppleDouble parser the kernel asks for xattrs on filesystems without native ones
+        cp "$(find ${userlandNoxBuild} -path '*/usr/libexec/doubleagentd' | head -n 1)" $out/usr/libexec/doubleagentd
+        cp "$(find ${userlandNoxBuild} -name com.apple.doubleagentd.plist | head -n 1)" $out/System/Library/LaunchDaemons/
         # joins a remembered network at boot
         cp "$(find ${userlandNoxBuild} -name org.puredarwin.wifi-autojoin.plist | head -n 1)" $out/System/Library/LaunchDaemons/
       '';
-      # the Wayland counterpart of a minimal X11 session: neuswc with pdwm, and the
-      # AppKit Terminal started by org.puredarwin.wayland-session.
       # the stripped base has zsh but no /bin/sh, which the session script and launchd jobs run under
       binShBuild = pkgs.runCommand "puredarwin-bin-sh" { } ''
         mkdir -p $out/bin
         ln -s zsh $out/bin/sh
       '';
+      # the Wayland counterpart of a minimal X11 session: neuswc with pdwm, and the
+      # AppKit Terminal started by org.puredarwin.argon.
       # pdkext alone from the userland, it loads the aux KC at boot for PDFBSDix and the drm kexts
       pdkextFiles = pkgs.runCommand "puredarwin-pdkext" { } ''
         mkdir -p $out/usr/sbin $out/System/Library/LaunchDaemons
@@ -2338,12 +2534,21 @@ EOF
       kc-arm64 = kcArm64ReleaseBuild;
       kc-arm64-a733 = kcArm64A733ReleaseBuild;
       kc-arm64-t8010-debug = kcArm64T8010DebugBuild;
+      kc-arm64-s8000-debug = kcArm64S8000DebugBuild;
+      kc-arm64-t8103-debug = kcArm64T8103DebugBuild;
       ramdisk-arm64-t8010 = ramdiskArm64T8010Build;
+      ramdisk-arm64-s8000 = ramdiskArm64S8000Build;
       ramdisk-arm64-sun50i = ramdiskArm64Sun50iBuild;
+      ramdisk-arm64-tegra210 = ramdiskArm64Tegra210Build;
+      ramdisk-arm64-tegra210-sd = ramdiskArm64Tegra210SdBuild;
+      ramdisk-arm64-tegra210-sd-desktop = ramdiskArm64Tegra210SdDesktopBuild;
+      ramdisk-arm64-tegra210-mainline-dtb = ramdiskArm64Tegra210MainlineDtbBuild;
+      ramdisk-arm64-tegra210-sd-mainline-dtb = ramdiskArm64Tegra210SdMainlineDtbBuild;
       ramdisk-arm64-sc8280xp = ramdiskArm64Sc8280xpBuild;
       kc-arm64-t8010 = kcArm64T8010ReleaseBuild;
       kc-arm64-virt4k-debug = kcArm64Virt4kDebugBuild;
       kc-arm64-sun50i = kcArm64Sun50iReleaseBuild;
+      kc-arm64-tegra210 = kcArm64Tegra210Build;
       kc-arm64-msm8916 = kcArm64Msm8916Build;
       kc-arm64-sun50i-debug = kcArm64Sun50iDebugBuild;
       kc-arm64-sc8280xp = kcArm64Sc8280xpReleaseBuild;
@@ -2399,6 +2604,12 @@ EOF
       opengl-framework-nox = openglFrameworkNoxBuild;
       mesa-demos-nox = mesaDemosNoxBuild;
       image-wayland = imageWaylandBuild;
+      # the same image under the desktop's name
+      image-argon = imageWaylandBuild;
+      # the Argon image with one local account, so it boots to the login screen
+      image-login-test = imageWaylandBuild.override {
+        defaultUser = { name = "tester"; realName = "Test Person"; password = "argon"; };
+      };
       image-wayland-minimal = imageWaylandMinimalBuild;
       image-installer = imageInstallerBuild;
       iso-installer = isoInstallerBuild;
@@ -2412,11 +2623,16 @@ EOF
       image-cg-test = imageCgTestBuild;
       msdos-cmds = msdosCmdsBuild;
       pdbless = pdblessBuild;
+      image-aux-test = imageAuxTestBuild;
+      image-store-minimal = imageStoreMinimalBuild;
+      image-builder = imageBuilderBuild;
       image-apfs-minimal = imageApfsMinimalBuild;
       image-legacy = imageLegacyBuild;
       image-ia32 = imageIa32Build;
       image-ia32-minimal = imageIa32MinimalBuild;
       image-ia32-dual = imageIa32DualBuild;
+      # the 32-bit uefi loader, so other images can carry it next to BOOTX64.EFI
+      xnu-loader-ia32 = xnuLoaderIa32;
       image-legacy-minimal = imageLegacyMinimalBuild;
       image-multiboot-minimal = imageMultibootMinimalBuild;
       image-grub-linux-minimal = imageGrubLinuxMinimalBuild;

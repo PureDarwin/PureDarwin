@@ -58,14 +58,16 @@ stdenv.mkDerivation {
 
     objs=""
 
+    source ${../../lib/pcc.sh}
     for s in ${lib.concatStringsSep " " cxxSrcs}; do
       extra=""
       # new.cpp stays out, operator new/delete belong to libc++abi (upstream's
       # LIBCXX_ENABLE_NEW_DELETE_DEFINITIONS=OFF, the define alone does nothing in llvm 21)
       o="cxx_$(echo "$s" | tr / _).o"
-      ${cc} $CXX_FLAGS $extra -c "$CXX/src/$s.cpp" -o "$o"
+      pcc ${cc} $CXX_FLAGS $extra -c "$CXX/src/$s.cpp" -o "$o"
       objs="$objs $o"
     done
+    pcc_wait
 
     # -reexport-lc++abi, not plain -lc++abi: on Apple platforms libc++.1.dylib
     # RE-EXPORTS libc++abi, so a two-level-namespace binary that records

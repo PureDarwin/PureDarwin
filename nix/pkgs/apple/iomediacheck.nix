@@ -5,7 +5,6 @@
 , libSystem
 , corefoundation
 , iokit
-, iokitHeaders
 , xnuIokitHeaders ? ../../../src/Kernel/xnu/iokit
 , storageHeaders ? ../../../src/Kernel/Extensions/IOStorageFamily/include
 , targetTriple ? "x86_64-apple-darwin20.4"
@@ -31,11 +30,11 @@ stdenv.mkDerivation {
     CC="${darwinCrossToolchain}/bin/${targetTriple}-clang"
 
     CFLAGS="-isysroot $DARWIN_SDK_ROOT -F$DARWIN_SDK_ROOT/System/Library/Frameworks -I${libSystem}/usr/include -I${corefoundation}/include -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
-    LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${iokit}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,26.5,26.5 -Wl,-undefined,dynamic_lookup -lIOKitCF -lCoreFoundation -lSystem"
+    LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -F${iokit}/System/Library/Frameworks -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,26.5,26.5 -Wl,-undefined,dynamic_lookup -framework IOKit -lCoreFoundation -lSystem"
 
     # Real headers, not local redefinitions: IOKitLib.h from the IOKitUser port,
     # IOBSD.h from xnu's iokit tree, storage/IOMedia.h from IOStorageFamily.
-    CFLAGS="$CFLAGS -I${iokitHeaders}/include -I${xnuIokitHeaders} -I${storageHeaders}"
+    CFLAGS="$CFLAGS -I${xnuIokitHeaders} -I${storageHeaders}"
 
     $CC $CFLAGS -c iomediacheck.c -o iomediacheck.o
     $CC $LDFLAGS -o iomediacheck iomediacheck.o

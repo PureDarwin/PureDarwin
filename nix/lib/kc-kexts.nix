@@ -52,8 +52,6 @@
     "IOVirtIONet.kext"
     "IOVirtIOBlock.kext"
     "PDHyperV.kext"
-    "PDRadeonFramebuffer.kext"
-    "PDAmdGPU.kext"
     "PDE1000.kext"
     "PDFBSDem.kext"
     "PDRealtek8111.kext"

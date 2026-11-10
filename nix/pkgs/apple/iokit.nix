@@ -10,6 +10,7 @@
 , foundation
 , isArmv6 ? lib.hasPrefix "armv6-" targetTriple
 , appleSdk
+, xnuIokitSrc ? ../../../src/Kernel/xnu/iokit/IOKit
 }:
 
 let
@@ -56,6 +57,15 @@ stdenv.mkDerivation {
     ln -sf A "$fwdir/Versions/Current"
     ln -sf Versions/Current/IOKit "$fwdir/IOKit"
     ln -sf Versions/Current/Resources "$fwdir/Resources"
+    # IOKitLib and the IOKitUser headers, so clients find <IOKit/...> through -F as on macOS
+    mkdir -p "$fwdir/Versions/A/Headers"
+    # the xnu headers the framework carries, xnu's INSTALL_IF_MI_LIST
+    for h in IOBSD.h IOKitKeys.h IOKitServer.h IOReturn.h IOSharedLock.h IOTypes.h IOMapTypes.h \
+             OSMessageNotification.h IODataQueueShared.h IOMessage.h IORPC.h IOUserServer.h; do
+      cp ${xnuIokitSrc}/$h "$fwdir/Versions/A/Headers/"
+    done
+    cp -r ${iokitCFStatic}/include/IOKit/. "$fwdir/Versions/A/Headers/"
+    ln -sf Versions/Current/Headers "$fwdir/Headers"
     runHook postInstall
   '';
 

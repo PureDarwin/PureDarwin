@@ -69,6 +69,14 @@ stdenv.mkDerivation {
     wayland-scanner client-header "$blur" ext-background-effect-v1-client-protocol.h
     wayland-scanner private-code "$blur" ext-background-effect-protocol.c
 
+    # mouse-look: pointer lock, confinement and relative motion, which neuswc implements
+    constraints=${waylandProtocols}/share/wayland-protocols/unstable/pointer-constraints/pointer-constraints-unstable-v1.xml
+    wayland-scanner client-header "$constraints" pointer-constraints-unstable-v1-client-protocol.h
+    wayland-scanner private-code "$constraints" pointer-constraints-protocol.c
+    relative=${waylandProtocols}/share/wayland-protocols/unstable/relative-pointer/relative-pointer-unstable-v1.xml
+    wayland-scanner client-header "$relative" relative-pointer-unstable-v1-client-protocol.h
+    wayland-scanner private-code "$relative" relative-pointer-protocol.c
+
     cc="${darwinCrossToolchain}/bin/${targetTriple}-clang"
     cflags="
       -isysroot $DARWIN_SDK_ROOT
@@ -92,6 +100,8 @@ stdenv.mkDerivation {
     $cc $cflags -c wlr-output-management-protocol.c -o wlr-output-management-protocol.o
     $cc $cflags -c pd-window-position-protocol.c -o pd-window-position-protocol.o
     $cc $cflags -c pd-surface-host-protocol.c -o pd-surface-host-protocol.o
+    $cc $cflags -c pointer-constraints-protocol.c -o pointer-constraints-protocol.o
+    $cc $cflags -c relative-pointer-protocol.c -o relative-pointer-protocol.o
 
     $cc \
       -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \
@@ -110,6 +120,7 @@ stdenv.mkDerivation {
       wlr-output-management-protocol.o \
       pd-window-position-protocol.o \
       pd-surface-host-protocol.o \
+      pointer-constraints-protocol.o relative-pointer-protocol.o \
       -lwayland-client -lwayland-cursor -lxkbcommon -lCoreGraphics -lCoreFoundation -lSystem \
       -o libWindowServer.dylib
 

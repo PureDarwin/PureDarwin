@@ -129,6 +129,9 @@ let
     ];
   };
   userlandSource = stripOsfmkImpl (sourceWith "puredarwin-userland-source" [
+    # pkill uses os_assert from libc's private os/assumes.h, which includes _simple.h
+    "src/Libraries/libSystem/libc/os/assumes.h"
+    "src/Libraries/libSystem/libplatform/private/_simple.h"
     # nohup detaches from the console session through _vprocmgr_detach_from_console;
     # vproc_priv.h is private and not in the SDK.
     "src/Libraries/XPC/libxpc/include"

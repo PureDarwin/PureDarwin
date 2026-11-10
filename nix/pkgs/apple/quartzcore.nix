@@ -61,12 +61,14 @@ stdenv.mkDerivation {
     "
 
     objects=""
+    source ${../../lib/pcc.sh}
     for source in *.m; do
       object="''${source%.m}.o"
       echo "  CC $source"
-      $cc $cflags -c "$source" -o "$object"
+      pcc $cc $cflags -c "$source" -o "$object"
       objects="$objects $object"
     done
+    pcc_wait
 
     $cc \
       -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \

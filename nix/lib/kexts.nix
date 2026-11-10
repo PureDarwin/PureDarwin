@@ -91,10 +91,6 @@ in
   { name = "IOVirtIOBlock.kext"; dir = "IOVirtIOBlock"; headers = [ "IOPCIFamily" "IOStorageFamily" "IOVirtIOFamily" ];
     arches = all; kc = x86; }
   { name = "PDHyperV.kext"; dir = "PDHyperV"; headers = [ "IONetworkingFamily" "IOStorageFamily" ]; arches = x86; kc = x86; }
-  { name = "PDRadeonFramebuffer.kext"; dir = "PDRadeonFramebuffer"; headers = [ "IOGraphicsFamily" "IOHIDFamily" "IOPCIFamily" ];
-    arches = x86; kc = x86; }
-  { name = "PDAmdGPU.kext"; dir = "PDAmdGPU"; headers = [ "IOGraphicsFamily" "IOHIDFamily" "IOPCIFamily" ];
-    arches = x86; kc = x86; }
   { name = "PDE1000.kext"; dir = "PDE1000"; headers = [ "IONetworkingFamily" "IOPCIFamily" ]; arches = x86arm; kc = x86; }
   { name = "PDFBSDem.kext"; dir = "PDFBSDem"; headers = [ "IONetworkingFamily" "IOPCIFamily" ]; extra = fbsdkpi;
     arches = x86arm; kc = x86; }
@@ -111,6 +107,8 @@ in
   # links against IO80211Family, so it must come after it
   { name = "PDFBSDrtw89.kext"; dir = "PDFBSDrtw89"; headers = [ "IO80211Family" "IOPCIFamily" ]; extra = fbsdkpi;
     arches = x86; kc = x86; }
+  { name = "PDFBSDiwlwifi.kext"; dir = "PDFBSDiwlwifi"; headers = [ "IO80211Family" "IOPCIFamily" ]; extra = fbsdkpi;
+    arches = x86; kc = [ ]; }
   # loaded from the gpu images' aux KC, with net80211 and linuxkpi it would push the boot KC past the loader's limit
   { name = "PDFBSDrtwn.kext"; dir = "PDFBSDrtwn"; headers = [ "IO80211Family" "IOPCIFamily" "IOUSBFamily" ]; extra = fbsdkpi;
     arches = x86; kc = [ ]; }
@@ -122,6 +120,7 @@ in
   { name = "PDUSBNCM.kext"; dir = "PDUSBNCM"; headers = [ "IONetworkingFamily" "IOUSBFamily" ]; arches = x86; kc = x86; }
   { name = "IOAudioFamily.kext"; dir = "IOAudioFamily"; arches = x86; kc = x86; }
   { name = "RavynHDAudio.kext"; dir = "RavynHDAudio"; headers = [ "IOAudioFamily" "IOPCIFamily" ]; arches = x86arm; kc = x86; }
+  { name = "PDUSBAudio.kext"; dir = "PDUSBAudio"; headers = [ "IOAudioFamily" "IOUSBFamily" ]; arches = x86; kc = x86; }
 
   # built but left out of the boot KC
   { name = "ApplePIODMA.kext"; dir = "IOPCIFamily/ApplePIODMA"; target = "ApplePIODMA"; headers = [ "IOPCIFamily" ];
@@ -149,7 +148,7 @@ in
   { name = "PDEcamPCI.kext"; dir = "PDEcamPCI"; target = "PDEcamPCI"; headers = [ "IOPCIFamily" ]; arches = armriscv; }
   { name = "PDRiscvPlatformExpert.kext"; dir = "PDRiscvPlatformExpert"; target = "PDRiscvPlatformExpert";
     arches = [ "riscv64" ]; }
-  { name = "PDSun50iMMC.kext"; dir = "PDSun50iMMC"; headers = [ "IOStorageFamily" ]; arches = arm; }
+  { name = "PDTegraSDMMC.kext"; dir = "PDTegraSDMMC"; headers = [ "IOStorageFamily" ]; arches = arm; }
   { name = "PDSg2002SD.kext"; dir = "PDSg2002SD"; headers = [ "IOStorageFamily" ]; arches = arm; }
   { name = "PDSg2002Eth.kext"; dir = "PDSg2002Eth"; headers = [ "IONetworkingFamily" ]; arches = arm; }
   { name = "PDQcomTLMM.kext"; dir = "PDQcomTLMM"; arches = arm; }
@@ -159,4 +158,8 @@ in
   { name = "PDTegraUSB.kext"; dir = "PDTegraUSB"; headers = [ "PDGadgetFamily" ]; arches = arm; }
   { name = "PDPowerVR.kext"; dir = "PDPowerVR"; headers = [ "PDSun60iDisplay" ]; arches = arm; }
   { name = "PDSun60iDisplay.kext"; dir = "PDSun60iDisplay"; arches = arm; }
+  { name = "PDTegraDisplay.kext"; dir = "PDTegraDisplay"; headers = [ "IOGraphicsFamily" "IOHIDFamily" ];
+    extra = [ "src/Kernel/fbsdkpi/freebsd" "src/Kernel/fbsdkpi/netbsd" ]; arches = arm; }
+  { name = "PDTegraXUSB.kext"; dir = "PDTegraXUSB"; headers = [ "PDTegraDisplay" ];
+    extra = [ "src/Kernel/fbsdkpi/freebsd" ]; arches = arm; }
 ]
