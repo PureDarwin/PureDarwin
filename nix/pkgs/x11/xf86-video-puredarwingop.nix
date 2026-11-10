@@ -40,10 +40,10 @@ stdenv.mkDerivation {
       -install_name /usr/lib/xorg/modules/drivers/puredarwingop_drv.so \
       @undef.args \
       -Wl,-exported_symbols_list,$drv/puredarwingop_drv.exports \
-      -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${iokit}/usr/lib \
+      -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -F${iokit}/System/Library/Frameworks \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -Wl,-platform_version,macos,26.5,26.5 \
-      puredarwingop_drv.o PDGOP.o pdscanout.o -lSystem -lIOKitCF -o puredarwingop_drv.so
+      puredarwingop_drv.o PDGOP.o pdscanout.o -lSystem -framework IOKit -o puredarwingop_drv.so
     runHook postBuild
   '';
 

@@ -41,12 +41,14 @@ stdenv.mkDerivation {
 
     mkdir -p out
     objs=""
+    source ${../../lib/pcc.sh}
     for src in ${lib.concatStringsSep " " migcomSrcs} y.tab.c lexxer.yy.c; do
       name="$(basename "$src" .c)"
       obj="out/$name.o"
-      $CC $CFLAGS -c "$src" -o "$obj"
+      pcc $CC $CFLAGS -c "$src" -o "$obj"
       objs="$objs $obj"
     done
+    pcc_wait
     $CC $LDFLAGS -o out/migcom $objs
     runHook postBuild
   '';

@@ -24,6 +24,7 @@ stdenv.mkDerivation {
   version = llvmVersion;
 
   src = llvmSrc;
+  patches = [ ./clang-msl.patch ];
 
   # Same as llvm-cross: with CoreServices in the SDK, clang's DirectoryWatcher
   # picks its mac backend and wants FSEvents. The APPLE branch has no fallback

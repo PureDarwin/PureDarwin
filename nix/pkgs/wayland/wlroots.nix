@@ -10,7 +10,6 @@
 , nativeMesonTools
 , libSystem
 , iokit
-, iokitHeaders
 , pdgopSource
 , pdVirglShim
 , libdrm
@@ -69,8 +68,8 @@ strip = '${darwinCrossToolchain}/bin/${targetTriple}-strip'
 pkg-config = '${pkg-config}/bin/pkg-config'
 
 [built-in options]
-    c_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=26.5', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-D_DARWIN_C_SOURCE', '-DPUREDARWIN', '-fno-stack-protector', '-I${waylandProtocols}/include', '-I${iokitHeaders}/include', '-I${pdVirglShim}/include', '-I${pdsurface}/usr/include']
-    c_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=26.5', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-L${iokit}/usr/lib', '-L${pdVirglShim}/usr/lib', '-L${pdsurface}/usr/lib', '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-dylib_file,/usr/lib/libpd_virgl_shim.dylib:${pdVirglShim}/usr/lib/libpd_virgl_shim.dylib', '-Wl,-dylib_file,/usr/lib/libPDSurface.dylib:${pdsurface}/usr/lib/libPDSurface.dylib', '-Wl,-platform_version,macos,26.5,26.5', '-lIOKitCF', '-lpd_virgl_shim', '-lPDSurface', '-lSystem']
+    c_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=26.5', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-D_DARWIN_C_SOURCE', '-DPUREDARWIN', '-fno-stack-protector', '-I${waylandProtocols}/include', '-I${pdVirglShim}/include', '-I${pdsurface}/usr/include']
+    c_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=26.5', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-F${iokit}/System/Library/Frameworks', '-L${pdVirglShim}/usr/lib', '-L${pdsurface}/usr/lib', '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-dylib_file,/usr/lib/libpd_virgl_shim.dylib:${pdVirglShim}/usr/lib/libpd_virgl_shim.dylib', '-Wl,-dylib_file,/usr/lib/libPDSurface.dylib:${pdsurface}/usr/lib/libPDSurface.dylib', '-Wl,-platform_version,macos,26.5,26.5', '-Wl,-framework,IOKit', '-lpd_virgl_shim', '-lPDSurface', '-lSystem']
 
 [host_machine]
 system = 'darwin'

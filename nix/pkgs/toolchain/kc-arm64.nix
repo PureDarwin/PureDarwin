@@ -7,9 +7,67 @@
 , kcBase ? "fffffe0006000000"
 # kext bundles from other builds, e.g. drm drivers built apart from the boot kexts
 , extraKexts ? [ ]
+# boot kexts a board leaves out, when its extra kexts would not fit below the kernel
+, omitKexts ? [ ]
 }:
 
 let
+  baseKexts = [
+    "IOPCIFamily"
+    "corecrypto"
+    "pthread"
+    "amfi"
+    "Sandbox"
+    "PDArmPlatformExpert"
+    "PDArmPCI"
+    "PDEcamPCI"
+    "IOStorageFamily"
+    "PDTegraSDMMC"
+    "PDGadgetFamily"
+    "PDTegraUSB"
+    "PDPowerVR"
+    "PDSun60iDisplay"
+    "PDSg2002SD"
+    "RavynAHCIPort"
+    "ext4"
+    "AppleFileSystemDriver"
+    "Ext4FileSystemDriver"
+    "msdosfs"
+    "apfs"
+    "ApfsFileSystemDriver"
+    "HFSEncodings"
+    "hfs"
+    "IONVMEFamily"
+    "IOHIDFamily"
+    "IOUSBFamily"
+    "IOUSBCompositeDriver"
+    "AppleUSBMergeNub"
+    "IOUSBHIDDriver"
+    "PDI2CFamily"
+    "PDQcomTLMM"
+    "PDQcomGeniI2C"
+    "PDI2CHID"
+    "AppleUSBEHCI"
+    "AppleUSBOHCI"
+    "PDTegraXUSB"
+    "RavynXHCIPort"
+    "IOGraphicsFamily"
+    "IOVirtIOFamily"
+    "IOVirtIOGPU"
+    "IOGOPFramebuffer"
+    "PDTegraDisplay"
+    "IONetworkingFamily"
+    "PDSg2002Eth"
+    "IOVirtIOBlock"
+    "IOVirtIONet"
+    "PDFBSDem"
+    "PDWatchdog"
+    "PDIOSurface"
+    "PDDiskImages2"
+    "PDLifs"
+    "PDSerialHID"
+    "PDKeyStore"
+  ];
   darwinKernelVersion = "25.5.0";
   darwinKernelVersionShort = "25.5";
 in
@@ -47,55 +105,7 @@ stdenv.mkDerivation {
     ${kcTools}/bin/kc-builder \
       -kc-base ${kcBase} \
       -kernel "$KERNEL_BIN" \
-      -kext "$KEXTS/IOPCIFamily.kext" \
-      -kext "$KEXTS/corecrypto.kext" \
-      -kext "$KEXTS/pthread.kext" \
-      -kext "$KEXTS/amfi.kext" \
-      -kext "$KEXTS/Sandbox.kext" \
-      -kext "$KEXTS/PDArmPlatformExpert.kext" \
-      -kext "$KEXTS/PDArmPCI.kext" \
-      -kext "$KEXTS/PDEcamPCI.kext" \
-      -kext "$KEXTS/IOStorageFamily.kext" \
-      -kext "$KEXTS/PDSun50iMMC.kext" \
-      -kext "$KEXTS/PDPowerVR.kext" \
-      -kext "$KEXTS/PDSun60iDisplay.kext" \
-      -kext "$KEXTS/PDSg2002SD.kext" \
-      -kext "$KEXTS/RavynAHCIPort.kext" \
-      -kext "$KEXTS/ext4.kext" \
-      -kext "$KEXTS/AppleFileSystemDriver.kext" \
-      -kext "$KEXTS/Ext4FileSystemDriver.kext" \
-      -kext "$KEXTS/msdosfs.kext" \
-      -kext "$KEXTS/apfs.kext" \
-      -kext "$KEXTS/ApfsFileSystemDriver.kext" \
-      -kext "$KEXTS/HFSEncodings.kext" \
-      -kext "$KEXTS/hfs.kext" \
-      -kext "$KEXTS/IONVMEFamily.kext" \
-      -kext "$KEXTS/IOHIDFamily.kext" \
-      -kext "$KEXTS/IOUSBFamily.kext" \
-      -kext "$KEXTS/IOUSBCompositeDriver.kext" \
-      -kext "$KEXTS/AppleUSBMergeNub.kext" \
-      -kext "$KEXTS/IOUSBHIDDriver.kext" \
-      -kext "$KEXTS/PDI2CFamily.kext" \
-      -kext "$KEXTS/PDQcomTLMM.kext" \
-      -kext "$KEXTS/PDQcomGeniI2C.kext" \
-      -kext "$KEXTS/PDI2CHID.kext" \
-      -kext "$KEXTS/AppleUSBEHCI.kext" \
-      -kext "$KEXTS/AppleUSBOHCI.kext" \
-      -kext "$KEXTS/RavynXHCIPort.kext" \
-      -kext "$KEXTS/IOGraphicsFamily.kext" \
-      -kext "$KEXTS/IOVirtIOFamily.kext" \
-      -kext "$KEXTS/IOVirtIOGPU.kext" \
-      -kext "$KEXTS/IOGOPFramebuffer.kext" \
-      -kext "$KEXTS/IONetworkingFamily.kext" \
-      -kext "$KEXTS/PDSg2002Eth.kext" \
-      -kext "$KEXTS/IOVirtIOBlock.kext" \
-      -kext "$KEXTS/IOVirtIONet.kext" \
-      -kext "$KEXTS/PDWatchdog.kext" \
-      -kext "$KEXTS/PDIOSurface.kext" \
-      -kext "$KEXTS/PDDiskImages2.kext" \
-      -kext "$KEXTS/PDLifs.kext" \
-      -kext "$KEXTS/PDSerialHID.kext" \
-      -kext "$KEXTS/PDKeyStore.kext" \
+      ${lib.concatMapStrings (k: "-kext \"$KEXTS/${k}.kext\" \\\n      ") (lib.subtractLists omitKexts baseKexts)}\
       ${lib.concatMapStrings (k: "-kext \"${k}\" \\\n      ") extraKexts}\
       "''${codeless[@]}" \
       -o kernel

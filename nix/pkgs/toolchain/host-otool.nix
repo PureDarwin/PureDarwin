@@ -56,15 +56,19 @@ stdenv.mkDerivation {
 
     CFLAGS="-std=gnu99 -I${cctools}/include -I${cctools}/include/foreign -I${xar}/include -DPROGRAM_PREFIX=\"\" -D__LITTLE_ENDIAN__=1 -D__private_extern__=__attribute__((visibility(\"hidden\"))) -include mach/i386/_structs.h -w${archDefines}"
 
+    source ${../../lib/pcc.sh}
     for f in ${lib.concatStringsSep " " otoolSrcs}; do
-      $CC $CFLAGS -c "${cctools}/otool/$f" -o "obj/otool_$f.o"
+      pcc $CC $CFLAGS -c "${cctools}/otool/$f" -o "obj/otool_$f.o"
     done
+    pcc_wait
     for f in ${lib.concatStringsSep " " libstuffSrcs}; do
-      $CC $CFLAGS -c "${cctools}/libstuff/$f" -o "obj/libstuff_$f.o"
+      pcc $CC $CFLAGS -c "${cctools}/libstuff/$f" -o "obj/libstuff_$f.o"
     done
+    pcc_wait
     for f in ${lib.concatStringsSep " " libxarSrcs}; do
-      $CC $CFLAGS -I${openssl.dev}/include -I${libxml2.dev}/include/libxml2 -c "${xar}/lib/$f" -o "obj/libxar_$f.o"
+      pcc $CC $CFLAGS -I${openssl.dev}/include -I${libxml2.dev}/include/libxml2 -c "${xar}/lib/$f" -o "obj/libxar_$f.o"
     done
+    pcc_wait
 
     $CC obj/otool_*.o obj/libstuff_*.o obj/libxar_*.o -o host_otool \
       -Wl,--allow-multiple-definition \

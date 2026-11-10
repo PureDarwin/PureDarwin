@@ -69,7 +69,7 @@ pkg-config = '${pkg-config}/bin/pkg-config'
 
 [built-in options]
 c_args = ['-isysroot', '${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk', '-mmacosx-version-min=26.5', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-fno-stack-protector', '-I${libSystem}/usr/include', '-I$PWD/compat']
-c_link_args = ['-isysroot', '${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk', '-mmacosx-version-min=26.5', '-F${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-L${corefoundation}/usr/lib', '-L${iokit}/usr/lib', '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-platform_version,macos,26.5,26.5', '-lIOKitCF', '-lCoreFoundation', '-lSystem']
+c_link_args = ['-isysroot', '${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk', '-mmacosx-version-min=26.5', '-F${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-L${corefoundation}/usr/lib', '-F${iokit}/System/Library/Frameworks', '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-platform_version,macos,26.5,26.5', '-framework', 'IOKit', '-lCoreFoundation', '-lSystem']
 
 [host_machine]
 system = 'darwin'

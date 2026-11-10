@@ -14,6 +14,19 @@ let
   kextList = lib.subtractLists excludeKexts (import ../../lib/kc-kexts.nix);
   darwinKernelVersion = "25.5.0";
   darwinKernelVersionShort = "25.5";
+  # only the codeless System.kext plists, so kernel source edits leave this input alone
+  systemKextPath = "src/Kernel/xnu/config/System.kext";
+  systemKextSource = lib.cleanSourceWith {
+    name = "puredarwin-kc-system-kext";
+    src = kernelSource;
+    filter = path: type:
+      let
+        rel = lib.removePrefix "${toString kernelSource.origSrc}/" (toString path);
+      in
+        rel == systemKextPath
+        || lib.hasPrefix "${systemKextPath}/" rel
+        || (type == "directory" && lib.hasPrefix "${rel}/" systemKextPath);
+  };
 in
 stdenv.mkDerivation {
   pname = "puredarwin-kc";
@@ -26,7 +39,7 @@ stdenv.mkDerivation {
     # The kernel derivation contains the linked kernel only. The codeless
     # KPI bundles live in the XNU source tree and are required for dependency
     # resolution (for example com.apple.kpi.bsd -> BSDKernel.kext).
-    KERNEL_EXTS=${kernelSource}/src/Kernel/xnu/config/System.kext/PlugIns
+    KERNEL_EXTS=${systemKextSource}/src/Kernel/xnu/config/System.kext/PlugIns
     KEXTS=${kexts}/System/Library/Extensions
 
     # The kernel binary's filename depends on which build variant xnu was

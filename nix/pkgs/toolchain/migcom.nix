@@ -110,14 +110,16 @@ stdenv.mkDerivation {
 
     mkdir -p migcom_native
     objs=""
+    source ${../../lib/pcc.sh}
     for src in ${lib.concatStringsSep " " migcomSrcs} y.tab.c lexxer.yy.c; do
       name="$(basename "$src" .c)"
       obj="migcom_native/$name.o"
-      $CC -std=gnu89 -D__private_extern__= -D__LITTLE_ENDIAN__ -DMIG_VERSION=\"\" \
+      pcc $CC -std=gnu89 -D__private_extern__= -D__LITTLE_ENDIAN__ -DMIG_VERSION=\"\" \
         ${hostCflags} \
         -c "$src" -o "$obj"
       objs="$objs $obj"
     done
+    pcc_wait
     $CC -o migcom_native/migcom.native $objs
     runHook postBuild
   '';
