@@ -31,6 +31,8 @@
 #import <Onyx2D/O2Surface.h>
 #import <Onyx2D/O2ColorSpace.h>
 #import <Onyx2D/O2DataProvider.h>
+#import <Onyx2D/O2ImageSource_PNG.h>
+#import <Onyx2D/O2ImageSource_JPEG.h>
 #import <Onyx2D/O2Exceptions.h>
 #import <Foundation/NSData.h>
 
@@ -107,9 +109,22 @@ ONYX2D_STATIC BOOL initFunctionsForRGBColorSpace(O2Image *self,size_t bitsPerCom
        
       case 32:
         switch(bitmapInfo&kO2BitmapAlphaInfoMask){
+         // a 4th byte with no alpha is padding, Wine asks for this in its window surfaces
          case kO2ImageAlphaNone:
+         case kO2ImageAlphaNoneSkipLast:
+          switch(bitmapInfo&kO2BitmapByteOrderMask){
+           case kO2BitmapByteOrder16Little:
+           case kO2BitmapByteOrder32Little:
+            self->_read_argb8u=O2ImageRead_XBGR8888_to_argb8u;
+            return YES;
+
+           case kO2BitmapByteOrder16Big:
+           case kO2BitmapByteOrder32Big:
+            self->_read_argb8u=O2ImageRead_RGBX8888_to_argb8u;
+            return YES;
+          }
           break;
-          
+
          case kO2ImageAlphaLast:
          case kO2ImageAlphaPremultipliedLast:
           switch(bitmapInfo&kO2BitmapByteOrderMask){
@@ -125,6 +140,8 @@ ONYX2D_STATIC BOOL initFunctionsForRGBColorSpace(O2Image *self,size_t bitsPerCom
           }
           break;
 
+         // read like the premultiplied layout, the same approximation AlphaLast uses
+         case kO2ImageAlphaFirst:
          case kO2ImageAlphaPremultipliedFirst:
           switch(bitmapInfo&kO2BitmapByteOrderMask){
            case kO2BitmapByteOrder16Little:
@@ -139,23 +156,6 @@ ONYX2D_STATIC BOOL initFunctionsForRGBColorSpace(O2Image *self,size_t bitsPerCom
           }
           break;
                     
-         case kO2ImageAlphaFirst:
-          break;
-          
-         case kO2ImageAlphaNoneSkipLast:
-          switch(bitmapInfo&kO2BitmapByteOrderMask){
-           case kO2BitmapByteOrder16Little:
-           case kO2BitmapByteOrder32Little:
-            self->_read_argb8u=O2ImageRead_XBGR8888_to_argb8u;
-            return YES;
-
-           case kO2BitmapByteOrder16Big:
-           case kO2BitmapByteOrder32Big:
-            self->_read_argb8u=O2ImageRead_RGBX8888_to_argb8u;
-            return YES;
-          }
-          break;
-          
          case kO2ImageAlphaNoneSkipFirst:
           switch(bitmapInfo&kO2BitmapByteOrderMask){
            
@@ -335,14 +335,25 @@ renderingIntent:(O2ColorRenderingIntent)renderingIntent {
    return self;
 }
 
--initWithJPEGDataProvider:(O2DataProvider *)jpegProvider decode:(const O2Float *)decode interpolate:(BOOL)interpolate renderingIntent:(O2ColorRenderingIntent)renderingIntent {
-   O2UnimplementedMethod();
-   return nil;
+// decodes through the image source for the format, decode arrays and interpolation are not applied
+static O2Image *O2ImageFromSourceClass(Class sourceClass,O2DataProvider *provider) {
+   O2ImageSource *source=[[sourceClass alloc] initWithDataProvider:provider options:nil];
+   O2Image       *image=nil;
+
+   if(source!=nil && [source count]>0)
+    image=[source createImageAtIndex:0 options:nil];
+   [source release];
+   return image;
 }
 
--initWithPNGDataProvider:(O2DataProvider *)jpegProvider decode:(const O2Float *)decode interpolate:(BOOL)interpolate renderingIntent:(O2ColorRenderingIntent)renderingIntent {
-   O2UnimplementedMethod();
-   return nil;
+-initWithJPEGDataProvider:(O2DataProvider *)jpegProvider decode:(const O2Float *)decode interpolate:(BOOL)interpolate renderingIntent:(O2ColorRenderingIntent)renderingIntent {
+   [self release];
+   return O2ImageFromSourceClass([O2ImageSource_JPEG class],jpegProvider);
+}
+
+-initWithPNGDataProvider:(O2DataProvider *)pngProvider decode:(const O2Float *)decode interpolate:(BOOL)interpolate renderingIntent:(O2ColorRenderingIntent)renderingIntent {
+   [self release];
+   return O2ImageFromSourceClass([O2ImageSource_PNG class],pngProvider);
 }
 
 -initMaskWithWidth:(size_t)width height:(size_t)height bitsPerComponent:(size_t)bitsPerComponent bitsPerPixel:(size_t)bitsPerPixel bytesPerRow:(size_t)bytesPerRow provider:(O2DataProvider *)provider decode:(const float *)decode interpolate:(BOOL)interpolate {
@@ -464,6 +475,9 @@ O2ImageRef O2ImageCreateWithPNGDataProvider(O2DataProviderRef pngProvider,const 
 }
 
 O2ImageRef O2ImageCreateWithImageInRect(O2ImageRef self,O2Rect rect) {
+   // Quartz returns NULL for a NULL image, Wine relies on it before a window has content
+   if(self==NULL)
+    return NULL;
    // like Quartz, the rounded rect is clipped to the image, rounding outwards could reach past its last row
    rect=O2RectIntersection(O2RectIntegral(rect),O2RectMake(0,0,self->_width,self->_height));
    if(rect.size.width<=0 || rect.size.height<=0)
@@ -1628,7 +1642,7 @@ void O2ImageReadPatternSpan_largb32f_PRE(O2Image *self,O2Float x, O2Float y, O2a
 }
 
 -(NSString *)description {
-   return [NSString stringWithFormat:@"<%@:%p> width=%d,height=%d,bpc=%d,bpp=%d,bpr=%d,bminfo=%x data length=%d",isa,self,_width,_height,_bitsPerComponent,_bitsPerPixel,_bytesPerRow,_bitmapInfo,[_provider length]];
+   return [NSString stringWithFormat:@"<%@:%p> width=%d,height=%d,bpc=%d,bpp=%d,bpr=%d,bminfo=%x data length=%d",[self class],self,_width,_height,_bitsPerComponent,_bitsPerPixel,_bytesPerRow,_bitmapInfo,[_provider length]];
 }
 
 @end

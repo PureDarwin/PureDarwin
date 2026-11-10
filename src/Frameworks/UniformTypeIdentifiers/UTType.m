@@ -63,6 +63,7 @@ static const UTDeclaration declarations[] = {
     { "org.gnu.gnu-zip-archive", "gzip archive", "public.archive", "gz gzip", "application/x-gzip" },
     { "public.font", "font", "public.data public.content", "", NULL },
     { "public.log", "log", "public.plain-text", "log", NULL },
+    { "public.vcard", "vCard", "public.text", "vcf vcard", "text/vcard" },
     { "com.pixar.universal-scene-description", "Universal Scene Description", "public.3d-content public.data", "usd usdc usda", "model/vnd.usd" },
     { "public.3d-content", "3D content", "public.content", "", NULL },
 };

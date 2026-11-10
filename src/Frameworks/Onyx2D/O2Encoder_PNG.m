@@ -101,11 +101,9 @@ void O2PNGEncoderWriteImage(O2PNGEncoderRef self,O2ImageRef image,CFDictionaryRe
 			break;
 		case kO2BitmapByteOrder32Big:
 			break;
+		// the default order is the components as named, RGBA already
 		case kO2BitmapByteOrderDefault:
 		default:
-#ifdef __LITTLE_ENDIAN__
-			png_set_bgr(png_ptr);
-#endif
 			break;
 	}
 	if (setjmp(png_jmpbuf(png_ptr))) {

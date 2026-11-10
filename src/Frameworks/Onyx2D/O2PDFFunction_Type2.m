@@ -97,7 +97,7 @@ static void evaluate(void *info,const float *input,float *output) {
    NSMutableString *result=[NSMutableString string];
    int i;
    
-   [result appendFormat:@"<%@ %x:",isa,self];
+   [result appendFormat:@"<%@ %x:",[self class],self];
    for(i=0;i<_C0Count;i++)
     [result appendFormat:@"C0[%d]=%f,",i,_C0[i]];
    for(i=0;i<_C1Count;i++)

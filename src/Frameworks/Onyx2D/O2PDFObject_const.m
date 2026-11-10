@@ -56,7 +56,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(NSString *)description {
-   return [NSString stringWithFormat:@"<%@ %d>",isa,_objectType];
+   return [NSString stringWithFormat:@"<%@ %d>",[self class],_objectType];
 }
 
 @end

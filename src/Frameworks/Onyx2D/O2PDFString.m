@@ -90,7 +90,7 @@ const unsigned char *O2PDFStringGetBytePtr(O2PDFStringRef string) {
    
    strncpy(s,(const char *)_bytes,_length);
    s[_length]='\0';
-   return [NSString stringWithFormat:@"<%@ %s>",isa,s];
+   return [NSString stringWithFormat:@"<%@ %s>",[self class],s];
 }
 
 @end

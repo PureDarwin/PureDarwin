@@ -52,9 +52,15 @@ CFTypeID O2ImageDestinationGetTypeID(void) {
    return 0;
 }
 
+// the types that have an encoder below
 CFArrayRef O2ImageDestinationCopyTypeIdentifiers(void) {
-   O2UnimplementedFunction();
-   return NULL;
+   const void *types[]={ CFSTR("public.png"), CFSTR("public.tiff"),
+#ifdef LIBJPEG_PRESENT
+    CFSTR("public.jpeg"),
+#endif
+   };
+
+   return CFArrayCreate(kCFAllocatorDefault,types,sizeof(types)/sizeof(types[0]),&kCFTypeArrayCallBacks);
 }
 
 

@@ -30,7 +30,7 @@
 }
 
 -(NSString *)description {
-   return [NSString stringWithFormat:@"<%@ %x> { %@ }",isa,self,_objects];
+   return [NSString stringWithFormat:@"<%@ %x> { %@ }",[self class],self,_objects];
 }
 
 @end

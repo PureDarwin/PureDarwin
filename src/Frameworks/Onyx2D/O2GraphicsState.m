@@ -14,6 +14,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <Onyx2D/O2MutablePath.h>
 #import <Onyx2D/O2Font.h>
 #import <Onyx2D/O2ClipState.h>
+#import <Onyx2D/O2ClipPhase.h>
+#import <Onyx2D/O2Path.h>
 #import <Foundation/NSArray.h>
 #import <Onyx2D/O2Exceptions.h>
 #import <Onyx2D/O2Surface.h>
@@ -112,9 +114,51 @@ O2AffineTransform O2GStateUserSpaceTransform(O2GState *self) {
    return self->_userSpaceTransform;
 }
 
+// the box around a rect's four corners after the transform
+static O2Rect O2GStateTransformRectBounds(O2Rect rect,O2AffineTransform xform) {
+   O2Point corners[4]={
+    rect.origin,
+    O2PointMake(rect.origin.x+rect.size.width,rect.origin.y),
+    O2PointMake(rect.origin.x,rect.origin.y+rect.size.height),
+    O2PointMake(rect.origin.x+rect.size.width,rect.origin.y+rect.size.height),
+   };
+   O2Float minX,minY,maxX,maxY;
+   int i;
+
+   for(i=0;i<4;i++){
+    O2Point p=O2PointApplyAffineTransform(corners[i],xform);
+
+    if(i==0 || p.x<minX)
+     minX=p.x;
+    if(i==0 || p.y<minY)
+     minY=p.y;
+    if(i==0 || p.x>maxX)
+     maxX=p.x;
+    if(i==0 || p.y>maxY)
+     maxY=p.y;
+   }
+   return O2RectMake(minX,minY,maxX-minX,maxY-minY);
+}
+
+// the clip paths are kept in device space, so their boxes are intersected there and mapped back to user space
 -(O2Rect)clipBoundingBox {
-   O2UnimplementedMethod();
-   return O2RectZero;
+   NSArray *phases=[_clipState clipPhases];
+   BOOL     bounded=NO;
+   O2Rect   box=O2RectZero;
+
+   for(O2ClipPhase *phase in phases){
+    O2Rect phaseBox;
+
+    if(O2ClipPhasePhaseType(phase)==O2ClipPhaseMask)
+     continue;
+    phaseBox=O2PathGetBoundingBox(O2ClipPhaseObject(phase));
+    box=bounded ? O2RectIntersection(box,phaseBox) : phaseBox;
+    bounded=YES;
+   }
+   // no clip yet, a box large enough for any device like the context's whole area
+   if(!bounded)
+    return O2RectMake(-1.0e9,-1.0e9,2.0e9,2.0e9);
+   return O2GStateTransformRectBounds(box,O2AffineTransformInvert(_deviceSpaceTransform));
 }
 
 -(O2InterpolationQuality)interpolationQuality {
@@ -138,13 +182,11 @@ O2AffineTransform O2GStateUserSpaceTransform(O2GState *self) {
 }
 
 -(O2Rect)convertRectToDeviceSpace:(O2Rect)rect {
-   O2UnimplementedMethod();
-   return O2RectZero;
+   return O2GStateTransformRectBounds(rect,_deviceSpaceTransform);
 }
 
 -(O2Rect)convertRectToUserSpace:(O2Rect)rect {
-   O2UnimplementedMethod();
-   return O2RectZero;
+   return O2GStateTransformRectBounds(rect,O2AffineTransformInvert(_deviceSpaceTransform));
 }
 
 void O2GStateSetDeviceSpaceCTM(O2GState *self,O2AffineTransform transform){

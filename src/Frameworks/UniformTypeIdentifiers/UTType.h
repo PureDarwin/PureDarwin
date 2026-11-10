@@ -34,7 +34,7 @@
     X(ApplicationBundle, "com.apple.application-bundle") X(Executable, "public.executable") \
     X(Text, "public.text") X(PlainText, "public.plain-text") X(UTF8PlainText, "public.utf8-plain-text") \
     X(RTF, "public.rtf") X(HTML, "public.html") X(XML, "public.xml") X(SourceCode, "public.source-code") \
-    X(JSON, "public.json") X(PropertyList, "com.apple.property-list") X(XMLPropertyList, "com.apple.xml-property-list") \
+    X(JSON, "public.json") X(VCard, "public.vcard") X(PropertyList, "com.apple.property-list") X(XMLPropertyList, "com.apple.xml-property-list") \
     X(BinaryPropertyList, "com.apple.binary-property-list") X(PDF, "com.adobe.pdf") X(URL, "public.url") \
     X(FileURL, "public.file-url") X(Image, "public.image") X(PNG, "public.png") X(JPEG, "public.jpeg") \
     X(GIF, "com.compuserve.gif") X(TIFF, "public.tiff") X(BMP, "com.microsoft.bmp") X(ICNS, "com.apple.icns") \

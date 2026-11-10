@@ -626,7 +626,7 @@ NSLog(@"INITIALIZE TYPE 4");
 
 -(NSString *)description {
    NSMutableString *result=[NSMutableString string];
-   [result appendFormat:@"<%@ %p:",isa,self];
+   [result appendFormat:@"<%@ %p:",[self class],self];
    [result appendFormat:@"calculator=%@",_calculator];
    [result appendFormat:@">"];
    

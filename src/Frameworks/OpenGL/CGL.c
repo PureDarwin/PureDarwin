@@ -19,7 +19,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__linux__)
+#include <unistd.h>
+#else
 #include <sys/sysctl.h>
+#endif
 #include <time.h>
 
 #ifdef PD_CGL_USE_EGL
@@ -1881,12 +1885,20 @@ CGLDestroyRendererInfo(CGLRendererInfoObj rend)
 static int
 pd_cgl_memory_megabytes(void)
 {
+#if defined(__linux__)
+	long pages = sysconf(_SC_PHYS_PAGES), page = sysconf(_SC_PAGESIZE);
+
+	if (pages <= 0 || page <= 0)
+		return 512;
+	return (int)(((uint64_t)pages * (uint64_t)page) >> 20);
+#else
 	uint64_t bytes = 0;
 	size_t size = sizeof(bytes);
 
 	if (sysctlbyname("hw.memsize", &bytes, &size, NULL, 0) != 0)
 		return 512;
 	return (int)(bytes >> 20);
+#endif
 }
 
 CGLError

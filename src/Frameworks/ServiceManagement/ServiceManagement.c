@@ -38,3 +38,12 @@ Boolean SMJobRemove(CFStringRef domain, CFStringRef jobLabel, AuthorizationRef a
         *outError = CFErrorCreate(kCFAllocatorDefault, kSMErrorDomainFramework, jobLabel ? kSMErrorJobNotFound : kSMErrorToolNotValid, NULL);
     return false;
 }
+
+Boolean SMJobSubmit(CFStringRef domain, CFDictionaryRef job, AuthorizationRef auth, CFErrorRef *outError)
+{
+    (void)auth;
+    CFIndex code = domain == NULL || job == NULL ? kSMErrorToolNotValid : kSMErrorServiceUnavailable;
+    if (outError)
+        *outError = CFErrorCreate(kCFAllocatorDefault, kSMErrorDomainFramework, code, NULL);
+    return false;
+}

@@ -27,6 +27,7 @@
  *-------------------------------------------------------------------*/
 
 #import <Onyx2D/O2Surface.h>
+#import <Foundation/NSThread.h>
 #import <Onyx2D/O2ColorSpace.h>
 #import <Onyx2D/O2DataProvider.h>
 
@@ -497,7 +498,10 @@ static BOOL initFunctionsForParameters(O2Surface *self,size_t bitsPerComponent,s
 
 -initWithBytes:(void *)bytes width:(size_t)width height:(size_t)height bitsPerComponent:(size_t)bitsPerComponent bytesPerRow:(size_t)bytesPerRow colorSpace:(O2ColorSpaceRef)colorSpace bitmapInfo:(O2BitmapInfo)bitmapInfo {
    O2DataProvider *provider;
-   int bitsPerPixel=32;
+   O2ImageAlphaInfo alphaInfo=bitmapInfo&kO2BitmapAlphaInfoMask;
+   // like Quartz, one component per colour channel plus one for alpha or padding
+   size_t components=(alphaInfo==kO2ImageAlphaOnly)?0:O2ColorSpaceGetNumberOfComponents(colorSpace);
+   int bitsPerPixel=(int)((components+(alphaInfo==kO2ImageAlphaNone?0:1))*bitsPerComponent);
    
    if(bytes!=NULL){
     provider=[[[O2DataProvider alloc] initWithBytes:bytes length:bytesPerRow*height] autorelease];
@@ -525,7 +529,8 @@ static BOOL initFunctionsForParameters(O2Surface *self,size_t bitsPerComponent,s
 
    // no write function for this format, fail like Apple's CGBitmapContextCreate does
    if(!initFunctionsForParameters(self,bitsPerComponent,_bitsPerPixel,colorSpace,bitmapInfo)){
-    NSLog(@"O2Surface: unsupported bitmap format bpc=%zu bitmapInfo=0x%x",bitsPerComponent,bitmapInfo);
+    NSLog(@"O2Surface: unsupported bitmap format bpc=%zu bpp=%d colorSpace=%@ bitmapInfo=0x%x",bitsPerComponent,bitsPerPixel,colorSpace,bitmapInfo);
+    NSLog(@"O2Surface: requested by\n%@",[[NSThread callStackSymbols] componentsJoinedByString:@"\n"]);
     [self release];
     return nil;
    }

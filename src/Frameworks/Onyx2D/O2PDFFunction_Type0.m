@@ -100,7 +100,7 @@ static void evaluate(void *info,const float *input,float *output) {
 
 -(NSString *)description {
    NSMutableString *result=[NSMutableString string];
-   [result appendFormat:@"<%@ %p:",isa,self];
+   [result appendFormat:@"<%@ %p:",[self class],self];
    [result appendFormat:@">"];
    
    return result;

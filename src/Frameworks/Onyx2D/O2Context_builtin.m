@@ -30,6 +30,9 @@
 #import "VGPath.h"
 #import <Onyx2D/O2Paint_color.h>
 #import <Onyx2D/O2Font_freetype.h>
+#ifdef FREETYPE_PRESENT
+#include FT_OUTLINE_H
+#endif
 #import <Onyx2D/O2Paint_image.h>
 #import <Onyx2D/O2Paint_axialGradient.h>
 #import <Onyx2D/O2Paint_radialGradient.h>
@@ -49,13 +52,13 @@ void O2DContextClipAndFillEdges(O2Context_builtin *self,int fillRuleMask);
 static void applyCoverageToSpan_lRGBA8888_PRE(O2argb8u *dst,unsigned char *coverageSpan,O2argb8u *src,int length){
    int i;
    
+   // source over: the glyph coverage scales the premultiplied colour, the destination keeps what its alpha leaves
    for(i=0;i<length;i++,src++,dst++){
-    int coverage=coverageSpan[i];
-    int oneMinusCoverage=inverseCoverage(coverage);
-    O2argb8u r=*src;
-    O2argb8u d=*dst;
-    
-    *dst=O2argb8uAdd(O2argb8uMultiplyByCoverage(r , coverage) , O2argb8uMultiplyByCoverage(d , oneMinusCoverage));
+    unsigned coverage=coverageSpan[i]+(coverageSpan[i]>>7);
+    O2argb8u r=O2argb8uMultiplyByCoverage(*src,coverage);
+    unsigned alpha=r.a+(r.a>>7);
+
+    *dst=O2argb8uAdd(r,O2argb8uMultiplyByCoverage(*dst,inverseCoverage(alpha)));
    }
 }
 
@@ -440,6 +443,7 @@ typedef struct {
    FT_Face face;
    FT_F26Dot6 size;
    FT_UInt glyph;
+   int phase;
    FT_Bitmap bitmap;
    FT_Int left, top;
    FT_Pos advance;
@@ -449,16 +453,17 @@ typedef struct {
 static O2GlyphCacheEntry *glyphCache;
 static unsigned glyphCacheCount;
 
-static O2GlyphCacheEntry *cachedGlyph(FT_Face face,FT_F26Dot6 size,FT_UInt glyph){
+// glyphs are hinted vertically only, at a quarter pixel phase, so they land where the advances put them
+static O2GlyphCacheEntry *cachedGlyph(FT_Face face,FT_F26Dot6 size,FT_UInt glyph,int phase){
    unsigned i,hash;
 
    if(glyphCache==NULL)
     glyphCache=calloc(O2_GLYPH_CACHE_SIZE,sizeof(O2GlyphCacheEntry));
-   hash=(unsigned)(((uintptr_t)face>>4)*31+size*17+glyph*2654435761u);
+   hash=(unsigned)(((uintptr_t)face>>4)*31+size*17+glyph*2654435761u+phase*7);
    for(i=0;i<O2_GLYPH_CACHE_SIZE;i++){
     O2GlyphCacheEntry *entry=&glyphCache[(hash+i)%O2_GLYPH_CACHE_SIZE];
 
-    if(entry->face==face && entry->size==size && entry->glyph==glyph)
+    if(entry->face==face && entry->size==size && entry->glyph==glyph && entry->phase==phase)
      return entry;
     if(entry->face!=NULL)
      continue;
@@ -471,9 +476,13 @@ static O2GlyphCacheEntry *cachedGlyph(FT_Face face,FT_F26Dot6 size,FT_UInt glyph
       free(glyphCache[j].bitmap.buffer);
      memset(glyphCache,0,O2_GLYPH_CACHE_SIZE*sizeof(O2GlyphCacheEntry));
      glyphCacheCount=0;
-     return cachedGlyph(face,size,glyph);
+     return cachedGlyph(face,size,glyph,phase);
     }
-    if(FT_Load_Glyph(face,glyph,FT_LOAD_DEFAULT)!=0 || FT_Render_Glyph(face->glyph,FT_RENDER_MODE_NORMAL)!=0)
+    if(FT_Load_Glyph(face,glyph,FT_LOAD_TARGET_LIGHT|FT_LOAD_NO_BITMAP)!=0)
+     return NULL;
+    if(face->glyph->format==FT_GLYPH_FORMAT_OUTLINE)
+     FT_Outline_Translate(&face->glyph->outline,phase*16,0);
+    if(FT_Render_Glyph(face->glyph,FT_RENDER_MODE_NORMAL)!=0)
      return NULL;
 
     FT_GlyphSlot slot=face->glyph;
@@ -482,6 +491,7 @@ static O2GlyphCacheEntry *cachedGlyph(FT_Face face,FT_F26Dot6 size,FT_UInt glyph
     entry->face=face;
     entry->size=size;
     entry->glyph=glyph;
+    entry->phase=phase;
     entry->bitmap=slot->bitmap;
     entry->bitmap.buffer=bytes?malloc(bytes):NULL;
     if(bytes)
@@ -526,13 +536,17 @@ static O2GlyphCacheEntry *cachedGlyph(FT_Face face,FT_F26Dot6 size,FT_UInt glyph
    O2Float userAdvance=0;
 
    for(i=0;i<count;i++){
-    O2GlyphCacheEntry *glyph=cachedGlyph(face,(FT_F26Dot6)(gState->_pointSize*64),glyphs[i]);
-
     if(advances!=NULL)
      point=O2PointApplyAffineTransform(NSMakePoint(_textMatrix.tx+userAdvance,_textMatrix.ty),transform);
 
+    // the pen position in whole pixels, its fraction rounded to a quarter picks the rendered phase
+    O2Float quarters=floor(point.x*4+0.5);
+    int     whole=(int)floor(quarters/4);
+    int     phase=(int)(quarters-whole*4);
+    O2GlyphCacheEntry *glyph=cachedGlyph(face,(FT_F26Dot6)(gState->_pointSize*64),glyphs[i],phase);
+
     if(glyph!=NULL && glyph->bitmap.buffer!=NULL)
-     drawFreeTypeBitmap(self,_surface,&glyph->bitmap,point.x+glyph->left,point.y-glyph->top,paint);
+     drawFreeTypeBitmap(self,_surface,&glyph->bitmap,whole+glyph->left,point.y-glyph->top,paint);
 
     if(advances!=NULL)
      userAdvance+=advances[i].width;
