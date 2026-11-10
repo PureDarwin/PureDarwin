@@ -833,9 +833,16 @@ let
     libjpeg = pkgs.libjpeg;
     src = ../src/Userspace/Dock;
   } // argonAppDeps);
+  # CoreAudio and AudioToolbox, the menubar's volume control links them
+  audiotoolboxArm64Build = mkArm64Build ./pkgs/apple/audiotoolbox.nix {
+    corefoundation = coreFoundationArm64Build;
+    src = ../src/Frameworks/AudioToolbox;
+    coreAudioSrc = ../src/Frameworks/CoreAudio;
+  };
   menubarMsmArm64Build = mkArm64Build ./pkgs/apps/menubar.nix ({
     librsvg = pkgs.librsvg;
     iokit = iokitArm64Build;
+    audiotoolbox = audiotoolboxArm64Build;
     src = ../src/Userspace/MenuBar;
   } // argonAppDeps);
   terminalMsmArm64Build = mkArm64Build ./pkgs/apps/terminal.nix ({
