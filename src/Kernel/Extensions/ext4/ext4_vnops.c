@@ -892,6 +892,149 @@ ext4_touch_ctime(struct ext4_inode *ri)
 	ri->i_ctime = le32((uint32_t)tv.tv_sec);
 }
 
+// the cached node for ino, so an orphan list edit also reaches the copy an open vnode writes back
+static struct ext4node *
+ext4_cached_node(struct ext4mount *emp, ino_t ino)
+{
+	struct ext4_node_bucket *bucket = &emp->em_node_hash[EXT4_NODE_HASH(ino)];
+	IOLock *hlock = (IOLock *)emp->em_hash_lock;
+	struct ext4node *ep, *found = NULL;
+
+	IOLockLock(hlock);
+	LIST_FOREACH(ep, bucket, e_hash) {
+		if (ep->e_ino == ino && !ep->e_unhashed) {
+			found = ep;
+			break;
+		}
+	}
+	IOLockUnlock(hlock);
+	return found;
+}
+
+// puts an inode with no names left but still open on the superblock's on-disk orphan list,
+// s_last_orphan is the head and each orphan's i_dtime holds the next one
+static int
+ext4_orphan_add(struct ext4mount *emp, ino_t ino, struct ext4_inode *raw)
+{
+	int error;
+
+	raw->i_dtime = emp->em_sb.s_last_orphan;
+	error = ext4_write_inode(emp, ino, raw);
+	if (error)
+		return error;
+	emp->em_sb.s_last_orphan = le32((uint32_t)ino);
+	return ext4_write_super(emp);
+}
+
+// takes ino off the orphan list before it is freed, next is the ino it pointed at
+static int
+ext4_orphan_del(struct ext4mount *emp, ino_t ino, uint32_t next)
+{
+	uint32_t cur = le32(emp->em_sb.s_last_orphan);
+	uint64_t steps = 0;
+
+	if (cur == ino) {
+		emp->em_sb.s_last_orphan = le32(next);
+		return ext4_write_super(emp);
+	}
+	while (cur != 0 && steps++ < emp->em_inodes_count) {
+		struct ext4node *pep = ext4_cached_node(emp, cur);
+		struct ext4_inode raw;
+		int error;
+
+		if (pep != NULL) {
+			if (le32(pep->e_raw.i_dtime) == ino) {
+				pep->e_raw.i_dtime = le32(next);
+				return ext4_write_inode(emp, cur, &pep->e_raw);
+			}
+			cur = le32(pep->e_raw.i_dtime);
+			continue;
+		}
+		error = ext4_read_inode(emp, cur, &raw);
+		if (error)
+			return error;
+		if (le32(raw.i_dtime) == ino) {
+			raw.i_dtime = le32(next);
+			return ext4_write_inode(emp, cur, &raw);
+		}
+		cur = le32(raw.i_dtime);
+	}
+	E4LOG("orphan inode %u was not on the orphan list", (unsigned)ino);
+	return 0;
+}
+
+// frees what a crash or shutdown left on the orphan list, after journal replay at mount:
+// inodes with no links are freed, inodes still linked are cut back to i_size
+int
+ext4_orphan_cleanup(struct ext4mount *emp)
+{
+	uint32_t ino = le32(emp->em_sb.s_last_orphan);
+	uint32_t first_ino = le32(emp->em_sb.s_first_ino);
+	uint64_t steps = 0;
+	unsigned freed = 0, truncated = 0;
+	int error = 0;
+
+	if (ino == 0)
+		return 0;
+	while (ino != 0 && steps++ < emp->em_inodes_count) {
+		struct ext4_inode raw;
+		struct ext4node *ep;
+		struct timeval tv;
+		uint32_t next;
+
+		if (ino < first_ino || ino > emp->em_inodes_count) {
+			E4LOG("orphan list holds bad inode %u, stopping", ino);
+			break;
+		}
+		error = ext4_read_inode(emp, ino, &raw);
+		if (error)
+			break;
+		next = le32(raw.i_dtime);
+		microtime(&tv);
+		if (le16(raw.i_links_count) == 0) {
+			enum vtype vtype = ext4_mode_to_vtype(le16(raw.i_mode));
+
+			error = ext4_xattr_release_block(emp, &raw);
+			if (!error)
+				error = ext4_inode_free_extents(emp, &raw);
+			if (error)
+				break;
+			raw.i_dtime = le32((uint32_t)tv.tv_sec);
+			error = ext4_write_inode(emp, ino, &raw);
+			if (!error)
+				error = ext4_free_inode(emp, ino, vtype);
+			if (error)
+				break;
+			freed++;
+		} else {
+			uint64_t size = le32(raw.i_size_lo) | ((uint64_t)le32(raw.i_size_high) << 32);
+
+			error = ext4_inode_truncate_extents(emp, ino, &raw,
+			    (size + emp->em_blocksize - 1) / emp->em_blocksize);
+			if (error)
+				break;
+			raw.i_dtime = 0;
+			error = ext4_write_inode(emp, ino, &raw);
+			if (error)
+				break;
+			truncated++;
+		}
+		// nothing should be cached this early, drop a stale node if something was
+		ep = ext4_cached_node(emp, ino);
+		if (ep != NULL)
+			ep->e_raw = raw;
+		ino = next;
+	}
+	if (error)
+		E4LOG("orphan cleanup stopped at inode %u: %d", ino, error);
+	emp->em_sb.s_last_orphan = le32(error ? ino : 0);
+	E4LOG("orphan cleanup: freed %u inodes, truncated %u", freed, truncated);
+	{
+		int werr = ext4_write_super(emp);
+		return error ? error : werr;
+	}
+}
+
 /*
  * Actually tear down an unlinked inode: free its extents/blocks and its
  * inode-bitmap entry, and unhash the in-memory node so a subsequent
@@ -980,8 +1123,8 @@ ext4_drop_inode(struct ext4node *ep)
 	 * once nothing references the vnode anymore.
 	 */
 	if (ep->e_vp && vnode_isinuse(ep->e_vp, 0)) {
-		ep->e_raw.i_dtime = ep->e_raw.i_ctime;
-		error = ext4_write_inode(ep->e_mount, ep->e_ino, &ep->e_raw);
+		// on the orphan list until the last close, so a crash before it frees nothing twice and leaks nothing
+		error = ext4_orphan_add(ep->e_mount, ep->e_ino, &ep->e_raw);
 		if (error)
 			return error;
 		ep->e_pending_free = 1;
@@ -2315,6 +2458,7 @@ ext4_vnop_inactive_impl(struct vnop_inactive_args *ap)
 	 */
 	if (ep && ep->e_pending_free) {
 		ep->e_pending_free = 0;
+		(void)ext4_orphan_del(ep->e_mount, ep->e_ino, le32(ep->e_raw.i_dtime));
 		(void)ext4_finish_free_inode(ep);
 		vnode_recycle(vp);
 	}

@@ -209,6 +209,14 @@ ext4_mount(struct mount *mp, vnode_t devvp, __unused user_addr_t data,
 		int rerr = ext4_repair_itable_unused(emp);
 		if (rerr)
 			E4LOG("bg_itable_unused repair failed: %d", rerr);
+		// files unlinked while open when the system went down, freed now at mount
+		ext4_fs_lock(emp);
+		rerr = ext4_orphan_cleanup(emp);
+		ext4_fs_unlock(emp);
+		if (rerr)
+			E4LOG("orphan cleanup failed: %d", rerr);
+	} else if (emp->em_sb.s_last_orphan != 0) {
+		E4LOG("read-only mount leaves orphan inodes from inode %u in place", le32(emp->em_sb.s_last_orphan));
 	}
 
 	/* fill in statfs */

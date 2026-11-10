@@ -55,9 +55,9 @@ function(add_kext_bundle name)
     target_link_options(${name} PRIVATE -lSystem)
     target_link_options(${name} PRIVATE "SHELL:-undefined dynamic_lookup")
 
-    # riscv's vm init is arm_vm_init's port, it maps a kext's __TEXT read only and runs
-    # code only from __TEXT_EXEC, which is where arm64 kexts keep it too
-    if(PUREDARWIN_ARCH STREQUAL "riscv64")
+    # arm_vm_init (and riscv's port of it) maps a kext's __TEXT read only and runs
+    # code only from __TEXT_EXEC, where Apple's collections and Inferno expect it
+    if(PUREDARWIN_ARCH STREQUAL "riscv64" OR PUREDARWIN_ARCH STREQUAL "arm64")
         target_link_options(${name} PRIVATE "LINKER:-text_exec")
     endif()
 

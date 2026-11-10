@@ -131,6 +131,17 @@ ext4_blkread(struct ext4mount *emp, uint64_t pblk, buf_t *bpp)
 	return 0;
 }
 
+// a block's buffer without reading it from the disk, for callers that overwrite all of it
+int
+ext4_blkget(struct ext4mount *emp, uint64_t pblk, buf_t *bpp)
+{
+	daddr64_t devblk = (daddr64_t)(pblk * ((uint64_t)emp->em_blocksize / emp->em_dev_bsize));
+	buf_t bp = buf_getblk(emp->em_devvp, devblk, (int)emp->em_blocksize, 0, 0, BLK_META);
+
+	*bpp = bp;
+	return bp != NULL ? 0 : EIO;
+}
+
 /*
  * Journaled metadata write. With a journal: log the buffer's contents into
  * the open transaction and release the buffer CLEAN - the in-place write
@@ -889,7 +900,8 @@ ext4_alloc_block_locked(struct ext4mount *emp, uint64_t goal,
 			error = ext4_write_super(emp);
 			if (error)
 				return error;
-			error = ext4_blkread(emp, pblk, &zbp);
+			// the zero-fill overwrites the whole block, reading it first cost a disk read per block
+			error = ext4_blkget(emp, pblk, &zbp);
 			if (error)
 				return error;
 			memset((void *)buf_dataptr(zbp), 0, emp->em_blocksize);

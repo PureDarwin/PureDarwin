@@ -376,6 +376,8 @@ int  ext4_write_inode(struct ext4mount *emp, ino_t ino, const struct ext4_inode 
 int  ext4_alloc_inode(struct ext4mount *emp, enum vtype type, ino_t *ino_out);
 int  ext4_repair_itable_unused(struct ext4mount *emp);
 int  ext4_free_inode(struct ext4mount *emp, ino_t ino, enum vtype type);
+// orphan list (ext4_vnops.c): frees what a crash left on it, run after journal replay
+int  ext4_orphan_cleanup(struct ext4mount *emp);
 int  ext4_alloc_block(struct ext4mount *emp, uint64_t goal, uint64_t *pblk_out);
 int  ext4_free_block(struct ext4mount *emp, uint64_t pblk);
 void ext4_inode_init_extent_header(struct ext4_inode *inode);
@@ -390,6 +392,7 @@ int  ext4_ino_is_live(struct ext4mount *emp, ino_t ino);
 int  ext4_indirect_lookup(struct ext4mount *emp, uint32_t blk, uint32_t lblk,
                int level, uint64_t *pblk_out);
 int  ext4_blkread(struct ext4mount *emp, uint64_t pblk, buf_t *bpp);
+int  ext4_blkget(struct ext4mount *emp, uint64_t pblk, buf_t *bpp);
 // extended attributes (ext4_xattr.c), index 1 is Linux's user namespace and 4 its trusted one
 #define EXT4_XATTR_INDEX_USER    1
 #define EXT4_XATTR_INDEX_TRUSTED 4

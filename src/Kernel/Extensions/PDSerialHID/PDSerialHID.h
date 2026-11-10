@@ -4,7 +4,7 @@
 #include "IOHIDDevice.h"	// the family's own header, IOKit/hid/ pulls in DriverKit
 
 // a keyboard and an absolute pointer fed by the serial console: host lines that start with SOH
-// ("m X Y BUTTONS", "k MODS K1..K6") become HID reports, for boards with no USB to plug into
+// ("m X Y BUTTONS", "k MODS K1..K6") become HID reports, "r DX DY BUTTONS" relative motion, for boards with no USB to plug into
 class PDSerialHID : public IOHIDDevice
 {
 	OSDeclareDefaultStructors(PDSerialHID);
