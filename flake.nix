@@ -3771,6 +3771,8 @@
               neuwld = neuwldBuild;
               mesaNox = mesaNoxBuild;
               pdsurface = pdsurfaceBuild;
+              # the VirtIOGPU hardware cursor (PD_VIRTIO_CURSOR)
+              pdVirglShim = pdVirglShimBuild;
               pixman = xvfbPixmanBuild;
               wayland = waylandBuild;
               waylandProtocols = waylandProtocolsBuild;
