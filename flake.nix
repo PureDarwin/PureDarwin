@@ -3507,7 +3507,10 @@
               nano = pkgs.nano;
               ncurses = ncursesBuild;
             };
-          dxvkBuild = pkgs.callPackage ./nix/pkgs/apps/dxvk.nix { dxvk = pkgs.dxvk; };
+          # the DLLs are the same on any host, nixpkgs only offers dxvk on x86 so other hosts take it from gnu64
+          dxvkBuild = pkgs.callPackage ./nix/pkgs/apps/dxvk.nix {
+            dxvk = if pkgs.stdenv.hostPlatform.isx86 then pkgs.dxvk else pkgs.pkgsCross.gnu64.dxvk;
+          };
           winetricksBuild =
             pkgs.callPackage ./nix/pkgs/apps/winetricks.nix { winetricks = pkgs.winetricks; };
           cabextractBuild =
