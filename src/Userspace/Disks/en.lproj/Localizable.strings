@@ -1,0 +1,195 @@
+/* No comment provided by engineer. */
+"%@ volume on %@%@" = "%@ volume on %@%@";
+
+/* No comment provided by engineer. */
+"%d%% full" = "%d%% full";
+
+/* No comment provided by engineer. */
+"%lu partitions, %@" = "%lu partitions, %@";
+
+/* No comment provided by engineer. */
+"%u bytes" = "%u bytes";
+
+/* No comment provided by engineer. */
+", startup disk" = ", startup disk";
+
+/* No comment provided by engineer. */
+"About %@" = "About %@";
+
+/* No comment provided by engineer. */
+"Block Size" = "Block Size";
+
+/* No comment provided by engineer. */
+"Bootable" = "Bootable";
+
+/* No comment provided by engineer. */
+"Capacity" = "Capacity";
+
+/* No comment provided by engineer. */
+"Check" = "Check";
+
+/* No comment provided by engineer. */
+"Check and Repair…" = "Check and Repair…";
+
+/* No comment provided by engineer. */
+"Check that nothing is using the volume, then try again." = "Check that nothing is using the volume, then try again.";
+
+/* No comment provided by engineer. */
+"Connection" = "Connection";
+
+/* No comment provided by engineer. */
+"Details" = "Details";
+
+/* No comment provided by engineer. */
+"Device" = "Device";
+
+/* No comment provided by engineer. */
+"Disk" = "Disk";
+
+/* No comment provided by engineer. */
+"Disk Images" = "Disk Images";
+
+/* No comment provided by engineer. */
+"Disk image" = "Disk image";
+
+/* No comment provided by engineer. */
+"Disks" = "Disks";
+
+/* No comment provided by engineer. */
+"Done" = "Done";
+
+/* No comment provided by engineer. */
+"Eject" = "Eject";
+
+/* No comment provided by engineer. */
+"Erase" = "Erase";
+
+/* No comment provided by engineer. */
+"Erase…" = "Erase…";
+
+/* No comment provided by engineer. */
+"External" = "External";
+
+/* No comment provided by engineer. */
+"File" = "File";
+
+/* No comment provided by engineer. */
+"Format" = "Format";
+
+/* No comment provided by engineer. */
+"Free" = "Free";
+
+/* No comment provided by engineer. */
+"GUID Partition Map" = "GUID Partition Map";
+
+/* No comment provided by engineer. */
+"Get Info" = "Get Info";
+
+/* No comment provided by engineer. */
+"Hide %@" = "Hide %@";
+
+/* No comment provided by engineer. */
+"Internal" = "Internal";
+
+/* No comment provided by engineer. */
+"Location" = "Location";
+
+/* No comment provided by engineer. */
+"Master Boot Record" = "Master Boot Record";
+
+/* No comment provided by engineer. */
+"Minimize" = "Minimize";
+
+/* No comment provided by engineer. */
+"Mount" = "Mount";
+
+/* No comment provided by engineer. */
+"Mount Point" = "Mount Point";
+
+/* No comment provided by engineer. */
+"Mount it to see usage" = "Mount it to see usage";
+
+/* No comment provided by engineer. */
+"New Disk Image…" = "New Disk Image…";
+
+/* No comment provided by engineer. */
+"No" = "No";
+
+/* No comment provided by engineer. */
+"None" = "None";
+
+/* No comment provided by engineer. */
+"Not mounted" = "Not mounted";
+
+/* No comment provided by engineer. */
+"OK" = "OK";
+
+/* No comment provided by engineer. */
+"Open Disk Image…" = "Open Disk Image…";
+
+/* No comment provided by engineer. */
+"Partition" = "Partition";
+
+/* No comment provided by engineer. */
+"Partition Scheme" = "Partition Scheme";
+
+/* No comment provided by engineer. */
+"Partition Type" = "Partition Type";
+
+/* No comment provided by engineer. */
+"Partition…" = "Partition…";
+
+/* No comment provided by engineer. */
+"Quit %@" = "Quit %@";
+
+/* No comment provided by engineer. */
+"Refresh" = "Refresh";
+
+/* No comment provided by engineer. */
+"Removable" = "Removable";
+
+/* No comment provided by engineer. */
+"Type GUID" = "Type GUID";
+
+/* No comment provided by engineer. */
+"Unmount" = "Unmount";
+
+/* No comment provided by engineer. */
+"Used" = "Used";
+
+/* No comment provided by engineer. */
+"View" = "View";
+
+/* No comment provided by engineer. */
+"Volume UUID" = "Volume UUID";
+
+/* No comment provided by engineer. */
+"Window" = "Window";
+
+/* No comment provided by engineer. */
+"Yes" = "Yes";
+
+/* No comment provided by engineer. */
+"Zoom" = "Zoom";
+
+/* No comment provided by engineer. */
+"available of %@" = "available of %@";
+
+/* No comment provided by engineer. */
+"journaled, 64bit, extents" = "journaled, 64bit, extents";
+
+/* No comment provided by engineer. */
+"not mounted" = "not mounted";
+
+/* No comment provided by engineer. */
+"read and write" = "read and write";
+
+/* No comment provided by engineer. */
+"startup volume" = "startup volume";
+
+/* No comment provided by engineer. */
+"“%@” couldn’t be mounted." = "“%@” couldn’t be mounted.";
+
+/* No comment provided by engineer. */
+"“%@” couldn’t be unmounted." = "“%@” couldn’t be unmounted.";
+

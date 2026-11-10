@@ -1,0 +1,195 @@
+/* No comment provided by engineer. */
+"%@ volume on %@%@" = "%@-Volume auf %@%@";
+
+/* No comment provided by engineer. */
+"%d%% full" = "%d %% belegt";
+
+/* No comment provided by engineer. */
+"%lu partitions, %@" = "%lu Partitionen, %@";
+
+/* No comment provided by engineer. */
+"%u bytes" = "%u Byte";
+
+/* No comment provided by engineer. */
+", startup disk" = ", Startvolume";
+
+/* No comment provided by engineer. */
+"About %@" = "Über %@";
+
+/* No comment provided by engineer. */
+"Block Size" = "Blockgröße";
+
+/* No comment provided by engineer. */
+"Bootable" = "Startfähig";
+
+/* No comment provided by engineer. */
+"Capacity" = "Kapazität";
+
+/* No comment provided by engineer. */
+"Check" = "Prüfen";
+
+/* No comment provided by engineer. */
+"Check and Repair…" = "Prüfen und reparieren …";
+
+/* No comment provided by engineer. */
+"Check that nothing is using the volume, then try again." = "Prüfe, dass nichts das Volume benutzt, und versuche es erneut.";
+
+/* No comment provided by engineer. */
+"Connection" = "Verbindung";
+
+/* No comment provided by engineer. */
+"Details" = "Details";
+
+/* No comment provided by engineer. */
+"Device" = "Gerät";
+
+/* No comment provided by engineer. */
+"Disk" = "Volume";
+
+/* No comment provided by engineer. */
+"Disk Images" = "Image-Dateien";
+
+/* No comment provided by engineer. */
+"Disk image" = "Image-Datei";
+
+/* No comment provided by engineer. */
+"Disks" = "Laufwerke";
+
+/* No comment provided by engineer. */
+"Done" = "Fertig";
+
+/* No comment provided by engineer. */
+"Eject" = "Auswerfen";
+
+/* No comment provided by engineer. */
+"Erase" = "Löschen";
+
+/* No comment provided by engineer. */
+"Erase…" = "Löschen …";
+
+/* No comment provided by engineer. */
+"External" = "Extern";
+
+/* No comment provided by engineer. */
+"File" = "Ablage";
+
+/* No comment provided by engineer. */
+"Format" = "Format";
+
+/* No comment provided by engineer. */
+"Free" = "Frei";
+
+/* No comment provided by engineer. */
+"GUID Partition Map" = "GUID-Partitionstabelle";
+
+/* No comment provided by engineer. */
+"Get Info" = "Informationen";
+
+/* No comment provided by engineer. */
+"Hide %@" = "%@ ausblenden";
+
+/* No comment provided by engineer. */
+"Internal" = "Intern";
+
+/* No comment provided by engineer. */
+"Location" = "Ort";
+
+/* No comment provided by engineer. */
+"Master Boot Record" = "Master Boot Record";
+
+/* No comment provided by engineer. */
+"Minimize" = "Im Dock ablegen";
+
+/* No comment provided by engineer. */
+"Mount" = "Aktivieren";
+
+/* No comment provided by engineer. */
+"Mount Point" = "Einhängepunkt";
+
+/* No comment provided by engineer. */
+"Mount it to see usage" = "Aktiviere es, um die Belegung zu sehen";
+
+/* No comment provided by engineer. */
+"New Disk Image…" = "Neue Image-Datei …";
+
+/* No comment provided by engineer. */
+"No" = "Nein";
+
+/* No comment provided by engineer. */
+"None" = "Keine";
+
+/* No comment provided by engineer. */
+"Not mounted" = "Nicht aktiviert";
+
+/* No comment provided by engineer. */
+"OK" = "OK";
+
+/* No comment provided by engineer. */
+"Open Disk Image…" = "Image-Datei öffnen …";
+
+/* No comment provided by engineer. */
+"Partition" = "Partitionieren";
+
+/* No comment provided by engineer. */
+"Partition Scheme" = "Partitionsschema";
+
+/* No comment provided by engineer. */
+"Partition Type" = "Partitionstyp";
+
+/* No comment provided by engineer. */
+"Partition…" = "Partitionieren …";
+
+/* No comment provided by engineer. */
+"Quit %@" = "%@ beenden";
+
+/* No comment provided by engineer. */
+"Refresh" = "Aktualisieren";
+
+/* No comment provided by engineer. */
+"Removable" = "Wechselmedium";
+
+/* No comment provided by engineer. */
+"Type GUID" = "Typ-GUID";
+
+/* No comment provided by engineer. */
+"Unmount" = "Deaktivieren";
+
+/* No comment provided by engineer. */
+"Used" = "Belegt";
+
+/* No comment provided by engineer. */
+"View" = "Darstellung";
+
+/* No comment provided by engineer. */
+"Volume UUID" = "Volume-UUID";
+
+/* No comment provided by engineer. */
+"Window" = "Fenster";
+
+/* No comment provided by engineer. */
+"Yes" = "Ja";
+
+/* No comment provided by engineer. */
+"Zoom" = "Zoomen";
+
+/* No comment provided by engineer. */
+"available of %@" = "frei von %@";
+
+/* No comment provided by engineer. */
+"journaled, 64bit, extents" = "Journaled, 64 Bit, Extents";
+
+/* No comment provided by engineer. */
+"not mounted" = "nicht aktiviert";
+
+/* No comment provided by engineer. */
+"read and write" = "Lesen und Schreiben";
+
+/* No comment provided by engineer. */
+"startup volume" = "Startvolume";
+
+/* No comment provided by engineer. */
+"“%@” couldn’t be mounted." = "„%@“ konnte nicht aktiviert werden.";
+
+/* No comment provided by engineer. */
+"“%@” couldn’t be unmounted." = "„%@“ konnte nicht deaktiviert werden.";
+
