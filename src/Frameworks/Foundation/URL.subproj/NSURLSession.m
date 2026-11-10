@@ -6,6 +6,7 @@
 #import <Foundation/NSURLFileTypeMappings.h>
 #import <Foundation/NSURL.h>
 #import <Foundation/NSData.h>
+#import <Foundation/NSArray.h>
 #import <Foundation/NSError.h>
 #import <Foundation/NSString.h>
 #import <Foundation/NSDictionary.h>
@@ -13,6 +14,8 @@
 #import <Foundation/NSFileManager.h>
 #include <dispatch/dispatch.h>
 #include <stdatomic.h>
+
+const int64_t NSURLSessionTransferSizeUnknown = -1LL;
 
 NSErrorDomain const NSURLErrorDomain = @"NSURLErrorDomain";
 NSString *const NSURLErrorFailingURLErrorKey = @"NSErrorFailingURLKey";
@@ -49,6 +52,7 @@ NSString *const NSURLErrorFailingURLStringErrorKey = @"NSErrorFailingURLStringKe
 - (void)dealloc {
     [_identifier release];
     [_HTTPAdditionalHeaders release];
+    [_sourceApplicationAuditTokenData release];
     [super dealloc];
 }
 
@@ -61,6 +65,11 @@ NSString *const NSURLErrorFailingURLStringErrorKey = @"NSErrorFailingURLStringKe
     copy->_requestCachePolicy = _requestCachePolicy;
     copy->_HTTPAdditionalHeaders = [_HTTPAdditionalHeaders copy];
     copy->_allowsCellularAccess = _allowsCellularAccess;
+    copy->_networkServiceType = _networkServiceType;
+    copy->_discretionary = _discretionary;
+    copy->_requiresPowerPluggedIn = _requiresPowerPluggedIn;
+    copy->_TLSMinimumSupportedProtocol = _TLSMinimumSupportedProtocol;
+    copy->_sourceApplicationAuditTokenData = [_sourceApplicationAuditTokenData copy];
     return copy;
 }
 
@@ -81,6 +90,21 @@ NSString *const NSURLErrorFailingURLStringErrorKey = @"NSErrorFailingURLStringKe
 
 - (BOOL)allowsCellularAccess { return _allowsCellularAccess; }
 - (void)setAllowsCellularAccess:(BOOL)flag { _allowsCellularAccess = flag; }
+- (NSURLRequestNetworkServiceType)networkServiceType { return _networkServiceType; }
+- (void)setNetworkServiceType:(NSURLRequestNetworkServiceType)type { _networkServiceType = type; }
+- (BOOL)isDiscretionary { return _discretionary; }
+- (void)setDiscretionary:(BOOL)flag { _discretionary = flag; }
+- (BOOL)_requiresPowerPluggedIn { return _requiresPowerPluggedIn; }
+- (void)set_requiresPowerPluggedIn:(BOOL)flag { _requiresPowerPluggedIn = flag; }
+- (int)TLSMinimumSupportedProtocol { return _TLSMinimumSupportedProtocol; }
+- (void)setTLSMinimumSupportedProtocol:(int)protocol { _TLSMinimumSupportedProtocol = protocol; }
+- (NSData *)_sourceApplicationAuditTokenData { return _sourceApplicationAuditTokenData; }
+
+- (void)set_sourceApplicationAuditTokenData:(NSData *)data {
+    NSData *old = _sourceApplicationAuditTokenData;
+    _sourceApplicationAuditTokenData = [data copy];
+    [old release];
+}
 
 @end
 
@@ -123,6 +147,16 @@ NSString *const NSURLErrorFailingURLStringErrorKey = @"NSErrorFailingURLStringKe
 - (NSURLResponse *)response { return _response; }
 - (NSError *)error { return _error; }
 - (int64_t)countOfBytesReceived { return _countOfBytesReceived; }
+
+// loads read whole files and send nothing, so sent counts are the request body and nothing goes out early
+- (int64_t)countOfBytesSent { return 0; }
+- (int64_t)countOfBytesExpectedToSend { return (int64_t)[[_originalRequest HTTPBody] length]; }
+
+- (int64_t)countOfBytesExpectedToReceive {
+    long long length = _response ? [_response expectedContentLength] : -1;
+
+    return length >= 0 ? length : NSURLSessionTransferSizeUnknown;
+}
 
 - (NSURLSessionTaskState)state {
     @synchronized(self) {
@@ -192,6 +226,12 @@ static NSError *urlError(NSInteger code, NSURL *url, NSString *description) {
                                                      delegate:nil delegateQueue:nil];
     });
     return shared;
+}
+
+// sessions here keep no background state between runs, so there is never anything to clear
++ (void)_obliterateAllBackgroundSessionsWithCompletionHandler:(void (^)(void))completionHandler {
+    if (completionHandler)
+        completionHandler();
 }
 
 + (NSURLSession *)sessionWithConfiguration:(NSURLSessionConfiguration *)configuration {
@@ -357,5 +397,19 @@ static NSError *urlError(NSInteger code, NSURL *url, NSString *description) {
         [delegate release];
     }];
 }
+
+@end
+
+@implementation NSURLSessionTaskMetrics
+
+- (void)dealloc {
+    [_transactionMetrics release];
+    [_taskInterval release];
+    [super dealloc];
+}
+
+- (NSArray *)transactionMetrics { return _transactionMetrics ?: [NSArray array]; }
+- (NSDateInterval *)taskInterval { return _taskInterval; }
+- (NSUInteger)redirectCount { return _redirectCount; }
 
 @end
