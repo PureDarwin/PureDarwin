@@ -182,7 +182,6 @@
 "Darwin and xnu" = "Darwin und xnu";
 
 /* No comment provided by engineer. */
-"PureDarwin %@" = "PureDarwin %@";
 
 /* No comment provided by engineer. */
 "%1$@ · %2$@ · %3$@ · build %4$@" = "%1$@ · %2$@ · %3$@ · Build %4$@";
@@ -512,7 +511,6 @@
 "Version" = "Version";
 
 /* No comment provided by engineer. */
-"PureDarwin %1$@ (%2$@)" = "PureDarwin %1$@ (%2$@)";
 
 /* No comment provided by engineer. */
 "Kernel" = "Kernel";
@@ -571,3 +569,238 @@
 
 /* No comment provided by engineer. */
 "The compositor is not running." = "Der Compositor läuft nicht.";
+"Users & Groups" = "Benutzer & Gruppen";
+
+/* No comment provided by engineer. */
+"Accounts and passwords" = "Accounts und Passwörter";
+
+/* No comment provided by engineer. */
+"Cancel" = "Abbrechen";
+
+/* No comment provided by engineer. */
+"Working…" = "Einen Moment…";
+
+/* No comment provided by engineer. */
+"Settings wants to make changes." = "Einstellungen möchte Änderungen vornehmen.";
+
+/* No comment provided by engineer. */
+"Enter an administrator's name and password to allow this." = "Gib Name und Passwort eines Administrators ein, um dies zu erlauben.";
+
+/* No comment provided by engineer. */
+"User Name:" = "Benutzername:";
+
+/* No comment provided by engineer. */
+"Password:" = "Passwort:";
+
+/* No comment provided by engineer. */
+"Unlock" = "Entsperren";
+
+/* No comment provided by engineer. */
+"Old password:" = "Altes Passwort:";
+
+/* No comment provided by engineer. */
+"New password:" = "Neues Passwort:";
+
+/* No comment provided by engineer. */
+"Verify:" = "Bestätigen:";
+
+/* No comment provided by engineer. */
+"Change your password." = "Ändere dein Passwort.";
+
+/* No comment provided by engineer. */
+"Reset the password for “%@”." = "Passwort für „%@“ zurücksetzen.";
+
+/* No comment provided by engineer. */
+"You need your old password to set a new one." = "Für ein neues Passwort brauchst du dein altes.";
+
+/* No comment provided by engineer. */
+"Files the user locked with the old password stay locked." = "Dateien, die mit dem alten Passwort geschützt wurden, bleiben geschützt.";
+
+/* No comment provided by engineer. */
+"Change Password" = "Passwort ändern";
+
+/* No comment provided by engineer. */
+"The new passwords don't match." = "Die neuen Passwörter stimmen nicht überein.";
+
+/* No comment provided by engineer. */
+"Choose a picture for “%@”." = "Wähle ein Bild für „%@“.";
+
+/* No comment provided by engineer. */
+"It shows on the login screen. Pictures in your Pictures and Desktop folders are listed after the system's own." = "Es erscheint beim Anmelden. Bilder aus deinen Ordnern Bilder und Schreibtisch folgen nach denen des Systems.";
+
+/* No comment provided by engineer. */
+"Choose" = "Auswählen";
+
+/* No comment provided by engineer. */
+"Click a picture first." = "Klicke zuerst auf ein Bild.";
+
+/* No comment provided by engineer. */
+"That picture can't be read." = "Dieses Bild kann nicht gelesen werden.";
+
+/* No comment provided by engineer. */
+"Delete the account “%@”?" = "Account „%@“ löschen?";
+
+/* No comment provided by engineer. */
+"The user can no longer log in. Their home folder can stay in /Users for later." = "Der Benutzer kann sich nicht mehr anmelden. Sein Benutzerordner kann in /Users bleiben.";
+
+/* No comment provided by engineer. */
+"Keep the home folder" = "Benutzerordner behalten";
+
+/* No comment provided by engineer. */
+"Delete the home folder" = "Benutzerordner löschen";
+
+/* No comment provided by engineer. */
+"Delete User" = "Benutzer löschen";
+
+/* No comment provided by engineer. */
+"Add a new user." = "Neuen Benutzer hinzufügen.";
+
+/* No comment provided by engineer. */
+"The account name is the name of the home folder. It is made from the full name when left empty." = "Der Accountname ist der Name des Benutzerordners. Bleibt er leer, wird er aus dem vollständigen Namen gebildet.";
+
+/* No comment provided by engineer. */
+"Full name:" = "Vollständiger Name:";
+
+/* No comment provided by engineer. */
+"Account name:" = "Accountname:";
+
+/* No comment provided by engineer. */
+"Allow this user to administer this computer" = "Diesem Benutzer erlauben, diesen Computer zu verwalten";
+
+/* No comment provided by engineer. */
+"Create User" = "Benutzer erstellen";
+
+/* No comment provided by engineer. */
+"Enter a full name." = "Gib einen vollständigen Namen ein.";
+
+/* No comment provided by engineer. */
+"The passwords don't match." = "Die Passwörter stimmen nicht überein.";
+
+/* No comment provided by engineer. */
+"Administrator" = "Administrator";
+
+/* No comment provided by engineer. */
+"Standard" = "Standard";
+
+/* No comment provided by engineer. */
+"Lock" = "Sperren";
+
+/* No comment provided by engineer. */
+"Unlock…" = "Entsperren…";
+
+/* No comment provided by engineer. */
+"Unlocked by %@." = "Entsperrt von %@.";
+
+/* No comment provided by engineer. */
+"Unlock to add, delete or change other users." = "Entsperre, um andere Benutzer hinzuzufügen, zu löschen oder zu ändern.";
+
+/* No comment provided by engineer. */
+"Current User" = "Aktueller Benutzer";
+
+/* No comment provided by engineer. */
+"Picture…" = "Bild…";
+
+/* No comment provided by engineer. */
+"Change Password…" = "Passwort ändern…";
+
+/* No comment provided by engineer. */
+"Make Standard" = "Zu Standard machen";
+
+/* No comment provided by engineer. */
+"Make Admin" = "Zum Admin machen";
+
+/* No comment provided by engineer. */
+"Reset Password…" = "Passwort zurücksetzen…";
+
+/* No comment provided by engineer. */
+"Delete…" = "Löschen…";
+
+/* No comment provided by engineer. */
+"No other users" = "Keine weiteren Benutzer";
+
+/* No comment provided by engineer. */
+"Add User…" = "Benutzer hinzufügen…";
+
+/* No comment provided by engineer. */
+"Other Users" = "Weitere Benutzer";
+
+/* No comment provided by engineer. */
+"Users" = "Benutzer";
+
+/* No comment provided by engineer. */
+"no members" = "keine Mitglieder";
+
+/* No comment provided by engineer. */
+"Groups" = "Gruppen";
+
+/* No comment provided by engineer. */
+"Administrators are the members of admin. Other groups are kept with dsuser group." = "Administratoren sind die Mitglieder von admin. Andere Gruppen verwaltet dsuser group.";
+
+/* No comment provided by engineer. */
+"The account service is not running." = "Der Account-Dienst läuft nicht.";
+
+/* No comment provided by engineer. */
+"The account service refused." = "Der Account-Dienst hat abgelehnt.";
+
+/* No comment provided by engineer. */
+"The administrator name or password is incorrect." = "Name oder Passwort des Administrators ist falsch.";
+
+/* No comment provided by engineer. */
+"The request is missing a value." = "In der Anfrage fehlt ein Wert.";
+
+/* No comment provided by engineer. */
+"The new password is too short." = "Das neue Passwort ist zu kurz.";
+
+/* No comment provided by engineer. */
+"The old password is incorrect." = "Das alte Passwort ist falsch.";
+
+/* No comment provided by engineer. */
+"There is no such user." = "Diesen Benutzer gibt es nicht.";
+
+/* No comment provided by engineer. */
+"The password could not be saved." = "Das Passwort konnte nicht gesichert werden.";
+
+/* No comment provided by engineer. */
+"An account name uses letters, digits, '.', '_' and '-' only." = "Ein Accountname besteht nur aus Buchstaben, Ziffern, „.“, „_“ und „-“.";
+
+/* No comment provided by engineer. */
+"The password is too short." = "Das Passwort ist zu kurz.";
+
+/* No comment provided by engineer. */
+"A full name cannot hold ':' or line breaks." = "Ein vollständiger Name darf weder „:“ noch Zeilenumbrüche enthalten.";
+
+/* No comment provided by engineer. */
+"That account name is already taken." = "Dieser Accountname ist schon vergeben.";
+
+/* No comment provided by engineer. */
+"The account could not be created." = "Der Account konnte nicht erstellt werden.";
+
+/* No comment provided by engineer. */
+"You can't delete the account you are logged in with." = "Den Account, mit dem du angemeldet bist, kannst du nicht löschen.";
+
+/* No comment provided by engineer. */
+"The last administrator can't be deleted." = "Der letzte Administrator kann nicht gelöscht werden.";
+
+/* No comment provided by engineer. */
+"The account could not be deleted." = "Der Account konnte nicht gelöscht werden.";
+
+/* No comment provided by engineer. */
+"The admin group could not be changed." = "Die Gruppe admin konnte nicht geändert werden.";
+
+/* No comment provided by engineer. */
+"At least one administrator has to stay." = "Mindestens ein Administrator muss bleiben.";
+
+/* No comment provided by engineer. */
+"That is not one of the system's pictures." = "Das ist keines der Bilder des Systems.";
+
+/* No comment provided by engineer. */
+"The picture could not be saved." = "Das Bild konnte nicht gesichert werden.";
+
+/* No comment provided by engineer. */
+"Pictures can be PNG, JPEG or TIFF files." = "Bilder können PNG-, JPEG- oder TIFF-Dateien sein.";
+
+/* No comment provided by engineer. */
+"The request names no operation." = "Die Anfrage nennt keinen Vorgang.";
+
+/* No comment provided by engineer. */
+"The account service doesn't know that operation." = "Diesen Vorgang kennt der Account-Dienst nicht.";

@@ -23,6 +23,8 @@ void PDPushWindowStyle(void);
 
 NSString *PDSystemVersion(void);
 NSString *PDBuildVersion(void);
+// the plist's ProductName, PureDarwin on PD and Argon on Linux
+NSString *PDProductName(void);
 NSString *PDKernelVersion(void);
 NSString *PDXNUTag(void);
 NSString *PDProcessor(void);

@@ -14,9 +14,14 @@
  * compositor Super+Q would eat every application's quit shortcut.
  */
 
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <execinfo.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <sys/ucontext.h>
 #include <wayland-server.h>
 #include <swc.h>
 
@@ -85,6 +90,7 @@ focus_front(struct window *window)
 		wl_list_remove(&window->link);
 		wl_list_insert(&window->screen->windows, &window->link);
 	}
+	swc_window_raise(window->swc);
 	focus(window);
 }
 
@@ -198,6 +204,58 @@ new_window(struct swc_window *swc)
 
 static const struct swc_manager manager = {&new_screen, &new_window};
 
+// the session log gets where the compositor died, the kernel alone only reports the signal
+static void
+crashed(int sig, siginfo_t *info, void *context)
+{
+	void *frames[48];
+	int count = backtrace(frames, 48);
+	ucontext_t *uc = context;
+	Dl_info at;
+	// glibc keeps the registers in an array, Darwin in the thread state
+#if defined(__linux__) && defined(__x86_64__)
+	void *pc = (void *)uc->uc_mcontext.gregs[REG_RIP];
+#elif defined(__APPLE__) && defined(__x86_64__)
+	void *pc = (void *)uc->uc_mcontext->__ss.__rip;
+#elif defined(__APPLE__) && defined(__arm64__)
+	void *pc = (void *)uc->uc_mcontext->__ss.__pc;
+#else
+	void *pc = NULL;
+#endif
+
+	fprintf(stderr, "neuswc: signal %d at %p, pc %p\n", sig, info->si_addr, pc);
+	// the handler runs on its own stack, so walk the crashed thread's frame pointers
+#if defined(__APPLE__) && defined(__x86_64__)
+	void **fp = (void **)uc->uc_mcontext->__ss.__rbp;
+#elif defined(__linux__) && defined(__x86_64__)
+	void **fp = (void **)uc->uc_mcontext.gregs[REG_RBP];
+#else
+	void **fp = NULL;
+#endif
+	for (int i = 0; fp != NULL && i < 32; i++) {
+		void *ret = fp[1];
+
+		if (dladdr(ret, &at) && at.dli_sname != NULL)
+			fprintf(stderr, "  fp%-2d %s + %ld\n", i, at.dli_sname, (long)((char *)ret - (char *)at.dli_saddr));
+		else
+			fprintf(stderr, "  fp%-2d %p\n", i, ret);
+		if ((void **)fp[0] <= fp)
+			break;
+		fp = (void **)fp[0];
+	}
+	if (pc != NULL && dladdr(pc, &at) && at.dli_sname != NULL)
+		fprintf(stderr, "  pc %s + %ld (%s)\n", at.dli_sname, (long)((char *)pc - (char *)at.dli_saddr), at.dli_fname);
+	for (int i = 0; i < count; i++) {
+		if (dladdr(frames[i], &at) && at.dli_sname != NULL)
+			fprintf(stderr, "  %2d %s + %ld (%s)\n", i, at.dli_sname, (long)((char *)frames[i] - (char *)at.dli_saddr), at.dli_fname);
+		else
+			fprintf(stderr, "  %2d %p\n", i, frames[i]);
+	}
+	fflush(stderr);
+	signal(sig, SIG_DFL);
+	raise(sig);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -208,6 +266,18 @@ main(int argc, char *argv[])
 
 	// a client that quits mid-write must not take the compositor with it
 	signal(SIGPIPE, SIG_IGN);
+
+	struct sigaction action = { 0 };
+	stack_t altstack = { .ss_sp = malloc(1 << 16), .ss_size = 1 << 16 };
+
+	sigaltstack(&altstack, NULL);
+	action.sa_sigaction = crashed;
+	action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+	sigaction(SIGSEGV, &action, NULL);
+	sigaction(SIGBUS, &action, NULL);
+	sigaction(SIGILL, &action, NULL);
+	sigaction(SIGABRT, &action, NULL);
+	sigaction(SIGFPE, &action, NULL);
 
 	display = wl_display_create();
 	if (!display) {

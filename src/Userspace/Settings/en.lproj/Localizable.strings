@@ -182,7 +182,6 @@
 "Darwin and xnu" = "Darwin and xnu";
 
 /* No comment provided by engineer. */
-"PureDarwin %@" = "PureDarwin %@";
 
 /* No comment provided by engineer. */
 "%1$@ · %2$@ · %3$@ · build %4$@" = "%1$@ · %2$@ · %3$@ · build %4$@";
@@ -512,7 +511,6 @@
 "Version" = "Version";
 
 /* No comment provided by engineer. */
-"PureDarwin %1$@ (%2$@)" = "PureDarwin %1$@ (%2$@)";
 
 /* No comment provided by engineer. */
 "Kernel" = "Kernel";
@@ -571,3 +569,238 @@
 
 /* No comment provided by engineer. */
 "The compositor is not running." = "The compositor is not running.";
+"Users & Groups" = "Users & Groups";
+
+/* No comment provided by engineer. */
+"Accounts and passwords" = "Accounts and passwords";
+
+/* No comment provided by engineer. */
+"Cancel" = "Cancel";
+
+/* No comment provided by engineer. */
+"Working…" = "Working…";
+
+/* No comment provided by engineer. */
+"Settings wants to make changes." = "Settings wants to make changes.";
+
+/* No comment provided by engineer. */
+"Enter an administrator's name and password to allow this." = "Enter an administrator's name and password to allow this.";
+
+/* No comment provided by engineer. */
+"User Name:" = "User Name:";
+
+/* No comment provided by engineer. */
+"Password:" = "Password:";
+
+/* No comment provided by engineer. */
+"Unlock" = "Unlock";
+
+/* No comment provided by engineer. */
+"Old password:" = "Old password:";
+
+/* No comment provided by engineer. */
+"New password:" = "New password:";
+
+/* No comment provided by engineer. */
+"Verify:" = "Verify:";
+
+/* No comment provided by engineer. */
+"Change your password." = "Change your password.";
+
+/* No comment provided by engineer. */
+"Reset the password for “%@”." = "Reset the password for “%@”.";
+
+/* No comment provided by engineer. */
+"You need your old password to set a new one." = "You need your old password to set a new one.";
+
+/* No comment provided by engineer. */
+"Files the user locked with the old password stay locked." = "Files the user locked with the old password stay locked.";
+
+/* No comment provided by engineer. */
+"Change Password" = "Change Password";
+
+/* No comment provided by engineer. */
+"The new passwords don't match." = "The new passwords don't match.";
+
+/* No comment provided by engineer. */
+"Choose a picture for “%@”." = "Choose a picture for “%@”.";
+
+/* No comment provided by engineer. */
+"It shows on the login screen. Pictures in your Pictures and Desktop folders are listed after the system's own." = "It shows on the login screen. Pictures in your Pictures and Desktop folders are listed after the system's own.";
+
+/* No comment provided by engineer. */
+"Choose" = "Choose";
+
+/* No comment provided by engineer. */
+"Click a picture first." = "Click a picture first.";
+
+/* No comment provided by engineer. */
+"That picture can't be read." = "That picture can't be read.";
+
+/* No comment provided by engineer. */
+"Delete the account “%@”?" = "Delete the account “%@”?";
+
+/* No comment provided by engineer. */
+"The user can no longer log in. Their home folder can stay in /Users for later." = "The user can no longer log in. Their home folder can stay in /Users for later.";
+
+/* No comment provided by engineer. */
+"Keep the home folder" = "Keep the home folder";
+
+/* No comment provided by engineer. */
+"Delete the home folder" = "Delete the home folder";
+
+/* No comment provided by engineer. */
+"Delete User" = "Delete User";
+
+/* No comment provided by engineer. */
+"Add a new user." = "Add a new user.";
+
+/* No comment provided by engineer. */
+"The account name is the name of the home folder. It is made from the full name when left empty." = "The account name is the name of the home folder. It is made from the full name when left empty.";
+
+/* No comment provided by engineer. */
+"Full name:" = "Full name:";
+
+/* No comment provided by engineer. */
+"Account name:" = "Account name:";
+
+/* No comment provided by engineer. */
+"Allow this user to administer this computer" = "Allow this user to administer this computer";
+
+/* No comment provided by engineer. */
+"Create User" = "Create User";
+
+/* No comment provided by engineer. */
+"Enter a full name." = "Enter a full name.";
+
+/* No comment provided by engineer. */
+"The passwords don't match." = "The passwords don't match.";
+
+/* No comment provided by engineer. */
+"Administrator" = "Administrator";
+
+/* No comment provided by engineer. */
+"Standard" = "Standard";
+
+/* No comment provided by engineer. */
+"Lock" = "Lock";
+
+/* No comment provided by engineer. */
+"Unlock…" = "Unlock…";
+
+/* No comment provided by engineer. */
+"Unlocked by %@." = "Unlocked by %@.";
+
+/* No comment provided by engineer. */
+"Unlock to add, delete or change other users." = "Unlock to add, delete or change other users.";
+
+/* No comment provided by engineer. */
+"Current User" = "Current User";
+
+/* No comment provided by engineer. */
+"Picture…" = "Picture…";
+
+/* No comment provided by engineer. */
+"Change Password…" = "Change Password…";
+
+/* No comment provided by engineer. */
+"Make Standard" = "Make Standard";
+
+/* No comment provided by engineer. */
+"Make Admin" = "Make Admin";
+
+/* No comment provided by engineer. */
+"Reset Password…" = "Reset Password…";
+
+/* No comment provided by engineer. */
+"Delete…" = "Delete…";
+
+/* No comment provided by engineer. */
+"No other users" = "No other users";
+
+/* No comment provided by engineer. */
+"Add User…" = "Add User…";
+
+/* No comment provided by engineer. */
+"Other Users" = "Other Users";
+
+/* No comment provided by engineer. */
+"Users" = "Users";
+
+/* No comment provided by engineer. */
+"no members" = "no members";
+
+/* No comment provided by engineer. */
+"Groups" = "Groups";
+
+/* No comment provided by engineer. */
+"Administrators are the members of admin. Other groups are kept with dsuser group." = "Administrators are the members of admin. Other groups are kept with dsuser group.";
+
+/* No comment provided by engineer. */
+"The account service is not running." = "The account service is not running.";
+
+/* No comment provided by engineer. */
+"The account service refused." = "The account service refused.";
+
+/* No comment provided by engineer. */
+"The administrator name or password is incorrect." = "The administrator name or password is incorrect.";
+
+/* No comment provided by engineer. */
+"The request is missing a value." = "The request is missing a value.";
+
+/* No comment provided by engineer. */
+"The new password is too short." = "The new password is too short.";
+
+/* No comment provided by engineer. */
+"The old password is incorrect." = "The old password is incorrect.";
+
+/* No comment provided by engineer. */
+"There is no such user." = "There is no such user.";
+
+/* No comment provided by engineer. */
+"The password could not be saved." = "The password could not be saved.";
+
+/* No comment provided by engineer. */
+"An account name uses letters, digits, '.', '_' and '-' only." = "An account name uses letters, digits, '.', '_' and '-' only.";
+
+/* No comment provided by engineer. */
+"The password is too short." = "The password is too short.";
+
+/* No comment provided by engineer. */
+"A full name cannot hold ':' or line breaks." = "A full name cannot hold ':' or line breaks.";
+
+/* No comment provided by engineer. */
+"That account name is already taken." = "That account name is already taken.";
+
+/* No comment provided by engineer. */
+"The account could not be created." = "The account could not be created.";
+
+/* No comment provided by engineer. */
+"You can't delete the account you are logged in with." = "You can't delete the account you are logged in with.";
+
+/* No comment provided by engineer. */
+"The last administrator can't be deleted." = "The last administrator can't be deleted.";
+
+/* No comment provided by engineer. */
+"The account could not be deleted." = "The account could not be deleted.";
+
+/* No comment provided by engineer. */
+"The admin group could not be changed." = "The admin group could not be changed.";
+
+/* No comment provided by engineer. */
+"At least one administrator has to stay." = "At least one administrator has to stay.";
+
+/* No comment provided by engineer. */
+"That is not one of the system's pictures." = "That is not one of the system's pictures.";
+
+/* No comment provided by engineer. */
+"The picture could not be saved." = "The picture could not be saved.";
+
+/* No comment provided by engineer. */
+"Pictures can be PNG, JPEG or TIFF files." = "Pictures can be PNG, JPEG or TIFF files.";
+
+/* No comment provided by engineer. */
+"The request names no operation." = "The request names no operation.";
+
+/* No comment provided by engineer. */
+"The account service doesn't know that operation." = "The account service doesn't know that operation.";

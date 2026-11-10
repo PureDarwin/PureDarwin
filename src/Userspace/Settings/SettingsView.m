@@ -9,6 +9,10 @@
 #import "SettingsView.h"
 #import "SettingsData.h"
 #import "PDWiFiUI.h"
+#import "AccountSheet.h"
+#import "SoundPane.h"
+#include "pdaccounts_client.h"
+#include <pwd.h>
 
 // sizes from the demo's settings window
 #define TB_H 38
@@ -276,7 +280,7 @@ static NSArray *sections(void)
 {
     return @[
         @[ NSLocalizedString(@"You", @""), @[ @[ @"appearance", NSLocalizedString(@"Appearance", @""), NSLocalizedString(@"Theme, wallpaper and dock", @""), @"pref-display" ],
-                      @[ @"users", NSLocalizedString(@"Account", @""), NSLocalizedString(@"Name and picture", @""), @"pref-user" ] ] ],
+                      @[ @"users", NSLocalizedString(@"Users & Groups", @""), NSLocalizedString(@"Accounts and passwords", @""), @"pref-user" ] ] ],
         @[ NSLocalizedString(@"System", @""), @[ @[ @"boot", NSLocalizedString(@"Startup & Boot", @""), NSLocalizedString(@"Boot args and disk", @""), @"settings" ],
                          @[ @"services", NSLocalizedString(@"Services", @""), NSLocalizedString(@"launchd daemons", @""), @"terminal" ],
                          @[ @"kexts", NSLocalizedString(@"Kernel Extensions", @""), NSLocalizedString(@"Kernel collection", @""), @"folder" ],
@@ -335,6 +339,8 @@ static NSArray *paneInfo(NSString *pane)
                                                  name:NSWindowDidMoveNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(wifiChanged:)
                                                  name:PDWiFiChangedNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(soundChanged:)
+                                                 name:PDSoundChangedNotification object:nil];
     return self;
 }
 
@@ -350,6 +356,9 @@ static NSArray *paneInfo(NSString *pane)
     [_kexts release];
     [_bootArgs release];
     [_displayModes release];
+    [_accounts release];
+    [_groups release];
+    [self lock];
     [_wifiScan invalidate];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [super dealloc];
@@ -397,6 +406,8 @@ static NSArray *renderChoices;
     } else if ([pane isEqualToString:@"session"]) {
         [renderChoices release];
         renderChoices = [PDRenderChoices() retain];
+    } else if ([pane isEqualToString:@"users"]) {
+        [self loadAccounts];
     } else if ([pane isEqualToString:@"displays"]) {
         [_displayModes release];
         _displayModes = (NSArray *)CGDisplayCopyAllDisplayModes(CGMainDisplayID(), NULL);
@@ -423,6 +434,13 @@ static NSArray *renderChoices;
 {
     if ([_pane isEqualToString:@"network"])
         [self setNeedsDisplay:YES];
+}
+
+// a change from another process arrives without an event, so the pane draws now
+- (void)soundChanged:(NSNotification *)note
+{
+    if ([_pane isEqualToString:@"sound"])
+        [self display];
 }
 
 - (void)windowMoved:(NSNotification *)note
@@ -753,7 +771,7 @@ static void drawCapsule(NSRect b, BOOL primary)
     [[NSBezierPath bezierPathWithRect:r] fill];
     [logo drawInRect:NSMakeRect(NSMaxX(r) - 170, NSMaxY(r) - 160, 200, 200) fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:0.14 respectFlipped:YES hints:nil];
     [logo drawInRect:NSMakeRect(NSMinX(r) + 26, NSMidY(r) - 28, 56, 56) fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1 respectFlipped:YES hints:nil];
-    [[NSString stringWithFormat:NSLocalizedString(@"PureDarwin %@", @""), PDSystemVersion()] drawAtPoint:NSMakePoint(NSMinX(r) + 100, NSMinY(r) + 22)
+    [[NSString stringWithFormat:@"%@ %@", PDProductName(), PDSystemVersion()] drawAtPoint:NSMakePoint(NSMinX(r) + 100, NSMinY(r) + 22)
                                                                   withAttributes:attrs(@"Inter-Bold", 22, [NSColor whiteColor])];
     [[NSString stringWithFormat:NSLocalizedString(@"%1$@ · %2$@ · %3$@ · build %4$@", @""), PDKernelVersion(), PDXNUTag(), PDProcessor(), PDBuildVersion()]
         drawAtPoint:NSMakePoint(NSMinX(r) + 100, NSMinY(r) + 52) withAttributes:white];
@@ -976,17 +994,394 @@ static void drawCapsule(NSRect b, BOOL primary)
     return y;
 }
 
-- (CGFloat)drawAccountAt:(CGFloat)y
+// what pdaccountsd tells everyone about each account, and the dslocal groups, which anyone may read
+- (void)loadAccounts
 {
-    NSDictionary *a = PDAccount();
+    pdac_item ask[] = { { "op", "list", 0 } };
+    pdac_message reply;
+    NSMutableArray *accounts = [NSMutableArray array], *groups = [NSMutableArray array];
+    NSString *dir = @"/var/db/dslocal/nodes/Default/groups";
 
-    return [self card:@[
-        [self valueRow:NSLocalizedString(@"Full name", @"") value:a[@"name"]],
-        [self valueRow:NSLocalizedString(@"Account name", @"") value:a[@"short"]],
-        [self valueRow:NSLocalizedString(@"Account", @"") value:[a[@"uid"] intValue] == 0 ? NSLocalizedString(@"Administrator, uid 0", @"") : [NSString stringWithFormat:NSLocalizedString(@"Standard, uid %@", @""), a[@"uid"]]],
-        [self valueRow:NSLocalizedString(@"Home", @"") value:a[@"home"]],
-        [self valueRow:NSLocalizedString(@"Shell", @"") value:a[@"shell"]],
-    ] at:y];
+    if (pdac_request(ask, 1, &reply) == 0) {
+        for (int i = 0; i < reply.count; i++) {
+            NSArray *f;
+
+            if (strcmp(reply.keys[i], "user") != 0)
+                continue;
+            f = [[NSString stringWithUTF8String:reply.values[i]] componentsSeparatedByString:[NSString stringWithFormat:@"%c", PDAC_FIELD_SEP]];
+            if ([f count] < 5)
+                continue;
+            [accounts addObject:@{ @"name": f[0], @"uid": @([f[1] intValue]), @"real": f[2], @"picture": f[3], @"admin": @([f[4] intValue] != 0) }];
+        }
+        pdac_free(&reply);
+    }
+    for (NSString *file in [[[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:NULL] sortedArrayUsingSelector:@selector(compare:)]) {
+        NSDictionary *g = [file hasSuffix:@".plist"] ? [NSDictionary dictionaryWithContentsOfFile:[dir stringByAppendingPathComponent:file]] : nil;
+
+        if (g != nil && [g[@"name"] count] > 0)
+            [groups addObject:@{ @"name": g[@"name"][0], @"gid": [g[@"gid"] firstObject] ?: @"", @"users": g[@"users"] ?: @[] }];
+    }
+    [_accounts release];
+    _accounts = [accounts retain];
+    [_groups release];
+    _groups = [groups retain];
+}
+
+- (void)lock
+{
+    // the administrator's password is only kept while unlocked, and wiped when locked again
+    if ([_authPassword isKindOfClass:[NSMutableString class]])
+        [(NSMutableString *)_authPassword setString:@""];
+    [_authPassword release];
+    _authPassword = nil;
+    [_authUser release];
+    _authUser = nil;
+}
+
+- (BOOL)unlocked
+{
+    return getuid() == 0 || _authUser != nil;
+}
+
+- (NSDictionary *)me
+{
+    for (NSDictionary *a in _accounts) {
+        if ([a[@"uid"] intValue] == (int)getuid())
+            return a;
+    }
+    return nil;
+}
+
+// a request to pdaccountsd with the unlocking administrator added, nil when it worked
+- (NSString *)ask:(NSDictionary *)values
+{
+    NSMutableDictionary *all = [NSMutableDictionary dictionaryWithDictionary:values];
+    pdac_item items[PDAC_MAX_ITEMS];
+    char message[512];
+    int n = 0;
+
+    if (_authUser != nil && _authPassword != nil) {
+        all[@"auth_user"] = _authUser;
+        all[@"auth_password"] = _authPassword;
+    }
+    for (NSString *k in all) {
+        id v = all[k];
+
+        if ([v isKindOfClass:[NSData class]])
+            items[n++] = (pdac_item){ [k UTF8String], [v bytes], [v length] };
+        else
+            items[n++] = (pdac_item){ [k UTF8String], [v UTF8String], 0 };
+    }
+    if (pdac_call(items, n, message, sizeof(message)) == 0)
+        return nil;
+    return NSLocalizedString([NSString stringWithUTF8String:message], @"");
+}
+
+- (void)accountsChanged
+{
+    [self loadAccounts];
+    [self setNeedsDisplay:YES];
+}
+
+- (void)unlock
+{
+    NSDictionary *me = [self me];
+
+    [AccountSheet showTitle:NSLocalizedString(@"Settings wants to make changes.", @"")
+                    message:NSLocalizedString(@"Enter an administrator's name and password to allow this.", @"")
+                     fields:@[ @[ NSLocalizedString(@"User Name:", @""), @NO, [me[@"admin"] boolValue] ? me[@"name"] : @"" ],
+                               @[ NSLocalizedString(@"Password:", @""), @YES ] ]
+                      check:nil choices:nil pictures:nil selected:nil
+                     button:NSLocalizedString(@"Unlock", @"") destructive:NO accent:accent()
+                     submit:^NSString *(NSArray *v, BOOL checked, NSInteger choice, NSString *picture) {
+        pdac_item items[] = { { "op", "check", 0 }, { "auth_user", [v[0] UTF8String], 0 }, { "auth_password", [v[1] UTF8String], 0 } };
+        char message[512];
+
+        if (pdac_call(items, 3, message, sizeof(message)) != 0)
+            return NSLocalizedString([NSString stringWithUTF8String:message], @"");
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            [self lock];
+            _authUser = [v[0] copy];
+            _authPassword = [v[1] mutableCopy];
+        });
+        return nil;
+    } done:^{
+        [self setNeedsDisplay:YES];
+    }];
+}
+
+- (void)changePassword:(NSDictionary *)a
+{
+    BOOL own = [a[@"name"] isEqualToString:[self me][@"name"]] && getuid() != 0;
+    NSMutableArray *fields = [NSMutableArray array];
+    NSString *name = a[@"name"];
+
+    if (own)
+        [fields addObject:@[ NSLocalizedString(@"Old password:", @""), @YES ]];
+    [fields addObject:@[ NSLocalizedString(@"New password:", @""), @YES ]];
+    [fields addObject:@[ NSLocalizedString(@"Verify:", @""), @YES ]];
+    [AccountSheet showTitle:own ? NSLocalizedString(@"Change your password.", @"") : [NSString stringWithFormat:NSLocalizedString(@"Reset the password for “%@”.", @""), a[@"real"]]
+                    message:own ? NSLocalizedString(@"You need your old password to set a new one.", @"")
+                                : NSLocalizedString(@"Files the user locked with the old password stay locked.", @"")
+                     fields:fields check:nil choices:nil pictures:nil selected:nil
+                     button:NSLocalizedString(@"Change Password", @"") destructive:NO accent:accent()
+                     submit:^NSString *(NSArray *v, BOOL checked, NSInteger choice, NSString *picture) {
+        NSUInteger n = [v count];
+
+        if (![v[n - 1] isEqualToString:v[n - 2]])
+            return NSLocalizedString(@"The new passwords don't match.", @"");
+        if (own) {
+            NSString *error = [self ask:@{ @"op": @"passwd", @"user": name, @"old": v[0], @"new": v[1] }];
+
+            // the unlock this person gave stays good with the new password
+            if (error == nil && [_authUser isEqualToString:name]) {
+                dispatch_sync(dispatch_get_main_queue(), ^{
+                    [_authPassword release];
+                    _authPassword = [v[1] mutableCopy];
+                });
+            }
+            return error;
+        }
+        return [self ask:@{ @"op": @"passwd", @"user": name, @"new": v[0] }];
+    } done:nil];
+}
+
+// the system's pictures, then pictures of the person's own from Pictures and the Desktop
+- (NSArray *)pictureChoices
+{
+    NSMutableArray *all = [NSMutableArray array];
+    NSString *system = @"/Library/User Pictures/PureDarwin";
+    NSArray *kinds = @[ @"png", @"jpg", @"jpeg", @"tif", @"tiff" ];
+
+    for (NSString *f in [[[NSFileManager defaultManager] contentsOfDirectoryAtPath:system error:NULL] sortedArrayUsingSelector:@selector(compare:)]) {
+        if ([kinds containsObject:[[f pathExtension] lowercaseString]])
+            [all addObject:[system stringByAppendingPathComponent:f]];
+    }
+    for (NSString *d in @[ @"Pictures", @"Desktop" ]) {
+        NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:d];
+
+        for (NSString *f in [[[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:NULL] sortedArrayUsingSelector:@selector(compare:)]) {
+            if ([kinds containsObject:[[f pathExtension] lowercaseString]] && [all count] < 24)
+                [all addObject:[dir stringByAppendingPathComponent:f]];
+        }
+    }
+    return all;
+}
+
+- (void)changePicture:(NSDictionary *)a
+{
+    NSString *name = a[@"name"];
+
+    [AccountSheet showTitle:[NSString stringWithFormat:NSLocalizedString(@"Choose a picture for “%@”.", @""), a[@"real"]]
+                    message:NSLocalizedString(@"It shows on the login screen. Pictures in your Pictures and Desktop folders are listed after the system's own.", @"")
+                     fields:@[] check:nil choices:nil pictures:[self pictureChoices] selected:a[@"picture"]
+                     button:NSLocalizedString(@"Choose", @"") destructive:NO accent:accent()
+                     submit:^NSString *(NSArray *v, BOOL checked, NSInteger choice, NSString *picture) {
+        NSData *bytes;
+
+        if (picture == nil)
+            return NSLocalizedString(@"Click a picture first.", @"");
+        if ([picture hasPrefix:@"/Library/User Pictures/"])
+            return [self ask:@{ @"op": @"picture", @"user": name, @"picture": picture }];
+        // a file of the person's own is read here, with their rights, and sent as bytes
+        if ((bytes = [NSData dataWithContentsOfFile:picture]) == nil || [bytes length] > PDAC_MAX_BYTES / 2)
+            return NSLocalizedString(@"That picture can't be read.", @"");
+        return [self ask:@{ @"op": @"picture", @"user": name, @"data": bytes }];
+    } done:^{
+        [self accountsChanged];
+    }];
+}
+
+- (void)deleteUser:(NSDictionary *)a
+{
+    NSString *name = a[@"name"];
+
+    [AccountSheet showTitle:[NSString stringWithFormat:NSLocalizedString(@"Delete the account “%@”?", @""), a[@"real"]]
+                    message:NSLocalizedString(@"The user can no longer log in. Their home folder can stay in /Users for later.", @"")
+                     fields:@[] check:nil
+                    choices:@[ NSLocalizedString(@"Keep the home folder", @""), NSLocalizedString(@"Delete the home folder", @"") ]
+                   pictures:nil selected:nil
+                     button:NSLocalizedString(@"Delete User", @"") destructive:YES accent:accent()
+                     submit:^NSString *(NSArray *v, BOOL checked, NSInteger choice, NSString *picture) {
+        return [self ask:@{ @"op": @"delete", @"user": name, @"removehome": choice == 1 ? @"1" : @"0" }];
+    } done:^{
+        [self accountsChanged];
+    }];
+}
+
+// a short name from the full one: lowercase letters and digits, as macOS suggests
+static NSString *shortName(NSString *real)
+{
+    NSMutableString *s = [NSMutableString string];
+    NSMutableString *plain = [[[real lowercaseString] mutableCopy] autorelease];
+
+    // decomposed, an accented letter is its base letter and a mark the loop below drops
+    CFStringNormalize((CFMutableStringRef)plain, kCFStringNormalizationFormD);
+
+    for (NSUInteger i = 0; i < [plain length]; i++) {
+        unichar c = [plain characterAtIndex:i];
+
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+            [s appendFormat:@"%C", c];
+    }
+    return s;
+}
+
+- (void)addUser
+{
+    [AccountSheet showTitle:NSLocalizedString(@"Add a new user.", @"")
+                    message:NSLocalizedString(@"The account name is the name of the home folder. It is made from the full name when left empty.", @"")
+                     fields:@[ @[ NSLocalizedString(@"Full name:", @""), @NO ], @[ NSLocalizedString(@"Account name:", @""), @NO ],
+                               @[ NSLocalizedString(@"Password:", @""), @YES ], @[ NSLocalizedString(@"Verify:", @""), @YES ] ]
+                      check:NSLocalizedString(@"Allow this user to administer this computer", @"") choices:nil pictures:nil selected:nil
+                     button:NSLocalizedString(@"Create User", @"") destructive:NO accent:accent()
+                     submit:^NSString *(NSArray *v, BOOL checked, NSInteger choice, NSString *picture) {
+        NSString *real = [v[0] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        NSString *name = [v[1] length] ? v[1] : shortName(real);
+
+        if ([real length] == 0 && [name length] == 0)
+            return NSLocalizedString(@"Enter a full name.", @"");
+        if (![v[2] isEqualToString:v[3]])
+            return NSLocalizedString(@"The passwords don't match.", @"");
+        return [self ask:@{ @"op": @"add", @"user": name, @"realname": [real length] ? real : name, @"password": v[2], @"admin": checked ? @"1" : @"0" }];
+    } done:^{
+        [self accountsChanged];
+    }];
+}
+
+- (void)setAdmin:(NSDictionary *)a on:(BOOL)on
+{
+    NSString *error = [self ask:@{ @"op": @"admin", @"user": a[@"name"], @"on": on ? @"1" : @"0" }];
+
+    [self setMessage:error];
+    [self accountsChanged];
+}
+
+- (NSImage *)avatar:(NSString *)path
+{
+    static NSMutableDictionary *cache;
+    NSDictionary *info = [path length] ? [[NSFileManager defaultManager] attributesOfItemAtPath:path error:NULL] : nil;
+    // a replaced picture keeps its path, so the cache goes by when it was written too
+    NSString *key = [NSString stringWithFormat:@"%@|%@", path, info[NSFileModificationDate]];
+    NSImage *img;
+
+    if (info == nil)
+        return nil;
+    if (cache == nil)
+        cache = [[NSMutableDictionary alloc] init];
+    if ((img = cache[key]) == nil && (img = [[[NSImage alloc] initWithContentsOfFile:path] autorelease]) != nil)
+        cache[key] = img;
+    return img;
+}
+
+- (void)drawAvatar:(NSDictionary *)a in:(NSRect)r
+{
+    NSImage *img = [self avatar:a[@"picture"]];
+
+    [NSGraphicsContext saveGraphicsState];
+    [[NSBezierPath bezierPathWithOvalInRect:r] addClip];
+    if (img != nil) {
+        drawFilled(img, r);
+    } else {
+        NSMutableString *initials = [NSMutableString string];
+        NSDictionary *t = attrs(@"Inter-SemiBold", NSHeight(r) * 0.4, [NSColor whiteColor]);
+        NSSize s;
+
+        for (NSString *w in [a[@"real"] componentsSeparatedByString:@" "]) {
+            if ([w length] && [initials length] < 2)
+                [initials appendString:[[w substringToIndex:1] uppercaseString]];
+        }
+        // NSRectFill ignores the clip, the oval itself is filled
+        [accent() setFill];
+        [[NSBezierPath bezierPathWithOvalInRect:r] fill];
+        s = [initials sizeWithAttributes:t];
+        [initials drawAtPoint:NSMakePoint(NSMidX(r) - s.width / 2, NSMidY(r) - s.height / 2) withAttributes:t];
+    }
+    [NSGraphicsContext restoreGraphicsState];
+}
+
+// one account: picture, name, role, and what can be done to it laid out from the right
+- (NSDictionary *)userRow:(NSDictionary *)a actions:(NSArray *)actions
+{
+    return [self row:54 draw:^(NSRect r) {
+        CGFloat right = NSMaxX(r) - 12, x = NSMinX(r) + 12 + 36 + 12;
+        NSString *role = [a[@"admin"] boolValue] ? NSLocalizedString(@"Administrator", @"") : NSLocalizedString(@"Standard", @"");
+
+        [self drawAvatar:a in:NSMakeRect(NSMinX(r) + 12, NSMidY(r) - 18, 36, 36)];
+        for (NSArray *act in [actions reverseObjectEnumerator])
+            right = [self wifiControl:act[0] button:[act[1] boolValue] right:right mid:NSMidY(r) action:act[2]];
+        [self drawLabel:a[@"real"] sub:[NSString stringWithFormat:@"%@ · %@", a[@"name"], role] in:NSMakeRect(x, NSMinY(r), right - x, NSHeight(r)) code:NO];
+    }];
+}
+
+- (CGFloat)drawUsersAt:(CGFloat)y
+{
+    NSDictionary *me = [self me];
+    BOOL root = getuid() == 0, open = [self unlocked];
+    NSMutableArray *others = [NSMutableArray array];
+
+    if (!root) {
+        y = [self card:@[
+            [self buttonRow:open ? NSLocalizedString(@"Lock", @"") : NSLocalizedString(@"Unlock…", @"")
+                       note:open ? [NSString stringWithFormat:NSLocalizedString(@"Unlocked by %@.", @""), _authUser]
+                                 : NSLocalizedString(@"Unlock to add, delete or change other users.", @"")
+                     action:^{
+                if ([self unlocked]) {
+                    [self lock];
+                    [self setNeedsDisplay:YES];
+                } else {
+                    [self unlock];
+                }
+            }],
+        ] at:y];
+    }
+    if (_message)
+        y = [self lead:_message at:y];
+    if (me != nil) {
+        y = [self title:NSLocalizedString(@"Current User", @"") at:y];
+        y = [self card:@[ [self userRow:me actions:@[
+            @[ NSLocalizedString(@"Picture…", @""), @NO, ^{ [self changePicture:me]; } ],
+            @[ NSLocalizedString(@"Change Password…", @""), @YES, ^{ [self changePassword:me]; } ],
+        ]] ] at:y];
+    }
+    for (NSDictionary *a in _accounts) {
+        NSArray *acts = @[];
+
+        if (a == me)
+            continue;
+        if (open) {
+            acts = @[
+                @[ [a[@"admin"] boolValue] ? NSLocalizedString(@"Make Standard", @"") : NSLocalizedString(@"Make Admin", @""), @NO, ^{ [self setAdmin:a on:![a[@"admin"] boolValue]]; } ],
+                @[ NSLocalizedString(@"Picture…", @""), @NO, ^{ [self changePicture:a]; } ],
+                @[ NSLocalizedString(@"Reset Password…", @""), @NO, ^{ [self changePassword:a]; } ],
+                @[ NSLocalizedString(@"Delete…", @""), @YES, ^{ [self deleteUser:a]; } ],
+            ];
+        }
+        [others addObject:[self userRow:a actions:acts]];
+    }
+    if ([others count] == 0)
+        [others addObject:[self valueRow:NSLocalizedString(@"No other users", @"") value:@""]];
+    if (open) {
+        [others addObject:[self row:ROW_MIN draw:^(NSRect r) {
+            NSString *t = NSLocalizedString(@"Add User…", @"");
+            [self wifiControl:t button:NO right:NSMinX(r) + 12 + [t sizeWithAttributes:attrs(@"Inter-Regular", 12, accent())].width
+                          mid:NSMidY(r) action:^{ [self addUser]; }];
+        }]];
+    }
+    y = [self title:me != nil ? NSLocalizedString(@"Other Users", @"") : NSLocalizedString(@"Users", @"") at:y];
+    y = [self card:others at:y];
+
+    NSMutableArray *groups = [NSMutableArray array];
+    for (NSDictionary *g in _groups) {
+        NSString *members = [g[@"users"] count] ? [g[@"users"] componentsJoinedByString:@", "] : NSLocalizedString(@"no members", @"");
+        [groups addObject:[self valueRow:[NSString stringWithFormat:@"%@ (%@)", g[@"name"], g[@"gid"]] value:members]];
+    }
+    if ([groups count]) {
+        y = [self title:NSLocalizedString(@"Groups", @"") at:y];
+        y = [self card:groups at:y];
+        y = [self lead:NSLocalizedString(@"Administrators are the members of admin. Other groups are kept with dsuser group.", @"") at:y];
+    }
+    return y;
 }
 
 - (CGFloat)drawBootAt:(CGFloat)y
@@ -1140,7 +1535,7 @@ static void drawCapsule(NSRect b, BOOL primary)
     return [self drawRenderDeviceAt:y];
 }
 
-// which GPU the compositor renders with, written for pd-wayland-session to read at the next start
+// which GPU the compositor renders with, written for argon-session to read at the next start
 - (CGFloat)drawRenderDeviceAt:(CGFloat)y
 {
     NSString *current = PDRenderChoice();
@@ -1473,13 +1868,67 @@ static void drawCapsule(NSRect b, BOOL primary)
 
 - (CGFloat)drawSoundAt:(CGFloat)y
 {
-    NSMutableArray *rows = [NSMutableArray array];
+    NSArray *outputs = PDSoundDevices(NO), *inputs = PDSoundDevices(YES);
+    AudioDeviceID out = PDSoundDefault(NO), in = PDSoundDefault(YES);
+    NSMutableArray *rows = [NSMutableArray array], *names = [NSMutableArray array];
+    NSUInteger selected = NSNotFound;
 
-    for (NSArray *d in PDAudioDevices())
-        [rows addObject:[self valueRow:d[0] value:d[1]]];
-    if ([rows count] == 0)
+    PDSoundWatch();
+    for (NSUInteger i = 0; i < [outputs count]; i++) {
+        [names addObject:outputs[i][1]];
+        if ([outputs[i][0] unsignedIntValue] == out)
+            selected = i;
+    }
+    if ([outputs count] == 0) {
         [rows addObject:[self valueRow:NSLocalizedString(@"Output", @"") value:NSLocalizedString(@"No audio device", @"")]];
-    return [self card:rows at:y];
+    } else {
+        BOOL muted = PDSoundMuted(out);
+
+        [rows addObject:[self popupRow:NSLocalizedString(@"Output device", @"") items:names selected:selected pick:^(NSUInteger i) {
+            PDSoundSetDefault(NO, [outputs[i][0] unsignedIntValue]);
+            [self setNeedsDisplay:YES];
+        }]];
+        [rows addObject:[self sliderRow:NSLocalizedString(@"Output volume", @"") value:PDSoundVolume(out) change:^(CGFloat v, BOOL dragging) {
+            PDSoundSetVolume(out, (Float32)v);
+            [self setNeedsDisplay:YES];
+        }]];
+        [rows addObject:[self switchRow:NSLocalizedString(@"Mute", @"") sub:nil code:NO dot:nil on:muted enabled:YES toggle:^(BOOL on) {
+            PDSoundSetMuted(out, on);
+            [self setNeedsDisplay:YES];
+        }]];
+    }
+    y = [self title:NSLocalizedString(@"Output", @"") at:y];
+    y = [self card:rows at:y];
+
+    if ([outputs count] > 0) {
+        NSMutableArray *list = [NSMutableArray array];
+
+        for (NSArray *d in outputs) {
+            NSString *rate = [NSString stringWithFormat:NSLocalizedString(@"%.1f kHz", @""), [d[2] doubleValue] / 1000];
+            NSString *value = [d[0] unsignedIntValue] == out ? [NSString stringWithFormat:NSLocalizedString(@"%@, in use", @""), rate] : rate;
+            [list addObject:[self valueRow:d[1] value:value]];
+        }
+        y = [self title:NSLocalizedString(@"Output Devices", @"") at:y];
+        y = [self card:list at:y];
+    }
+
+    NSMutableArray *inRows = [NSMutableArray array], *inNames = [NSMutableArray array];
+    NSUInteger inSelected = NSNotFound;
+
+    for (NSUInteger i = 0; i < [inputs count]; i++) {
+        [inNames addObject:inputs[i][1]];
+        if ([inputs[i][0] unsignedIntValue] == in)
+            inSelected = i;
+    }
+    if ([inputs count] == 0)
+        [inRows addObject:[self valueRow:NSLocalizedString(@"Input", @"") value:NSLocalizedString(@"No input device", @"")]];
+    else
+        [inRows addObject:[self popupRow:NSLocalizedString(@"Input device", @"") items:inNames selected:inSelected pick:^(NSUInteger i) {
+            PDSoundSetDefault(YES, [inputs[i][0] unsignedIntValue]);
+            [self setNeedsDisplay:YES];
+        }]];
+    y = [self title:NSLocalizedString(@"Input", @"") at:y];
+    return [self card:inRows at:y];
 }
 
 - (CGFloat)drawPowerAt:(CGFloat)y
@@ -1538,7 +1987,7 @@ static void drawCapsule(NSRect b, BOOL primary)
 - (CGFloat)drawAboutAt:(CGFloat)y
 {
     return [self card:@[
-        [self valueRow:NSLocalizedString(@"Version", @"") value:[NSString stringWithFormat:NSLocalizedString(@"PureDarwin %1$@ (%2$@)", @""), PDSystemVersion(), PDBuildVersion()]],
+        [self valueRow:NSLocalizedString(@"Version", @"") value:[NSString stringWithFormat:@"%@ %@ (%@)", PDProductName(), PDSystemVersion(), PDBuildVersion()]],
         [self valueRow:NSLocalizedString(@"Kernel", @"") value:[NSString stringWithFormat:@"%@, %@", PDKernelVersion(), PDXNUTag()]],
         [self valueRow:NSLocalizedString(@"Processor", @"") value:PDProcessor()],
         [self valueRow:NSLocalizedString(@"Memory", @"") value:PDMemory()],
@@ -1556,7 +2005,7 @@ static void drawCapsule(NSRect b, BOOL primary)
     if ([_pane isEqualToString:@"appearance"])
         return [self drawAppearanceAt:y];
     if ([_pane isEqualToString:@"users"])
-        return [self drawAccountAt:y];
+        return [self drawUsersAt:y];
     if ([_pane isEqualToString:@"boot"])
         return [self drawBootAt:y];
     if ([_pane isEqualToString:@"services"])

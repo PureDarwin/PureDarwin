@@ -277,6 +277,12 @@ static NSFont *font(NSString *name, CGFloat size)
 
 @implementation InfoController
 
+// the app quits with its last window, which macOS asks the delegate for
+- (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)app
+{
+    return YES;
+}
+
 static NSMenuItem *addItem(NSMenu *menu, NSString *title, SEL action, NSString *key)
 {
     NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title action:action keyEquivalent:key];

@@ -446,6 +446,8 @@ static NSArray *software(void)
     up = boot.tv_sec > 0 ? (long)(time(NULL) - boot.tv_sec) : 0;
     [rows addObject:@[ @"System Version", [NSString stringWithFormat:@"%@ %@ (%@)", sv[@"ProductName"] ?: @"PureDarwin",
                                                    sv[@"ProductVersion"] ?: @"?", sv[@"ProductBuildVersion"] ?: @"?"] ]];
+    if (getenv("XDG_CURRENT_DESKTOP") != NULL && getenv("XDG_CURRENT_DESKTOP")[0] != '\0')
+        [rows addObject:@[ NSLocalizedString(@"Desktop", @""), [NSString stringWithUTF8String:getenv("XDG_CURRENT_DESKTOP")] ]];
     [rows addObject:@[ NSLocalizedString(@"Kernel Version", @""), [NSString stringWithFormat:@"%s %s", u.sysname, u.release] ]];
     [rows addObject:@[ NSLocalizedString(@"Kernel Build", @""), sysctlString("kern.version") ?: @"?" ]];
     [rows addObject:@[ NSLocalizedString(@"Boot Arguments", @""), [sysctlString("kern.bootargs") length] > 0 ? sysctlString("kern.bootargs") : NSLocalizedString(@"None", @"") ]];

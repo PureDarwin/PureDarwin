@@ -25,6 +25,9 @@
     NSRect _dirty;
     BOOL _wifiDetails;
     NSTimer *_wifiScan;
+    NSArray *_accounts;
+    NSArray *_groups;
+    NSString *_authUser, *_authPassword;
 }
 - (void)showPane:(NSString *)pane;
 - (IBAction)goBack:(id)sender;

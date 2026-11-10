@@ -898,8 +898,9 @@ static void appendCodepoint(unichar *buf, int *len, uint32_t c)
     if (_vt == NULL)
         return;
 
-    int cols = MAX(2, (int)floor(size.width / _cellWidth));
-    int rows = MAX(1, (int)floor(size.height / _cellHeight));
+    // libvterm aborts when a resize leaves no room for the cursor, so the grid never gets that small
+    int cols = MAX(10, (int)floor(size.width / _cellWidth));
+    int rows = MAX(3, (int)floor(size.height / _cellHeight));
     if (cols == _cols && rows == _rows)
         return;
 

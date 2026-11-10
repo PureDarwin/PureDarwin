@@ -1,0 +1,79 @@
+#!/bin/sh
+# argon-session [CLIENT ARGS...]: Argon, PureDarwin's desktop. neuswc with pdwm, the Dock, the menu bar
+# and one client, the Wayland counterpart of startx with xterm. CLIENT defaults to Terminal.app.
+#
+# Copyright (c) 2026 The PureDarwin Project
+# SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
+: "${XDG_RUNTIME_DIR:=/var/run/user/0}"
+export XDG_RUNTIME_DIR
+# launchd empties /var/run at boot, so the runtime directory is made here
+mkdir -p -m 0700 "$XDG_RUNTIME_DIR" || exit 1
+
+# an image can give the compositor its own environment and log, its GL drivers or ARGON_GFX
+NEUSWC_ENV=
+NEUSWC_LOG=/dev/stderr
+[ -r /etc/neuswc.env ] && . /etc/neuswc.env
+# the user's choice of render GPU and compositing, GPU=... and GFX=... lines a Settings pane can write,
+# after the image's defaults so it wins
+argon_conf=/Library/Preferences/org.puredarwin.argon.conf
+argon_key() { sed -n "s/^$1=\([A-Za-z0-9:/._-]*\)\$/\1/p" "$argon_conf" 2>/dev/null | tail -1; }
+argon_gpu=$(argon_key GPU)
+argon_gfx=$(argon_key GFX)
+[ -n "$argon_gpu" ] && NEUSWC_ENV="$NEUSWC_ENV ARGON_GPU=$argon_gpu"
+[ -n "$argon_gfx" ] && NEUSWC_ENV="$NEUSWC_ENV ARGON_GFX=$argon_gfx"
+env $NEUSWC_ENV /bin/neuswc 2>>"$NEUSWC_LOG" &
+compositor=$!
+
+# how toolkits and tools such as fastfetch tell which desktop they run in
+XDG_CURRENT_DESKTOP=Argon
+XDG_SESSION_DESKTOP=Argon
+export XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP
+
+# libwayland-server names its first socket wayland-0; AppKit waits for it to appear
+WAYLAND_DISPLAY=wayland-0
+export WAYLAND_DISPLAY
+
+# with local accounts the screen asks who is there, the compositor stays up across logins
+loginwindow=/System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow
+if [ -s /var/db/dslocal/nodes/Default/users.passwd ] && [ -x "$loginwindow" ]; then
+    while kill -0 $compositor 2>/dev/null; do
+        "$loginwindow"
+        echo "argon-session: loginwindow exited with status $?" >&2
+        sleep 1
+    done
+    exit 0
+fi
+
+# desktop services come back if they crash or are killed, as launchd brings back macOS's Dock,
+# for as long as the compositor runs
+keep() {
+    while kill -0 $compositor 2>/dev/null; do
+        "$@"
+        sleep 1
+    done
+}
+
+# the Dock draws the desktop picture, the menu bar serves every app's menus, both before the first client
+keep /System/Library/CoreServices/Dock.app/Contents/MacOS/Dock &
+dock=$!
+# title bars for windows that ask the compositor to draw them, foot, Qt, SDL and Wine
+keep /System/Library/CoreServices/pddecor.app/Contents/MacOS/pddecor 2>/dev/console &
+pddecor=$!
+keep /System/Library/CoreServices/MenuBar.app/Contents/MacOS/MenuBar &
+menubar=$!
+
+if [ $# -eq 0 ]; then
+    set -- /Applications/Utilities/Terminal.app/Contents/MacOS/Terminal
+fi
+# the first app is only the opening window, quitting it must leave the desktop running
+"$@" &
+
+# the install drive opens the installer too
+installer="/Applications/Install PureDarwin.app/Contents/MacOS/Installer"
+if [ -f /.pd-install-media ] && [ -x "$installer" ]; then
+    "$installer" &
+fi
+
+wait $compositor
+kill $menubar $dock $pddecor 2>/dev/null

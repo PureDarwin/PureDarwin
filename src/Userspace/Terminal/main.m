@@ -17,6 +17,12 @@
 
 @implementation TerminalController
 
+// the app quits with its last window, which macOS asks the delegate for
+- (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)app
+{
+    return YES;
+}
+
 static NSMenuItem *addItem(NSMenu *menu, NSString *title, SEL action, NSString *key)
 {
     NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title action:action keyEquivalent:key];
@@ -103,6 +109,8 @@ static NSMenu *addMenu(NSMenu *mainMenu, NSString *title)
                                            backing:NSBackingStoreBuffered
                                              defer:NO];
     [window setReleasedWhenClosed:NO];
+    // a few columns and rows at least, as Terminal on macOS keeps
+    [window setMinSize:NSMakeSize(240, 140)];
     [window setTitle:@"Terminal"];
     [window setDelegate:self];
     [window setAcceptsMouseMovedEvents:YES];

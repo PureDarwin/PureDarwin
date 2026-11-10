@@ -352,3 +352,5 @@
 /* No comment provided by engineer. */
 "Drivers in Use" = "Drivers in Use";
 
+/* the desktop environment the session runs, from XDG_CURRENT_DESKTOP */
+"Desktop" = "Desktop";

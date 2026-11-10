@@ -103,6 +103,11 @@ NSString *PDSystemVersion(void)
     return systemVersion()[@"ProductVersion"] ?: @"?";
 }
 
+NSString *PDProductName(void)
+{
+    return systemVersion()[@"ProductName"] ?: @"PureDarwin";
+}
+
 NSString *PDBuildVersion(void)
 {
     return systemVersion()[@"ProductBuildVersion"] ?: @"?";
@@ -309,7 +314,7 @@ NSSet *PDRunningProcesses(void)
 // the desktop session itself can't be switched off from inside it
 static BOOL lockedDaemon(NSString *label)
 {
-    return [label isEqualToString:@"org.puredarwin.wayland-session"] || [label hasPrefix:@"com.apple.launchd"];
+    return [label isEqualToString:@"org.puredarwin.argon"] || [label hasPrefix:@"com.apple.launchd"];
 }
 
 NSArray *PDLaunchDaemons(void)
@@ -609,7 +614,7 @@ NSString *PDRenderChoice(void)
 {
     NSString *value = @"auto";
 
-    // the last GPU= line wins, as in pd-wayland-session
+    // the last GPU= line wins, as in argon-session
     for (NSString *line in argonLines()) {
         if ([line hasPrefix:@"GPU="] && [line length] > 4)
             value = [line substringFromIndex:4];
@@ -669,7 +674,7 @@ BOOL PDRestartSession(void)
     if (compositor == 0)
         return NO;
     // the session ends when neuswc does, the helper's own session id keeps it alive past that
-    script = [NSString stringWithFormat:@"sleep 1; kill %d; sleep 3; exec launchctl start org.puredarwin.wayland-session", compositor];
+    script = [NSString stringWithFormat:@"sleep 1; kill %d; sleep 3; exec launchctl start org.puredarwin.argon", compositor];
     args[0] = "/bin/sh", args[1] = "-c", args[2] = (char *)[script UTF8String], args[3] = NULL;
     posix_spawnattr_init(&attr);
     posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSID);
