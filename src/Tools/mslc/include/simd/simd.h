@@ -1,21 +1,67 @@
-// simd/simd.h for mslc: the vector types under their simd names
+// simd/simd.h for mslc: the vector and matrix types under their simd_ and vector_/matrix_ names, as headers
+// shared between an app's C code and its shaders use them
 #ifndef PD_SIMD_H
 #define PD_SIMD_H
 
 #include <metal_stdlib>
 
 #define PD_SIMD(T)                                                                                                  \
-  typedef T simd_##T##2 __attribute__((ext_vector_type(2)));                                                        \
-  typedef T simd_##T##3 __attribute__((ext_vector_type(3)));                                                        \
-  typedef T simd_##T##4 __attribute__((ext_vector_type(4)));                                                        \
-  typedef T vector_##T##2 __attribute__((ext_vector_type(2)));                                                      \
-  typedef T vector_##T##3 __attribute__((ext_vector_type(3)));                                                      \
-  typedef T vector_##T##4 __attribute__((ext_vector_type(4)));
+  typedef T simd_##T##1;                                                                                            \
+  typedef T##2 simd_##T##2;                                                                                         \
+  typedef T##3 simd_##T##3;                                                                                         \
+  typedef T##4 simd_##T##4;                                                                                         \
+  typedef T##2 vector_##T##2;                                                                                       \
+  typedef T##3 vector_##T##3;                                                                                       \
+  typedef T##4 vector_##T##4;
 
 PD_SIMD(float)
 PD_SIMD(half)
 PD_SIMD(int)
 PD_SIMD(uint)
+PD_SIMD(short)
+PD_SIMD(ushort)
+PD_SIMD(char)
+PD_SIMD(uchar)
+PD_SIMD(long)
+PD_SIMD(ulong)
+
+#define PD_SIMD_MAT(T, C, R)                                                                                        \
+  typedef T##C##x##R simd_##T##C##x##R;                                                                             \
+  typedef T##C##x##R matrix_##T##C##x##R;
+
+#define PD_SIMD_MATS(T)                                                                                             \
+  PD_SIMD_MAT(T, 2, 2) PD_SIMD_MAT(T, 2, 3) PD_SIMD_MAT(T, 2, 4)                                                    \
+  PD_SIMD_MAT(T, 3, 2) PD_SIMD_MAT(T, 3, 3) PD_SIMD_MAT(T, 3, 4)                                                    \
+  PD_SIMD_MAT(T, 4, 2) PD_SIMD_MAT(T, 4, 3) PD_SIMD_MAT(T, 4, 4)
+
+PD_SIMD_MATS(float)
+PD_SIMD_MATS(half)
+
+// the constructors, as for the plain names in metal_stdlib
+#define vector_float2(...) ::metal::__pd_make<::float2>(__VA_ARGS__)
+#define vector_float3(...) ::metal::__pd_make<::float3>(__VA_ARGS__)
+#define vector_float4(...) ::metal::__pd_make<::float4>(__VA_ARGS__)
+#define vector_half2(...) ::metal::__pd_make<::half2>(__VA_ARGS__)
+#define vector_half3(...) ::metal::__pd_make<::half3>(__VA_ARGS__)
+#define vector_half4(...) ::metal::__pd_make<::half4>(__VA_ARGS__)
+#define vector_int2(...) ::metal::__pd_make<::int2>(__VA_ARGS__)
+#define vector_int3(...) ::metal::__pd_make<::int3>(__VA_ARGS__)
+#define vector_int4(...) ::metal::__pd_make<::int4>(__VA_ARGS__)
+#define vector_uint2(...) ::metal::__pd_make<::uint2>(__VA_ARGS__)
+#define vector_uint3(...) ::metal::__pd_make<::uint3>(__VA_ARGS__)
+#define vector_uint4(...) ::metal::__pd_make<::uint4>(__VA_ARGS__)
+#define simd_float2(...) ::metal::__pd_make<::float2>(__VA_ARGS__)
+#define simd_float3(...) ::metal::__pd_make<::float3>(__VA_ARGS__)
+#define simd_float4(...) ::metal::__pd_make<::float4>(__VA_ARGS__)
+#define simd_half2(...) ::metal::__pd_make<::half2>(__VA_ARGS__)
+#define simd_half3(...) ::metal::__pd_make<::half3>(__VA_ARGS__)
+#define simd_half4(...) ::metal::__pd_make<::half4>(__VA_ARGS__)
+#define simd_int2(...) ::metal::__pd_make<::int2>(__VA_ARGS__)
+#define simd_int3(...) ::metal::__pd_make<::int3>(__VA_ARGS__)
+#define simd_int4(...) ::metal::__pd_make<::int4>(__VA_ARGS__)
+#define simd_uint2(...) ::metal::__pd_make<::uint2>(__VA_ARGS__)
+#define simd_uint3(...) ::metal::__pd_make<::uint3>(__VA_ARGS__)
+#define simd_uint4(...) ::metal::__pd_make<::uint4>(__VA_ARGS__)
 
 // their constructors T(a, b, ...) as metal_stdlib makes floatN(...)
 #define simd_float2(...) ::metal::__pd_make<::simd_float2>(__VA_ARGS__)

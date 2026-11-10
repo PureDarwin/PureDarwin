@@ -98,7 +98,7 @@ stdenv.mkDerivation {
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -Wl,-platform_version,macos,26.5,26.5 \
       -L${libSystem}/usr/lib -L${libcxxDylib}/usr/lib -L${libcxxabiDylib}/usr/lib -L${llvm}/usr/lib \
-      -L${vulkanLoader}/usr/lib -L${iokit}/usr/lib -L${corefoundation}/usr/lib -L${libobjc}/usr/lib \
+      -L${vulkanLoader}/usr/lib -F${iokit}/System/Library/Frameworks -L${corefoundation}/usr/lib -L${libobjc}/usr/lib \
       -L${foundation}/usr/lib -L${glfw}/usr/local/lib -L${mesa}/usr/lib -L${spirvCross}/usr/lib"
 
     objs=""
@@ -115,7 +115,7 @@ stdenv.mkDerivation {
     # indium-pd first: its C++ statics have to exist before Metal.mm's constructor runs Indium::init
     $CXX $LINK -dynamiclib -install_name ${fw}/Metal.framework/Versions/A/Metal \
       -Wl,-force_load,${metalPd}/lib/libmetal-pd.a $objs \
-      -lEGL -lGL -lspirv-cross-c-shared -lglfw -lLLVM-21 -lvulkan -lIOKitCF -lFoundation -lCoreFoundation -lobjc -lc++ -lc++abi -lSystem -o Metal
+      -lEGL -lGL -lspirv-cross-c-shared -lglfw -lLLVM-21 -lvulkan -framework IOKit -lFoundation -lCoreFoundation -lobjc -lc++ -lc++abi -lSystem -o Metal
 
     $CXX $OBJCXX $APPKIT -c $O/PDMetalKit.mm -o PDMetalKit.o
     # the MTKTextureLoader takes images through CoreGraphics' CGImageSource (Onyx2D) and reads KTX directly

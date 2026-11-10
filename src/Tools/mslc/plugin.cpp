@@ -5,13 +5,16 @@
 #include "clang/AST/Attr.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclTemplate.h"
+#include "clang/AST/Mangle.h"
 #include "clang/AST/RecordLayout.h"
 #include "clang/Basic/DiagnosticSema.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
+#include "clang/Sema/Lookup.h"
 #include "clang/Sema/ParsedAttr.h"
 #include "clang/Sema/Sema.h"
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include <string>
@@ -50,7 +53,22 @@ std::string attr_text(Sema &S, const ParsedAttr &A) {
     if (i)
       t += ",";
     if (A.isArgIdent(i)) {
-      t += A.getArgAsIdent(i)->getIdentifierInfo()->getName().str();
+      IdentifierLoc *il = A.getArgAsIdent(i);
+      // [[buffer(AAPLBufferIndexFrameData)]]: an enumerator or integer constant names the index
+      LookupResult lr(S, il->getIdentifierInfo(), il->getLoc(), Sema::LookupOrdinaryName);
+      if (S.LookupName(lr, S.getCurScope()) && lr.isSingleResult()) {
+        if (auto *ec = dyn_cast<EnumConstantDecl>(lr.getFoundDecl())) {
+          t += std::to_string(ec->getInitVal().getExtValue());
+          continue;
+        }
+        if (auto *vd = dyn_cast<VarDecl>(lr.getFoundDecl())) {
+          if (const APValue *v = vd->evaluateValue(); v && v->isInt()) {
+            t += std::to_string(v->getInt().getExtValue());
+            continue;
+          }
+        }
+      }
+      t += il->getIdentifierInfo()->getName().str();
       continue;
     }
     Expr *e = A.getArgAsExpr(i);
@@ -199,6 +217,8 @@ struct Desc {
     return n ? e + "x" + std::to_string(n) : e;
   }
 
+  // MSL's own spelling of a type, as Apple's compiler writes it in the metadata: typedefs see through to
+  // float2, uint, float3x3 and packed_float3, records keep their names
   std::string tname(QualType t) {
     t = ctx.removeAddrSpaceQualType(t.getUnqualifiedType());
     // scalars by their MSL names whatever typedef spelled them (uint32_t is uint), as Apple's type names
@@ -213,6 +233,44 @@ struct Desc {
       }
       return c;
     }
+    QualType c = t.getCanonicalType();
+
+    if (auto *v = c->getAs<ExtVectorType>()) {
+      std::string e = tname(v->getElementType());
+      if (e == "int" && t.getAsString(pp).compare(0, 4, "bool") == 0)
+        e = "bool";
+      return e + std::to_string(v->getNumElements());
+    }
+    if (auto *b = c->getAs<BuiltinType>()) {
+      switch (b->getKind()) {
+      case BuiltinType::UInt: return "uint";
+      case BuiltinType::UShort: return "ushort";
+      case BuiltinType::UChar:
+      case BuiltinType::Char_U: return "uchar";
+      case BuiltinType::Char_S:
+      case BuiltinType::SChar: return "char";
+      case BuiltinType::ULong: return "ulong";
+      default: break;
+      }
+    }
+    if (auto *cs = dyn_cast_or_null<ClassTemplateSpecializationDecl>(c->getAsRecordDecl())) {
+      const TemplateArgumentList &ta = cs->getTemplateArgs();
+      if (cs->getName() == "matrix" && ta.size() == 3)
+        return tname(ta[0].getAsType()) + std::to_string(ta[1].getAsIntegral().getZExtValue()) + "x" +
+               std::to_string(ta[2].getAsIntegral().getZExtValue());
+      if (cs->getName() == "packed_vec" && ta.size() == 2)
+        return "packed_" + tname(ta[0].getAsType()) + std::to_string(ta[1].getAsIntegral().getZExtValue());
+    }
+    // enums by their integer type, the sampler by its plain name, other metal:: records keep the scope
+    if (auto *et = c->getAs<EnumType>())
+      return tname(et->getDecl()->getIntegerType());
+    if (const RecordDecl *rd = c->getAsRecordDecl(); rd && rd->getName() == "sampler") {
+      auto *ns = dyn_cast<NamespaceDecl>(rd->getDeclContext());
+      if (ns && ns->getName() == "metal")
+        return "sampler";
+    }
+    if (c->isRecordType() || c->isBuiltinType())
+      return c.getAsString(pp);
     return t.getAsString(pp);
   }
 
@@ -224,6 +282,41 @@ struct Desc {
 
     *acc = a;
     return cs->getName().str() + "<" + tname(ta[0].getAsType()) + ", " + names[a & 3] + ">";
+  }
+
+  // whether a stage struct member says where it goes, interpolation alone does not count
+  static bool located(const std::string &a) {
+    static const char *const interp[] = { "flat", "center_perspective", "center_no_perspective",
+                                          "centroid_perspective", "centroid_no_perspective",
+                                          "sample_perspective", "sample_no_perspective" };
+    size_t i = 0;
+
+    while (i < a.size()) {
+      size_t j = a.find(',', i);
+      std::string n = a.substr(i, j == std::string::npos ? std::string::npos : j - i);
+      n = n.substr(0, n.find('('));
+      if (std::find(std::begin(interp), std::end(interp), n) == std::end(interp))
+        return true;
+      if (j == std::string::npos)
+        break;
+      i = j + 1;
+    }
+    return false;
+  }
+
+  // the name Apple's compiler gives a member without a location, matched between the stages:
+  // its length, its name and its Itanium-mangled type, "5colorDv4_f"
+  std::string generated(const FieldDecl *f) {
+    std::unique_ptr<MangleContext> mc(ItaniumMangleContext::create(ctx, ctx.getDiagnostics()));
+    std::string m;
+    llvm::raw_string_ostream os(m);
+    std::string n = f->getNameAsString();
+
+    mc->mangleCanonicalTypeName(ctx.removeAddrSpaceQualType(f->getType().getUnqualifiedType()), os);
+    os.flush();
+    if (!m.compare(0, 4, "_ZTS"))
+      m = m.substr(4);
+    return std::to_string(n.size()) + n + m;
   }
 
   void fields(const RecordDecl *rd, char tag) {
@@ -253,6 +346,8 @@ struct Desc {
           fields(inner, 'T');
         continue;
       }
+      if (!located(a))
+        a += std::string(a.empty() ? "" : ",") + "generated(" + generated(f) + ")";
       out += std::string(1, tag) + "|" + std::to_string(off) + "|" + lty(ft) + "|" + tname(ft) + "|" + a + "|" +
              f->getNameAsString() + "\n";
     }
@@ -322,7 +417,14 @@ struct Desc {
       return;
     }
 
-    if (has_attr(p, "stage_in")) {
+    // a struct of [[color(n)]] members without an attribute of its own: framebuffer fetch, the attachments'
+    // current values come in member by member like stage_in
+    bool fetch = false;
+    if (const RecordDecl *rd = t->getAsRecordDecl(); rd && join_attrs(p).empty()) {
+      for (const FieldDecl *f : rd->fields())
+        fetch |= has_attr(f, "color");
+    }
+    if (has_attr(p, "stage_in") || fetch) {
       const RecordDecl *rd = t->getAsRecordDecl();
       out += "P|" + is + "|stage_in|" + tname(t) + "|" + std::to_string(ctx.getTypeSizeInChars(t).getQuantity()) +
              "|" + name + "\n";
@@ -359,8 +461,22 @@ public:
   bool HandleTopLevelDecl(DeclGroupRef dg) override {
     for (Decl *d : dg) {
       auto *fd = dyn_cast<FunctionDecl>(d);
-      std::string st;
+      std::string st, fc;
 
+      // a function constant: its index, MSL type name, name and Itanium-mangled type for airify
+      if (auto *vd = dyn_cast<VarDecl>(d); vd && vd->isFileVarDecl() && has_attr(vd, "function_constant", &fc)) {
+        Desc ds(vd->getASTContext());
+        std::string m;
+        llvm::raw_string_ostream os(m);
+        std::unique_ptr<MangleContext> mc(ItaniumMangleContext::create(vd->getASTContext(), vd->getASTContext().getDiagnostics()));
+        mc->mangleCanonicalTypeName(vd->getASTContext().removeAddrSpaceQualType(vd->getType().getUnqualifiedType()), os);
+        os.flush();
+        if (!m.compare(0, 4, "_ZTS"))
+          m = m.substr(4);
+        std::string text = "C|" + std::to_string(attr_int(fc)) + "|" + ds.tname(vd->getType()) + "|" + vd->getNameAsString() + "|" + m;
+        vd->addAttr(AnnotateAttr::CreateImplicit(vd->getASTContext(), text, nullptr, 0));
+        continue;
+      }
       if (!fd || !fd->doesThisDeclarationHaveABody())
         continue;
 

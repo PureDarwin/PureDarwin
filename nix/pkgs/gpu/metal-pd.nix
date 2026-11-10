@@ -63,8 +63,8 @@ stdenv.mkDerivation {
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -Wl,-platform_version,macos,26.5,26.5 \
       -L${libSystem}/usr/lib -L${libcxxDylib}/usr/lib -L${libcxxabiDylib}/usr/lib -L${llvm}/usr/lib \
-      -L${vulkanLoader}/usr/lib -L${iokit}/usr/lib -L${corefoundation}/usr/lib -L${glfw}/usr/local/lib -L${mesa}/usr/lib -L${spirvCross}/usr/lib"
-    LIBS="-lEGL -lGL -lspirv-cross-c-shared -lglfw -lLLVM-21 -lvulkan -lIOKitCF -lCoreFoundation -lc++ -lc++abi -lSystem"
+      -L${vulkanLoader}/usr/lib -F${iokit}/System/Library/Frameworks -L${corefoundation}/usr/lib -L${glfw}/usr/local/lib -L${mesa}/usr/lib -L${spirvCross}/usr/lib"
+    LIBS="-lEGL -lGL -lspirv-cross-c-shared -lglfw -lLLVM-21 -lvulkan -framework IOKit -lCoreFoundation -lc++ -lc++abi -lSystem"
 
     # PD libSystem exports dispatch_apply but not dispatch_apply_f (an export-list gap)
     cat > pd_apply_f.c <<'EOF'
@@ -156,10 +156,10 @@ stdenv.mkDerivation {
     lib=$S/demo-xcode26.metallib
     while [ $# -gt 0 ]; do
       case "$1" in
-        --cpu) unset AIRJITD_VULKAN AIRJITD_OPENGL ;;
-        --opengl) export AIRJITD_OPENGL=1; unset AIRJITD_VULKAN ;;
+        --cpu) export AIRJITD_BACKEND=cpu ;;
+        --opengl) export AIRJITD_BACKEND=gl ;;
         --copy) export PDMTL_PRESENT=copy ;;
-        --lavapipe) export VK_DRIVER_FILES=$(ls $icd/lvp_icd*.json | head -1) ;;
+        --lavapipe) export AIRJITD_BACKEND=vk VK_DRIVER_FILES=$(ls $icd/lvp_icd*.json | head -1) ;;
         --xcode13) lib=$S/demo-xcode13.metallib ;;
         *) break ;;
       esac

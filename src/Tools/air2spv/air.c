@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "a2s.h"
+#include "../airjitd/ir.h"
 
 // one call being lowered: its operands, result type and the name after "air." and "fast_"
 struct call {
@@ -35,52 +36,38 @@ static void done(struct a2s *a, struct call *c, uint32_t v) {
   a2s_set(a, c->in, v);
 }
 
-// GLSL.std.450 elementwise math: name, arity, op, negative ops are lowered here
+// ir.h's math ops as GLSL.std.450 instructions, negative ones are lowered here
 enum { M_SATURATE = -1, M_LOG10 = -2, M_FMOD = -3, M_SINPI = -4, M_COSPI = -5, M_TANPI = -6, M_EXP10 = -7 };
 
-static const struct {
-  const char *name;
-  unsigned arity;
-  int op;
-} math[] = {
-  { "floor", 1, GLSLstd450Floor },   { "ceil", 1, GLSLstd450Ceil },       { "trunc", 1, GLSLstd450Trunc },
-  { "rint", 1, GLSLstd450RoundEven }, { "round", 1, GLSLstd450Round },    { "sqrt", 1, GLSLstd450Sqrt },
-  { "fabs", 1, GLSLstd450FAbs },     { "abs", 1, GLSLstd450FAbs },        { "fmin", 2, GLSLstd450FMin },
-  { "fmax", 2, GLSLstd450FMax },     { "min", 2, GLSLstd450FMin },        { "max", 2, GLSLstd450FMax },
-  { "fract", 1, GLSLstd450Fract },   { "rsqrt", 1, GLSLstd450InverseSqrt }, { "fma", 3, GLSLstd450Fma },
-  { "sign", 1, GLSLstd450FSign },    { "clamp", 3, GLSLstd450FClamp },    { "saturate", 1, M_SATURATE },
-  { "mix", 3, GLSLstd450FMix },      { "sin", 1, GLSLstd450Sin },         { "cos", 1, GLSLstd450Cos },
-  { "tan", 1, GLSLstd450Tan },       { "asin", 1, GLSLstd450Asin },       { "acos", 1, GLSLstd450Acos },
-  { "atan", 1, GLSLstd450Atan },     { "sinh", 1, GLSLstd450Sinh },       { "cosh", 1, GLSLstd450Cosh },
-  { "tanh", 1, GLSLstd450Tanh },     { "exp", 1, GLSLstd450Exp },         { "exp2", 1, GLSLstd450Exp2 },
-  { "log", 1, GLSLstd450Log },       { "log2", 1, GLSLstd450Log2 },       { "log10", 1, M_LOG10 },
-  { "atan2", 2, GLSLstd450Atan2 },   { "pow", 2, GLSLstd450Pow },         { "powr", 2, GLSLstd450Pow },
-  { "fmod", 2, M_FMOD },             { "sinpi", 1, M_SINPI },             { "cospi", 1, M_COSPI },
-  { "tanpi", 1, M_TANPI },           { "exp10", 1, M_EXP10 },             { "step", 2, GLSLstd450Step },
-  { "smoothstep", 3, GLSLstd450SmoothStep },
+static const int math[IR_MATH_END] = {
+  [IR_FLOOR] = GLSLstd450Floor,     [IR_CEIL] = GLSLstd450Ceil,           [IR_TRUNC] = GLSLstd450Trunc,
+  [IR_RINT] = GLSLstd450RoundEven,  [IR_ROUND] = GLSLstd450Round,         [IR_SQRT] = GLSLstd450Sqrt,
+  [IR_FABS] = GLSLstd450FAbs,       [IR_FMIN] = GLSLstd450FMin,           [IR_FMAX] = GLSLstd450FMax,
+  [IR_FRACT] = GLSLstd450Fract,     [IR_RSQRT] = GLSLstd450InverseSqrt,   [IR_FMA] = GLSLstd450Fma,
+  [IR_SIGN] = GLSLstd450FSign,      [IR_CLAMP] = GLSLstd450FClamp,        [IR_SATURATE] = M_SATURATE,
+  [IR_MIX] = GLSLstd450FMix,        [IR_STEP] = GLSLstd450Step,           [IR_SMOOTHSTEP] = GLSLstd450SmoothStep,
+  [IR_SIN] = GLSLstd450Sin,         [IR_COS] = GLSLstd450Cos,             [IR_TAN] = GLSLstd450Tan,
+  [IR_ASIN] = GLSLstd450Asin,       [IR_ACOS] = GLSLstd450Acos,           [IR_ATAN] = GLSLstd450Atan,
+  [IR_SINH] = GLSLstd450Sinh,       [IR_COSH] = GLSLstd450Cosh,           [IR_TANH] = GLSLstd450Tanh,
+  [IR_EXP] = GLSLstd450Exp,         [IR_EXP2] = GLSLstd450Exp2,           [IR_EXP10] = M_EXP10,
+  [IR_LOG] = GLSLstd450Log,         [IR_LOG2] = GLSLstd450Log2,           [IR_LOG10] = M_LOG10,
+  [IR_ATAN2] = GLSLstd450Atan2,     [IR_POW] = GLSLstd450Pow,             [IR_FMOD] = M_FMOD,
+  [IR_SINPI] = M_SINPI,             [IR_COSPI] = M_COSPI,                 [IR_TANPI] = M_TANPI,
 };
 
-static int air_math(struct a2s *a, struct call *c, const char *name) {
+static int air_math(struct a2s *a, struct call *c, enum ir_op op) {
   uint32_t ty = a2s_type(a, c->rt), args[3], r;
-  LLVMTypeKind ek = LLVMGetTypeKind(a2s_scalar(c->rt));
-  unsigned i, k;
+  unsigned k;
 
-  if (ek != LLVMHalfTypeKind && ek != LLVMFloatTypeKind)
-    return 0;
-
-  for (i = 0; i < A2S_ARRAY_LEN(math); i++) {
-    if (math[i].arity == c->n && !strcmp(math[i].name, name))
-      break;
-  }
-
-  if (i == A2S_ARRAY_LEN(math))
-    return 0;
+  // zero marks an operation this backend cannot lower
+  if (!ir_is_math(op) || !math[op])
+    a2s_fail(a, "no SPIR-V lowering for air.%s (%s)", c->op, ir_op_name(op));
 
   for (k = 0; k < c->n; k++) {
     args[k] = arg(a, c, k);
   }
 
-  switch (math[i].op) {
+  switch (math[op]) {
   case M_SATURATE:
     args[1] = a2s_fconst(a, c->rt, 0), args[2] = a2s_fconst(a, c->rt, 1);
     r = a2s_ext(a, GLSLstd450FClamp, ty, args, 3);
@@ -99,11 +86,11 @@ static int air_math(struct a2s *a, struct call *c, const char *name) {
   case M_COSPI:
   case M_TANPI:
     args[0] = a2s_op2(a, SpvOpFMul, ty, args[0], a2s_fconst(a, c->rt, 3.14159265359f));
-    r = a2s_ext(a, math[i].op == M_SINPI ? GLSLstd450Sin : math[i].op == M_COSPI ? GLSLstd450Cos : GLSLstd450Tan, ty,
+    r = a2s_ext(a, math[op] == M_SINPI ? GLSLstd450Sin : math[op] == M_COSPI ? GLSLstd450Cos : GLSLstd450Tan, ty,
                 args, 1);
     break;
   default:
-    r = a2s_ext(a, (unsigned)math[i].op, ty, args, c->n);
+    r = a2s_ext(a, (unsigned)math[op], ty, args, c->n);
   }
 
   done(a, c, r);
@@ -1316,9 +1303,8 @@ static int air_ib_rw(struct a2s *a, struct call *c, int store) {
 
 int a2s_air_call(struct a2s *a, LLVMValueRef in, const char *name) {
   struct call c;
-  char op[48];
-  const char *dot;
-  size_t ol;
+  struct ir_call ic;
+  LLVMTypeKind ek;
 
   if (strncmp(name, "air.", 4))
     return 0;
@@ -1326,73 +1312,66 @@ int a2s_air_call(struct a2s *a, LLVMValueRef in, const char *name) {
   c.in = in;
   c.rt = LLVMTypeOf(in);
   c.n = (unsigned)LLVMGetNumArgOperands(in);
-  c.op = name + 4;
-  if (!strncmp(c.op, "fast_", 5))
-    c.op += 5;
-
-  dot = strchr(c.op, '.');
-  ol = dot ? (size_t)(dot - c.op) : strlen(c.op);
-  if (ol >= sizeof(op))
+  ek = LLVMGetTypeKind(a2s_scalar(c.rt));
+  if (ir_parse(name, c.n, ek == LLVMHalfTypeKind || ek == LLVMFloatTypeKind, &ic))
     return 0;
-  memcpy(op, c.op, ol);
-  op[ol] = 0;
+  c.op = ic.name;
 
-  // integer variants carry the signedness right after the op: air.min.s.v2i16
-  if (dot && (dot[1] == 's' || dot[1] == 'u') && dot[2] == '.' &&
-      (!strcmp(op, "min") || !strcmp(op, "max") || !strcmp(op, "clamp") || !strcmp(op, "abs")))
-    return air_int(a, &c, op, dot[1]);
-
+  switch (ic.op) {
+  case IR_INT_MINMAX:
+  case IR_INT_ABS:
+    return air_int(a, &c, ic.base, ic.sign);
   // MSL 4's read sampler: only the texel reads take it, and they skip it
-  if (!strcmp(op, "get_read_sampler"))
+  case IR_READ_SAMPLER:
     return 1;
-  if (!strcmp(op, "convert"))
+  case IR_CONVERT:
     return air_convert(a, &c);
-  if (!strcmp(op, "mul_hi") || !strcmp(op, "clz") || !strcmp(op, "ctz") || !strcmp(op, "popcount") ||
-      !strcmp(op, "reverse_bits") || !strcmp(op, "rotate") || !strcmp(op, "abs_diff") || !strcmp(op, "add_sat") ||
-      !strcmp(op, "sub_sat") || !strcmp(op, "extract_bits") || !strcmp(op, "insert_bits"))
-    return air_int_bits(a, &c, op);
-  if (!strcmp(op, "pack"))
+  case IR_INT_BITS:
+    return air_int_bits(a, &c, ic.base);
+  case IR_PACK:
     return air_pack(a, &c);
-  if (!strcmp(op, "atomic"))
+  case IR_ATOMIC:
     return air_atomic(a, &c);
-  if (!strncmp(op, "simd_", 5))
+  case IR_SIMD:
     return air_simd(a, &c);
-  if (!strcmp(op, "unpack"))
+  case IR_UNPACK:
     return air_unpack(a, &c);
-  if (!strcmp(op, "dot"))
+  case IR_DOT:
     return air_dot(a, &c);
-  if (!strcmp(op, "any") || !strcmp(op, "all"))
+  case IR_ANY:
+  case IR_ALL:
     return air_anyall(a, &c);
-  if (!strcmp(op, "dfdx") || !strcmp(op, "dfdy") || !strcmp(op, "fwidth"))
-    return air_deriv(a, &c, op);
-  if (!strcmp(op, "fmax3") || !strcmp(op, "fmin3") || !strcmp(op, "fmed3"))
-    return air_minmax3(a, &c, op);
-  if (!strcmp(op, "discard_fragment"))
+  case IR_DERIV:
+    return air_deriv(a, &c, ic.base);
+  case IR_MINMAX3:
+    return air_minmax3(a, &c, ic.base);
+  case IR_DISCARD:
     return air_discard(a, &c);
-  if (!strncmp(op, "sample_texture_", 15))
+  case IR_SAMPLE:
     return air_sample(a, &c);
-  if (!strncmp(op, "read_texture_", 13))
+  case IR_TEX_READ:
     return air_read_tex(a, &c);
-  if (!strncmp(op, "write_texture_", 14))
+  case IR_TEX_WRITE:
     return air_write_tex(a, &c);
-  if (!strncmp(op, "get_", 4) && strstr(op, "_texture_"))
+  case IR_TEX_QUERY:
     return air_tex_size(a, &c);
-  if (!strcmp(op, "wg"))
+  case IR_BARRIER_WG:
     return air_barrier(a, &c, 0, 1);
-  if (!strcmp(op, "simdgroup"))
+  case IR_BARRIER_SIMD:
     return air_barrier(a, &c, 1, 1);
-  if (!strcmp(op, "mem_barrier"))
+  case IR_MEM_BARRIER:
     return air_barrier(a, &c, 0, 0);
-  if (!strcmp(op, "quad_shuffle_xor") || !strcmp(op, "quad_broadcast") || !strcmp(op, "quad_shuffle"))
+  case IR_QUAD:
     return air_quad(a, &c);
-  if (!strcmp(op, "imageblock_data"))
+  case IR_IB_DATA:
     return air_ib_data(a, &c);
-  if (!strncmp(op, "write_imageblock_slice_to_texture_2d", 36))
+  case IR_IB_WRITE:
     return air_ib_write(a, &c);
-  if (!strcmp(op, "load") && dot && !strncmp(dot, ".implicit_imageblock", 20))
+  case IR_IB_LOAD:
     return air_ib_rw(a, &c, 0);
-  if (!strcmp(op, "store") && dot && !strncmp(dot, ".implicit_imageblock", 20))
+  case IR_IB_STORE:
     return air_ib_rw(a, &c, 1);
-
-  return air_math(a, &c, op);
+  default:
+    return air_math(a, &c, ic.op);
+  }
 }

@@ -102,17 +102,20 @@ stdenv.mkDerivation {
 
     # migrating OpenGL Code to Metal, its Metal target
     G=gl
+    source ${../../lib/pcc.sh}
     for f in Common/main.m Common/AAPLMathUtilities.m Metal/AAPLMetalRenderer.m Metal/AAPLMetalViewController.m; do
-      $CC $OBJC -I$G/Common -I$G/Metal -c $G/$f -o gl-$(basename $f).o
+      pcc $CC $OBJC -I$G/Common -I$G/Metal -c $G/$f -o gl-$(basename $f).o
     done
+    pcc_wait
     $CXX $OBJCXX -I$G/Common -I$G/Metal -c $G/Common/AAPLMeshData.mm -o gl-AAPLMeshData.o
     $CXX $LINK gl-*.o -o OpenGLToMetal
 
     # creating and Sampling Textures
     T=tex
     for f in Application/main.m Application/AAPLViewController.m Renderer/AAPLRenderer.m Renderer/AAPLImage.m; do
-      $CC $OBJC -I$T/Application -I$T/Renderer -c $T/$f -o tex-$(basename $f).o
+      pcc $CC $OBJC -I$T/Application -I$T/Renderer -c $T/$f -o tex-$(basename $f).o
     done
+    pcc_wait
     $CXX $LINK tex-*.o -o BasicTexturing
 
     # newLibraryWithSource: through the source cache and mslc

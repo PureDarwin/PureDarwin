@@ -48,11 +48,13 @@ stdenv.mkDerivation {
       srcs="$srcs air2spv/$f.c"
     done
     objs=""
+    source ${../../lib/pcc.sh}
     for f in $srcs; do
       o=$(echo "$f" | tr / _); o=''${o%.c}.o
-      $CC $CFLAGS -w -c "$f" -o "$o"
+      pcc $CC $CFLAGS -w -c "$f" -o "$o"
       objs="$objs $o"
     done
+    pcc_wait
     $CC -o metal-window $objs -L${lib.getLib llvm}/lib -lLLVM -L${lib.getLib glfw}/lib -lglfw \
       -Wl,-rpath,${vulkan-loader}/lib -lpthread -ldl -lm
     runHook postBuild

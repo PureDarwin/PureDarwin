@@ -1,4 +1,4 @@
-// vkreplay CAPTURE.bin REF.bin: a captured job (airjitdcap=) on airjitd's Vulkan executor, each output region
+// vkreplay CAPTURE.bin REF.bin: a captured job (airjitdcap=) on airjitd's Vulkan (glreplay: OpenGL) executor, each output region
 // compared with REF (ajreplay's CPU output) on one line; exit 0 within tolerance
 #include <math.h>
 #include <stdarg.h>
@@ -7,7 +7,28 @@
 #include <string.h>
 
 #include "../airjitd/bridge.h"
+#ifdef REPLAY_GL
+#include "../airjitd/opengl/gl.h"
+#else
 #include "../airjitd/vulkan/vk.h"
+#endif
+
+// built with REPLAY_GL this is glreplay: the same job on the OpenGL executor
+#ifdef REPLAY_GL
+#define REPLAY_NAME "glreplay"
+#define REPLAY_BACKEND "gl"
+#define REPLAY_FALLBACK PD_GL_FALLBACK
+#define replay_compute pd_gl_compute
+#define replay_draw pd_gl_draw
+#define replay_reason pd_gl_reason
+#else
+#define REPLAY_NAME "vkreplay"
+#define REPLAY_BACKEND "vk"
+#define REPLAY_FALLBACK PD_VK_FALLBACK
+#define replay_compute pd_vk_compute
+#define replay_draw pd_vk_draw
+#define replay_reason pd_vk_reason
+#endif
 
 struct cap_header {
   uint32_t magic, kind, serial, reqBytes;
@@ -23,10 +44,24 @@ static uint8_t *ref_data[64];
 static unsigned nout, nref;
 static int verbose;
 
+#ifdef REPLAY_GL
+extern int pd_log_verbose;
+#else
 // the executor logs through the daemon's logger
 int pd_log_verbose;
 
 void logmsg(const char *fmt, ...) {
+  va_list ap;
+
+  if (!verbose)
+    return;
+  va_start(ap, fmt);
+  vfprintf(stderr, fmt, ap);
+  va_end(ap);
+  fputc('\n', stderr);
+}
+
+void logv2(const char *fmt, ...) {
   va_list ap;
 
   if (!verbose)
@@ -47,6 +82,7 @@ void logv(const char *fmt, ...) {
   va_end(ap);
   fputc('\n', stderr);
 }
+#endif
 
 // pixel formats as the kext numbers them, see airjitd/texture.h
 static const struct {
@@ -229,7 +265,7 @@ static uint8_t *load_cap(const char *path, struct cap_header *h, uint8_t *mem, s
   static uint8_t req[65536];
 
   if (!f || fread(h, sizeof(*h), 1, f) != 1 || h->magic != 0x31434a41u || h->reqBytes > sizeof(req)) {
-    fprintf(stderr, "vkreplay: not a capture: %s\n", path);
+    fprintf(stderr, REPLAY_NAME ": not a capture: %s\n", path);
     exit(2);
   }
   if (fread(req, 1, h->reqBytes, f) != h->reqBytes)
@@ -263,11 +299,11 @@ int main(int argc, char **argv) {
   int rc = 0;
 
   if (argc < 3) {
-    fprintf(stderr, "usage: vkreplay CAPTURE.bin REF.bin\n");
+    fprintf(stderr, "usage: " REPLAY_NAME " CAPTURE.bin REF.bin\n");
     return 2;
   }
   verbose = getenv("VKV") != 0;
-  setenv("AIRJITD_VULKAN", "1", 0);
+  setenv("AIRJITD_BACKEND", REPLAY_BACKEND, 0);
   base = calloc(1, PD_BRIDGE_BYTES);
   req = load_cap(argv[1], &h, base, outs, out_data, &nout);
   memcpy(base + PD_BRIDGE_REQ, req, h.reqBytes);
@@ -279,7 +315,7 @@ int main(int argc, char **argv) {
     struct PDComputeRequest *q = (struct PDComputeRequest *)(base + PD_BRIDGE_REQ);
     printf("compute %u\n", h.serial);
     add_texs(q->tex, PD_DRAW_TEXS);
-    rc = pd_vk_compute(q, base, PD_BRIDGE_BYTES);
+    rc = replay_compute(q, base, PD_BRIDGE_BYTES);
   } else if (h.kind == PD_JOB_DRAW) {
     struct PDDrawRequest *q = (struct PDDrawRequest *)(base + PD_BRIDGE_REQ);
 
@@ -301,26 +337,33 @@ int main(int argc, char **argv) {
     struct PDDrawTex t = { 0, q->targetOff, q->tw, q->th, q->tbpr, q->tfmt };
     printf("draw %u\n", h.serial);
     add_texs(&t, 1), add_texs(q->rt, 4), add_texs(q->ftex, PD_DRAW_TEXS);
-    rc = pd_vk_draw(q, base, PD_BRIDGE_BYTES);
+    rc = replay_draw(q, base, PD_BRIDGE_BYTES);
   } else if (h.kind == PD_JOB_TILE) {
     struct PDTileRequest *q = (struct PDTileRequest *)(base + PD_BRIDGE_REQ);
     printf("tile %u\n", h.serial);
     add_texs(q->rt, 4), add_texs(q->tex, PD_DRAW_TEXS);
+#ifdef REPLAY_GL
+    printf("FALLBACK no tile function executor in the opengl backend\nRESULT cpu\n");
+    return 1;
+#else
     rc = pd_vk_tile(q, base, PD_BRIDGE_BYTES);
+#endif
   }
 
-  if (rc == PD_VK_FALLBACK) {
-    printf("FALLBACK %s\nRESULT cpu\n", pd_vk_reason());
+  if (rc == REPLAY_FALLBACK) {
+    printf("FALLBACK %s\nRESULT cpu\n", replay_reason());
     return 1;
   }
   if (rc) {
     printf("RESULT fail %d\n", rc);
     return 1;
   }
+#ifndef REPLAY_GL
   printf("vkstats translate %llu pipeline %llu upload %llu run %llu readback %llu us\n",
          (unsigned long long)pd_vk_last.translate, (unsigned long long)pd_vk_last.pipeline,
          (unsigned long long)pd_vk_last.upload, (unsigned long long)pd_vk_last.run,
          (unsigned long long)pd_vk_last.readback);
+#endif
 
   rc = compare();
   printf("RESULT %s\n", rc == -2 ? "exact" : rc == -1 ? "near" : rc ? "mismatch" : "match");

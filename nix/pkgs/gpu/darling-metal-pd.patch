@@ -3497,3 +3497,135 @@
  #else
  
  @dynamic dispatchType;
+--- a/include/Metal/Metal.h
++++ b/include/Metal/Metal.h
+@@ -16,6 +16,7 @@
+ #import <Metal/MTLDepthStencilDescriptor.h>
+ #import <Metal/MTLDevice.h>
+ #import <Metal/MTLDrawable.h>
++#import <Metal/MTLFunctionConstantValues.h>
+ #import <Metal/MTLLibrary.h>
+ #import <Metal/MTLPipeline.h>
+ #import <Metal/MTLPixelFormat.h>
+--- a/include/Metal/MTLLibrary.h
++++ b/include/Metal/MTLLibrary.h
+@@ -7,6 +7,7 @@
+ #import <Foundation/Foundation.h>
+ 
+ #import <Metal/MTLDefines.h>
++#import <Metal/MTLFunctionConstantValues.h>
+ 
+ METAL_DECLARATIONS_BEGIN
+ 
+@@ -88,6 +89,13 @@
+ @property(nullable, copy, nonatomic) NSString* label;
+ 
+ - (id<MTLFunction>)newFunctionWithName: (NSString*)functionName;
++// the function with its function constants set (PureDarwin's MetalExtras implements these)
++- (id<MTLFunction>)newFunctionWithName: (NSString*)name
++                        constantValues: (MTLFunctionConstantValues*)constantValues
++                                 error: (NSError**)error;
++- (void)newFunctionWithName: (NSString*)name
++             constantValues: (MTLFunctionConstantValues*)constantValues
++          completionHandler: (void (^)(id<MTLFunction> function, NSError* error))completionHandler;
+ 
+ // TODO: other methods
+ 
+--- /dev/null
++++ b/include/Metal/MTLFunctionConstantValues.h
+@@ -0,0 +1,67 @@
++// SPDX-License-Identifier: MPL-2.0
++
++#ifndef _METAL_MTLFUNCTIONCONSTANTVALUES_H_
++#define _METAL_MTLFUNCTIONCONSTANTVALUES_H_
++
++#import <Foundation/Foundation.h>
++
++#import <Metal/MTLDefines.h>
++
++METAL_DECLARATIONS_BEGIN
++
++// the types function constants can have, with Metal's numbering
++typedef NS_ENUM(NSUInteger, MTLDataType) {
++	MTLDataTypeNone = 0,
++	MTLDataTypeStruct = 1,
++	MTLDataTypeArray = 2,
++	MTLDataTypeFloat = 3,
++	MTLDataTypeFloat2 = 4,
++	MTLDataTypeFloat3 = 5,
++	MTLDataTypeFloat4 = 6,
++	MTLDataTypeHalf = 16,
++	MTLDataTypeHalf2 = 17,
++	MTLDataTypeHalf3 = 18,
++	MTLDataTypeHalf4 = 19,
++	MTLDataTypeInt = 29,
++	MTLDataTypeInt2 = 30,
++	MTLDataTypeInt3 = 31,
++	MTLDataTypeInt4 = 32,
++	MTLDataTypeUInt = 33,
++	MTLDataTypeUInt2 = 34,
++	MTLDataTypeUInt3 = 35,
++	MTLDataTypeUInt4 = 36,
++	MTLDataTypeShort = 37,
++	MTLDataTypeShort2 = 38,
++	MTLDataTypeShort3 = 39,
++	MTLDataTypeShort4 = 40,
++	MTLDataTypeUShort = 41,
++	MTLDataTypeUShort2 = 42,
++	MTLDataTypeUShort3 = 43,
++	MTLDataTypeUShort4 = 44,
++	MTLDataTypeChar = 45,
++	MTLDataTypeChar2 = 46,
++	MTLDataTypeChar3 = 47,
++	MTLDataTypeChar4 = 48,
++	MTLDataTypeUChar = 49,
++	MTLDataTypeUChar2 = 50,
++	MTLDataTypeUChar3 = 51,
++	MTLDataTypeUChar4 = 52,
++	MTLDataTypeBool = 53,
++	MTLDataTypeBool2 = 54,
++	MTLDataTypeBool3 = 55,
++	MTLDataTypeBool4 = 56,
++	MTLDataTypeLong = 81,
++	MTLDataTypeULong = 85,
++};
++
++// values for a function's [[function_constant]]s, by index or by name
++@interface MTLFunctionConstantValues : NSObject <NSCopying>
++- (void)setConstantValue: (const void*)value type: (MTLDataType)type atIndex: (NSUInteger)index;
++- (void)setConstantValues: (const void*)values type: (MTLDataType)type withRange: (NSRange)range;
++- (void)setConstantValue: (const void*)value type: (MTLDataType)type withName: (NSString*)name;
++- (void)reset;
++@end
++
++METAL_DECLARATIONS_END
++
++#endif // _METAL_MTLFUNCTIONCONSTANTVALUES_H_
+--- a/src/Metal/MTLLibrary.mm
++++ b/src/Metal/MTLLibrary.mm
+@@ -5,6 +5,10 @@
+ #import <Metal/MTLDevice.h>
+ #import <Metal/stubs.h>
+ 
++#if DARLING_METAL_ENABLED
++#include <indium/pd-sync.hpp>
++#endif
++
+ MTL_EXTERN NSString* const MTLLibraryErrorDomain = @"MTLLibraryErrorDomain";
+ 
+ @implementation MTLFunctionInternal
+@@ -104,8 +108,12 @@
+ 		_installName = nil;
+ 		_type = MTLLibraryTypeExecutable;
+ 
+-		// TODO: function names. this requires a change in Indium.
+-		_functionNames = nil;
++		// the metallib's functions, from indium-pd
++		NSMutableArray<NSString*>* names = [NSMutableArray array];
++		for (const std::string& name : IndiumPD::functionNames(library)) {
++			[names addObject: [NSString stringWithUTF8String: name.c_str()]];
++		}
++		_functionNames = [names copy];
+ 
+ 		_device = [device retain];
+ 	}

@@ -1001,6 +1001,191 @@ struct MTLDrawPatchIndirectArguments {
   uint baseInstance;
 };
 
+
+// snorm, 10a2 and half packing, written out from the specification rules as the unorm forms above
+inline float __pd_unorm(uint v, uint bits) {
+  return (float)v / (float)((1u << bits) - 1u);
+}
+inline float __pd_snorm(uint v, uint bits) {
+  int s = (int)(v << (32 - bits)) >> (32 - bits);
+  return max((float)s / (float)((1 << (bits - 1)) - 1), -1.0f);
+}
+inline uint __pd_to_unorm(float x, uint bits) {
+  return (uint)rint(clamp(x, 0.0f, 1.0f) * (float)((1u << bits) - 1u));
+}
+inline uint __pd_to_snorm(float x, uint bits) {
+  return (uint)(int)rint(clamp(x, -1.0f, 1.0f) * (float)((1 << (bits - 1)) - 1)) & ((1u << bits) - 1u);
+}
+inline float4 unpack_snorm4x8_to_float(uint v) {
+  return __pd_make<float4>(__pd_snorm(v & 255, 8), __pd_snorm(v >> 8 & 255, 8), __pd_snorm(v >> 16 & 255, 8),
+                __pd_snorm(v >> 24, 8));
+}
+inline float2 unpack_snorm2x16_to_float(uint v) {
+  return __pd_make<float2>(__pd_snorm(v & 65535, 16), __pd_snorm(v >> 16, 16));
+}
+inline float4 unpack_unorm10a2_to_float(uint v) {
+  return __pd_make<float4>(__pd_unorm(v & 1023, 10), __pd_unorm(v >> 10 & 1023, 10), __pd_unorm(v >> 20 & 1023, 10),
+                __pd_unorm(v >> 30, 2));
+}
+inline half4 unpack_unorm4x8_to_half(uint v) {
+  return __pd_make<half4>(unpack_unorm4x8_to_float(v));
+}
+inline half4 unpack_snorm4x8_to_half(uint v) {
+  return __pd_make<half4>(unpack_snorm4x8_to_float(v));
+}
+inline half2 unpack_unorm2x16_to_half(uint v) {
+  return __pd_make<half2>(unpack_unorm2x16_to_float(v));
+}
+inline half2 unpack_snorm2x16_to_half(uint v) {
+  return __pd_make<half2>(unpack_snorm2x16_to_float(v));
+}
+inline half3 unpack_unorm565_to_half(ushort v) {
+  return __pd_make<half3>(unpack_unorm565_to_float(v));
+}
+inline half4 unpack_unorm10a2_to_half(uint v) {
+  return __pd_make<half4>(unpack_unorm10a2_to_float(v));
+}
+inline uint pack_float_to_snorm4x8(float4 x) {
+  return __pd_to_snorm(x.x, 8) | __pd_to_snorm(x.y, 8) << 8 | __pd_to_snorm(x.z, 8) << 16 | __pd_to_snorm(x.w, 8) << 24;
+}
+inline uint pack_float_to_snorm2x16(float2 x) {
+  return __pd_to_snorm(x.x, 16) | __pd_to_snorm(x.y, 16) << 16;
+}
+inline uint pack_float_to_unorm10a2(float4 x) {
+  return __pd_to_unorm(x.x, 10) | __pd_to_unorm(x.y, 10) << 10 | __pd_to_unorm(x.z, 10) << 20 | __pd_to_unorm(x.w, 2) << 30;
+}
+inline uint pack_half_to_unorm4x8(half4 x) {
+  return pack_float_to_unorm4x8(__pd_make<float4>(x));
+}
+inline uint pack_half_to_snorm4x8(half4 x) {
+  return pack_float_to_snorm4x8(__pd_make<float4>(x));
+}
+inline uint pack_half_to_unorm2x16(half2 x) {
+  return pack_float_to_unorm2x16(__pd_make<float2>(x));
+}
+inline uint pack_half_to_snorm2x16(half2 x) {
+  return pack_float_to_snorm2x16(__pd_make<float2>(x));
+}
+
+struct _texture_3d_t;
+struct _depth_2d_t;
+
+// 3D textures, sample_texture_3d takes what Apple's compiler passes it, the 3D read, write and size
+// queries follow the 2D names and are unchecked against Apple's output
+template <class T> struct __pd_tex3;
+#define PD_TEX3(T, t)                                                                                               \
+  __attribute__((pure, convergent, nothrow)) vec<T, 4> __pd_sample_3d_##T(__global _texture_3d_t *,                 \
+                                                                      __constant _sampler_t *, float3, bool, int3, \
+                                                                      bool, float, float, int) __asm__(            \
+      "pd.sret.air.sample_texture_3d." t);                                                                          \
+  __attribute__((pure, nothrow)) vec<T, 4> __pd_read_3d_##T(__global _texture_3d_t *, uint3, uint, int) __asm__(   \
+      "pd.sret.air.read_texture_3d." t);                                                                            \
+  __attribute__((nothrow)) void __pd_write_3d_##T(__global _texture_3d_t *, uint3, vec<T, 4>, uint, int) __asm__( \
+      "air.write_texture_3d." t);                                                                                   \
+  __attribute__((pure, convergent, nothrow)) vec<T, 4> __pd_sample_cube_##T(__global _texture_cube_t *,             \
+                                                                        __constant _sampler_t *, float3, bool,     \
+                                                                        float, float, int) __asm__(                \
+      "pd.sret.air.sample_texture_cube." t);                                                                        \
+  template <> struct __pd_tex3<T> {                                                                                 \
+    static vec<T, 4> sample(__global _texture_3d_t *h, __constant _sampler_t *s, float3 c, int3 off, bool lod,    \
+                            float v) {                                                                              \
+      return __pd_sample_3d_##T(h, s, c, true, off, lod, v, 0.0f, 0);                                               \
+    }                                                                                                               \
+    static vec<T, 4> read(__global _texture_3d_t *h, uint3 c, uint lod, int a) {                                   \
+      return __pd_read_3d_##T(h, c, lod, a);                                                                        \
+    }                                                                                                               \
+    static void write(__global _texture_3d_t *h, uint3 c, vec<T, 4> v, uint lod, int a) {                          \
+      __pd_write_3d_##T(h, c, v, lod, a);                                                                           \
+    }                                                                                                               \
+    static vec<T, 4> sample(__global _texture_cube_t *h, __constant _sampler_t *s, float3 c, bool lod, float v) {  \
+      return __pd_sample_cube_##T(h, s, c, lod, v, 0.0f, 0);                                                        \
+    }                                                                                                               \
+  };
+
+PD_TEX3(float, "v4f32")
+PD_TEX3(half, "v4f16")
+PD_TEX3(int, "s.v4i32")
+PD_TEX3(uint, "u.v4i32")
+
+__attribute__((pure, nothrow)) uint __pd_width_3d(__global _texture_3d_t *, uint) __asm__("air.get_width_texture_3d");
+__attribute__((pure, nothrow)) uint __pd_height_3d(__global _texture_3d_t *, uint) __asm__("air.get_height_texture_3d");
+__attribute__((pure, nothrow)) uint __pd_depth_3d(__global _texture_3d_t *, uint) __asm__("air.get_depth_texture_3d");
+__attribute__((pure, nothrow)) uint __pd_width_cube(__global _texture_cube_t *, uint) __asm__(
+    "air.get_width_texture_cube");
+
+template <class T, access A = access::sample> struct texture3d {
+  __global _texture_3d_t *__h;
+
+  vec<T, 4> sample(sampler s, float3 c, int3 off = (int3)0) const {
+    return __pd_tex3<T>::sample(__h, __pd_smp(s), c, off, false, 0.0f);
+  }
+  vec<T, 4> sample(sampler s, float3 c, level l, int3 off = (int3)0) const {
+    return __pd_tex3<T>::sample(__h, __pd_smp(s), c, off, true, l.lod);
+  }
+  vec<T, 4> sample(sampler s, float3 c, bias b, int3 off = (int3)0) const {
+    return __pd_tex3<T>::sample(__h, __pd_smp(s), c, off, false, b.value);
+  }
+  vec<T, 4> read(uint3 c, uint lod = 0) const {
+    return __pd_tex3<T>::read(__h, c, lod, (int)A);
+  }
+  void write(vec<T, 4> v, uint3 c, uint lod = 0) const {
+    __pd_tex3<T>::write(__h, c, v, lod, (int)A);
+  }
+  uint get_width(uint lod = 0) const {
+    return __pd_width_3d(__h, lod);
+  }
+  uint get_height(uint lod = 0) const {
+    return __pd_height_3d(__h, lod);
+  }
+  uint get_depth(uint lod = 0) const {
+    return __pd_depth_3d(__h, lod);
+  }
+};
+
+// depth2d<float>, sample_compare takes what Apple's compiler passes it (with its i32 1 before the coordinate),
+// sample, read and the size queries follow the texture forms and are unchecked
+__attribute__((pure, convergent, nothrow)) float __pd_sample_compare_d2d(__global _depth_2d_t *, __constant _sampler_t *,
+                                                                     int, float2, float, bool, int2, bool, float,
+                                                                     float, int) __asm__(
+    "pd.sret.air.sample_compare_depth_2d.f32");
+__attribute__((pure, convergent, nothrow)) float __pd_sample_d2d(__global _depth_2d_t *, __constant _sampler_t *, float2,
+                                                             bool, int2, bool, float, float, int) __asm__(
+    "pd.sret.air.sample_depth_2d.f32");
+__attribute__((pure, nothrow)) float __pd_read_d2d(__global _depth_2d_t *, uint2, uint, int) __asm__(
+    "pd.sret.air.read_depth_2d.f32");
+__attribute__((pure, nothrow)) uint __pd_width_d2d(__global _depth_2d_t *, uint) __asm__("air.get_width_depth_2d");
+__attribute__((pure, nothrow)) uint __pd_height_d2d(__global _depth_2d_t *, uint) __asm__("air.get_height_depth_2d");
+
+template <class T, access A = access::sample> struct depth2d {
+  __global _depth_2d_t *__h;
+
+  float sample_compare(sampler s, float2 c, float ref, int2 off = (int2)0) const {
+    return __pd_sample_compare_d2d(__h, __pd_smp(s), 1, c, ref, true, off, false, 0.0f, 0.0f, 0);
+  }
+  float sample_compare(sampler s, float2 c, float ref, level l, int2 off = (int2)0) const {
+    return __pd_sample_compare_d2d(__h, __pd_smp(s), 1, c, ref, true, off, true, l.lod, 0.0f, 0);
+  }
+  float sample(sampler s, float2 c, int2 off = (int2)0) const {
+    return __pd_sample_d2d(__h, __pd_smp(s), c, true, off, false, 0.0f, 0.0f, 0);
+  }
+  float read(uint2 c, uint lod = 0) const {
+    return __pd_read_d2d(__h, c, lod, (int)A);
+  }
+  uint get_width(uint lod = 0) const {
+    return __pd_width_d2d(__h, lod);
+  }
+  uint get_height(uint lod = 0) const {
+    return __pd_height_d2d(__h, lod);
+  }
+};
+
+struct MTLQuadTessellationFactorsHalf {
+  ushort edgeTessellationFactor[4], insideTessellationFactor[2];
+};
+struct MTLTriangleTessellationFactorsHalf {
+  ushort edgeTessellationFactor[3], insideTessellationFactor;
+};
+
 } // namespace metal
 
 using metal::matrix;
