@@ -407,6 +407,10 @@ IOVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArgumen
                 return fOwner->gpuPresent(rect[0], rect[1], rect[2], rect[3])
                     ? kIOReturnSuccess : kIOReturnIOError;
             }
+        case kPDGPU_SetCursor:
+            return mSetCursor(args);
+        case kPDGPU_MoveCursor:
+            return mMoveCursor(args);
         default:
             return kIOReturnUnsupported;
         }

@@ -23,6 +23,7 @@ class IOVirtIOGPU : public IOFramebuffer
     OSDeclareDefaultStructors(IOVirtIOGPU);
     // the scanouts past the first are framebuffers of their own, they send 2D commands through this one
     friend class IOVirtIOGPUDisplay;
+    friend class IOVirtIOGPUPresenter;
 
 private:
     IOPCIDevice      *fPCIDevice;
@@ -170,6 +171,9 @@ private:
     enum { kMaxDisplays = 16 };
     bool     gpuGetScanouts(uint32_t widths[kMaxDisplays], uint32_t heights[kMaxDisplays]);
     IOVirtIOGPUDisplay *fDisplays[kMaxDisplays];
+    // a presenter's flip pair per scanout, the resource it last flipped to or 0 before its first flip
+    bool         fPresenting[kMaxDisplays];
+    uint32_t     fPresentedRes[kMaxDisplays];
     // a framebuffer for every scanout past the first the host has on, and news of the rest
     void     updateDisplays();
     bool     gpuCreateResource2D(uint32_t resourceId, uint32_t width, uint32_t height);
@@ -262,6 +266,15 @@ public:
 
     bool     gpuSetScanoutResource(uint32_t resourceId, uint32_t width,
                                    uint32_t height);
+
+    // the presenter protocol, one flip pair per scanout. a flip is refused once the scanout changed size
+    bool     scanoutSize(uint32_t scanout, uint32_t *width, uint32_t *height);
+    bool     presenterBegin(uint32_t scanout);
+    bool     presenterShow(uint32_t scanout, uint32_t resourceId, uint32_t width, uint32_t height);
+    void     presenterEnd(uint32_t scanout);
+    // the display went back to its own buffer, a later flip puts the pair on again
+    void     presenterLost(uint32_t scanout);
+    uint32_t presentedResource(uint32_t scanout);
 
     // Push CPU writes in a guest-backed surface to the host and repaint it.
     bool     gpuFlushSurface(uint32_t resourceId, uint32_t x, uint32_t y,

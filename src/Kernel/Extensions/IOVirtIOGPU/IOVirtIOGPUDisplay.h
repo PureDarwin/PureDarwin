@@ -44,6 +44,12 @@ public:
     static IOVirtIOGPUDisplay *withScanout(IOVirtIOGPU *gpu, uint32_t scanout, uint32_t width,
                                            uint32_t height);
     uint32_t scanout() const { return fScanout; }
+    // the size a presenter has to match, false while the host has the display off
+    bool     currentSize(uint32_t *width, uint32_t *height);
+    // the display shows its own buffer again, after a presenter
+    void     showOwnBuffer();
+    IOReturn newUserClient(task_t owningTask, void *securityID, UInt32 type,
+                           IOUserClient **handler) override;
     // the host resized this display, or turned it off with 0x0
     void     hostChanged(uint32_t width, uint32_t height);
     // the gpu driver is stopping, the timer stops sending it commands

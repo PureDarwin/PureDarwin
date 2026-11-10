@@ -12,6 +12,7 @@
 #include "IOVirtIOGPUUserClient.h"
 #include "IOVirtIOGPUVenusClient.h"
 #include "IOVirtIOGPUDisplay.h"
+#include "IOVirtIOGPUPresenter.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/IOPlatformExpert.h>
 #include <kern/thread_call.h>
@@ -721,7 +722,10 @@ IOVirtIOGPU::gpuSetScanoutResource(uint32_t resourceId, uint32_t width,
                                    uint32_t height)
 {
     if (resourceId == 0) {
-        resourceId = fResourceId;
+        // a presenter's last flip is what the display was showing before
+        uint32_t presented = presentedResource(0);
+
+        resourceId = presented ? presented : fResourceId;
         width = fWidth;
         height = fHeight;
     }
@@ -737,6 +741,122 @@ IOVirtIOGPU::gpuSetScanoutResource(uint32_t resourceId, uint32_t width,
     // Whatever the resource already holds on the host is what appears, a
     // guest-backed surface has to be pushed with gpuFlushSurface() first.
     return gpuResourceFlush(resourceId, 0, 0, width, height);
+}
+
+bool
+IOVirtIOGPU::scanoutSize(uint32_t scanout, uint32_t *width, uint32_t *height)
+{
+    if (scanout == 0) {
+        IOLockLock(fCtrlLock);
+        *width = fWidth;
+        *height = fHeight;
+        bool ok = fFbBase != NULL && !fModeChanging;
+        IOLockUnlock(fCtrlLock);
+        return ok;
+    }
+    if (scanout >= kMaxDisplays || fDisplays[scanout] == NULL)
+        return false;
+    return fDisplays[scanout]->currentSize(width, height);
+}
+
+// one presenter per scanout, on scanout 0 the console stops drawing for as long as it lives
+bool
+IOVirtIOGPU::presenterBegin(uint32_t scanout)
+{
+    if (scanout >= kMaxDisplays)
+        return false;
+    IOLockLock(fCtrlLock);
+    bool busy = fPresenting[scanout];
+    if (!busy) {
+        fPresenting[scanout] = true;
+        fPresentedRes[scanout] = 0;
+        if (scanout == 0) {
+            fNativePresent = true;
+            fPresentPending = false;
+        }
+    }
+    IOLockUnlock(fCtrlLock);
+    if (busy)
+        return false;
+    if (scanout == 0)
+        setConsoleDrawing(false);
+    return true;
+}
+
+// the guest pages go to the host resource, then it takes the scanout and is repainted
+bool
+IOVirtIOGPU::presenterShow(uint32_t scanout, uint32_t resourceId, uint32_t width, uint32_t height)
+{
+    uint32_t w = 0, h = 0;
+
+    if (scanout >= kMaxDisplays || !fPresenting[scanout] || !scanoutSize(scanout, &w, &h) ||
+        w != width || h != height)
+        return false;
+    if (!gpuTransferToHost2D(resourceId, 0, 0, width, height) ||
+        !gpuSetScanout(scanout, resourceId, width, height) ||
+        !gpuResourceFlush(resourceId, 0, 0, width, height))
+        return false;
+
+    IOLockLock(fCtrlLock);
+    fPresentedRes[scanout] = resourceId;
+    if (scanout == 0) {
+        fScanoutResourceId = resourceId;
+        fScanoutWidth = width;
+        fScanoutHeight = height;
+    }
+    IOLockUnlock(fCtrlLock);
+    return true;
+}
+
+void
+IOVirtIOGPU::presenterLost(uint32_t scanout)
+{
+    if (scanout >= kMaxDisplays)
+        return;
+    IOLockLock(fCtrlLock);
+    fPresentedRes[scanout] = 0;
+    IOLockUnlock(fCtrlLock);
+}
+
+uint32_t
+IOVirtIOGPU::presentedResource(uint32_t scanout)
+{
+    if (scanout >= kMaxDisplays || fCtrlLock == NULL)
+        return 0;
+    IOLockLock(fCtrlLock);
+    uint32_t resourceId = fPresentedRes[scanout];
+    IOLockUnlock(fCtrlLock);
+    return resourceId;
+}
+
+// the display takes its own buffer back, unless something else was put on it since
+void
+IOVirtIOGPU::presenterEnd(uint32_t scanout)
+{
+    if (scanout >= kMaxDisplays)
+        return;
+    IOLockLock(fCtrlLock);
+    uint32_t presented = fPresentedRes[scanout];
+    bool showing = presented != 0 && (scanout != 0 || fScanoutResourceId == presented);
+    fPresenting[scanout] = false;
+    fPresentedRes[scanout] = 0;
+    IOLockUnlock(fCtrlLock);
+
+    if (scanout != 0) {
+        if (showing && fDisplays[scanout] != NULL)
+            fDisplays[scanout]->showOwnBuffer();
+        return;
+    }
+    if (showing && fFbBase != NULL && gpuSetScanout(0, fResourceId, fWidth, fHeight)) {
+        IOLockLock(fCtrlLock);
+        fScanoutResourceId = fResourceId;
+        fScanoutWidth = fWidth;
+        fScanoutHeight = fHeight;
+        IOLockUnlock(fCtrlLock);
+        gpuTransferToHost2D(fResourceId, 0, 0, fWidth, fHeight);
+        gpuResourceFlush(fResourceId, 0, 0, fWidth, fHeight);
+    }
+    releasePresentOwnership();
 }
 
 bool
@@ -1842,8 +1962,10 @@ IOVirtIOGPU::scheduleFlush()
 
     // Only the driver's own framebuffer needs its pixels pushed to the host;
     // a client resource the scanout has been pointed at already lives there.
+    // a presenter flushes every flip itself
     if (fScanoutResourceId != fResourceId) {
-        gpuResourceFlush(fScanoutResourceId, 0, 0, fWidth, fHeight);
+        if (fScanoutResourceId != presentedResource(0))
+            gpuResourceFlush(fScanoutResourceId, 0, 0, fWidth, fHeight);
     } else if (fFbBase && pending) {
         gpuTransferToHost2D(fResourceId, x1, y1, x2 - x1, y2 - y1);
         gpuResourceFlush(fResourceId, x1, y1, x2 - x1, y2 - y1);
@@ -2147,6 +2269,20 @@ IOVirtIOGPU::newUserClient(task_t owningTask, void *securityID, UInt32 type,
         return kIOReturnSuccess;
     }
 
+    // the flip pair a compositor draws into, as PDDRMFramebuffer offers it
+    if (type == kIOVirtIOGPUPresenterType) {
+        IOVirtIOGPUPresenter *pc = IOVirtIOGPUPresenter::withScanout(this, 0, owningTask, securityID, type);
+        if (!pc)
+            return kIOReturnNoMemory;
+        if (!pc->attach(this) || !pc->start(this)) {
+            pc->detach(this);
+            pc->release();
+            return kIOReturnError;
+        }
+        *handler = pc;
+        return kIOReturnSuccess;
+    }
+
     // The PDSurface protocol does not depend on virgl, so it is offered
     // whether or not 3D came up.
     if (type == kPDSurfaceConnectType) {
@@ -2327,6 +2463,8 @@ IOVirtIOGPU::setDisplayMode(IODisplayModeID mode, IOIndex depth)
     fScanoutWidth = width;
     fScanoutHeight = height;
     fModeID = mode;
+    // the flip pair is the old size, the presenter's next flip is refused
+    presenterLost(0);
     gpuTransferToHost2D(fResourceId, 0, 0, fWidth, fHeight);
     gpuResourceFlush(fResourceId, 0, 0, fWidth, fHeight);
 

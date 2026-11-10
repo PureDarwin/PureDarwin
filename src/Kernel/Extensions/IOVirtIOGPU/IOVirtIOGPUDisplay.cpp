@@ -8,6 +8,7 @@
  */
 #include "IOVirtIOGPUDisplay.h"
 #include "IOVirtIOGPU.h"
+#include "IOVirtIOGPUPresenter.h"
 
 #include <IOKit/IOLib.h>
 
@@ -74,6 +75,8 @@ IOVirtIOGPUDisplay::makeBuffer(uint32_t width, uint32_t height)
 
     fGPU->gpuTransferToHost2D(fResourceId, 0, 0, fWidth, fHeight);
     fGPU->gpuResourceFlush(fResourceId, 0, 0, fWidth, fHeight);
+    // a presenter's pair is the old size now
+    fGPU->presenterLost(fScanout);
     // a client that mapped the old buffer keeps its pages through the mapping
     if (oldResource != 0)
         fGPU->gpuResourceUnref(oldResource);
@@ -139,7 +142,8 @@ IOVirtIOGPUDisplay::flush()
 
     if (fGone)
         return;
-    if (!dark && resourceId != 0) {
+    // a presenter's flips push its own buffers
+    if (!dark && resourceId != 0 && fGPU->presentedResource(fScanout) == 0) {
         fGPU->gpuTransferToHost2D(resourceId, 0, 0, width, height);
         fGPU->gpuResourceFlush(resourceId, 0, 0, width, height);
     }
@@ -171,7 +175,8 @@ IOVirtIOGPUDisplay::hostChanged(uint32_t width, uint32_t height)
             IOLockLock(fLock);
             fDark = false;
             IOLockUnlock(fLock);
-            fGPU->gpuSetScanout(fScanout, fResourceId, fWidth, fHeight);
+            uint32_t presented = fGPU->presentedResource(fScanout);
+            fGPU->gpuSetScanout(fScanout, presented ? presented : fResourceId, fWidth, fHeight);
         } else if (!makeBuffer(width, height)) {
             IOLog("IOVirtIOGPU: display %u could not take %ux%u\n", fScanout, width, height);
             return;
@@ -183,6 +188,51 @@ IOVirtIOGPUDisplay::hostChanged(uint32_t width, uint32_t height)
     // the compositor re-reads the mode and remaps on a connect change
     if (fConnectProc != NULL)
         fConnectProc(fConnectTarget, fConnectRef);
+}
+
+bool
+IOVirtIOGPUDisplay::currentSize(uint32_t *width, uint32_t *height)
+{
+    IOLockLock(fLock);
+    *width = fWidth;
+    *height = fHeight;
+    bool on = !fDark && !fGone && fResourceId != 0;
+    IOLockUnlock(fLock);
+    return on;
+}
+
+void
+IOVirtIOGPUDisplay::showOwnBuffer()
+{
+    IOLockLock(fLock);
+    uint32_t resourceId = fResourceId, width = fWidth, height = fHeight;
+    bool dark = fDark;
+    IOLockUnlock(fLock);
+
+    if (dark || fGone || resourceId == 0)
+        return;
+    fGPU->gpuSetScanout(fScanout, resourceId, width, height);
+    fGPU->gpuTransferToHost2D(resourceId, 0, 0, width, height);
+    fGPU->gpuResourceFlush(resourceId, 0, 0, width, height);
+}
+
+IOReturn
+IOVirtIOGPUDisplay::newUserClient(task_t owningTask, void *securityID, UInt32 type, IOUserClient **handler)
+{
+    if (type != kIOVirtIOGPUPresenterType)
+        return super::newUserClient(owningTask, securityID, type, handler);
+
+    IOVirtIOGPUPresenter *client = IOVirtIOGPUPresenter::withScanout(fGPU, fScanout, owningTask, securityID, type);
+
+    if (client == NULL)
+        return kIOReturnNoMemory;
+    if (!client->attach(this) || !client->start(this)) {
+        client->detach(this);
+        client->release();
+        return kIOReturnError;
+    }
+    *handler = client;
+    return kIOReturnSuccess;
 }
 
 IOReturn
