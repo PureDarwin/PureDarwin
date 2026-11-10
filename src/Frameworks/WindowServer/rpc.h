@@ -87,6 +87,9 @@ void _windowServerDragFinish(void);
 // when this process last saw a key, button, wheel or pointer motion, in nanoseconds of mach_absolute_time, 0 for never
 uint64_t _windowServerLastInputTime(void);
 
+// asks the window manager to raise and focus the window, 0 when the compositor has no way to
+int _windowServerActivateWindow(int windowID);
+
 #ifdef __cplusplus
 }
 #endif

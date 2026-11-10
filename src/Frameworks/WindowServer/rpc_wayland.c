@@ -17,6 +17,8 @@
 #include "wlr-output-management-unstable-v1-client-protocol.h"
 #include "pd-window-position-v1-client-protocol.h"
 #include "pd-surface-host-v1-client-protocol.h"
+#include "pointer-constraints-unstable-v1-client-protocol.h"
+#include "relative-pointer-unstable-v1-client-protocol.h"
 #include <CoreGraphics/CGDirectDisplay_puredarwin.h>
 #include <CoreGraphics/CGWindowLevel.h>
 #include <CoreFoundation/CFBundle.h>
@@ -41,6 +43,8 @@ struct wsFrame {
     size_t size;
     int w, h;
     int busy;
+    // the part of this frame older than the backing store, as x0,y0,x1,y1, empty when x0>=x1
+    int staleX0, staleY0, staleX1, staleY1;
 };
 
 #define WS_FRAMES 3
@@ -52,6 +56,8 @@ struct wsWindow {
     struct xdg_toplevel *toplevel;
     // where the compositor placed this window, NULL without pd_window_position
     struct pd_window_position_v1 *position;
+    // the size of the last configure, until the app has resized to it
+    int configureW, configureH;
     struct zwlr_layer_surface_v1 *layerSurface;
     int level;
     // the backing store AppKit maps by path and draws into, never attached to the surface itself
@@ -74,6 +80,8 @@ struct wsWindow {
     struct ext_background_effect_surface_v1 *blurEffect;
     int blurOn, blurInset, blurRadius, blurDirty;
     int ignoresMouse, inputDirty;
+    // -[NSWindow setMouseConfinementRect:] in surface coordinates, confineW 0 for none
+    int confineX, confineY, confineW, confineH;
     struct wsWindow *next;
 };
 
@@ -121,9 +129,12 @@ static struct {
     int connected;
     int lastMouseX, lastMouseY;
     int screenW, screenH;
+    // the compositor's usable area in its top-left coordinates, width 0 until told
+    int usableX, usableY, usableW, usableH;
     // modes the compositor lists through wlr-output-management, read from any thread under modesLock
     struct zwlr_output_manager_v1 *outputManager;
     struct pd_window_position_manager_v1 *positionManager;
+    uint32_t positionVersion;
     struct pd_surface_host_manager_v1 *surfaceHost;
     struct zwlr_output_head_v1 *head;
     uint32_t outputSerial;
@@ -133,7 +144,17 @@ static struct {
     struct wsMode *modes;
     struct wsMode *currentMode;
     int32_t nextModeID;
-} ws = { .modesLock = PTHREAD_MUTEX_INITIALIZER };
+    // mouse-look: CGAssociateMouseAndMouseCursorPosition(false) locks the pointer on one window
+    struct zwp_pointer_constraints_v1 *constraints;
+    struct zwp_relative_pointer_manager_v1 *relativeManager;
+    struct zwp_relative_pointer_v1 *relativePointer;
+    struct zwp_locked_pointer_v1 *lockedPointer;
+    struct zwp_confined_pointer_v1 *confinedPointer;
+    int disassociated, lockWindowID, lockActive, confineWindowID;
+    // the window holding keyboard focus now, 0 while another client has it
+    int keyWindowID;
+    pthread_mutex_t constraintLock;
+} ws = { .modesLock = PTHREAD_MUTEX_INITIALIZER, .constraintLock = PTHREAD_RECURSIVE_MUTEX_INITIALIZER };
 
 struct wsMode {
     struct zwlr_output_mode_v1 *proxy;
@@ -398,12 +419,22 @@ static const struct CGDirectDisplayModeProvider modeProvider = {
 
 /* Defined with the rest of the input handling, below. */
 static const struct wl_seat_listener seatListener;
+static void relativePointerStart(void);
+static void constraintsApply(void);
 static void *dispatchThreadMain(void *unused);
 static int windowCreateBuffer(struct wsWindow *window);
 static int windowShowFront(struct wsWindow *window);
 static int windowPresent(struct wsWindow *window);
 static void windowReleaseBuffer(struct wsWindow *window);
 static void windowReleaseFrames(struct wsWindow *window);
+
+static bool pointerAssociate(bool connected);
+static bool pointerWarp(CGPoint point);
+
+static const struct CGDirectDisplayPointerProvider pointerProvider = {
+    .associate = pointerAssociate,
+    .warp = pointerWarp,
+};
 
 static void registryGlobal(void *data, struct wl_registry *registry, uint32_t name,
                            const char *interface, uint32_t version) {
@@ -442,7 +473,8 @@ static void registryGlobal(void *data, struct wl_registry *registry, uint32_t na
     } else if (strcmp(interface, wl_data_device_manager_interface.name) == 0) {
         ws.dataDeviceManager = wl_registry_bind(registry, name, &wl_data_device_manager_interface, version < 3 ? version : 3);
     } else if (strcmp(interface, pd_window_position_manager_v1_interface.name) == 0) {
-        ws.positionManager = wl_registry_bind(registry, name, &pd_window_position_manager_v1_interface, 1);
+        ws.positionVersion = version < 2 ? version : 2;
+        ws.positionManager = wl_registry_bind(registry, name, &pd_window_position_manager_v1_interface, ws.positionVersion);
     } else if (strcmp(interface, pd_surface_host_manager_v1_interface.name) == 0) {
         ws.surfaceHost = wl_registry_bind(registry, name, &pd_surface_host_manager_v1_interface, 1);
     } else if (strcmp(interface, zwlr_output_manager_v1_interface.name) == 0) {
@@ -450,6 +482,11 @@ static void registryGlobal(void *data, struct wl_registry *registry, uint32_t na
                                             version < 2 ? version : 2);
         zwlr_output_manager_v1_add_listener(ws.outputManager, &managerListener, NULL);
         CGDirectDisplaySetModeProvider(&modeProvider);
+    } else if (strcmp(interface, zwp_pointer_constraints_v1_interface.name) == 0) {
+        ws.constraints = wl_registry_bind(registry, name, &zwp_pointer_constraints_v1_interface, 1);
+        CGDirectDisplaySetPointerProvider(&pointerProvider);
+    } else if (strcmp(interface, zwp_relative_pointer_manager_v1_interface.name) == 0) {
+        ws.relativeManager = wl_registry_bind(registry, name, &zwp_relative_pointer_manager_v1_interface, 1);
     } else if (strcmp(interface, wl_output_interface.name) == 0) {
         ws.output = wl_registry_bind(registry, name, &wl_output_interface, 2);
         wl_output_add_listener(ws.output, &outputListener, NULL);
@@ -517,6 +554,7 @@ static int ensureConnected(void) {
 
     if (ws.dataDeviceManager != NULL && ws.seat != NULL)
         dataDeviceStart();
+    relativePointerStart();
 
     ws.connected = 1;
     ws.dispatchRunning = 1;
@@ -581,6 +619,8 @@ static const struct zwlr_layer_surface_v1_listener layerSurfaceListener = {
 // window levels are the values CGWindowLevelForKey returns, the same numbers apps built against Apple's SDK pass
 enum {
     kWSDesktopIconLevel = INT32_MIN + 45,
+    kWSNormalLevel = 0,
+    kWSFloatingLevel = 3,
     kWSModalPanelLevel = 8,
     kWSDockLevel = 20,
     kWSMainMenuLevel = 24,
@@ -601,8 +641,8 @@ static int layerForWindowLevel(int level, uint32_t *layerOut) {
     /* The dock sits on the TOP layer; the menu bar and anything above it are
      * overlays, which is both what they are semantically and what keeps them
      * clear of the dock's stacking. */
-    // modal panels sit with the menus, above the dock, as they did before levels were real values
-    if (level >= kWSMainMenuLevel || level == kWSModalPanelLevel) {
+    // modal and floating panels are ordinary movable windows, the compositor keeps them above their app
+    if (level >= kWSMainMenuLevel) {
         *layerOut = ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY;
         return 1;
     }
@@ -842,6 +882,10 @@ static int frameCreate(struct wsWindow *window, struct wsFrame *frame, int w, in
     frame->size = size;
     frame->w = w;
     frame->h = h;
+    frame->staleX0 = 0;
+    frame->staleY0 = 0;
+    frame->staleX1 = w;
+    frame->staleY1 = h;
     return 1;
 }
 
@@ -892,26 +936,155 @@ static struct wsFrame *windowFreeFrame(struct wsWindow *window, int w, int h) {
     return pick;
 }
 
-// copies what AppKit has finished drawing into a free frame and puts it on the surface, the caller commits
-static int windowPresent(struct wsWindow *window) {
+// ARGON_GFX_STATS: flushes, bytes copied and the damaged share of the windows, every 5 s
+static struct {
+    int on;
+    unsigned long flushes, emptyFlushes;
+    unsigned long long copied, damaged, area, nanos;
+    struct timespec since;
+} gfxStats = { -1 };
+
+static void gfxStatsAdd(size_t copied, size_t damaged, size_t area, const struct timespec *start) {
+    struct timespec now;
+
+    if (gfxStats.on < 0) {
+        gfxStats.on = getenv("ARGON_GFX_STATS") != NULL;
+        clock_gettime(CLOCK_MONOTONIC, &gfxStats.since);
+    }
+    if (!gfxStats.on)
+        return;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    gfxStats.flushes++;
+    if (damaged == 0)
+        gfxStats.emptyFlushes++;
+    gfxStats.copied += copied;
+    gfxStats.damaged += damaged;
+    gfxStats.area += area;
+    gfxStats.nanos += (unsigned long long)(now.tv_sec - start->tv_sec) * 1000000000ull + (now.tv_nsec - start->tv_nsec);
+    if (now.tv_sec - gfxStats.since.tv_sec < 5)
+        return;
+    fprintf(stderr, "ARGON-GFX flushes %lu (empty %lu) copied %llu KB damage %.1f%% present %.1f us avg\n",
+            gfxStats.flushes, gfxStats.emptyFlushes, gfxStats.copied / 1024,
+            gfxStats.area ? 100.0 * (double)gfxStats.damaged / (double)gfxStats.area : 0.0,
+            gfxStats.flushes ? (double)gfxStats.nanos / 1000.0 / (double)gfxStats.flushes : 0.0);
+    memset(&gfxStats, 0, sizeof(gfxStats));
+    gfxStats.on = 1;
+    gfxStats.since = now;
+}
+
+// copies what AppKit changed into a free frame and puts it on the surface, the caller commits. The
+// frame gets the new damage plus whatever it missed while the other frames were on screen.
+static int windowPresentDamage(struct wsWindow *window, int dx, int dy, int dw, int dh) {
+    struct timespec start;
+
+    clock_gettime(CLOCK_MONOTONIC, &start);
     pthread_mutex_lock(&ws.pixelsLock);
     if (window->pixels == NULL || window->pixelsW <= 0 || window->pixelsH <= 0) {
         pthread_mutex_unlock(&ws.pixelsLock);
         return 0;
     }
 
-    struct wsFrame *frame = windowFreeFrame(window, window->pixelsW, window->pixelsH);
+    int w = window->pixelsW, h = window->pixelsH;
+    int x0 = dx < 0 ? 0 : dx, y0 = dy < 0 ? 0 : dy;
+    int x1 = dx + dw > w ? w : dx + dw, y1 = dy + dh > h ? h : dy + dh;
+
+    if (x0 >= x1 || y0 >= y1)
+        x0 = y0 = x1 = y1 = 0;
+
+    struct wsFrame *frame = windowFreeFrame(window, w, h);
     if (frame == NULL) {
         pthread_mutex_unlock(&ws.pixelsLock);
         return 0;
     }
 
-    memcpy(frame->pixels, window->pixels, frame->size);
+    int cx0 = x0, cy0 = y0, cx1 = x1, cy1 = y1;
+
+    if (frame->staleX0 < frame->staleX1) {
+        if (cx0 >= cx1) {
+            cx0 = frame->staleX0, cy0 = frame->staleY0, cx1 = frame->staleX1, cy1 = frame->staleY1;
+        } else {
+            cx0 = cx0 < frame->staleX0 ? cx0 : frame->staleX0;
+            cy0 = cy0 < frame->staleY0 ? cy0 : frame->staleY0;
+            cx1 = cx1 > frame->staleX1 ? cx1 : frame->staleX1;
+            cy1 = cy1 > frame->staleY1 ? cy1 : frame->staleY1;
+        }
+    }
+
+    size_t pitch = (size_t)w * 4, copied = 0;
+
+    if (cx0 < cx1) {
+        if (cx0 == 0 && cx1 == w) {
+            memcpy((char *)frame->pixels + (size_t)cy0 * pitch, (char *)window->pixels + (size_t)cy0 * pitch,
+                   (size_t)(cy1 - cy0) * pitch);
+        } else {
+            for (int y = cy0; y < cy1; y++)
+                memcpy((char *)frame->pixels + (size_t)y * pitch + (size_t)cx0 * 4,
+                       (char *)window->pixels + (size_t)y * pitch + (size_t)cx0 * 4, (size_t)(cx1 - cx0) * 4);
+        }
+        copied = (size_t)(cx1 - cx0) * (size_t)(cy1 - cy0) * 4;
+    }
+    frame->staleX0 = frame->staleY0 = frame->staleX1 = frame->staleY1 = 0;
+
+    // ARGON_DAMAGE_CHECK: the frame must now equal the backing store, anything else is damage AppKit missed
+    static int check = -1;
+
+    if (check < 0)
+        check = getenv("ARGON_DAMAGE_CHECK") != NULL;
+    if (check) {
+        int mx0 = w, my0 = h, mx1 = 0, my1 = 0;
+
+        for (int y = 0; y < h; y++) {
+            const uint32_t *a = (const uint32_t *)((char *)frame->pixels + (size_t)y * pitch);
+            const uint32_t *b = (const uint32_t *)((char *)window->pixels + (size_t)y * pitch);
+
+            if (memcmp(a, b, pitch) == 0)
+                continue;
+            for (int x = 0; x < w; x++) {
+                if (a[x] != b[x]) {
+                    mx0 = x < mx0 ? x : mx0;
+                    mx1 = x + 1 > mx1 ? x + 1 : mx1;
+                }
+            }
+            my0 = y < my0 ? y : my0;
+            my1 = y + 1;
+        }
+        if (mx0 < mx1) {
+            fprintf(stderr, "ARGON-DAMAGE missed: window %d %d,%d %dx%d (sent %d,%d %dx%d)\n", window->windowID,
+                    mx0, my0, mx1 - mx0, my1 - my0, x0, y0, x1 - x0, y1 - y0);
+            memcpy(frame->pixels, window->pixels, frame->size);
+            x0 = y0 = 0, x1 = w, y1 = h;
+        }
+    }
+
+    // every other frame now lacks this damage
+    if (x0 < x1) {
+        for (int i = 0; i < WS_FRAMES; i++) {
+            struct wsFrame *other = &window->frames[i];
+
+            if (other == frame || other->buffer == NULL)
+                continue;
+            if (other->staleX0 >= other->staleX1) {
+                other->staleX0 = x0, other->staleY0 = y0, other->staleX1 = x1, other->staleY1 = y1;
+            } else {
+                other->staleX0 = x0 < other->staleX0 ? x0 : other->staleX0;
+                other->staleY0 = y0 < other->staleY0 ? y0 : other->staleY0;
+                other->staleX1 = x1 > other->staleX1 ? x1 : other->staleX1;
+                other->staleY1 = y1 > other->staleY1 ? y1 : other->staleY1;
+            }
+        }
+    }
     pthread_mutex_unlock(&ws.pixelsLock);
+
     window->front = frame;
     wl_surface_attach(window->surface, frame->buffer, 0, 0);
-    wl_surface_damage(window->surface, 0, 0, frame->w, frame->h);
+    if (x0 < x1)
+        wl_surface_damage_buffer(window->surface, x0, y0, x1 - x0, y1 - y0);
+    gfxStatsAdd(copied, (size_t)(x1 - x0) * (size_t)(y1 - y0), (size_t)w * (size_t)h, &start);
     return 1;
+}
+
+static int windowPresent(struct wsWindow *window) {
+    return windowPresentDamage(window, 0, 0, INT32_MAX / 2, INT32_MAX / 2);
 }
 
 // puts the last presented frame back on the surface, unless the window is meant to be unmapped
@@ -1175,6 +1348,150 @@ void _windowServerSetCursorHidden(int hidden) {
     pthread_mutex_unlock(&cursor.lock);
 }
 
+
+static bool pointerAssociate(bool connected) {
+    struct wsRPCSimple msg = { { kCGAssociateMouseAndMouseCursorPosition, 16 }, connected ? 1 : 0 };
+
+    return _windowServerRPC(&msg, sizeof(msg), NULL, NULL) == KERN_SUCCESS;
+}
+
+static bool pointerWarp(CGPoint point) {
+    struct wsRPCSimple msg = { { kCGWarpMouseCursorPosition, 16 }, (int)point.x, (int)point.y };
+
+    return _windowServerRPC(&msg, sizeof(msg), NULL, NULL) == KERN_SUCCESS;
+}
+
+// relative motion from zwp_relative_pointer_v1. Only a locked pointer turns it into events,
+// otherwise wl_pointer.motion carries the same deltas already
+static void relativeMotion(void *data, struct zwp_relative_pointer_v1 *relative, uint32_t timeHi,
+                           uint32_t timeLo, wl_fixed_t dx, wl_fixed_t dy, wl_fixed_t dxRaw, wl_fixed_t dyRaw) {
+    struct mach_event event = {0};
+    struct wsWindow *window;
+
+    if (!ws.lockActive)
+        return;
+    noteInput();
+    window = windowForID(ws.lockWindowID);
+    event.windowID = ws.lockWindowID;
+    event.code = leftButtonDown ? WS_LEFT_MOUSE_DRAGGED
+               : rightButtonDown ? WS_RIGHT_MOUSE_DRAGGED
+               : otherButtonDown ? WS_OTHER_MOUSE_DRAGGED : WS_MOUSE_MOVED;
+    // the cursor stays where it was locked, so the location does not change
+    event.x = lastPointerX;
+    event.y = window != NULL ? window->h - lastPointerY : lastPointerY;
+    event.dx = wl_fixed_to_double(dxRaw);
+    event.dy = wl_fixed_to_double(dyRaw);
+    event.mods = currentModifiers;
+    if (getenv("PD_WS_TRACE") != NULL)
+        fprintf(stderr, "WindowServer: relative %.1f,%.1f window=%d\n", event.dx, event.dy, event.windowID);
+    queuePush(&event);
+}
+
+static const struct zwp_relative_pointer_v1_listener relativeListener = {
+    .relative_motion = relativeMotion,
+};
+
+static void relativePointerStart(void) {
+    if (ws.relativePointer != NULL || ws.relativeManager == NULL || ws.pointer == NULL)
+        return;
+    ws.relativePointer = zwp_relative_pointer_manager_v1_get_relative_pointer(ws.relativeManager, ws.pointer);
+    zwp_relative_pointer_v1_add_listener(ws.relativePointer, &relativeListener, NULL);
+}
+
+static void lockedPointerLocked(void *data, struct zwp_locked_pointer_v1 *locked) {
+    ws.lockActive = 1;
+    if (getenv("PD_WS_TRACE") != NULL)
+        fprintf(stderr, "WindowServer: pointer locked on window %d\n", ws.lockWindowID);
+}
+
+static void lockedPointerUnlocked(void *data, struct zwp_locked_pointer_v1 *locked) {
+    ws.lockActive = 0;
+    if (getenv("PD_WS_TRACE") != NULL)
+        fprintf(stderr, "WindowServer: pointer unlocked\n");
+}
+
+static const struct zwp_locked_pointer_v1_listener lockedListener = {
+    .locked = lockedPointerLocked,
+    .unlocked = lockedPointerUnlocked,
+};
+
+static void confinedPointerConfined(void *data, struct zwp_confined_pointer_v1 *confined) {
+    if (getenv("PD_WS_TRACE") != NULL)
+        fprintf(stderr, "WindowServer: pointer confined on window %d\n", ws.confineWindowID);
+}
+
+static void confinedPointerUnconfined(void *data, struct zwp_confined_pointer_v1 *confined) {
+}
+
+static const struct zwp_confined_pointer_v1_listener confinedListener = {
+    .confined = confinedPointerConfined,
+    .unconfined = confinedPointerUnconfined,
+};
+
+static void constraintsDrop(void) {
+    if (ws.lockedPointer != NULL)
+        zwp_locked_pointer_v1_destroy(ws.lockedPointer);
+    if (ws.confinedPointer != NULL)
+        zwp_confined_pointer_v1_destroy(ws.confinedPointer);
+    ws.lockedPointer = NULL;
+    ws.confinedPointer = NULL;
+    ws.lockActive = 0;
+    ws.confineWindowID = 0;
+}
+
+// the window a disassociated pointer locks on: the one under the pointer if it is key, else the key window
+static int lockTarget(void) {
+    struct wsWindow *window = windowForID(ws.pointerWindowID);
+
+    if (window != NULL && window->toplevel != NULL && ws.pointerWindowID == ws.keyWindowID)
+        return ws.pointerWindowID;
+    window = windowForID(ws.keyWindowID);
+    return window != NULL && window->surface != NULL ? ws.keyWindowID : 0;
+}
+
+// one constraint per surface: a lock wins over the key window's confinement rect. Caller holds constraintLock
+static void constraintsApply(void) {
+    struct wsWindow *window;
+
+    if (ws.constraints == NULL || ws.pointer == NULL)
+        return;
+    if (ws.disassociated) {
+        int target = ws.lockWindowID != 0 ? ws.lockWindowID : lockTarget();
+
+        window = windowForID(target);
+        if (ws.lockedPointer != NULL && target == ws.lockWindowID && window != NULL)
+            return;
+        constraintsDrop();
+        ws.lockWindowID = 0;
+        if (window == NULL || window->surface == NULL)
+            return;
+        ws.lockWindowID = target;
+        ws.lockedPointer = zwp_pointer_constraints_v1_lock_pointer(ws.constraints, window->surface, ws.pointer, NULL,
+                                                                  ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
+        zwp_locked_pointer_v1_add_listener(ws.lockedPointer, &lockedListener, NULL);
+        wl_display_flush(ws.display);
+        return;
+    }
+    ws.lockWindowID = 0;
+    window = windowForID(ws.keyWindowID);
+    if (window != NULL && (window->confineW <= 0 || window->surface == NULL))
+        window = NULL;
+    if (window != NULL && ws.confinedPointer != NULL && ws.confineWindowID == window->windowID)
+        return;
+    constraintsDrop();
+    if (window != NULL) {
+        struct wl_region *region = wl_compositor_create_region(ws.compositor);
+
+        wl_region_add(region, window->confineX, window->confineY, window->confineW, window->confineH);
+        ws.confineWindowID = window->windowID;
+        ws.confinedPointer = zwp_pointer_constraints_v1_confine_pointer(ws.constraints, window->surface, ws.pointer,
+                                                                       region, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
+        zwp_confined_pointer_v1_add_listener(ws.confinedPointer, &confinedListener, NULL);
+        wl_region_destroy(region);
+    }
+    wl_display_flush(ws.display);
+}
+
 static void pointerEnter(void *data, struct wl_pointer *pointer, uint32_t serial,
                          struct wl_surface *surface, wl_fixed_t x, wl_fixed_t y) {
     for (struct wsWindow *w = ws.windows; w != NULL; w = w->next) {
@@ -1255,8 +1572,9 @@ static void pointerMotion(void *data, struct wl_pointer *pointer, uint32_t time,
      * click into a point outside the view. */
     event.x = newX;
     event.y = window != NULL ? window->h - newY : newY;
+    // NSEvent deltaY grows downwards on macOS, which SDL and other mouse-look code rely on
     event.dx = newX - lastPointerX;
-    event.dy = lastPointerY - newY;
+    event.dy = newY - lastPointerY;
     event.mods = currentModifiers;
     lastPointerX = newX;
     lastPointerY = newY;
@@ -1515,6 +1833,10 @@ static void keyboardEnter(void *data, struct wl_keyboard *keyboard, uint32_t ser
             event.windowID = w->windowID;
             event.code = WS_EVENT_FOCUS_GAINED;
             queuePush(&event);
+            pthread_mutex_lock(&ws.constraintLock);
+            ws.keyWindowID = w->windowID;
+            constraintsApply();
+            pthread_mutex_unlock(&ws.constraintLock);
             break;
         }
     }
@@ -1532,6 +1854,14 @@ static void keyboardLeave(void *data, struct wl_keyboard *keyboard, uint32_t ser
             event.windowID = w->windowID;
             event.code = WS_EVENT_FOCUS_LOST;
             queuePush(&event);
+            // a deactivated window gives the pointer back, it locks again when it is key once more
+            pthread_mutex_lock(&ws.constraintLock);
+            if (ws.lockWindowID == w->windowID)
+                ws.lockWindowID = 0;
+            if (ws.keyWindowID == w->windowID)
+                ws.keyWindowID = 0;
+            constraintsApply();
+            pthread_mutex_unlock(&ws.constraintLock);
             break;
         }
     }
@@ -1763,6 +2093,7 @@ static void seatCapabilities(void *data, struct wl_seat *seat, uint32_t caps) {
         ws.pointer = wl_seat_get_pointer(seat);
         wl_pointer_add_listener(ws.pointer, &pointerListener, NULL);
     }
+    relativePointerStart();
 }
 
 static void seatName(void *data, struct wl_seat *seat, const char *name) {
@@ -1851,6 +2182,8 @@ static void toplevelConfigure(void *data, struct xdg_toplevel *toplevel,
     if (width <= 0 || height <= 0 || (width == (int32_t)window->w && height == (int32_t)window->h))
         return;
 
+    window->configureW = width;
+    window->configureH = height;
     event.windowID = window->windowID;
     event.code = WS_EVENT_CONFIGURE;
     event.dx = width;
@@ -1903,6 +2236,27 @@ static void windowSendPosition(struct wsWindow *window) {
                                        (int32_t)(ws.screenH - window->y - window->h));
 }
 
+// a modal or floating panel is a transient of the window it serves, the key window or else another shown one
+static void windowSetPanelParent(struct wsWindow *window) {
+    struct wsWindow *parent;
+
+    if (window->toplevel == NULL || (window->level != kWSModalPanelLevel && window->level != kWSFloatingLevel))
+        return;
+    parent = windowForID(ws.keyWindowID);
+    if (parent == NULL || parent == window || parent->toplevel == NULL || parent->level != kWSNormalLevel) {
+        parent = NULL;
+        for (struct wsWindow *w = ws.windows; w != NULL; w = w->next) {
+            if (w != window && w->toplevel != NULL && w->level == kWSNormalLevel && w->front != NULL &&
+                w->state != MINIMIZED && w->state != HIDDEN) {
+                parent = w;
+                break;
+            }
+        }
+    }
+    if (parent != NULL)
+        xdg_toplevel_set_parent(window->toplevel, parent->toplevel);
+}
+
 /* Gives the surface its shell role. A window whose level maps to a layer gets
  * a layer-shell surface; everything else gets an xdg_toplevel. The role cannot
  * be changed in place, so a level change tears this down and rebuilds it. */
@@ -1950,7 +2304,10 @@ static void windowCreateRole(struct wsWindow *window, const char *title) {
         window->position = pd_window_position_manager_v1_get_window_position(ws.positionManager, window->surface);
         pd_window_position_v1_add_listener(window->position, &positionListener, window);
         windowSendPosition(window);
+        if (ws.positionVersion >= 2)
+            pd_window_position_v1_set_level(window->position, window->level);
     }
+    windowSetPanelParent(window);
 
     // compositors match window rules and desktop entries on the app id
     CFBundleRef bundle = CFBundleGetMainBundle();
@@ -2037,6 +2394,13 @@ static kern_return_t windowDestroy(struct wsRPCWindow *msg) {
         struct wsWindow *window = *link;
 
         if (window->windowID == msg->windowID) {
+            // the constraint goes before its surface
+            pthread_mutex_lock(&ws.constraintLock);
+            if (ws.lockWindowID == window->windowID || ws.confineWindowID == window->windowID) {
+                constraintsDrop();
+                ws.lockWindowID = 0;
+            }
+            pthread_mutex_unlock(&ws.constraintLock);
             *link = window->next;
             windowReleaseBuffer(window);
             windowDestroyRole(window);
@@ -2074,6 +2438,9 @@ static int windowEnsureRole(struct wsWindow *window) {
 
 static kern_return_t windowModifyState(struct wsRPCWindow *msg) {
     struct wsWindow *window = windowForID(msg->windowID);
+
+    if (getenv("PD_WS_TRACE") != NULL && window != NULL && msg->state != window->state)
+        fprintf(stderr, "WindowServer: window %d state %d -> %d\n", msg->windowID, window->state, msg->state);
 
     /* AppKit sends the modify before the create for a window it has just
      * built, so treat an unknown id as a create. */
@@ -2139,6 +2506,16 @@ static kern_return_t windowModifyState(struct wsRPCWindow *msg) {
             pthread_mutex_unlock(&ws.queueLock);
             return window->configured ? KERN_SUCCESS : KERN_FAILURE;
         }
+        // a toplevel that becomes a modal or floating panel keeps its role, the compositor still has to know
+        if (window->toplevel != NULL) {
+            if (window->position != NULL && ws.positionVersion >= 2)
+                pd_window_position_v1_set_level(window->position, window->level);
+            if (window->level == kWSModalPanelLevel || window->level == kWSFloatingLevel)
+                windowSetPanelParent(window);
+            else
+                xdg_toplevel_set_parent(window->toplevel, NULL);
+            wl_display_flush(ws.display);
+        }
     }
 
     if (msg->title[0] != '\0' && window->toplevel != NULL) {
@@ -2185,6 +2562,9 @@ static kern_return_t windowModifyState(struct wsRPCWindow *msg) {
                 }
                 break;
             case HIDDEN:
+                // an app that unzooms a window it has not shown yet sends hidden, which must still end the maximise
+                if (window->toplevel != NULL && window->state == MAXIMIZED)
+                    xdg_toplevel_unset_maximized(window->toplevel);
                 /* Wayland has no hide; the surface is unmapped by attaching a
                  * null buffer. */
                 wl_surface_attach(window->surface, NULL, 0, 0);
@@ -2198,6 +2578,10 @@ static kern_return_t windowModifyState(struct wsRPCWindow *msg) {
 
     int moved = (msg->x != window->x || msg->y != window->y ||
                  msg->w != window->w || msg->h != window->h);
+    // the app answering a configure keeps its old origin, sending that would undo the compositor's placement
+    int answersConfigure = (window->configureW > 0 && msg->w == window->configureW && msg->h == window->configureH);
+    if (answersConfigure)
+        window->configureW = window->configureH = 0;
 
     window->x = msg->x;
     window->y = msg->y;
@@ -2210,7 +2594,7 @@ static kern_return_t windowModifyState(struct wsRPCWindow *msg) {
             windowApplyLayerGeometry(window, layer);
             wl_surface_commit(window->surface);
         }
-    } else if (moved && window->toplevel != NULL) {
+    } else if (moved && !answersConfigure && window->toplevel != NULL) {
         // the app moved its own window, the compositor's moves come back as WS_EVENT_MOVED and never get here
         windowSendPosition(window);
     }
@@ -2301,6 +2685,8 @@ kern_return_t _windowServerRPC(void *data, size_t len, void *reply, int *replyLe
                         window->windowID, nonzero, count, px[0],
                         px[count / 2]);
             }
+            int stateChanged = window->blurDirty || window->inputDirty;
+
             if (window->blurDirty) {
                 windowApplyBlur(window);
             }
@@ -2314,9 +2700,24 @@ kern_return_t _windowServerRPC(void *data, size_t len, void *reply, int *replyLe
                 window->inputDirty = 0;
             }
             // hand the compositor a copy of the backing store, so it never reads a frame mid-draw
-            if (window->state != MINIMIZED && window->state != HIDDEN && windowPresent(window)) {
-                wl_surface_commit(window->surface);
-                wl_display_flush(ws.display);
+            if (window->state != MINIMIZED && window->state != HIDDEN) {
+                int presented;
+
+                // nothing changed: no copy and no commit, the compositor keeps what it has
+                if (msg->damageValid && (msg->damageW <= 0 || msg->damageH <= 0) && window->front != NULL) {
+                    struct timespec start;
+
+                    clock_gettime(CLOCK_MONOTONIC, &start);
+                    gfxStatsAdd(0, 0, (size_t)window->pixelsW * (size_t)window->pixelsH, &start);
+                    presented = 0;
+                } else if (msg->damageValid && window->front != NULL)
+                    presented = windowPresentDamage(window, msg->damageX, msg->damageY, msg->damageW, msg->damageH);
+                else
+                    presented = windowPresent(window);
+                if (presented || stateChanged) {
+                    wl_surface_commit(window->surface);
+                    wl_display_flush(ws.display);
+                }
             }
             return KERN_SUCCESS;
         }
@@ -2410,6 +2811,26 @@ kern_return_t _windowServerRPC(void *data, size_t len, void *reply, int *replyLe
             return KERN_SUCCESS;
         }
 
+        case kWSGetUsableArea: {
+            if (reply == NULL || replyLen == NULL ||
+                (size_t)*replyLen < sizeof(struct wsRPCSimple)) {
+                return KERN_INVALID_ARGUMENT;
+            }
+            struct wsRPCSimple *out = (struct wsRPCSimple *)reply;
+
+            memset(out, 0, sizeof(*out));
+            out->base.code = kWSGetUsableArea;
+            out->base.len = sizeof(*out) - sizeof(struct wsRPCBase);
+            if (ensureConnected() && ws.usableW > 0 && ws.screenH > 0) {
+                out->val1 = ws.usableX;
+                out->val2 = ws.screenH - ws.usableY - ws.usableH;
+                out->val3 = ws.usableW;
+                out->val4 = ws.usableH;
+            }
+            *replyLen = sizeof(struct wsRPCSimple);
+            return KERN_SUCCESS;
+        }
+
         case kCGGetMouseLocation: {
             if (reply == NULL || replyLen == NULL ||
                 (size_t)*replyLen < sizeof(struct wsRPCSimple)) {
@@ -2423,6 +2844,60 @@ kern_return_t _windowServerRPC(void *data, size_t len, void *reply, int *replyLe
             return KERN_SUCCESS;
         }
 
+        case kCGAssociateMouseAndMouseCursorPosition: {
+            struct wsRPCSimple *msg = (struct wsRPCSimple *)data;
+
+            if (ws.constraints == NULL)
+                return KERN_FAILURE;
+            pthread_mutex_lock(&ws.constraintLock);
+            ws.disassociated = !msg->val1;
+            constraintsApply();
+            pthread_mutex_unlock(&ws.constraintLock);
+            return KERN_SUCCESS;
+        }
+
+        // screen coordinates from the top left. Wayland moves no pointer, but a locked one takes the spot
+        // as the hint it returns to on unlock, which is all mouse-look recentring needs
+        case kCGWarpMouseCursorPosition: {
+            struct wsRPCSimple *msg = (struct wsRPCSimple *)data;
+            kern_return_t ret = KERN_FAILURE;
+
+            pthread_mutex_lock(&ws.constraintLock);
+            struct wsWindow *window = windowForID(ws.lockWindowID);
+
+            if (ws.lockedPointer != NULL && window != NULL) {
+                double top = ws.screenH > 0 ? ws.screenH - window->y - window->h : window->y;
+                double x = msg->val1 - window->x, y = msg->val2 - top;
+
+                zwp_locked_pointer_v1_set_cursor_position_hint(ws.lockedPointer, wl_fixed_from_double(x),
+                                                               wl_fixed_from_double(y));
+                wl_surface_commit(window->surface);
+                wl_display_flush(ws.display);
+                ret = KERN_SUCCESS;
+            }
+            pthread_mutex_unlock(&ws.constraintLock);
+            return ret;
+        }
+
+        // wsRPCWindow: window, a rect in window coordinates from the bottom left, an empty one clears it
+        case kWSWindowSetConfinement: {
+            struct wsRPCWindow *msg = (struct wsRPCWindow *)data;
+            struct wsWindow *window = windowForID(msg->windowID);
+
+            if (window == NULL || len < sizeof(*msg))
+                return KERN_FAILURE;
+            pthread_mutex_lock(&ws.constraintLock);
+            window->confineX = (int)msg->x;
+            window->confineY = (int)(window->h - msg->y - msg->h);
+            window->confineW = msg->w > 0 && msg->h > 0 ? (int)msg->w : 0;
+            window->confineH = (int)msg->h;
+            if (ws.confineWindowID == window->windowID)
+                constraintsDrop();
+            constraintsApply();
+            pthread_mutex_unlock(&ws.constraintLock);
+            return KERN_SUCCESS;
+        }
+
         default:
             fprintf(stderr, "WindowServer: unhandled RPC code %u\n", base->code);
             return KERN_INVALID_ARGUMENT;
@@ -2431,6 +2906,18 @@ kern_return_t _windowServerRPC(void *data, size_t len, void *reply, int *replyLe
 
 // metal: a CAMetalLayer presents with Vulkan into its own child surface of a window. The child is desynchronised,
 // so its frames show without AppKit committing the window, and position changes apply on the window's next commit, made here.
+// asks the window manager to bring the window forward, older compositors cannot
+int _windowServerActivateWindow(int windowID) {
+    struct wsWindow *window;
+
+    if (!ensureConnected() || (window = windowForID(windowID)) == NULL || window->position == NULL ||
+        pd_window_position_v1_get_version(window->position) < PD_WINDOW_POSITION_V1_ACTIVATE_SINCE_VERSION)
+        return 0;
+    pd_window_position_v1_activate(window->position);
+    wl_display_flush(ws.display);
+    return 1;
+}
+
 void *_windowServerWaylandDisplay(void) {
     return ensureConnected() ? ws.display : NULL;
 }

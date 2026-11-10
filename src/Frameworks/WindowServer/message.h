@@ -32,10 +32,18 @@ enum {
     kWSWindowSetBlur = 10,
     // wsRPCSimple: window, 1 to let pointer events pass through to what is below
     kWSWindowSetIgnoresMouse = 11,
+    // wsRPCWindow: window, confinement rect in window coordinates, zero size to clear
+    kWSWindowSetConfinement = 12,
     kCGGetLastMouseDelta = 100,
     kCGGetMouseLocation = 101,
     /* windowID 0 asks for the active application window. */
     kWSGetWindowInfo = 102,
+    // wsRPCSimple: 0 locks the pointer for mouse-look, 1 releases it
+    kCGAssociateMouseAndMouseCursorPosition = 103,
+    // wsRPCSimple: x, y in screen coordinates from the top left
+    kCGWarpMouseCursorPosition = 104,
+    // wsRPCSimple reply: the area windows may cover as Cocoa x, y, width, height, all 0 when unknown
+    kWSGetUsableArea = 105,
 };
 
 enum {
@@ -107,6 +115,9 @@ struct wsRPCWindow {
     int state;
     char title[WS_TITLE_MAX];
     int level;
+    // kWSWindowFlush only: the changed area in buffer pixels, top-left origin, when damageValid is set
+    int damageValid;
+    int damageX, damageY, damageW, damageH;
 };
 
 struct wsRPCSimple {
@@ -132,6 +143,8 @@ struct wsRPCSimple {
 #define WS_EVENT_DRAG_MOTION  1006
 #define WS_EVENT_DRAG_LEAVE   1007
 #define WS_EVENT_DRAG_DROP    1008
+// the usable screen area changed, a panel such as the dock came, went or resized
+#define WS_EVENT_USABLE_AREA  1009
 
 struct mach_event {
     int windowID;

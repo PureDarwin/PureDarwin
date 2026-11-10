@@ -5,7 +5,7 @@
     SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
   </copyright>
 
-  <interface name="pd_window_position_manager_v1" version="1">
+  <interface name="pd_window_position_manager_v1" version="2">
     <description summary="where the compositor placed a client's windows">
       Wayland keeps window positions with the compositor. AppKit reports frames in screen
       coordinates, so a window learns where it is from this.
@@ -17,9 +17,19 @@
       <arg name="id" type="new_id" interface="pd_window_position_v1"/>
       <arg name="surface" type="object" interface="wl_surface"/>
     </request>
+    <event name="usable_area" since="2">
+      <description summary="the part of the screen windows may cover">
+        The first screen less the exclusive zones of panels such as the menu bar and the dock,
+        in global compositor coordinates. Sent on bind and whenever it changes.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </event>
   </interface>
 
-  <interface name="pd_window_position_v1" version="1">
+  <interface name="pd_window_position_v1" version="2">
     <description summary="one window's position">
       Sent once when created and again every time the compositor moves the window.
     </description>
@@ -33,6 +43,20 @@
       </description>
       <arg name="x" type="int"/>
       <arg name="y" type="int"/>
+    </request>
+
+    <request name="set_level" since="2">
+      <description summary="the window level AppKit gave the window">
+        A CGWindowLevel value. A modal panel (8) or floating panel (3) stays above the other
+        windows of its client, and a click on one of those windows goes to the modal panel.
+      </description>
+      <arg name="level" type="int"/>
+    </request>
+    <request name="activate" since="2">
+      <description summary="bring the window forward and give it the keyboard">
+        Sent when the user asked for the app from outside it, such as a click on its Dock tile.
+        The window manager decides, as it does for a click on the window.
+      </description>
     </request>
 
     <event name="position">
