@@ -1,0 +1,141 @@
+/* No comment provided by engineer. */
+"%@ — Edited" = "%@ — Bearbeitet";
+
+/* No comment provided by engineer. */
+"%lu match" = "%lu Treffer";
+
+/* No comment provided by engineer. */
+"%lu matches" = "%lu Treffer";
+
+/* No comment provided by engineer. */
+"%lu words, %lu characters" = "%lu Wörter, %lu Zeichen";
+
+/* No comment provided by engineer. */
+"About %@" = "Über %@";
+
+/* No comment provided by engineer. */
+"Bigger" = "Größer";
+
+/* No comment provided by engineer. */
+"Cancel" = "Abbrechen";
+
+/* No comment provided by engineer. */
+"Choose a name for this document in %@." = "Wähle einen Namen für dieses Dokument in %@.";
+
+/* No comment provided by engineer. */
+"Close" = "Schließen";
+
+/* No comment provided by engineer. */
+"Copy" = "Kopieren";
+
+/* No comment provided by engineer. */
+"Cut" = "Ausschneiden";
+
+/* No comment provided by engineer. */
+"Done" = "Fertig";
+
+/* No comment provided by engineer. */
+"Don’t Save" = "Nicht sichern";
+
+/* No comment provided by engineer. */
+"Edit" = "Bearbeiten";
+
+/* No comment provided by engineer. */
+"File" = "Ablage";
+
+/* No comment provided by engineer. */
+"Find" = "Suchen";
+
+/* No comment provided by engineer. */
+"Find Next" = "Weitersuchen";
+
+/* No comment provided by engineer. */
+"Find Previous" = "Rückwärts suchen";
+
+/* No comment provided by engineer. */
+"Find…" = "Suchen …";
+
+/* No comment provided by engineer. */
+"Format" = "Format";
+
+/* No comment provided by engineer. */
+"Hide %@" = "%@ ausblenden";
+
+/* No comment provided by engineer. */
+"Line %lu, Column %lu   Plain Text   UTF-8   LF" = "Zeile %lu, Spalte %lu   Reiner Text   UTF-8   LF";
+
+/* No comment provided by engineer. */
+"Minimize" = "Im Dock ablegen";
+
+/* No comment provided by engineer. */
+"New" = "Neu";
+
+/* No comment provided by engineer. */
+"Not found" = "Nicht gefunden";
+
+/* No comment provided by engineer. */
+"OK" = "OK";
+
+/* No comment provided by engineer. */
+"Open…" = "Öffnen …";
+
+/* No comment provided by engineer. */
+"Paste" = "Einsetzen";
+
+/* No comment provided by engineer. */
+"Proportional Font" = "Proportionalschrift";
+
+/* No comment provided by engineer. */
+"Quit %@" = "%@ beenden";
+
+/* No comment provided by engineer. */
+"Redo" = "Wiederholen";
+
+/* No comment provided by engineer. */
+"Revert to Saved" = "Zurück zur gesicherten Version";
+
+/* No comment provided by engineer. */
+"Save" = "Sichern";
+
+/* No comment provided by engineer. */
+"Save As" = "Sichern unter";
+
+/* No comment provided by engineer. */
+"Save As…" = "Sichern unter …";
+
+/* No comment provided by engineer. */
+"Save changes to “%@”?" = "Änderungen an „%@“ sichern?";
+
+/* No comment provided by engineer. */
+"Select All" = "Alles auswählen";
+
+/* No comment provided by engineer. */
+"Smaller" = "Kleiner";
+
+/* No comment provided by engineer. */
+"Text Editor" = "Texteditor";
+
+/* No comment provided by engineer. */
+"The document couldn’t be saved." = "Das Dokument konnte nicht gesichert werden.";
+
+/* No comment provided by engineer. */
+"Undo" = "Widerrufen";
+
+/* No comment provided by engineer. */
+"Untitled" = "Ohne Titel";
+
+/* No comment provided by engineer. */
+"Untitled %d" = "Ohne Titel %d";
+
+/* No comment provided by engineer. */
+"Window" = "Fenster";
+
+/* No comment provided by engineer. */
+"Wrap Lines" = "Zeilen umbrechen";
+
+/* No comment provided by engineer. */
+"Your changes will be lost if you don’t save them." = "Deine Änderungen gehen verloren, wenn du sie nicht sicherst.";
+
+/* No comment provided by engineer. */
+"Zoom" = "Zoomen";
+
