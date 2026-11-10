@@ -9,6 +9,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <CoreGraphics/CGColorSpace.h>
 #import <objc/runtime.h>
 #import <Onyx2D/O2ColorSpace.h>
+#import <dispatch/dispatch.h>
+#include <math.h>
+#include <string.h>
 
 CGColorSpaceRef CGColorSpaceRetain(CGColorSpaceRef colorSpace) {
    return O2ColorSpaceRetain(colorSpace);
@@ -102,4 +105,11 @@ size_t CGColorSpaceGetNumberOfComponents(CGColorSpaceRef self) {
 // Onyx2D's spaces are device spaces without an ICC profile, Apple answers NULL for those too
 CFDataRef CGColorSpaceCopyICCData(CGColorSpaceRef space) {
    return NULL;
+}
+
+// a named space is described by its name, the only description an ICC-less space has
+CFPropertyListRef CGColorSpaceCopyPropertyList(CGColorSpaceRef space) {
+   CFStringRef name=CGColorSpaceGetName(space);
+
+   return name ? CFRetain(name) : NULL;
 }

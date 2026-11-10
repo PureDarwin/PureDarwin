@@ -73,6 +73,8 @@ enum {
     kKeyboardUnknown = kUnknownType,
 };
 typedef UInt32 PhysicalKeyboardLayoutType;
+typedef UInt8 KeyMapByteArray[16];
+typedef UInt32 KeyMap[4];
 
 CARBON_EXPORT UInt8 LMGetKbdType(void);
 CARBON_EXPORT PhysicalKeyboardLayoutType KBGetLayoutType(SInt16 keyboardType);
@@ -133,6 +135,7 @@ enum {
 
 CARBON_EXPORT UInt32 GetCurrentEventKeyModifiers(void);
 CARBON_EXPORT UInt32 GetCurrentKeyModifiers(void);
+CARBON_EXPORT void GetKeys(KeyMap theKeys);
 
 CARBON_EXPORT OSStatus EnableSecureEventInput(void);
 CARBON_EXPORT OSStatus DisableSecureEventInput(void);

@@ -65,6 +65,7 @@ COREGRAPHICS_EXPORT const CFStringRef kCGColorSpaceITUR_2100_HLG;
 COREGRAPHICS_EXPORT const CFStringRef kCGColorSpaceITUR_2100_PQ;
 // the name a space was made with (CGColorSpaceCreateWithName), NULL for the device spaces
 COREGRAPHICS_EXPORT CFStringRef CGColorSpaceGetName(CGColorSpaceRef space);
+COREGRAPHICS_EXPORT CFPropertyListRef CGColorSpaceCopyPropertyList(CGColorSpaceRef space);
 
 COREGRAPHICS_EXPORT CGColorSpaceModel CGColorSpaceGetModel(CGColorSpaceRef self);
 COREGRAPHICS_EXPORT size_t CGColorSpaceGetNumberOfComponents(CGColorSpaceRef self);

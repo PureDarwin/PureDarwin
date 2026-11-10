@@ -57,5 +57,7 @@ COREGRAPHICS_EXPORT void CGPathAddArc(CGMutablePathRef self, const CGAffineTrans
 COREGRAPHICS_EXPORT void CGPathAddArcToPoint(CGMutablePathRef self, const CGAffineTransform *xform, CGFloat tx1, CGFloat ty1, CGFloat tx2, CGFloat ty2, CGFloat radius);
 
 COREGRAPHICS_EXPORT void CGPathAddEllipseInRect(CGMutablePathRef self, const CGAffineTransform *xform, CGRect rect);
+COREGRAPHICS_EXPORT void CGPathAddRoundedRect(CGMutablePathRef self, const CGAffineTransform *xform, CGRect rect, CGFloat cornerWidth, CGFloat cornerHeight);
+COREGRAPHICS_EXPORT CGPathRef CGPathCreateWithRoundedRect(CGRect rect, CGFloat cornerWidth, CGFloat cornerHeight, const CGAffineTransform *transform);
 
 COREGRAPHICS_EXPORT void CGPathAddPath(CGMutablePathRef self, const CGAffineTransform *xform, CGPathRef other);

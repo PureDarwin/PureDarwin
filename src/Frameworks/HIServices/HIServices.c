@@ -279,9 +279,43 @@ OSStatus TransformProcessType(const ProcessSerialNumber *psn, UInt32 transformSt
     return ok ? noErr : paramErr;
 }
 
-// Pasteboard handles: the clipboard itself is NSPasteboard's, these only carry the name
+// Pasteboard handles reach NSPasteboard's pasteboards, as on macOS, flavors are its UTI types
+// and its one item is item 1
 typedef CFMutableDictionaryRef PasteboardRef;
 typedef OptionBits PasteboardSyncFlags;
+typedef void *PasteboardItemID;
+typedef CFStringRef PasteboardFlavorType;
+typedef OptionBits PasteboardFlavorFlags;
+typedef void (*PasteboardPromiseKeeperProcPtr)(PasteboardRef pasteboard, PasteboardItemID item,
+                                               PasteboardFlavorType flavorType, void *context);
+
+enum {
+    noPasteboardPromiseKeeperErr = -25136,
+    badPasteboardIndexErr = -25134,
+    badPasteboardItemErr = -25135,
+    kPasteboardFlavorNoFlags = 0,
+};
+
+#define kPDPasteboardItem ((PasteboardItemID)1)
+
+static id nsPasteboard(PasteboardRef pb)
+{
+    Class cls = objc_getClass("NSPasteboard");
+    CFStringRef name = pb ? CFDictionaryGetValue(pb, CFSTR("name")) : NULL;
+
+    if (cls == nil || name == NULL)
+        return nil;
+    if (CFEqual(name, CFSTR("com.apple.pasteboard.clipboard")))
+        return ((id (*)(id, SEL))objc_msgSend)((id)cls, sel_registerName("generalPasteboard"));
+    return ((id (*)(id, SEL, id))objc_msgSend)((id)cls, sel_registerName("pasteboardWithName:"), (id)name);
+}
+
+static CFArrayRef copyTypes(id nspb)
+{
+    CFArrayRef types = nspb ? (CFArrayRef)((id (*)(id, SEL))objc_msgSend)(nspb, sel_registerName("types")) : NULL;
+
+    return types ? CFRetain(types) : CFArrayCreate(NULL, NULL, 0, &kCFTypeArrayCallBacks);
+}
 
 OSStatus PasteboardCreate(CFStringRef inName, PasteboardRef *outPasteboard)
 {
@@ -294,6 +328,149 @@ OSStatus PasteboardCreate(CFStringRef inName, PasteboardRef *outPasteboard)
     CFRelease(name);
     *outPasteboard = pb;
     return noErr;
+}
+
+OSStatus PasteboardCopyName(PasteboardRef inPasteboard, CFStringRef *outName)
+{
+    CFStringRef name = inPasteboard ? CFDictionaryGetValue(inPasteboard, CFSTR("name")) : NULL;
+
+    if (name == NULL || outName == NULL)
+        return paramErr;
+    *outName = CFRetain(name);
+    return noErr;
+}
+
+OSStatus PasteboardClear(PasteboardRef inPasteboard)
+{
+    id nspb = nsPasteboard(inPasteboard);
+
+    if (nspb == nil)
+        return paramErr;
+    ((long (*)(id, SEL))objc_msgSend)(nspb, sel_registerName("clearContents"));
+    return noErr;
+}
+
+OSStatus PasteboardGetItemCount(PasteboardRef inPasteboard, ItemCount *outItemCount)
+{
+    CFArrayRef types;
+
+    if (inPasteboard == NULL || outItemCount == NULL)
+        return paramErr;
+    types = copyTypes(nsPasteboard(inPasteboard));
+    *outItemCount = CFArrayGetCount(types) > 0 ? 1 : 0;
+    CFRelease(types);
+    return noErr;
+}
+
+OSStatus PasteboardGetItemIdentifier(PasteboardRef inPasteboard, CFIndex inIndex, PasteboardItemID *outItem)
+{
+    ItemCount count = 0;
+
+    if (outItem == NULL || PasteboardGetItemCount(inPasteboard, &count) != noErr)
+        return paramErr;
+    if (inIndex < 1 || (ItemCount)inIndex > count)
+        return badPasteboardIndexErr;
+    *outItem = kPDPasteboardItem;
+    return noErr;
+}
+
+OSStatus PasteboardCopyItemFlavors(PasteboardRef inPasteboard, PasteboardItemID inItem, CFArrayRef *outFlavorTypes)
+{
+    if (inPasteboard == NULL || outFlavorTypes == NULL)
+        return paramErr;
+    if (inItem != kPDPasteboardItem)
+        return badPasteboardItemErr;
+    *outFlavorTypes = copyTypes(nsPasteboard(inPasteboard));
+    return noErr;
+}
+
+OSStatus PasteboardGetItemFlavorFlags(PasteboardRef inPasteboard, PasteboardItemID inItem, PasteboardFlavorType inFlavorType,
+                                      PasteboardFlavorFlags *outFlags)
+{
+    CFArrayRef types;
+    Boolean present;
+
+    if (inPasteboard == NULL || inFlavorType == NULL)
+        return paramErr;
+    if (inItem != kPDPasteboardItem)
+        return badPasteboardItemErr;
+    types = copyTypes(nsPasteboard(inPasteboard));
+    present = CFArrayContainsValue(types, CFRangeMake(0, CFArrayGetCount(types)), inFlavorType);
+    CFRelease(types);
+    if (!present)
+        return badPasteboardFlavorErr;
+    if (outFlags)
+        *outFlags = kPasteboardFlavorNoFlags;
+    return noErr;
+}
+
+OSStatus PasteboardCopyItemFlavorData(PasteboardRef inPasteboard, PasteboardItemID inItem, PasteboardFlavorType inFlavorType,
+                                      CFDataRef *outData)
+{
+    id nspb = nsPasteboard(inPasteboard);
+    CFDataRef data;
+
+    if (nspb == nil || inFlavorType == NULL || outData == NULL)
+        return paramErr;
+    if (inItem != kPDPasteboardItem)
+        return badPasteboardItemErr;
+    data = (CFDataRef)((id (*)(id, SEL, id))objc_msgSend)(nspb, sel_registerName("dataForType:"), (id)inFlavorType);
+    if (data == NULL)
+        return badPasteboardFlavorErr;
+    *outData = CFRetain(data);
+    return noErr;
+}
+
+// a promise is kept at once, NSPasteboard here has no lazy providers to defer it to
+OSStatus PasteboardPutItemFlavor(PasteboardRef inPasteboard, PasteboardItemID inItem, PasteboardFlavorType inFlavorType,
+                                 CFDataRef inData, PasteboardFlavorFlags inFlags)
+{
+    id nspb = nsPasteboard(inPasteboard);
+    CFArrayRef types;
+
+    if (nspb == nil || inFlavorType == NULL)
+        return paramErr;
+    if (inData == NULL) {
+        CFDataRef keeper = CFDictionaryGetValue(inPasteboard, CFSTR("promiseKeeper"));
+        CFDataRef context = CFDictionaryGetValue(inPasteboard, CFSTR("promiseContext"));
+        PasteboardPromiseKeeperProcPtr proc;
+        void *ctx = NULL;
+
+        if (keeper == NULL)
+            return noPasteboardPromiseKeeperErr;
+        memcpy(&proc, CFDataGetBytePtr(keeper), sizeof(proc));
+        if (context)
+            memcpy(&ctx, CFDataGetBytePtr(context), sizeof(ctx));
+        proc(inPasteboard, inItem, inFlavorType, ctx);
+        return noErr;
+    }
+    types = CFArrayCreate(NULL, (const void **)&inFlavorType, 1, &kCFTypeArrayCallBacks);
+    ((long (*)(id, SEL, id, id))objc_msgSend)(nspb, sel_registerName("addTypes:owner:"), (id)types, nil);
+    CFRelease(types);
+    if (!((BOOL (*)(id, SEL, id, id))objc_msgSend)(nspb, sel_registerName("setData:forType:"), (id)inData, (id)inFlavorType))
+        return badPasteboardFlavorErr;
+    return noErr;
+}
+
+OSStatus PasteboardSetPromiseKeeper(PasteboardRef inPasteboard, PasteboardPromiseKeeperProcPtr inPromiseKeeper, void *inContext)
+{
+    CFDataRef keeper, context;
+
+    if (inPasteboard == NULL)
+        return paramErr;
+    keeper = CFDataCreate(NULL, (const UInt8 *)&inPromiseKeeper, sizeof(inPromiseKeeper));
+    context = CFDataCreate(NULL, (const UInt8 *)&inContext, sizeof(inContext));
+    CFDictionarySetValue(inPasteboard, CFSTR("promiseKeeper"), keeper);
+    CFDictionarySetValue(inPasteboard, CFSTR("promiseContext"), context);
+    CFRelease(keeper);
+    CFRelease(context);
+    return noErr;
+}
+
+// promises are kept when made, so none are ever outstanding
+OSStatus PasteboardResolvePromises(PasteboardRef inPasteboard)
+{
+    return inPasteboard ? noErr : paramErr;
 }
 
 PasteboardSyncFlags PasteboardSynchronize(PasteboardRef inPasteboard)
@@ -318,6 +495,13 @@ OSStatus PasteboardSetPasteLocation(PasteboardRef inPasteboard, CFURLRef inPaste
         return paramErr;
     CFDictionarySetValue(inPasteboard, CFSTR("pasteLocation"), inPasteLocation);
     return noErr;
+}
+
+// GetIconRef hands out no icons, so any ref here is invalid
+OSStatus PlotIconRefInContext(void *inContext, const void *inRect, SInt16 inAlign, SInt16 inTransform,
+                              const void *inLabelColor, UInt32 inFlags, void *inIconRef)
+{
+    return -2580; // invalidIconRefErr
 }
 
 // screen zoom, which PureDarwin does not provide

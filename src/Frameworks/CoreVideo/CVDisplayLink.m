@@ -23,6 +23,8 @@ enum {
     // a stop then a start makes a new thread, the old one sees the generation change and leaves
     volatile unsigned _generation;
     CGDirectDisplayID _display;
+    // held while the callback runs, so a stop can wait for it
+    pthread_mutex_t _callbackLock;
 }
 
 @end
@@ -56,10 +58,13 @@ static void *displayLinkThread(void *arg) {
         fillTimeStamp(&now, frame, start, period);
         fillTimeStamp(&out, frame + 1, start, period);
 
-        NSAutoreleasePool *pool = [NSAutoreleasePool new];
-        if (link->_callback != NULL)
+        pthread_mutex_lock(&link->_callbackLock);
+        if (link->_running && link->_generation == generation && link->_callback != NULL) {
+            NSAutoreleasePool *pool = [NSAutoreleasePool new];
             link->_callback(link, &now, &out, 0, &flagsOut, link->_userInfo);
-        [pool release];
+            [pool release];
+        }
+        pthread_mutex_unlock(&link->_callbackLock);
     }
     [link release];
     return NULL;
@@ -67,8 +72,15 @@ static void *displayLinkThread(void *arg) {
 
 @implementation CVDisplayLink
 
+-init {
+    if ((self = [super init]) != nil)
+        pthread_mutex_init(&_callbackLock, NULL);
+    return self;
+}
+
 -(void)dealloc {
     _running = NO;
+    pthread_mutex_destroy(&_callbackLock);
     [super dealloc];
 }
 
@@ -85,8 +97,13 @@ static void *displayLinkThread(void *arg) {
     pthread_detach(_thread);
 }
 
+// as on macOS a stop returns once a callback in progress has finished, so the caller may free what it uses
 -(void)stop {
     _running = NO;
+    if (!pthread_equal(pthread_self(), _thread)) {
+        pthread_mutex_lock(&_callbackLock);
+        pthread_mutex_unlock(&_callbackLock);
+    }
 }
 
 CVReturn CVDisplayLinkCreateWithActiveCGDisplays(CVDisplayLinkRef *result) {

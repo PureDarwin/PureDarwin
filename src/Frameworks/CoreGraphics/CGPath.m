@@ -106,3 +106,32 @@ void CGPathAddEllipseInRect(CGMutablePathRef self,const CGAffineTransform *xform
 void CGPathAddPath(CGMutablePathRef self,const CGAffineTransform *xform,CGPathRef other) {
    O2PathAddPath(self,O2AffineTransformPtrFromCG(xform),other);
 }
+
+// each corner is a quarter ellipse, drawn as one cubic with the usual 0.5523 control distance
+void CGPathAddRoundedRect(CGMutablePathRef self,const CGAffineTransform *xform,CGRect rect,CGFloat cornerWidth,CGFloat cornerHeight) {
+   const CGFloat k=0.5522847498;
+   CGFloat minX=CGRectGetMinX(rect),maxX=CGRectGetMaxX(rect),minY=CGRectGetMinY(rect),maxY=CGRectGetMaxY(rect);
+   CGFloat w=MIN(cornerWidth,rect.size.width/2),h=MIN(cornerHeight,rect.size.height/2);
+
+   if(w<=0 || h<=0){
+    CGPathAddRect(self,xform,rect);
+    return;
+   }
+   CGPathMoveToPoint(self,xform,minX+w,minY);
+   CGPathAddLineToPoint(self,xform,maxX-w,minY);
+   CGPathAddCurveToPoint(self,xform,maxX-w+w*k,minY,maxX,minY+h-h*k,maxX,minY+h);
+   CGPathAddLineToPoint(self,xform,maxX,maxY-h);
+   CGPathAddCurveToPoint(self,xform,maxX,maxY-h+h*k,maxX-w+w*k,maxY,maxX-w,maxY);
+   CGPathAddLineToPoint(self,xform,minX+w,maxY);
+   CGPathAddCurveToPoint(self,xform,minX+w-w*k,maxY,minX,maxY-h+h*k,minX,maxY-h);
+   CGPathAddLineToPoint(self,xform,minX,minY+h);
+   CGPathAddCurveToPoint(self,xform,minX,minY+h-h*k,minX+w-w*k,minY,minX+w,minY);
+   CGPathCloseSubpath(self);
+}
+
+CGPathRef CGPathCreateWithRoundedRect(CGRect rect,CGFloat cornerWidth,CGFloat cornerHeight,const CGAffineTransform *transform) {
+   CGMutablePathRef path=CGPathCreateMutable();
+
+   CGPathAddRoundedRect(path,transform,rect,cornerWidth,cornerHeight);
+   return path;
+}

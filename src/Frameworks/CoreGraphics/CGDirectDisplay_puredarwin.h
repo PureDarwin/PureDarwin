@@ -34,4 +34,12 @@ struct CGDirectDisplayModeProvider {
 
 COREGRAPHICS_EXPORT void CGDirectDisplaySetModeProvider(const struct CGDirectDisplayModeProvider *provider);
 
+// the window server locks the pointer for mouse-look and takes warps while it is locked
+struct CGDirectDisplayPointerProvider {
+    bool (*associate)(bool connected);
+    bool (*warp)(CGPoint point);
+};
+
+COREGRAPHICS_EXPORT void CGDirectDisplaySetPointerProvider(const struct CGDirectDisplayPointerProvider *provider);
+
 #endif /* CGDirectDisplay_puredarwin_h */

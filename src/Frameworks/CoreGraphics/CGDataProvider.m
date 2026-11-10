@@ -29,3 +29,23 @@ COREGRAPHICS_EXPORT CFDataRef CGDataProviderCopyData(CGDataProviderRef self) {
    return (CFDataRef)O2DataProviderCopyData(self);
 }
 
+// a sequential provider is read to the end once, the image decoders here want the whole buffer anyway
+COREGRAPHICS_EXPORT CGDataProviderRef CGDataProviderCreateSequential(void *info,const CGDataProviderSequentialCallbacks *callbacks) {
+   CFMutableDataRef data;
+   CGDataProviderRef result;
+   uint8_t buffer[65536];
+   size_t count;
+
+   if(callbacks==NULL || callbacks->getBytes==NULL)
+    return NULL;
+   data=CFDataCreateMutable(kCFAllocatorDefault,0);
+   if(callbacks->rewind!=NULL)
+    callbacks->rewind(info);
+   while((count=callbacks->getBytes(info,buffer,sizeof(buffer)))>0)
+    CFDataAppendBytes(data,buffer,count);
+   if(callbacks->releaseInfo!=NULL)
+    callbacks->releaseInfo(info);
+   result=CGDataProviderCreateWithCFData(data);
+   CFRelease(data);
+   return result;
+}

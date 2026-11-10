@@ -19,6 +19,46 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 #pragma mark creation
 
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// PD_APPKIT_TRACE=1 also logs which fonts CoreText hands out, read once
+static int ctTraceOn(void) {
+   static int on=-1;
+
+   if(on<0){
+    const char *value=getenv("PD_APPKIT_TRACE");
+
+    on=(value!=NULL && strcmp(value,"1")==0);
+   }
+   return on;
+}
+
+static void ctTraceFont(const char *what,CTFontRef font,CFDictionaryRef attributes) {
+   char name[256]="nil",asked[512]="";
+   CFStringRef ps;
+
+   if(!ctTraceOn())
+    return;
+   ps=font ? CTFontCopyPostScriptName(font) : NULL;
+   if(ps){
+    CFStringGetCString(ps,name,sizeof(name),kCFStringEncodingUTF8);
+    CFRelease(ps);
+   }
+   if(attributes){
+    CFStringRef d=CFCopyDescription(attributes);
+
+    CFStringGetCString(d,asked,sizeof(asked),kCFStringEncodingUTF8);
+    for(char *c=asked;*c;c++)
+     if(*c=='\n')
+      *c=' ';
+    CFRelease(d);
+   }
+   fprintf(stderr,"pdtrace CTFont %s -> %s size=%.2f symbolic=0x%x asked=%s\n",what,name,font ? CTFontGetSize(font) : 0.0,font ? CTFontGetSymbolicTraits(font) : 0,asked);
+}
+
 static CTFontRef createWithAttributes(CFDictionaryRef attributes,CGFloat size,const CGAffineTransform *matrix) {
    const CTFontRecord **matches=NULL;
    CFIndex count=CTRegistryCopyMatches(attributes,&matches);
@@ -35,6 +75,7 @@ static CTFontRef createWithAttributes(CFDictionaryRef attributes,CGFloat size,co
    if(record==NULL)
     return NULL;
    font=CTFontCreateWithRecord(record,size,matrix,attributes);
+   ctTraceFont("createWithAttributes",font,attributes);
    return font;
 }
 
@@ -105,6 +146,7 @@ CTFontRef CTFontCreateUIFontForLanguage(CTFontUIFontType uiFontType,CGFloat size
     if(record!=NULL)
      font=CTFontCreateWithRecord(record,size>0 ? size : CTDefaultFontSize,NULL,NULL);
    }
+   ctTraceFont("UIFont",font,NULL);
    return font;
 }
 
@@ -158,6 +200,7 @@ CTFontRef CTFontCreateCopyWithSymbolicTraits(CTFontRef font,CGFloat size,const C
    if(matches) CFRelease(matches);
    CFRelease(wanted);
    CFRelease(base);
+   ctTraceFont("copyWithSymbolicTraits",copy,NULL);
    return copy;
 }
 
@@ -613,6 +656,23 @@ void CTFontDrawGlyphs(CTFontRef font,const CGGlyph *glyphs,const CGPoint *positi
    for(size_t i=0;i+1<count;i++)
     advances[i]=CGSizeMake(positions[i+1].x-positions[i].x,positions[i+1].y-positions[i].y);
    advances[count-1]=CGSizeZero;
+   if(ctTraceOn()){
+    char line[1024],drawn[128]="?";
+    size_t used=0;
+    CFStringRef dname=CGFontCopyPostScriptName(graphics);
+    CGSize measured[count];
+
+    if(dname){
+     CFStringGetCString(dname,drawn,sizeof(drawn),kCFStringEncodingUTF8);
+     CFRelease(dname);
+    }
+    CTFontGetAdvancesForGlyphs(font,kCTFontOrientationHorizontal,glyphs,measured,(CFIndex)count);
+    line[0]=0;
+    for(size_t i=0;i<count && i<24 && used+48<sizeof(line);i++)
+     used+=snprintf(line+used,sizeof(line)-used," %u@%.2f(adv %.2f)",glyphs[i],positions[i].x,measured[i].width);
+    ctTraceFont("drawGlyphs",font,NULL);
+    fprintf(stderr,"pdtrace CTFontDrawGlyphs drawnWith=%s count=%zu%s\n",drawn,count,line);
+   }
    // PD_CT_TRACE=1: what an app draws and how many bitmap bytes it changed, for ports that show no text
    static int trace=-1;
    uint8_t *data=NULL;
@@ -627,10 +687,13 @@ void CTFontDrawGlyphs(CTFontRef font,const CGGlyph *glyphs,const CGPoint *positi
     for(size_t i=0;i<size;i++)
      before+=data[i];
    }
+   // positions go through the text matrix as on macOS, so they add to the current text position (Qt sets that and draws at zero)
+   CGPoint origin=CGContextGetTextPosition(context);
+
    CGContextSaveGState(context);
    CGContextSetFont(context,graphics);
    CGContextSetFontSize(context,CTFontGetSize(font));
-   CGContextSetTextPosition(context,positions[0].x,positions[0].y);
+   CGContextSetTextPosition(context,origin.x+positions[0].x,origin.y+positions[0].y);
    CGContextShowGlyphsWithAdvances(context,glyphs,advances,(unsigned)count);
    CGContextRestoreGState(context);
    if(trace){

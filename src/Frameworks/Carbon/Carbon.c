@@ -393,6 +393,17 @@ UInt32 GetCurrentKeyModifiers(void)
     return GetCurrentEventKeyModifiers();
 }
 
+// one bit per virtual key code, code k at byte k >> 3, bit k & 7, from what AppKit has seen
+void GetKeys(KeyMap theKeys)
+{
+    Class event = objc_getClass("NSEvent");
+    SEL copy = sel_registerName("_copyPressedKeys:");
+
+    memset(theKeys, 0, sizeof(KeyMap));
+    if (event != Nil && class_respondsToSelector(object_getClass((id)event), copy))
+        ((void (*)(id, SEL, UInt8 *))objc_msgSend)((id)event, copy, (UInt8 *)theKeys);
+}
+
 static pthread_mutex_t secureInputLock = PTHREAD_MUTEX_INITIALIZER;
 static int secureInputCount;
 

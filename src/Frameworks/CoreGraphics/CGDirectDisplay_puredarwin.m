@@ -134,11 +134,18 @@ CGError CGDisplayRemoveReconfigurationCallback(CGDisplayReconfigurationCallBack 
     return kCGErrorIllegalArgument;
 }
 
-// decouples the cursor from mouse motion for mouse-look, the Wayland WindowServer has no pointer lock yet,
-// so events keep their deltas and the cursor stays attached
+static const struct CGDirectDisplayPointerProvider *pointerProvider;
+
+void CGDirectDisplaySetPointerProvider(const struct CGDirectDisplayPointerProvider *provider) {
+    pointerProvider = provider;
+}
+
+// decouples the cursor from mouse motion for mouse-look, the window server locks the pointer
+// and mouse events then carry only deltas
 CGError CGAssociateMouseAndMouseCursorPosition(boolean_t connected) {
-    (void)connected;
-    return kCGErrorSuccess;
+    if (pointerProvider == NULL)
+        return kCGErrorCannotComplete;
+    return pointerProvider->associate(connected != 0) ? kCGErrorSuccess : kCGErrorFailure;
 }
 
 CGDirectDisplayID CGMainDisplayID(void) {
@@ -159,6 +166,32 @@ CGError CGGetActiveDisplayList(uint32_t maxDisplays, CGDirectDisplayID *activeDi
 CGError CGGetOnlineDisplayList(uint32_t maxDisplays, CGDirectDisplayID *onlineDisplays,
                                uint32_t *displayCount) {
     return CGGetActiveDisplayList(maxDisplays, onlineDisplays, displayCount);
+}
+
+CGError CGGetDisplaysWithRect(CGRect rect, uint32_t maxDisplays, CGDirectDisplayID *displays,
+                               uint32_t *matchingDisplayCount) {
+    uint32_t count = CGRectIntersectsRect(rect, currentBounds()) ? 1 : 0;
+
+    if (matchingDisplayCount != NULL) {
+        *matchingDisplayCount = count;
+    }
+    if (count && displays != NULL && maxDisplays >= 1) {
+        displays[0] = PUREDARWIN_MAIN_DISPLAY_ID;
+    }
+    return kCGErrorSuccess;
+}
+
+CGError CGGetDisplaysWithPoint(CGPoint point, uint32_t maxDisplays, CGDirectDisplayID *displays,
+                               uint32_t *matchingDisplayCount) {
+    uint32_t count = CGRectContainsPoint(currentBounds(), point) ? 1 : 0;
+
+    if (matchingDisplayCount != NULL) {
+        *matchingDisplayCount = count;
+    }
+    if (count && displays != NULL && maxDisplays >= 1) {
+        displays[0] = PUREDARWIN_MAIN_DISPLAY_ID;
+    }
+    return kCGErrorSuccess;
 }
 
 CGRect CGDisplayBounds(CGDirectDisplayID display) {
@@ -525,9 +558,37 @@ CGSize CGDisplayScreenSize(CGDirectDisplayID display) {
     return CGSizeMake(bounds.size.width * 25.4 / 96, bounds.size.height * 25.4 / 96);
 }
 
-// Wayland gives clients no way to move the pointer
+// Wayland moves no pointer, but a locked one takes the point as where it comes back on unlock
 CGError CGWarpMouseCursorPosition(CGPoint newCursorPosition) {
-    return kCGErrorCannotComplete;
+    if (pointerProvider == NULL || !pointerProvider->warp(newCursorPosition))
+        return kCGErrorCannotComplete;
+    return kCGErrorSuccess;
+}
+
+CGError CGDisplayMoveCursorToPoint(CGDirectDisplayID display, CGPoint point) {
+    CGRect bounds = CGDisplayBounds(display);
+
+    return CGWarpMouseCursorPosition(CGPointMake(bounds.origin.x + point.x, bounds.origin.y + point.y));
+}
+
+// the compositor draws no fades: a reservation is granted and a fade completes at once, as apps that fade around a
+// mode switch expect
+CGError CGAcquireDisplayFadeReservation(CGDisplayReservationInterval seconds, CGDisplayFadeReservationToken *token) {
+    static CGDisplayFadeReservationToken next;
+
+    if (token == NULL)
+        return kCGErrorIllegalArgument;
+    *token = ++next;
+    return kCGErrorSuccess;
+}
+
+CGError CGDisplayFade(CGDisplayFadeReservationToken token, CGDisplayFadeInterval duration, CGDisplayBlendFraction startBlend,
+    CGDisplayBlendFraction endBlend, float redBlend, float greenBlend, float blueBlend, boolean_t synchronous) {
+    return token == kCGDisplayFadeReservationInvalidToken ? kCGErrorIllegalArgument : kCGErrorSuccess;
+}
+
+CGError CGReleaseDisplayFadeReservation(CGDisplayFadeReservationToken token) {
+    return token == kCGDisplayFadeReservationInvalidToken ? kCGErrorIllegalArgument : kCGErrorSuccess;
 }
 
 // capture needs the compositor, so it fails like macOS without screen recording consent

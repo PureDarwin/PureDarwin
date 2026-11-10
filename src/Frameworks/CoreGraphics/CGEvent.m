@@ -371,6 +371,10 @@ CFMachPortRef CGEventTapCreate(CGEventTapLocation tap, CGEventTapPlacement place
     return NULL;
 }
 
+CFMachPortRef CGEventTapCreateForPid(pid_t pid, CGEventTapPlacement place, CGEventTapOptions options, CGEventMask eventsOfInterest, CGEventTapCallBack callback, void *userInfo) {
+    return NULL;
+}
+
 CFMachPortRef CGEventTapCreateForPSN(void *processSerialNumber, CGEventTapPlacement place, CGEventTapOptions options, CGEventMask eventsOfInterest, CGEventTapCallBack callback, void *userInfo) {
     return NULL;
 }
@@ -429,9 +433,15 @@ bool CGEventSourceButtonState(CGEventSourceStateID stateID, CGMouseButton button
     return (PDAppKitUnsigned("pressedMouseButtons") >> button) & 1;
 }
 
-// key state per key code is not tracked, only the modifier keys are known
+// AppKit keeps the held keys as its events arrive, the modifiers also come from its flags
 bool CGEventSourceKeyState(CGEventSourceStateID stateID, CGKeyCode key) {
     CGEventFlags flags = CGEventSourceFlagsState(stateID);
+    Class event = objc_getClass("NSEvent");
+    SEL isDown = sel_registerName("_isKeyCodeDown:");
+
+    if (event != Nil && class_respondsToSelector(object_getClass((id)event), isDown) &&
+        ((BOOL (*)(id, SEL, unsigned short))objc_msgSend)((id)event, isDown, key))
+        return true;
 
     switch (key) {
     case 0x37: case 0x36: return (flags & kCGEventFlagMaskCommand) != 0;

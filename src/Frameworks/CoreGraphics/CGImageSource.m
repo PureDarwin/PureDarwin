@@ -8,6 +8,18 @@ CGImageSourceRef CGImageSourceCreateWithData(CFDataRef data,CFDictionaryRef opti
 	return (CGImageSourceRef)[O2ImageSource newImageSourceWithData:data options:options];
 }
 
+CGImageSourceRef CGImageSourceCreateWithDataProvider(CGDataProviderRef provider,CFDictionaryRef options) {
+	return (CGImageSourceRef)[O2ImageSource newImageSourceWithDataProvider:(O2DataProvider *)provider options:options];
+}
+
+// the formats Onyx2D has decoders for
+CFArrayRef CGImageSourceCopyTypeIdentifiers(void) {
+	const void *types[]={ CFSTR("public.png"), CFSTR("public.jpeg"), CFSTR("com.compuserve.gif"),
+	 CFSTR("com.microsoft.bmp"), CFSTR("public.tiff"), CFSTR("com.apple.icns") };
+
+	return CFArrayCreate(kCFAllocatorDefault,types,sizeof(types)/sizeof(types[0]),&kCFTypeArrayCallBacks);
+}
+
 CGImageSourceRef CGImageSourceCreateWithURL(CFURLRef url,CFDictionaryRef options) {
 	return (CGImageSourceRef)[O2ImageSource newImageSourceWithURL:(NSURL *)url options:options];
 }

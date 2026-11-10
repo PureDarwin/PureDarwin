@@ -498,9 +498,8 @@ static int compareMatches(const void *a, const void *b) {
 }
 
 // a PostScript-style name split at the dash, its style words picked up as weight and slant
-static const CTFontRecord *aliasRecordForName(CFStringRef name) {
-    // the core macOS families map to the metric-compatible or closest free faces
-    static const char *const aliases[][2] = {
+// the core macOS families map to the metric-compatible or closest free faces
+static const char *const aliases[][2] = {
         { "Helvetica", "Nimbus Sans" }, { "HelveticaNeue", "Nimbus Sans" }, { "Helvetica Neue", "Nimbus Sans" },
         { "Arial", "Nimbus Sans" }, { "ArialMT", "Nimbus Sans" }, { "Times", "Nimbus Roman" }, { "Times New Roman", "Nimbus Roman" },
         { "TimesNewRomanPSMT", "Nimbus Roman" }, { "Courier", "Nimbus Mono PS" }, { "Courier New", "Nimbus Mono PS" },
@@ -508,7 +507,20 @@ static const CTFontRecord *aliasRecordForName(CFStringRef name) {
         { "SF Mono", "DejaVu Sans Mono" }, { "Lucida Grande", "Inter" }, { "LucidaGrande", "Inter" }, { ".AppleSystemUIFont", "Inter" },
         { "SF Pro", "Inter" }, { "SF Pro Text", "Inter" }, { "SF NS", "Inter" }, { "system-ui", "Inter" }, { "Geneva", "DejaVu Sans" },
         { "Verdana", "DejaVu Sans" }, { "Georgia", "DejaVu Serif" }, { "Palatino", "P052" }, { "Bookman", "URW Bookman" },
-    };
+};
+
+// the family a macOS family name stands for here, NULL when it has no alias
+static CFStringRef copyAliasFamily(CFStringRef family) {
+    char buffer[256];
+
+    if (!CFStringGetCString(family, buffer, sizeof(buffer), kCFStringEncodingUTF8)) return NULL;
+    for (size_t i = 0; i < sizeof(aliases) / sizeof(aliases[0]); i++)
+        if (strcasecmp(buffer, aliases[i][0]) == 0)
+            return CFStringCreateWithCString(NULL, aliases[i][1], kCFStringEncodingUTF8);
+    return NULL;
+}
+
+static const CTFontRecord *aliasRecordForName(CFStringRef name) {
     char buffer[256], *dash;
     FcPattern *pattern, *match;
     FcResult result;
@@ -567,6 +579,21 @@ static CFIndex CTRegistryCopyMatchesUnlocked(CFDictionaryRef attributes, const C
     if (url != NULL && CFGetTypeID(url) == CFURLGetTypeID())
         hasPath = CFURLGetFileSystemRepresentation(url, true, (UInt8 *)path, sizeof(path));
     buildRegistry();
+    // with a weight or bold asked for, a PostScript name only picks the family, as Apple matches it
+    CFStringRef namedFamily = NULL;
+    if ((name != NULL || hasPath) && (hasWeight || (hasSymbolic && (symbolic & kCTFontTraitBold)))) {
+        for (CFIndex i = 0; i < recordCount; i++)
+            if (name != NULL ? CFEqual(records[i].postScriptName, name) : strcmp(records[i].path, path) == 0) {
+                namedFamily = records[i].familyName;
+                break;
+            }
+        // a descriptor copied from a font carries its file, full name and style too, which would pin the regular face
+        if (namedFamily != NULL) {
+            hasPath = false;
+            display = NULL;
+            style = NULL;
+        }
+    }
     matches = calloc(recordCount ? recordCount : 1, sizeof(Match));
     for (CFIndex i = 0; i < recordCount; i++) {
         const CTFontRecord *r = &records[i];
@@ -574,7 +601,12 @@ static CFIndex CTRegistryCopyMatchesUnlocked(CFDictionaryRef attributes, const C
 
         if (hasPath && strcmp(r->path, path) != 0)
             continue;
-        if (name != NULL) {
+        if (namedFamily != NULL) {
+            if (!equalCaseless(r->familyName, namedFamily))
+                continue;
+            score -= (name != NULL && CFEqual(r->postScriptName, name)) ? 50.5 : 50;
+        }
+        else if (name != NULL) {
             // a name matches the PostScript name exactly, else the full name, else a family's regular face
             if (CFEqual(r->postScriptName, name))
                 score -= 100;
@@ -599,6 +631,9 @@ static CFIndex CTRegistryCopyMatchesUnlocked(CFDictionaryRef attributes, const C
             score += __builtin_popcount((r->symbolicTraits ^ wanted) & (kCTFontTraitItalic | kCTFontTraitBold)) * 3;
             if ((wanted & kCTFontTraitBold) == 0 && (r->symbolicTraits & kCTFontTraitBold) == 0)
                 score += fabs(r->weight) * 2;
+            // bold alone means the bold face, weight 0.4, ahead of a semibold or heavy one
+            if ((wanted & kCTFontTraitBold) && !hasWeight)
+                score += fabs(r->weight - 0.4) * 2;
         }
         if (hasWeight) score += fabs(r->weight - weight) * 4;
         if (hasWidth) score += fabs(r->width - width) * 2;
@@ -608,6 +643,24 @@ static CFIndex CTRegistryCopyMatchesUnlocked(CFDictionaryRef attributes, const C
         matches[count].record = r;
         matches[count].score = score;
         count++;
+    }
+    // a macOS family nobody installs, Menlo or Lucida Grande, matches as the family it stands for
+    if (count == 0 && family != NULL && !hasPath) {
+        CFStringRef alias = copyAliasFamily(family);
+
+        if (alias != NULL) {
+            CFMutableDictionaryRef retry = CFDictionaryCreateMutableCopy(NULL, 0, attributes);
+            const CTFontRecord **found = NULL;
+            CFIndex n;
+
+            CFDictionarySetValue(retry, kCTFontFamilyNameAttribute, alias);
+            CFRelease(alias);
+            free(matches);
+            n = CTRegistryCopyMatchesUnlocked(retry, &found);
+            CFRelease(retry);
+            *result = found;
+            return n;
+        }
     }
     // names no installed face carries go through fontconfig's aliases, Helvetica to Nimbus Sans and so on
     if (count == 0 && name != NULL && family == NULL && !hasPath) {

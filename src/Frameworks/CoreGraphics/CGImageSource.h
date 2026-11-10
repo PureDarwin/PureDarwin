@@ -16,6 +16,8 @@ typedef struct _O2ImageSource *CGImageSourceRef;
 
 COREGRAPHICS_EXPORT CGImageSourceRef CGImageSourceCreateWithData(CFDataRef data, CFDictionaryRef options);
 COREGRAPHICS_EXPORT CGImageSourceRef CGImageSourceCreateWithURL(CFURLRef url, CFDictionaryRef options);
+COREGRAPHICS_EXPORT CGImageSourceRef CGImageSourceCreateWithDataProvider(CGDataProviderRef provider, CFDictionaryRef options);
+COREGRAPHICS_EXPORT CFArrayRef CGImageSourceCopyTypeIdentifiers(void);
 
 COREGRAPHICS_EXPORT CFStringRef CGImageSourceGetType(CGImageSourceRef self);
 

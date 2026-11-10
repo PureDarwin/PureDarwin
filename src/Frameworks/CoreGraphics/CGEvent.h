@@ -284,6 +284,7 @@ COREGRAPHICS_EXPORT void CGEventSetDoubleValueField(CGEventRef event, CGEventFie
 typedef CGEventRef (*CGEventTapCallBack)(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *userInfo);
 
 // Working with Event Taps
+COREGRAPHICS_EXPORT CFMachPortRef CGEventTapCreateForPid(pid_t pid, CGEventTapPlacement place, CGEventTapOptions options, CGEventMask eventsOfInterest, CGEventTapCallBack callback, void *userInfo);
 COREGRAPHICS_EXPORT CFMachPortRef CGEventTapCreate(CGEventTapLocation tap, CGEventTapPlacement place, CGEventTapOptions options, CGEventMask eventsOfInterest, CGEventTapCallBack callback, void *userInfo);
 COREGRAPHICS_EXPORT CFMachPortRef CGEventTapCreateForPSN(void *processSerialNumber, CGEventTapPlacement place, CGEventTapOptions options, CGEventMask eventsOfInterest, CGEventTapCallBack callback, void *userInfo);
 COREGRAPHICS_EXPORT void CGEventTapEnable(CFMachPortRef tap, bool enable);

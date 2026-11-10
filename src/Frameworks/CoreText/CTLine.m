@@ -237,8 +237,9 @@ static void drawRun(CTRun *r, CGContextRef context, CFRange range, CGPoint origi
 
     CGPoint positions[range.length];
 
+    // relative to the text position, which CTFontDrawGlyphs adds and which origin already is
     for (CFIndex i = 0; i < range.length; i++)
-        positions[i] = CGPointMake(origin.x + r->_positions[range.location + i].x, origin.y + r->_positions[range.location + i].y);
+        positions[i] = r->_positions[range.location + i];
     CGContextSaveGState(context);
     if (color && !colorFromContext(r->_attributes)) CGContextSetFillColorWithColor(context, color);
     if (strokeWidth) CFNumberGetValue(strokeWidth, kCFNumberDoubleType, &stroke);

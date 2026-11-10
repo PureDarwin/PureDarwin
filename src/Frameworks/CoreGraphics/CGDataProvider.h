@@ -8,6 +8,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 #import <CoreGraphics/CoreGraphicsExport.h>
 #import <CoreFoundation/CFData.h>
+#include <sys/types.h>
 
 typedef struct O2DataProvider *CGDataProviderRef;
 
@@ -21,3 +22,18 @@ COREGRAPHICS_EXPORT CGDataProviderRef CGDataProviderCreateWithCFData(CFDataRef d
 COREGRAPHICS_EXPORT CGDataProviderRef CGDataProviderCreateWithData(void *info, const void *data, size_t size, CGDataProviderReleaseDataCallback releaseCallback);
 
 COREGRAPHICS_EXPORT CFDataRef CGDataProviderCopyData(CGDataProviderRef self);
+
+typedef size_t (*CGDataProviderGetBytesCallback)(void *info, void *buffer, size_t count);
+typedef off_t (*CGDataProviderSkipForwardCallback)(void *info, off_t count);
+typedef void (*CGDataProviderRewindCallback)(void *info);
+typedef void (*CGDataProviderReleaseInfoCallback)(void *info);
+
+typedef struct CGDataProviderSequentialCallbacks {
+    unsigned int version;
+    CGDataProviderGetBytesCallback getBytes;
+    CGDataProviderSkipForwardCallback skipForward;
+    CGDataProviderRewindCallback rewind;
+    CGDataProviderReleaseInfoCallback releaseInfo;
+} CGDataProviderSequentialCallbacks;
+
+COREGRAPHICS_EXPORT CGDataProviderRef CGDataProviderCreateSequential(void *info, const CGDataProviderSequentialCallbacks *callbacks);
