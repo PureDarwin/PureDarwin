@@ -2326,11 +2326,152 @@ static uint64_t content_hash(const uint8_t *p, size_t n) {
   return h;
 }
 
+// fallback hashes, hash_epoch moves at every command buffer's end for buffers the CPU writes unreported
+// texture hashes stay until a reported write overlaps them, since their bytes change only through reported calls
+static uint64_t hash_epoch = 1;
+// enough slots for Minecraft's chunk draws, which touch tens of thousands of resident buffer ranges
+#define RHASH_BITS 18
+#define RHASHES (1u << RHASH_BITS)
+enum { RH_BUFFER, RH_TEXTURE, RH_ATTACHMENT, RH_N };
+struct range_hash_stats { uint64_t calls, hits, misses, collisions, invalidated, bytes; };
+static struct range_hash_stats range_hash_stats[RH_N];
+static uint64_t finish_hash_invalidations;
+static const char *const range_hash_names[RH_N] = { "buffer", "texture", "attachment" };
+static struct { uint64_t attempts, accepted, disabled, bounds, managed_page, alloc_fail, bytes; } watch_stats;
+static struct {
+  const uint8_t *p;
+  size_t n;
+  uint64_t epoch, h, stamp;
+  unsigned site;
+} rhashes[RHASHES];
+// reported writes stamp the 256 KB blocks of the bridge they touch: a cached hash is good while no block it covers
+// was stamped after it, so invalidating never walks the table
+#define RH_BLOCK_SHIFT 18
+static uint64_t *rh_block_stamp, rh_clock = 1;
+static size_t rh_blocks;
+static const uint8_t *rh_blocks_base;
+
+// the newest stamp of the blocks [p, p + n) covers, 0 outside the bridge
+static uint64_t rh_newest(const uint8_t *p, size_t n) {
+  uint64_t s = 0;
+
+  if (!rh_block_stamp || rh_blocks_base != res_base || p < res_base || !n || p + n > res_base + res_bsize)
+    return 0;
+  for (size_t b = (size_t)(p - res_base) >> RH_BLOCK_SHIFT; b <= (size_t)(p + n - 1 - res_base) >> RH_BLOCK_SHIFT; b++) {
+    if (rh_block_stamp[b] > s)
+      s = rh_block_stamp[b];
+  }
+  return s;
+}
+
+static uint64_t range_hash(const uint8_t *p, size_t n, unsigned site) {
+  // a 64-bit multiplicative mix, its top bits as the slot: a big buffer's 256 KB chunks differ only in high
+  // pointer bits, which a low-bit modulo maps to a handful of slots
+  uint64_t mix = ((uint64_t)(uintptr_t)p * 0x9e3779b97f4a7c15ull) ^ ((uint64_t)n * 0xc2b2ae3d27d4eb4full);
+  unsigned k = (unsigned)((mix ^ (mix >> 29)) * 0xbf58476d1ce4e5b9ull >> (64 - RHASH_BITS));
+
+  if (site >= RH_N)
+    site = RH_BUFFER;
+  uint64_t epoch = site == RH_BUFFER ? hash_epoch : 1;
+  range_hash_stats[site].calls++;
+  if (rhashes[k].p == p && rhashes[k].n == n && rhashes[k].site == site && rhashes[k].epoch == epoch &&
+      ((bisect() & 16) ? 0 : rh_newest(p, n) < rhashes[k].stamp)) {
+    range_hash_stats[site].hits++;
+    return rhashes[k].h;
+  }
+  if (rhashes[k].p == p && rhashes[k].n == n)
+    range_hash_stats[site].invalidated++;
+  else if (rhashes[k].p)
+    range_hash_stats[site].collisions++;
+  range_hash_stats[site].misses++, range_hash_stats[site].bytes += n;
+  pd_vk_last.buffer_hash_bytes += n;
+  rhashes[k].p = p, rhashes[k].n = n, rhashes[k].epoch = epoch, rhashes[k].site = site, rhashes[k].stamp = ++rh_clock;
+  return rhashes[k].h = content_hash(p, n);
+}
+
+// a reported write invalidates the cached views that overlap it, a global epoch bump here made every
+// texture hash miss on unrelated buffer updates
+static void range_hash_invalidate_all(void);
+
+static void range_hash_invalidate(uint32_t off, uint32_t len) {
+  uint64_t s;
+
+  if (!res_base || !len || off >= res_bsize)
+    return;
+  if (len > res_bsize - off)
+    len = res_bsize - off;
+  if (rh_blocks_base != res_base || !rh_block_stamp) {
+    free(rh_block_stamp);
+    rh_blocks = ((size_t)res_bsize >> RH_BLOCK_SHIFT) + 1;
+    rh_block_stamp = calloc(rh_blocks, sizeof(*rh_block_stamp));
+    rh_blocks_base = rh_block_stamp ? res_base : 0;
+    if (!rh_block_stamp) {
+      range_hash_invalidate_all();
+      return;
+    }
+  }
+  s = ++rh_clock;
+  for (size_t b = off >> RH_BLOCK_SHIFT; b <= (size_t)(off + len - 1) >> RH_BLOCK_SHIFT; b++) {
+    rh_block_stamp[b] = s;
+  }
+}
+
+static void range_hash_invalidate_all(void) {
+  for (unsigned i = 0; i < RHASHES; i++)
+    rhashes[i].epoch = 0;
+}
+
+#if defined(__x86_64__) || defined(_M_X64)
+// a fast change detector for the bridge, two CRC32C streams over opposite byte orders make a 64-bit key
+// on the CPU's CRC unit
+__attribute__((target("sse4.2")))
+static uint64_t content_hash_crc32c(const uint8_t *p, size_t n) {
+  uint32_t a = 0x243f6a88u, b = 0x85a308d3u;
+  size_t i = 0, tail;
+  uint64_t h;
+
+  for (; i + 8 <= n; i += 8) {
+    uint64_t w;
+    memcpy(&w, p + i, 8);
+    a = (uint32_t)_mm_crc32_u64(a, w);
+    b = (uint32_t)_mm_crc32_u64(b, __builtin_bswap64(w));
+  }
+  tail = n - i;
+  for (size_t j = 0; j < tail; j++) {
+    a = _mm_crc32_u8(a, p[i + j]);
+    b = _mm_crc32_u8(b, p[n - j - 1]);
+  }
+  h = ((uint64_t)a << 32) | b;
+  h ^= (uint64_t)n * 11400714785074694791ull;
+  h ^= h >> 33; h *= 14029467366897019727ull;
+  h ^= h >> 29; h *= 1609587929392839161ull;
+  return h ^ (h >> 32);
+}
+
+static int content_hash_has_crc32c(void) {
+  static int available = -1;
+  if (available < 0) {
+#ifdef __APPLE__
+    int yes = 0;
+    size_t len = sizeof(yes);
+    available = sysctlbyname("hw.optional.sse4_2", &yes, &len, 0, 0) == 0 && yes;
+#else
+    available = __builtin_cpu_supports("sse4.2");
+#endif
+  }
+  return available;
+}
+#endif
+
 static uint64_t content_hash_raw(const uint8_t *p, size_t n) {
   const uint64_t p1 = 11400714785074694791ull, p2 = 14029467366897019727ull;
   const uint64_t p3 = 1609587929392839161ull, p4 = 9650029242287828579ull, p5 = 2870177450012600261ull;
   size_t left = n;
   uint64_t h;
+#if defined(__x86_64__) || defined(_M_X64)
+  if (content_hash_has_crc32c())
+    return content_hash_crc32c(p, n);
+#endif
   if (left >= 32) {
     uint64_t a = p1 + p2, b = p2, c = 0, d = 0 - p1;
     do {
@@ -2362,25 +2503,495 @@ static uint64_t content_hash_raw(const uint8_t *p, size_t n) {
   return h;
 }
 
+static int in_managed(uint32_t off, uint32_t len);
+static int overlaps_managed(uint32_t off, uint32_t len);
+
+static int watch_bounds(uint32_t off, uint32_t len, size_t *first, size_t *last) {
+  uintptr_t lo, hi;
+
+  if (!watch_pages || !len || off > res_bsize || len > res_bsize - off)
+    return 0;
+  lo = (uintptr_t)res_base + off, hi = lo + len;
+  if (lo < watch_base || hi > watch_end)
+    return 0;
+  *first = (lo - watch_base) / watch_page_size;
+  *last = (hi - 1 - watch_base) / watch_page_size;
+  lo = watch_base + *first * watch_page_size;
+  hi = watch_base + (*last + 1) * watch_page_size;
+  for (unsigned i = 0; i < watch_exclusion_count; i++)
+    if (lo < watch_exclusions[i].hi && watch_exclusions[i].lo < hi)
+      return 0;
+  return *last < watch_page_count;
+}
+
+// page generations per resident, so aliased Vulkan buffers each see the same write
+static int watch_dirty(struct resident *r, uint32_t off, uint32_t len) {
+  size_t first, last, i;
+  uint64_t t0 = now_us();
+  uint64_t epoch;
+  uint64_t *epoch_cursor;
+  size_t chunk = 0;
+  int chunk_cursor = 0, cursor_exact = 0;
+  int dirty = 0;
+
+  pd_vk_last.buffer_watch_checks++;
+  if (!r || !r->watch_seen || !watch_bounds(off, len, &first, &last) || first < r->watch_first ||
+      last >= r->watch_first + r->watch_count) {
+    pd_vk_last.buffer_watch_us += now_us() - t0;
+    return -1;
+  }
+  epoch_cursor = &r->watch_epoch;
+  if (off == r->off && len == r->size) {
+    cursor_exact = 1;
+  } else if (r->watch_chunk_epochs && off >= r->off && r->size > RES_CHUNKED) {
+    chunk = (off - r->off) / RES_CHUNK;
+    uint32_t chunk_off = r->off + (uint32_t)(chunk * RES_CHUNK);
+    uint32_t chunk_len = r->size - (uint32_t)(chunk * RES_CHUNK);
+    if (chunk_len > RES_CHUNK)
+      chunk_len = RES_CHUNK;
+    if (chunk < r->watch_chunk_count && off == chunk_off && len == chunk_len)
+      epoch_cursor = &r->watch_chunk_epochs[chunk], chunk_cursor = 1;
+    cursor_exact = chunk_cursor;
+  }
+  if (watch_epoch_blocks && cursor_exact && (chunk_cursor ? *epoch_cursor != UINT64_MAX : r->watch_epoch_valid)) {
+    unsigned writers = atomic_load_explicit(&watch_epoch_writers, memory_order_acquire);
+    if (!writers) {
+      uint64_t before = atomic_load_explicit(&watch_global_epoch, memory_order_acquire);
+      uint64_t max_epoch = watch_epoch_range(first, last);
+      unsigned after_writers = atomic_load_explicit(&watch_epoch_writers, memory_order_acquire);
+      uint64_t after = atomic_load_explicit(&watch_global_epoch, memory_order_acquire);
+      if (!after_writers && before == after && max_epoch <= *epoch_cursor) {
+        pd_vk_last.buffer_watch_fast++;
+        pd_vk_last.buffer_watch_us += now_us() - t0;
+        return 0;
+      }
+    }
+  }
+  epoch = atomic_load_explicit(&watch_global_epoch, memory_order_acquire);
+  for (i = first; i <= last;) {
+    unsigned s = atomic_load_explicit(&watch_pages[i].state, memory_order_relaxed);
+
+    if (s == WATCH_RO_CLEAN) {
+      uint32_t generation = atomic_load_explicit(&watch_pages[i].generation, memory_order_relaxed);
+      unsigned after = atomic_load_explicit(&watch_pages[i].state, memory_order_relaxed);
+      size_t seen = i - r->watch_first;
+      if (after == WATCH_FAULTING || after == WATCH_ARMING_CLEAN || after == WATCH_ARMING_DIRTY)
+        continue;
+      if (after == WATCH_RW_DIRTY)
+        dirty = 1;
+      if (generation != r->watch_seen[seen])
+        dirty = 1, r->watch_seen[seen] = generation;
+      pd_vk_last.buffer_watch_pages++;
+      i++;
+      continue;
+    }
+    if (s == WATCH_ARMING_CLEAN || s == WATCH_ARMING_DIRTY || s == WATCH_FAULTING)
+      continue;
+    if (s != WATCH_RW_DIRTY)
+      return -1;
+
+    // re-protect adjacent dirty pages together before copying their contents
+    {
+      size_t start = i, end;
+      unsigned expected = WATCH_RW_DIRTY;
+
+      if (!atomic_compare_exchange_weak_explicit(&watch_pages[i].state, &expected, WATCH_ARMING_CLEAN,
+                                                 memory_order_relaxed, memory_order_relaxed))
+        continue;
+      end = i + 1;
+      while (end <= last && atomic_load_explicit(&watch_pages[end].refs, memory_order_relaxed)) {
+        expected = WATCH_RW_DIRTY;
+        if (!atomic_compare_exchange_weak_explicit(&watch_pages[end].state, &expected, WATCH_ARMING_CLEAN,
+                                                   memory_order_relaxed, memory_order_relaxed))
+          break;
+        end++;
+      }
+      if (mprotect((void *)(watch_base + start * watch_page_size), (end - start) * watch_page_size, PROT_READ) != 0) {
+        for (size_t k = start; k < end; k++) {
+          expected = WATCH_ARMING_CLEAN;
+          atomic_compare_exchange_strong_explicit(&watch_pages[k].state, &expected, WATCH_RW_DIRTY,
+                                                  memory_order_relaxed, memory_order_relaxed);
+        }
+        mprotect((void *)(watch_base + start * watch_page_size), (end - start) * watch_page_size, PROT_READ | PROT_WRITE);
+        return -1;
+      }
+      for (size_t k = start; k < end; k++) {
+        expected = WATCH_ARMING_CLEAN;
+        atomic_compare_exchange_strong_explicit(&watch_pages[k].state, &expected, WATCH_RO_CLEAN,
+                                                memory_order_relaxed, memory_order_relaxed);
+      }
+      // the generation check is per resident, so an alias that already scanned this page leaves this
+      // buffer's dirty state alone
+      for (size_t k = start; k < end; k++) {
+        uint32_t generation = atomic_load_explicit(&watch_pages[k].generation, memory_order_relaxed);
+        unsigned after = atomic_load_explicit(&watch_pages[k].state, memory_order_relaxed);
+        size_t seen = k - r->watch_first;
+        if (after == WATCH_RW_DIRTY || after == WATCH_FAULTING)
+          dirty = 1;
+        if (generation != r->watch_seen[seen])
+          dirty = 1, r->watch_seen[seen] = generation;
+        pd_vk_last.buffer_watch_pages++;
+      }
+      i = end;
+    }
+  }
+  // the pre-scan epoch, a write that raced the scan makes the next lookup check the pages again
+  if (cursor_exact) {
+    *epoch_cursor = epoch;
+    if (!chunk_cursor)
+      r->watch_epoch_valid = 1;
+  }
+  pd_vk_last.buffer_watch_us += now_us() - t0;
+  return dirty;
+}
+
+static int watch_buffer(struct resident *r, int on) {
+  size_t first, last;
+
+  if (!r)
+    return 0;
+  if (on) {
+    uint32_t *seen;
+    uint64_t *chunk_epochs = 0;
+    size_t chunk_count = 0;
+    watch_stats.attempts++;
+    if (!watch_enabled) {
+      watch_stats.disabled++;
+      return 0;
+    }
+    if (!watch_bounds(r->off, r->size, &first, &last)) {
+      watch_stats.bounds++;
+      return 0;
+    }
+    if (r->watch_seen) {
+      watch_stats.accepted++;
+      return 1;
+    }
+    // a page shared with managed storage still uses didModifyRange as its authority
+    for (size_t i = first; i <= last; i++) {
+      uintptr_t a = watch_base + i * watch_page_size;
+      uint32_t off = (uint32_t)(a - (uintptr_t)res_base);
+      if (overlaps_managed(off, (uint32_t)watch_page_size)) {
+        watch_stats.managed_page++;
+        return 0;
+      }
+    }
+    seen = calloc(last - first + 1, sizeof(*seen));
+    if (!seen) {
+      watch_stats.alloc_fail++;
+      return 0;
+    }
+    if (r->size > RES_CHUNKED) {
+      chunk_count = (r->size + RES_CHUNK - 1) / RES_CHUNK;
+      chunk_epochs = malloc(chunk_count * sizeof(*chunk_epochs));
+      if (!chunk_epochs) {
+        free(seen);
+        watch_stats.alloc_fail++;
+        return 0;
+      }
+      for (size_t i = 0; i < chunk_count; i++)
+        chunk_epochs[i] = UINT64_MAX;
+    }
+    for (size_t i = first; i <= last; i++)
+      seen[i - first] = atomic_load_explicit(&watch_pages[i].generation, memory_order_relaxed);
+    r->watch_seen = seen, r->watch_first = first, r->watch_count = last - first + 1;
+    r->watch_chunk_epochs = chunk_epochs, r->watch_chunk_count = chunk_count;
+    r->watch_epoch_valid = 0;
+    for (size_t i = first; i <= last; i++) {
+      if (!atomic_fetch_add_explicit(&watch_pages[i].refs, 1, memory_order_relaxed))
+        atomic_store_explicit(&watch_pages[i].state, WATCH_RW_DIRTY, memory_order_relaxed);
+    }
+    watch_stats.accepted++, watch_stats.bytes += r->size;
+    return 1;
+  }
+  if (watch_pages && r->watch_seen && watch_bounds(r->off, r->size, &first, &last) &&
+      first == r->watch_first && last + 1 == r->watch_first + r->watch_count) {
+    for (size_t i = first; i <= last; i++) {
+      if (atomic_fetch_sub_explicit(&watch_pages[i].refs, 1, memory_order_relaxed) == 1) {
+        if (mprotect((void *)(watch_base + i * watch_page_size), watch_page_size, PROT_READ | PROT_WRITE) != 0) {
+          atomic_fetch_add_explicit(&watch_pages[i].refs, 1, memory_order_relaxed);
+          watch_disable("failed to unprotect a released buffer page");
+          return 0;
+        }
+        atomic_store_explicit(&watch_pages[i].state, WATCH_OFF, memory_order_relaxed);
+      }
+    }
+  }
+  free(r->watch_seen), r->watch_seen = 0, r->watch_first = r->watch_count = 0;
+  free(r->watch_chunk_epochs), r->watch_chunk_epochs = 0, r->watch_chunk_count = 0;
+  r->watch_epoch_valid = 0;
+  return 0;
+}
+
+static void small_buffer_unwatch(struct small_buffer_entry *e) {
+  watch_buffer(&e->watch, 0);
+  memset(&e->watch, 0, sizeof(e->watch));
+}
+
+static void small_buffer_track(struct small_buffer_entry *e, uint32_t off, uint32_t size) {
+  if (!watch_enabled || e->watch.watch_seen)
+    return;
+  e->watch.off = off, e->watch.size = size, e->watch.kind = RES_BUF;
+  e->watch.live = 1;
+  watch_buffer(&e->watch, 1);
+}
+
+static void small_buffer_reset(int a) {
+  for (unsigned i = 0; i < SMALL_BUFFER_CACHE; i++)
+    small_buffer_unwatch(&small_buffer_cache[a][i]);
+  memset(small_buffer_cache[a], 0, sizeof(small_buffer_cache[a]));
+}
+
+// watch_reset owns the page refcounts and restores protections before this
+// drops the per-entry generation snapshots.
+static void small_buffer_watch_clear(void) {
+  for (unsigned a = 0; a < 2; a++)
+    for (unsigned i = 0; i < SMALL_BUFFER_CACHE; i++) {
+      struct resident *r = &small_buffer_cache[a][i].watch;
+      free(r->watch_seen), r->watch_seen = 0;
+      r->watch_first = r->watch_count = 0, r->watched = 0;
+      free(r->watch_chunk_epochs), r->watch_chunk_epochs = 0, r->watch_chunk_count = 0;
+      r->watch_epoch_valid = 0;
+    }
+}
+
+static void small_buffer_invalidate(uint32_t off, uint32_t len) {
+  uint64_t end = (uint64_t)off + len;
+
+  if (!len)
+    return;
+  for (unsigned a = 0; a < 2; a++)
+    for (unsigned i = 0; i < SMALL_BUFFER_CACHE; i++) {
+      struct small_buffer_entry *e = &small_buffer_cache[a][i];
+      if (!e->size || off >= (uint64_t)e->off + e->size || e->off >= end)
+        continue;
+      small_buffer_unwatch(e);
+      e->size = 0;
+    }
+}
+
+static int watch_arm_all(void) {
+  size_t i = 0;
+
+  if (!watch_pages)
+    return 1;
+  while (i < watch_page_count) {
+    unsigned expected;
+    size_t start, end;
+
+    if (!atomic_load_explicit(&watch_pages[i].refs, memory_order_relaxed) ||
+        atomic_load_explicit(&watch_pages[i].state, memory_order_relaxed) != WATCH_RW_DIRTY) {
+      i++;
+      continue;
+    }
+    start = i;
+    expected = WATCH_RW_DIRTY;
+    if (!atomic_compare_exchange_weak_explicit(&watch_pages[i].state, &expected, WATCH_ARMING_DIRTY,
+                                               memory_order_relaxed, memory_order_relaxed))
+      continue;
+    end = i + 1;
+    while (end < watch_page_count && atomic_load_explicit(&watch_pages[end].refs, memory_order_relaxed)) {
+      expected = WATCH_RW_DIRTY;
+      if (!atomic_compare_exchange_weak_explicit(&watch_pages[end].state, &expected, WATCH_ARMING_DIRTY,
+                                                 memory_order_relaxed, memory_order_relaxed))
+        break;
+      end++;
+    }
+    if (mprotect((void *)(watch_base + start * watch_page_size), (end - start) * watch_page_size, PROT_READ) != 0) {
+      for (size_t k = start; k < end; k++) {
+        expected = WATCH_ARMING_DIRTY;
+        atomic_compare_exchange_strong_explicit(&watch_pages[k].state, &expected, WATCH_RW_DIRTY,
+                                                memory_order_relaxed, memory_order_relaxed);
+      }
+      mprotect((void *)(watch_base + start * watch_page_size), (end - start) * watch_page_size, PROT_READ | PROT_WRITE);
+      return 0;
+    }
+    for (size_t k = start; k < end; k++) {
+      expected = WATCH_ARMING_DIRTY;
+      atomic_compare_exchange_strong_explicit(&watch_pages[k].state, &expected, WATCH_RO_CLEAN,
+                                              memory_order_relaxed, memory_order_relaxed);
+    }
+    i = end;
+  }
+  return 1;
+}
+
+static int watch_reset(void) {
+  int ok = 1;
+
+  if (watch_pages) {
+    for (size_t i = 0; i < watch_page_count; i++) {
+      if (!atomic_load_explicit(&watch_pages[i].refs, memory_order_relaxed))
+        continue;
+      if (mprotect((void *)(watch_base + i * watch_page_size), watch_page_size, PROT_READ | PROT_WRITE) == 0) {
+        atomic_store_explicit(&watch_pages[i].refs, 0, memory_order_relaxed);
+        atomic_store_explicit(&watch_pages[i].state, WATCH_OFF, memory_order_relaxed);
+      } else {
+        ok = 0;
+      }
+    }
+  }
+  for (unsigned i = 0; i < MAX_RESIDENT; i++) {
+    residents[i].watched = 0;
+    free(residents[i].watch_seen), residents[i].watch_seen = 0;
+    residents[i].watch_first = residents[i].watch_count = 0;
+    free(residents[i].watch_chunk_epochs), residents[i].watch_chunk_epochs = 0;
+    residents[i].watch_chunk_count = 0, residents[i].watch_epoch_valid = 0;
+  }
+  small_buffer_watch_clear();
+  if (ok) {
+    while (atomic_load_explicit(&watch_epoch_writers, memory_order_acquire))
+      sched_yield();
+    free(watch_pages), watch_pages = 0;
+    free(watch_epoch_blocks), watch_epoch_blocks = 0, watch_epoch_block_count = 0;
+    watch_base = watch_end = 0, watch_page_size = watch_page_count = 0;
+    watch_owner = 0, watch_owner_size = 0;
+  }
+  return ok;
+}
+
+static void watch_before_submit(void) {
+  if (!watch_enabled || !watch_pages || watch_arm_all())
+    return;
+  watch_disable("page protection failed before submit");
+}
+
+static void watch_disable(const char *reason) {
+  watch_enabled = watch_requested = 0;
+  logmsg("AIRJITD: shared buffer watch %s; rolling back to content hashing", reason);
+  if (!watch_reset())
+    logmsg("AIRJITD: shared buffer rollback incomplete; retaining the fault table for protected pages");
+}
+
+static void watch_setup(void) {
+  long ps;
+  uintptr_t lo, hi;
+
+  if (!watch_enabled || !res_base || !res_bsize || watch_pages)
+    return;
+  ps = sysconf(_SC_PAGESIZE);
+  if (ps <= 0)
+    return;
+  watch_page_size = (size_t)ps;
+  lo = ((uintptr_t)res_base + watch_page_size - 1) & ~(uintptr_t)(watch_page_size - 1);
+  hi = ((uintptr_t)res_base + res_bsize) & ~(uintptr_t)(watch_page_size - 1);
+  if (hi <= lo)
+    return;
+  watch_page_count = (hi - lo) / watch_page_size;
+  watch_pages = calloc(watch_page_count, sizeof(*watch_pages));
+  if (!watch_pages) {
+    watch_page_count = watch_page_size = 0;
+    return;
+  }
+  for (size_t i = 0; i < watch_page_count; i++) {
+    atomic_init(&watch_pages[i].refs, 0);
+    atomic_init(&watch_pages[i].state, WATCH_OFF);
+    atomic_init(&watch_pages[i].generation, 0);
+  }
+  watch_epoch_block_count = (watch_page_count + WATCH_EPOCH_BLOCK_PAGES - 1) / WATCH_EPOCH_BLOCK_PAGES;
+  watch_epoch_blocks = calloc(watch_epoch_block_count, sizeof(*watch_epoch_blocks));
+  if (watch_epoch_blocks)
+    for (size_t i = 0; i < watch_epoch_block_count; i++)
+      atomic_init(&watch_epoch_blocks[i], 0);
+  else
+    watch_epoch_block_count = 0;
+  watch_base = lo, watch_end = hi;
+  watch_owner = res_base, watch_owner_size = res_bsize;
+}
+
+void pd_vk_watch_enable(int on) {
+  watch_requested = !!on;
+  watch_enabled = watch_requested;
+  if (!on) {
+    if (!watch_reset())
+      logmsg("AIRJITD: shared buffer watch rollback could not restore every page; fault tracking retained");
+    return;
+  }
+  if (watch_pages && (watch_owner != res_base || watch_owner_size != res_bsize)) {
+    watch_enabled = watch_requested = 0;
+    logmsg("AIRJITD: shared buffer watch arena changed before rollback completed; using hashes");
+    return;
+  }
+  watch_enabled = 1;
+  watch_setup();
+}
+
+void pd_vk_watch_exclude(void *address, size_t size) {
+  uintptr_t lo = (uintptr_t)address, hi;
+  long ps;
+
+  if (!address || !size || size > UINTPTR_MAX - lo || watch_exclusion_count == WATCH_EXCLUSIONS)
+    return;
+  // registered before resident mode starts, a later change could leave the scratch ring read-only mid-copy
+  if (watch_pages)
+    return;
+  ps = sysconf(_SC_PAGESIZE);
+  if (ps <= 0)
+    return;
+  hi = lo + size;
+  lo &= ~((uintptr_t)ps - 1);
+  hi = (hi + (uintptr_t)ps - 1) & ~((uintptr_t)ps - 1);
+  watch_exclusions[watch_exclusion_count].lo = lo;
+  watch_exclusions[watch_exclusion_count++].hi = hi;
+}
+
 
 static int overlaps(const struct resident *r, uint32_t off, uint32_t len) {
   return r->live && off < r->off + r->size && r->off < off + len;
 }
 
+static void fb_drop_view(VkImageView v);
+
+static void res_set_gpu_newer(struct resident *r, int newer) {
+  unsigned i;
+
+  if (!!r->gpu_newer == !!newer)
+    return;
+  if (newer) {
+    i = (unsigned)(r - residents);
+    r->gpu_newer = 1;
+    r->newer_pos = newer_count;
+    newer_residents[newer_count++] = i;
+    return;
+  }
+  i = r->newer_pos;
+  if (i < newer_count) {
+    unsigned moved = newer_residents[--newer_count];
+    newer_residents[i] = moved;
+    residents[moved].newer_pos = i;
+  }
+  r->gpu_newer = 0;
+}
+
 static void res_destroy(struct resident *r) {
   unsigned k;
 
+  if (r->live)
+    res_index_remove(r);
+  if (r->kind == RES_BUF)
+    draw_binding_cache_valid = 0;
+  res_set_gpu_newer(r, 0);
   if (r->kind == RES_BUF) {
+    if (r->watched)
+      watch_buffer(r, 0);
     vkDestroyBuffer(dev, r->b, 0);
+    free(r->chunks), r->chunks = 0;
+    free(r->mdirty), r->mdirty = 0;
   } else {
     for (k = 0; k < 8; k++) {
-      if (r->im.tv[k])
+      if (r->im.tv[k]) {
+        fb_drop_view(r->im.tv[k]);
         vkDestroyImageView(dev, r->im.tv[k], 0);
+      }
     }
     for (k = 0; k < 16; k++) {
-      if (r->im.lv[k])
+      if (r->im.lv[k]) {
+        fb_drop_view(r->im.lv[k]);
         vkDestroyImageView(dev, r->im.lv[k], 0);
+      }
     }
+    if (r->im.v)
+      fb_drop_view(r->im.v);
     vkDestroyImageView(dev, r->im.v, 0);
     vkDestroyImage(dev, r->im.i, 0);
   }
@@ -2389,13 +3000,85 @@ static void res_destroy(struct resident *r) {
 }
 
 // ends the batch and submits it, wait: until it has run, and its arena is freed
+// a job is recording: a flush in it frees what the job already bound, so the job starts over in the next batch
+static int in_job, job_restarts, restart_pending;
+static unsigned res_cap;
+
+// after a flush inside a job: what it recorded since is dropped and the job runs again from the start
+static void restart_point(void) {
+  if (!restart_pending || !in_job)
+    return;
+  restart_pending = 0;
+  if (batch) {
+    if (in_pass)
+      vkCmdEndRenderPass(batch);
+    vkEndCommandBuffer(batch);
+    vkFreeCommandBuffers(dev, pool, 1, &batch);
+    batch = 0, in_pass = 0;
+  }
+  _longjmp(job_fail, 2);
+}
+static uint64_t job_mark;
+static uint64_t spool_mark(void);
+
+// what the current arena holds: unchanged since the job began means the job has bound nothing in this batch yet
+static uint64_t arena_mark(void) {
+  uint64_t m = (uint64_t)arena.nbuf + arena.nmem + arena.nview + arena.nbview + arena.nimg + arena.npool + arena.nfb + !!arena.fb +
+               !!arena.dpool;
+
+  for (unsigned i = 0; i < HBLOCKS; i++) {
+    m += hblocks[cur_arena][i].used;
+  }
+  return m + spool_mark();
+}
+
+// a second of jobs, summed for the once-a-second line
+static struct {
+  uint64_t t0, jobs, draws, fallbacks, translated, translated_cached, pipes_new, pipes_cached, restarts, up, down;
+  uint64_t translate, pipeline, upload, run, readback, wait, wall;
+  uint64_t flush_sync, flush_slot, flush_finish, flush_full, flush_other;
+  uint64_t res_slot, res_overlap, res_lru, buf_scan, buf_hash, buf_copy, buf_overlap, buf_sync, drawcmd, barrier, barriers;
+  uint64_t img_us, img_b, buf_us, buf_b, back_us, back_b, newbuf_us, newbuf_n, att_us, bind_us, newimg_us, newimg_n;
+  // prof's hash totals when the second began
+  uint64_t hash_us0, hash_b0;
+} sec;
+
+static void flush_impl(int wait, const char *why);
+
 void pd_vk_flush(int wait) {
+  pd_vk_lock();
+  flush_impl(wait, "external");
+  pd_vk_unlock();
+}
+
+// flushes inside vk.c are counted by the function that asks
+#define pd_vk_flush(w) flush_impl(w, __func__)
+
+static void flush_impl(int wait, const char *why) {
   VkSubmitInfo si = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
   uint64_t t0 = now_us();
+  int restart;
 
   if (state != 1 || !resident_mode)
     return;
+  restart = in_job && batch && arena_mark() != job_mark;
   if (batch) {
+    if (!strcmp(why, "sync_range"))
+      sec.flush_sync++;
+    else if (!strcmp(why, "res_slot"))
+      sec.flush_slot++;
+    else if (!strcmp(why, "pd_vk_finish"))
+      sec.flush_finish++;
+    else if (!strcmp(why, "run_job"))
+      sec.flush_full++;
+    else
+      sec.flush_other++;
+    if (restart)
+      logv2("AIRJITD: vulkan flush from %s inside a job, restarting it", why);
+  }
+  if (batch) {
+    if (in_pass)
+      vkCmdEndRenderPass(batch);
     // one batch in flight: the one before must be done before its arena is reused
     if (batch_inflight) {
       vkWaitForFences(dev, 1, &batch_fence, 1, UINT64_MAX);
@@ -2406,6 +3089,7 @@ void pd_vk_flush(int wait) {
     arena.cb = batch;
     vkEndCommandBuffer(batch);
     si.commandBufferCount = 1, si.pCommandBuffers = &batch;
+    watch_before_submit();
     if (vkQueueSubmit(queue, 1, &si, batch_fence) != VK_SUCCESS)
       logmsg("AIRJITD: vulkan batch submit failed");
     batch = 0, batch_inflight = 1, in_pass = 0;
@@ -2419,6 +3103,10 @@ void pd_vk_flush(int wait) {
     batch_inflight = 0;
   }
   pd_vk_last.wait += now_us() - t0;
+  // the caller finishes what it flushed for (a readback, an eviction), then the job starts over
+  if (restart)
+    restart_pending = 1;
+  job_mark = arena_mark();
 }
 
 // what the GPU wrote into r, back into the bridge (the batch must have run)
@@ -2427,21 +3115,26 @@ static void res_readback(struct resident *r) {
   if ((uint64_t)r->off + r->size > res_bsize) {
     logmsg("AIRJITD: resident %s at 0x%x + %u past the bridge (%u bytes), not read back",
            r->kind == RES_BUF ? "buffer" : r->kind == RES_DEPTH ? "depth" : "image", r->off, r->size, res_bsize);
-    r->gpu_newer = 0;
+    res_set_gpu_newer(r, 0);
     return;
   }
-  logv("AIRJITD:   read back %s at 0x%x + %u into %p (bridge %p + %u)", r->kind == RES_BUF ? "buffer" : r->kind == RES_DEPTH ? "depth" : "image",
+  logv2("AIRJITD:   read back %s at 0x%x + %u into %p (bridge %p + %u)", r->kind == RES_BUF ? "buffer" : r->kind == RES_DEPTH ? "depth" : "image",
        r->off, r->size, (void *)(res_base + r->off), (void *)res_base, res_bsize);
   direct = 1;
+  range_hash_invalidate(r->off, r->size);
   if (r->kind == RES_BUF) {
-    VkBufferCopy c = { 0, 0, r->size };
-    struct buf st = new_buf(r->size, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    VkCommandBuffer cb = begin();
+    // in pieces no larger than a staging block piece, a big buffer is never mapped whole
+    for (uint32_t at = 0; at < r->size; at += 4u << 20) {
+      uint32_t len = r->size - at < (4u << 20) ? r->size - at : 4u << 20;
+      struct buf st = new_buf(len, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+      VkBufferCopy c = { at, st.off, len };
+      VkCommandBuffer cb = begin();
 
-    vkCmdCopyBuffer(cb, r->b, st.b, 1, &c);
-    submit(cb);
-    logv("AIRJITD:   read back from staging %p", st.map);
-    from_map(res_base + r->off, st.map, r->size);
+      vkCmdCopyBuffer(cb, r->b, st.b, 1, &c);
+      submit(cb);
+      logv2("AIRJITD:   read back from staging %p", st.map);
+      from_map(res_base + r->off + at, st.map, len);
+    }
     pd_vk_last.down_bytes += r->size;
   } else if (r->kind == RES_DEPTH) {
     read_depth(res_base, &r->im);
@@ -2450,26 +3143,111 @@ static void res_readback(struct resident *r) {
     read_imgs(res_base, &im, 1);
   }
   direct = 0;
-  r->gpu_newer = 0;
+  res_set_gpu_newer(r, 0);
+}
+
+// every buffer the GPU wrote, read back with one submission per group of staging pieces
+#define READBACK_PIECES 32
+#define READBACK_GROUP (64u << 20)
+struct readback_piece {
+  struct resident *r;
+  uint32_t at, len;
+  struct buf st;
+};
+
+// submit the group, then its pieces go into the bridge, a buffer whose last piece is back is the CPU's again
+static void readback_group(VkCommandBuffer cb, struct readback_piece *piece, unsigned np) {
+  submit(cb);
+  for (unsigned k = 0; k < np; k++) {
+    from_map(res_base + piece[k].r->off + piece[k].at, piece[k].st.map, piece[k].len);
+    pd_vk_last.down_bytes += piece[k].len;
+    if (piece[k].at + piece[k].len >= piece[k].r->size)
+      res_set_gpu_newer(piece[k].r, 0);
+  }
+}
+
+static uint64_t finish_private_kept, finish_private_bytes, finish_read_bytes;
+static int in_private(uint32_t off, uint32_t len);
+
+static void res_readback_buffers(void) {
+  struct resident *todo[MAX_RESIDENT];
+  struct readback_piece piece[READBACK_PIECES];
+  unsigned n = 0, np = 0;
+  uint32_t group = 0;
+  VkCommandBuffer cb = 0;
+
+  for (unsigned i = 0; i < newer_count; i++) {
+    struct resident *r = &residents[newer_residents[i]];
+
+    // a private buffer's bytes stay on the GPU until a blit or a CPU job asks for them (sync_range)
+    if (r->live && r->kind == RES_BUF && in_private(r->off, r->size)) {
+      finish_private_kept++, finish_private_bytes += r->size;
+      continue;
+    }
+    if (r->live && r->kind == RES_BUF)
+      todo[n++] = r, finish_read_bytes += r->size;
+  }
+  direct = 1;
+  for (unsigned i = 0; i < n; i++) {
+    struct resident *r = todo[i];
+
+    if ((uint64_t)r->off + r->size > res_bsize) {
+      logmsg("AIRJITD: resident buffer at 0x%x + %u past the bridge (%u bytes), not read back", r->off, r->size,
+             res_bsize);
+      res_set_gpu_newer(r, 0);
+      continue;
+    }
+    range_hash_invalidate(r->off, r->size);
+    for (uint32_t at = 0; at < r->size; at += 4u << 20) {
+      uint32_t len = r->size - at < (4u << 20) ? r->size - at : 4u << 20;
+      VkBufferCopy c;
+
+      if (!cb)
+        cb = begin();
+      piece[np].r = r, piece[np].at = at, piece[np].len = len;
+      piece[np].st = new_buf(len, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+      c = (VkBufferCopy){ at, piece[np].st.off, len };
+      vkCmdCopyBuffer(cb, r->b, piece[np].st.b, 1, &c);
+      group += len;
+      if (++np == READBACK_PIECES || group >= READBACK_GROUP) {
+        readback_group(cb, piece, np);
+        cb = 0, np = 0, group = 0;
+      }
+    }
+  }
+  if (np)
+    readback_group(cb, piece, np);
+  direct = 0;
 }
 
 static int sync_range(uint32_t off, uint32_t len) {
   int n = 0;
 
-  for (unsigned i = 0; i < MAX_RESIDENT; i++) {
-    struct resident *r = &residents[i];
+  for (unsigned i = 0; i < newer_count;) {
+    struct resident *r = &residents[newer_residents[i]];
 
-    if (!overlaps(r, off, len) || !r->gpu_newer)
+    if (!overlaps(r, off, len)) {
+      i++;
       continue;
+    }
     if (!n++)
       pd_vk_flush(1);
     res_readback(r);
   }
+  restart_point();
   return n;
 }
 
+static void vk_sync_locked(uint32_t off, uint32_t len);
+
 void pd_vk_sync(uint32_t off, uint32_t len) {
-  if (state != 1 || !resident_mode || setjmp(job_fail))
+  pd_vk_lock();
+  vk_sync_locked(off, len);
+  pd_vk_unlock();
+}
+
+static void vk_sync_locked(uint32_t off, uint32_t len) {
+  if (state != 1 || !resident_mode || _setjmp(job_fail))
     return;
   sync_range(off, len);
 }
@@ -2478,39 +3256,173 @@ void pd_vk_sync_all(void) {
   pd_vk_sync(0, 0xffffffffu);
 }
 
+static void vk_finish_locked(void);
+
 void pd_vk_finish(void) {
+  pd_vk_lock();
+  vk_finish_locked();
+  pd_vk_unlock();
+}
+
+static void vk_finish_locked(void) {
   int bufs = 0;
 
+  // the CPU writes shared buffers with no report, their cached hashes start over here
+  hash_epoch++, finish_hash_invalidations++;
   if (state != 1 || !resident_mode)
     return;
-  // apps read buffer memory directly once the command buffer completes: what the GPU wrote goes back now
-  for (unsigned i = 0; i < MAX_RESIDENT; i++) {
-    bufs |= residents[i].live && residents[i].kind == RES_BUF && residents[i].gpu_newer;
+  // apps read buffer memory directly once the command buffer completes: what the GPU wrote goes back now, but
+  // private buffers stay on the GPU, and with only those the batch goes without a wait
+  for (unsigned i = 0; i < newer_count && !bufs; i++) {
+    struct resident *r = &residents[newer_residents[i]];
+    bufs |= r->live && r->kind == RES_BUF && ((bisect() & 8) || !in_private(r->off, r->size));
   }
   if (!bufs) {
     pd_vk_flush(0);
     return;
   }
-  if (setjmp(job_fail))
+  if (_setjmp(job_fail)) {
+    direct = 0;
     return;
-  pd_vk_flush(1);
-  for (unsigned i = 0; i < MAX_RESIDENT; i++) {
-    if (residents[i].live && residents[i].kind == RES_BUF && residents[i].gpu_newer)
-      res_readback(&residents[i]);
   }
+  pd_vk_flush(1);
+  res_readback_buffers();
 }
 
+// the managed buffers' bridge ranges
+#define MANAGED 8192
+static struct {
+  uint32_t off, len;
+  // private storage: the CPU never reads it, the GPU's writes are not read back at finish
+  int priv;
+} managed[MANAGED];
+static unsigned nmanaged;
+
+// the ranges are heap allocations, sorted by offset and never overlapping: the count of those starting before at
+static unsigned managed_before(uint64_t at) {
+  unsigned lo = 0, hi = nmanaged;
+
+  while (lo < hi) {
+    unsigned mid = (lo + hi) / 2;
+
+    if (managed[mid].off < at)
+      lo = mid + 1;
+    else
+      hi = mid;
+  }
+  return lo;
+}
+
+static int in_managed(uint32_t off, uint32_t len) {
+  unsigned i = managed_before((uint64_t)off + 1);
+
+  return i && (uint64_t)off + len <= (uint64_t)managed[i - 1].off + managed[i - 1].len;
+}
+
+static int in_private(uint32_t off, uint32_t len) {
+  unsigned i = managed_before((uint64_t)off + 1);
+
+  return i && managed[i - 1].priv && (uint64_t)off + len <= (uint64_t)managed[i - 1].off + managed[i - 1].len;
+}
+
+static int overlaps_managed(uint32_t off, uint32_t len) {
+  unsigned i = managed_before((uint64_t)off + (len ? len : 1));
+
+  return i && (uint64_t)managed[i - 1].off + managed[i - 1].len > off;
+}
+
+void pd_vk_managed(uint32_t off, uint32_t len, int on) {
+  pd_vk_lock();
+  small_buffer_invalidate(off, len);
+  if (on && nmanaged < MANAGED) {
+    unsigned i = managed_before(off);
+
+    memmove(&managed[i + 1], &managed[i], (nmanaged - i) * sizeof(managed[0]));
+    managed[i].off = off, managed[i].len = len, managed[i].priv = on == 2, nmanaged++;
+  } else if (!on) {
+    unsigned i = managed_before(off);
+
+    if (i < nmanaged && managed[i].off == off && managed[i].len == len) {
+      memmove(&managed[i], &managed[i + 1], (nmanaged - i - 1) * sizeof(managed[0]));
+      nmanaged--;
+    }
+  }
+  for (unsigned i = 0; i < MAX_RESIDENT; i++) {
+    struct resident *r = &residents[i];
+    int managed_now;
+
+    if (!r->live || r->kind != RES_BUF || r->off < off ||
+        (uint64_t)r->off + r->size > (uint64_t)off + len)
+      continue;
+    managed_now = in_managed(r->off, r->size);
+    if (r->managed == managed_now)
+      continue;
+    if (r->watched)
+      watch_buffer(r, 0), r->watched = 0;
+    r->managed = managed_now, r->stale = 1;
+    free(r->mdirty), r->mdirty = 0, r->mdirty_count = 0;
+    if (!managed_now && r->size > RES_SMALL_BUFFER)
+      r->watched = watch_buffer(r, 1);
+  }
+  pd_vk_unlock();
+}
+
+void pd_vk_modified(uint32_t off, uint32_t len) {
+  if (!len)
+    return;
+  pd_vk_lock();
+  externals_written(off, len);
+  // hashes of anything else over these bytes (a texture on the buffer) are old now too
+  range_hash_invalidate(off, len);
+  for (unsigned i = 0; i < MAX_RESIDENT; i++) {
+    struct resident *r = &residents[i];
+
+    if (!overlaps(r, off, len))
+      continue;
+    if (r->managed && r->mdirty) {
+      uint32_t lo = off > r->off ? off - r->off : 0;
+      uint64_t end = (uint64_t)off + len - r->off;
+      uint32_t hi = end < r->size ? (uint32_t)end : r->size;
+
+      for (uint32_t k = lo / RES_CHUNK; k <= (hi - 1) / RES_CHUNK; k++) {
+        if (!r->mdirty[k])
+          r->mdirty[k] = 1, r->mdirty_count++;
+      }
+    } else {
+      res_set_gpu_newer(r, 0), r->stale = 1;
+    }
+  }
+  pd_vk_unlock();
+}
+
+static void vk_dirty_locked(uint32_t off, uint32_t len);
+
 void pd_vk_dirty(uint32_t off, uint32_t len) {
-  if (ext_att.image && ext_att.off >= off && ext_att.off < off + len)
-    ext_att.written = 1;
+  pd_vk_lock();
+  vk_dirty_locked(off, len);
+  pd_vk_unlock();
+}
+
+static void vk_dirty_locked(uint32_t off, uint32_t len) {
+  range_hash_invalidate(off, len);
+  externals_written(off, len);
   for (unsigned i = 0; i < MAX_RESIDENT; i++) {
     if (overlaps(&residents[i], off, len))
-      residents[i].stale = 1, residents[i].gpu_newer = 0;
+      residents[i].stale = 1, res_set_gpu_newer(&residents[i], 0);
   }
 }
 
 void pd_vk_set_resident(int on, uint8_t *base, uint32_t bsize) {
+  if (!on || res_base != base || res_bsize != bsize) {
+    range_hash_invalidate_all();
+    if (!watch_reset()) {
+      watch_enabled = watch_requested = 0;
+      logmsg("AIRJITD: shared buffer watch rollback could not restore every page; fault tracking retained");
+    }
+  }
   resident_mode = on, res_base = base, res_bsize = bsize;
+  watch_enabled = !!on && watch_requested;
+  watch_setup();
 }
 
 int pd_vk_resident(void) {
@@ -2521,7 +3433,7 @@ int pd_vk_resident(void) {
 static void res_written(struct resident *r) {
   if (!r)
     return;
-  r->gpu_newer = 1, r->stale = 0;
+  res_set_gpu_newer(r, 1), r->stale = 0;
   for (unsigned i = 0; i < MAX_RESIDENT; i++) {
     if (&residents[i] != r && overlaps(&residents[i], r->off, r->size))
       residents[i].stale = 1;
@@ -2530,31 +3442,66 @@ static void res_written(struct resident *r) {
 
 // a slot for a resource over [off, off + size) made as key: the one that matches, else a fresh one. A
 // different resource over overlapping bytes with newer GPU contents goes back to the bridge first
+// what res_slot did this second, reported with the transfer line
+static struct { uint64_t hits, stale_hits, misses, walked, syncs, sync_bytes, sync_us, inside; } slot_stats;
+
 static struct resident *res_slot(uint32_t off, uint32_t size, uint64_t key, int kind, int *fresh) {
   struct resident *r = 0, *lru = 0;
   unsigned i;
+  uint64_t slot_ts = now_us(), overlap_ts;
 
-  for (i = 0; i < MAX_RESIDENT; i++) {
-    struct resident *s = &residents[i];
-
-    if (s->live && s->off == off && s->size == size && s->key == key && s->kind == kind)
-      r = s;
+  r = res_lookup(off, size, key, kind);
+  // res_written marks every overlapping resident stale first, so an exact hit that is not stale overlaps
+  // no other GPU-newer entry and the steady-state lookup skips that list
+  if (r && !r->stale) {
+    slot_stats.hits++;
+    r->used = ++use_clock;
+    *fresh = 0;
+    pd_vk_last.res_slot_us += now_us() - slot_ts;
+    return r;
   }
-  for (i = 0; i < MAX_RESIDENT; i++) {
-    struct resident *s = &residents[i];
+  overlap_ts = now_us();
+  if (r)
+    slot_stats.stale_hits++;
+  else
+    slot_stats.misses++;
+  slot_stats.walked += newer_count;
+  for (i = 0; i < newer_count;) {
+    struct resident *s = &residents[newer_residents[i]];
 
-    if (s != r && s->gpu_newer && overlaps(s, off, size)) {
+    if (s != r && overlaps(s, off, size)) {
+      uint64_t ss = now_us();
+
+      slot_stats.syncs++, slot_stats.sync_bytes += s->size;
+      {
+        static unsigned shown;
+
+        if (shown++ < 40)
+          logmsg("AIRJITD: slot sync: wanted %s 0x%x + %u (%s), newer %s 0x%x + %u key 0x%llx", kind == RES_BUF ? "buffer" : kind == RES_DEPTH ? "depth" : "image",
+                 off, size, r ? "stale" : "new", s->kind == RES_BUF ? "buffer" : s->kind == RES_DEPTH ? "depth" : "image", s->off, s->size,
+                 (unsigned long long)s->key);
+      }
       sync_range(s->off, s->size);
+      slot_stats.sync_us += now_us() - ss;
       if (r)
         r->stale = 1;
-    }
+    } else
+      i++;
   }
+  pd_vk_last.res_overlap_us += now_us() - overlap_ts;
   if (r) {
     r->used = ++use_clock;
     *fresh = 0;
+    pd_vk_last.res_slot_us += now_us() - slot_ts;
     return r;
   }
-  for (i = 0; i < MAX_RESIDENT; i++) {
+  // AIRJITD_VK_RESIDENTS: fewer slots than MAX_RESIDENT, to test eviction
+  if (!res_cap) {
+    const char *e = getenv("AIRJITD_VK_RESIDENTS");
+    res_cap = e && atoi(e) > 1 && atoi(e) < MAX_RESIDENT ? (unsigned)atoi(e) : MAX_RESIDENT;
+  }
+  overlap_ts = now_us();
+  for (i = 0; i < res_cap; i++) {
     if (!residents[i].live) {
       r = &residents[i];
       break;
@@ -2562,16 +3509,20 @@ static struct resident *res_slot(uint32_t off, uint32_t size, uint64_t key, int 
     if (!residents[i].gpu_newer && (!lru || residents[i].used < lru->used))
       lru = &residents[i];
   }
+  pd_vk_last.res_lru_us += now_us() - overlap_ts;
   // full: the least recently used goes, once nothing in flight uses it
   if (!r) {
     if (!lru)
       decline("resident table full");
     pd_vk_flush(1);
     res_destroy(lru);
+    restart_point();
     r = lru;
   }
   r->off = off, r->size = size, r->key = key, r->kind = kind, r->live = 1, r->used = ++use_clock;
+  res_index_add(r);
   *fresh = 1;
+  pd_vk_last.res_slot_us += now_us() - slot_ts;
   return r;
 }
 
