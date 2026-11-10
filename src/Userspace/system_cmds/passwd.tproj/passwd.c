@@ -262,6 +262,21 @@ main(int argc, char *argv[])
 		}
 	}
 
+	// a person's account lives in dslocal, its hash in ShadowHashData that dsuser writes
+	// as a person, dsuser asks pdaccountsd and gives it the old password
+	if (infosystem == INFO_FILE && locn == NULL && strchr(user, '/') == NULL)
+	{
+		char record[1024];
+
+		snprintf(record, sizeof(record), "/var/db/dslocal/nodes/Default/users/%s.plist", user);
+		if (access(record, F_OK) == 0 || (errno == EACCES && getuid() != 0))
+		{
+			execl("/usr/sbin/dsuser", "dsuser", "passwd", user, (char *)NULL);
+			perror("/usr/sbin/dsuser");
+			exit(1);
+		}
+	}
+
 	switch (infosystem)
 	{
 		case INFO_FILE:

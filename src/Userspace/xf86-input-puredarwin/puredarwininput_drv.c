@@ -150,8 +150,8 @@ PDAcquireIOHIDSystem(InputInfoPtr pInfo)
     if (kr != KERN_SUCCESS)
         return;
 
-    kr = IOServiceGetMatchingService(masterPort, IOServiceMatching("IOHIDSystem"), &service);
-    if (kr != KERN_SUCCESS || service == IO_OBJECT_NULL)
+    service = IOServiceGetMatchingService(masterPort, IOServiceMatching("IOHIDSystem"));
+    if (service == IO_OBJECT_NULL)
         return;
 
     kr = IOServiceOpen(service, mach_task_self(), 0, &connect);
