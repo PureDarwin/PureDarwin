@@ -40,6 +40,21 @@
 # fixed uuid for the ext4 root partition and filesystem, for loaders that cannot scan the disk
 # and take boot-uuid from boot-args (xnu-loader turns that into an IOMedia UUID root match)
 , rootUUID ? null
+# a first person for test images, { name, password, realName ? name, uid ? 501 }, an administrator as on
+# macOS with root locked, and the password lands in the Nix store, so test images only
+, defaultUser ? null
+# a device tree for xnu-loader to use in place of the firmware's, installed as EFI/BOOT/board.dtb
+, boardDtb ? null
+, python3 ? null
+# put the system tree in /nix/store and reach the Apple paths through /run/current-system
+, nixStore ? false
+# public keys for root's ssh login, to drive a guest without a password
+, rootAuthorizedKeys ? [ ]
+# bundle ids pdkext starts at boot, a non-empty list also ships the KC's aux.kc
+, auxLoad ? [ ]
+, closureInfo
+, runCommand
+, nix
 , bootArgs ? "debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 -noprogress gen9_debug=1 serial_video_mirror=1 vgpu_debug=1"
 }:
 
@@ -56,125 +71,19 @@ assert legacyBoot == null || grubMultiboot == null;
 assert rootFsType == "ext4" || rootFsType == "hfs" || rootFsType == "apfs";
 assert rootFsType == "hfs" -> (hfsprogs != null && libdmg-hfsplus != null);
 assert rootFsType == "apfs" -> (apfsprogs != null && libapfsrw != null);
+assert nixStore -> !useRamdisk;
 
-stdenv.mkDerivation {
-  pname = "puredarwin-image";
-  version = "0.1";
+let
 
-  dontUnpack = true;
-
-  nativeBuildInputs = [ gptfdisk util-linux dosfstools mtools e2fsprogs fakeroot ]
-    ++ lib.optionals (grubProtocol == "linux") [ cpio ]
-    ++ lib.optionals (rootFsType == "hfs") [ hfsprogs libdmg-hfsplus ]
-    ++ lib.optionals (rootFsType == "apfs") [ apfsprogs libapfsrw ];
-
-  buildPhase = ''
-    runHook preBuild
-    export MTOOLS_SKIP_CHECK=1
-    netboot_only=${if netbootOnly then "1" else "0"}
-    LINUX_FS_GUID=0FC63DAF-8483-4772-8E79-3D69D8477DE4
-    APFS_GUID=7C3457EF-0000-11AA-AA11-00306543ECAC
-    # Apple_HFS: xnu-loader scans GPT for this type GUID and derives boot-uuid
-    # from the volume header's FinderInfo UUID (see xnu-loader devtree.c
-    # read_hfs_uuid_from_blockio); AppleFileSystemDriver then publishes
-    # boot-uuid-media for the matching volume.
-    HFS_GUID=48465300-0000-11AA-AA11-00306543ECAC
-
-    if [ "$netboot_only" -eq 0 ]; then
-    img=puredarwin.img
-    esp_sectors=$((${toString espMB} * 2048))
-    root_sectors=$((${toString rootMB} * 2048))
-${if rootFsType == "apfs" then ''
-    img_sectors=$((2048 + esp_sectors + root_sectors + 2048))
-    truncate -s $((img_sectors * 512)) $img
-    sgdisk \
-      -n 1:2048:+${toString espMB}M -t 1:EF00       -c 1:"EFI System Partition" \
-      -n 2:0:+${toString rootMB}M   -t 2:$APFS_GUID -c 2:"Darwin APFS Root" \
-      $img >/dev/null
-
-    read -r root_start root_size <<<"$(sfdisk -d $img | grep -i type=$APFS_GUID \
-      | sed -E 's/.*start= *([0-9]+), *size= *([0-9]+),.*/\1 \2/')"
-'' else if rootFsType == "hfs" then ''
-    img_sectors=$((2048 + esp_sectors + root_sectors + 2048))
-    truncate -s $((img_sectors * 512)) $img
-    sgdisk \
-      -n 1:2048:+${toString espMB}M -t 1:EF00       -c 1:"EFI System Partition" \
-      -n 2:0:+${toString rootMB}M   -t 2:$HFS_GUID  -c 2:"Darwin HFS Root" \
-      $img >/dev/null
-
-    read -r root_start root_size <<<"$(sfdisk -d $img | grep -i type=$HFS_GUID \
-      | sed -E 's/.*start= *([0-9]+), *size= *([0-9]+),.*/\1 \2/')"
-'' else ''
-    img_sectors=$((2048 + esp_sectors + root_sectors + 2048))
-    truncate -s $((img_sectors * 512)) $img
-    sgdisk \
-      -n 1:2048:+${toString espMB}M -t 1:EF00            -c 1:"EFI System Partition" \
-      -n 2:0:+${toString rootMB}M   -t 2:$LINUX_FS_GUID  -c 2:"Darwin ext4 Root"${lib.optionalString (rootUUID != null) " -u 2:${rootUUID}"} \
-      $img >/dev/null
-
-    read -r root_start root_size <<<"$(sfdisk -d $img | grep -i type=$LINUX_FS_GUID \
-      | sed -E 's/.*start= *([0-9]+), *size= *([0-9]+),.*/\1 \2/')"
-''}
-    read -r esp_start esp_size <<<"$(sfdisk -d $img | grep -i type=C12A7328 \
-      | sed -E 's/.*start= *([0-9]+), *size= *([0-9]+),.*/\1 \2/')"
-
-    truncate -s $((esp_size * 512)) esp.img
-    mkfs.vfat -F 32 -n EFI esp.img >/dev/null
-    mmd -i esp.img ::/EFI ::/EFI/BOOT
-${lib.optionalString (xnuLoader != null) "    mcopy -o -i esp.img ${xnuLoader}/img/EFI/BOOT/${efiBinary} ::/EFI/BOOT/${efiBinary}\n"}${lib.concatMapStrings (e: ''
-    mcopy -o -i esp.img ${e.loader}/img/EFI/BOOT/${e.efiBinary} ::/EFI/BOOT/${e.efiBinary}
-'') extraLoaders}
-    mcopy -o -i esp.img ${kc}/kernel                          ::/EFI/BOOT/kernel
-    printf '%s' ${lib.escapeShellArg bootArgs} > boot-args.txt
-    mcopy -o -i esp.img boot-args.txt                          ::/EFI/BOOT/boot-args.txt
-${lib.optionalString (legacyBoot != null) ''
-    # The minimal FAT reader uses a stable 8.3 alias and does not parse LFNs.
-    mcopy -o -i esp.img boot-args.txt                          ::/EFI/BOOT/BOOTARGS.TXT
-''}
-${lib.optionalString (grubMultiboot != null || grubEfi != null) (let
-    grubLoader = if grubMultiboot != null then grubMultiboot else grubEfi;
-  in ''
-    cat > grub.cfg <<'GRUBCFG'
-serial --unit=0 --speed=115200
-terminal_input console serial
-terminal_output console serial
-set timeout=2
-${if grubProtocol == "linux" then ''
-menuentry "PureDarwin" {
-  set gfxpayload=1024x768x32,auto
-  linux /boot/xnu-loader.bzImage
-  initrd /boot/initrd.cpio
-  boot
-}
-'' else ''
-menuentry "PureDarwin" {
-  multiboot2 /boot/xnu-loader.elf
-  module2 /EFI/BOOT/kernel /EFI/BOOT/kernel
-  module2 /EFI/BOOT/boot-args.txt /EFI/BOOT/boot-args.txt
-  boot
-}
-''}GRUBCFG
-    mmd -D s -i esp.img ::/boot ::/boot/grub 2>/dev/null || true
-    mcopy -o -i esp.img grub.cfg                               ::/boot/grub/grub.cfg
-${if grubProtocol == "linux" then ''
-    mkdir -p initrd-root/EFI/BOOT
-    cp ${kc}/kernel initrd-root/EFI/BOOT/kernel
-    cp boot-args.txt initrd-root/EFI/BOOT/boot-args.txt
-    (cd initrd-root && find EFI | sort | cpio -o -H newc --reproducible --quiet) > initrd.cpio
-    mcopy -o -i esp.img ${grubLoader}/xnu-loader.bzImage       ::/boot/xnu-loader.bzImage
-    mcopy -o -i esp.img initrd.cpio                            ::/boot/initrd.cpio
-'' else ''
-    mcopy -o -i esp.img ${grubLoader}/xnu-loader.elf           ::/boot/xnu-loader.elf
-''}${lib.optionalString (grubEfi != null) ''
-    mcopy -o -i esp.img ${grubEfi}/grubx64.efi                 ::/EFI/BOOT/BOOTX64.EFI
-''}
-'')}
-    fi
-
-    if [ "$netboot_only" -eq 1 ]; then
-      printf '%s' ${lib.escapeShellArg bootArgs} > boot-args.txt
-    fi
-    staging="$PWD/root-staging"
+  # the root filesystem as the image installs it, a store path of its own so the image can also place it in /nix/store
+  systemTree = stdenv.mkDerivation {
+    pname = "puredarwin-system-tree";
+    version = "0.1";
+    dontUnpack = true;
+    dontFixup = true;
+    installPhase = ''
+    runHook preInstall
+    staging="$out"
     mkdir -p "$staging"
 
     copyPackage() {
@@ -331,6 +240,7 @@ root:*:0:0:System Administrator:/var/root:/bin/sh
 daemon:*:1:1:System Services:/var/root:/usr/bin/false
 sshd:*:74:74:Privilege-separated SSH:/var/empty:/usr/bin/false
 messagebus:*:96:96:D-Bus Message Daemon User:/var/empty:/usr/bin/false
+_trustd:*:282:282:trustd:/var/empty:/usr/bin/false
 nobody:*:-2:-2:Unprivileged User:/var/empty:/usr/bin/false
 EOF
     # Darwin's libinfo file_module reads /etc/master.passwd when euid==0 (it is
@@ -344,15 +254,47 @@ root:*:0:0::0:0:System Administrator:/var/root:/bin/sh
 daemon:*:1:1::0:0:System Services:/var/root:/usr/bin/false
 sshd:*:74:74::0:0:Privilege-separated SSH:/var/empty:/usr/bin/false
 messagebus:*:96:96::0:0:D-Bus Message Daemon User:/var/empty:/usr/bin/false
+_trustd:*:282:282::0:0:trustd:/var/empty:/usr/bin/false
 nobody:*:-2:-2::0:0:Unprivileged User:/var/empty:/usr/bin/false
 EOF
     chmod 600 $staging/etc/master.passwd
+${lib.optionalString (defaultUser != null) ''
+    # the first person, kept the macOS way in dslocal with a SALTED-SHA512-PBKDF2 hash
+    ${python3}/bin/python3 - "$staging" ${lib.escapeShellArg defaultUser.name} ${lib.escapeShellArg (defaultUser.realName or defaultUser.name)} \
+      ${toString (defaultUser.uid or 501)} ${lib.escapeShellArg defaultUser.password} <<'PYEOF'
+import hashlib, os, plistlib, sys, uuid
+root, name, real, uid, password = sys.argv[1:6]
+node = os.path.join(root, "var/db/dslocal/nodes/Default")
+for d, mode in (("users", 0o700), ("groups", 0o755)):
+    os.makedirs(os.path.join(node, d), exist_ok=True)
+    os.chmod(os.path.join(node, d), mode)
+salt = os.urandom(32)
+entropy = hashlib.pbkdf2_hmac("sha512", password.encode(), salt, 40000, 128)
+shadow = plistlib.dumps({"SALTED-SHA512-PBKDF2": {"entropy": entropy, "salt": salt, "iterations": 40000}}, fmt=plistlib.FMT_BINARY)
+home = "/Users/" + name
+record = {"name": [name], "uid": [uid], "gid": ["20"], "realname": [real], "home": [home], "shell": ["/bin/zsh"],
+          "generateduid": [str(uuid.uuid4()).upper()], "ShadowHashData": [shadow]}
+path = os.path.join(node, "users", name + ".plist")
+with open(path, "wb") as f:
+    plistlib.dump(record, f, fmt=plistlib.FMT_XML)
+os.chmod(path, 0o600)
+with open(os.path.join(node, "users.passwd"), "w") as f:
+    f.write("%s:*:%s:20:%s:%s:/bin/zsh\n" % (name, uid, real.replace(":", " "), home))
+for d in ("", "/Desktop", "/Documents", "/Downloads", "/Library", "/Library/Preferences", "/Pictures"):
+    os.makedirs(root + home + d, exist_ok=True)
+admin = os.path.join(node, "groups", "admin.plist")
+with open(admin, "wb") as f:
+    plistlib.dump({"name": ["admin"], "gid": ["80"], "passwd": ["*"], "users": [name]}, f, fmt=plistlib.FMT_XML)
+os.chmod(admin, 0o644)
+PYEOF
+''}
 
     cat > $staging/etc/group <<'EOF'
 wheel:*:0:root
 daemon:*:1:root
 sshd:*:74:
 messagebus:*:96:
+_trustd:*:282:
 nogroup:*:-1:
 nobody:*:-2:
 staff:*:20:root
@@ -373,8 +315,8 @@ EOF
     cp ${iana-etc}/etc/services $staging/etc/services
     cp ${iana-etc}/etc/protocols $staging/etc/protocols
     cat > $staging/etc/hosts <<'EOF'
-127.0.0.1	localhost
-::1		localhost
+127.0.0.1	localhost puredarwin
+::1		localhost puredarwin
 EOF
     cat > $staging/etc/fstab <<'EOF'
 #
@@ -525,6 +467,24 @@ EOF
 </plist>
 EOF
 
+    # the kernel log saver comes from the userland build, /etc/no-dmesg-save or pdlogsave=0 turn it off
+    cat > $staging/System/Library/LaunchDaemons/org.puredarwin.dmesg-save.plist <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>org.puredarwin.dmesg-save</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/libexec/pd-dmesg-save</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+</dict>
+</plist>
+EOF
+
     cat > $staging/usr/libexec/pd-dbus-launch <<'EOF'
 #!/bin/sh
 # launchctl's system bootstrap empties /var/run at boot (empty_dir(_PATH_VARRUN)),
@@ -641,9 +601,9 @@ EOF
       chmod 755 "$staging/var/root/.config" "$staging/var/root/.config/i3"
       chmod 644 "$staging/var/root/.config/i3/config"
     fi
+    # master.passwd stays root-only, as set where it is written
     chmod 644 \
       $staging/etc/passwd \
-      $staging/etc/master.passwd \
       $staging/etc/group \
       $staging/etc/profile \
       $staging/etc/zshenv \
@@ -807,6 +767,7 @@ EOF
     else
       ln -sfn /bin/zsh "$staging/private/var/select/sh"
     fi
+    [ -e "$staging/bin/sh" ] || ln -sf zsh "$staging/bin/sh"
 
     # Scripts widely assume `#!/usr/bin/env foo` works, not just `/bin/foo`.
     ln -sf ../../bin/env "$staging/usr/bin/env"
@@ -829,11 +790,193 @@ EOF
     chmod 1777 "$staging/var/run/dbus"
 
     chmod 700  $staging/var/root
+    chmod 755  $staging/var/root/.cache
+    chmod 755  $staging/var/empty
+${lib.optionalString nixStore ''
+    # header scripts carry build-host shebangs from patchShebangs, which would pull linux bash into /nix/store
+    grep -rlZ '^#!/nix/store/' "$staging/usr/include" | xargs -0 -r sed -i '1s|^#!/nix/store/[^/]*/bin/|#!/bin/|'
+    # the tree is a self-contained root that image-minimal boots without any /nix/store, so the
+    # store paths its strings still name (compiler flags, __FILE__, config dirs) only drag build inputs in
+    for hash in $(grep -rhoa '/nix/store/[a-z0-9]\{32\}-' "$staging" | cut -c12-43 | sort -u); do
+      grep -rlZa "$hash" "$staging" | xargs -0 -r sed -i "s|$hash|eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee|g"
+    done
+''}
+    runHook postInstall
+  '';
+  };
+  # the system closure, NixOS-shaped: sw/ is the tree, the version file sits beside it
+  system = runCommand "puredarwin-system-0.1" { } ''
+    mkdir $out
+    ln -s ${systemTree} $out/sw
+    echo 0.1 > $out/puredarwin-version
+  '';
+
+  systemClosure = closureInfo { rootPaths = [ system ]; };
+
+in
+stdenv.mkDerivation {
+  pname = "puredarwin-image";
+  version = "0.1";
+
+  dontUnpack = true;
+
+  nativeBuildInputs = [ gptfdisk util-linux dosfstools mtools e2fsprogs fakeroot ]
+    ++ lib.optionals (grubProtocol == "linux") [ cpio ]
+    ++ lib.optionals (rootFsType == "hfs") [ hfsprogs libdmg-hfsplus ]
+    ++ lib.optionals (rootFsType == "apfs") [ apfsprogs libapfsrw ]
+    ++ lib.optionals nixStore [ nix ];
+
+  buildPhase = ''
+    runHook preBuild
+    export MTOOLS_SKIP_CHECK=1
+    netboot_only=${if netbootOnly then "1" else "0"}
+    LINUX_FS_GUID=0FC63DAF-8483-4772-8E79-3D69D8477DE4
+    APFS_GUID=7C3457EF-0000-11AA-AA11-00306543ECAC
+    # Apple_HFS, the type xnu-loader derives boot-uuid from (devtree.c read_hfs_uuid_from_blockio),
+    # AppleFileSystemDriver then publishes boot-uuid-media for the matching volume
+    HFS_GUID=48465300-0000-11AA-AA11-00306543ECAC
+
+    if [ "$netboot_only" -eq 0 ]; then
+    img=puredarwin.img
+    esp_sectors=$((${toString espMB} * 2048))
+    root_sectors=$((${toString rootMB} * 2048))
+${if rootFsType == "apfs" then ''
+    img_sectors=$((2048 + esp_sectors + root_sectors + 2048))
+    truncate -s $((img_sectors * 512)) $img
+    sgdisk \
+      -n 1:2048:+${toString espMB}M -t 1:EF00       -c 1:"EFI System Partition" \
+      -n 2:0:+${toString rootMB}M   -t 2:$APFS_GUID -c 2:"Darwin APFS Root" \
+      $img >/dev/null
+
+    read -r root_start root_size <<<"$(sfdisk -d $img | grep -i type=$APFS_GUID \
+      | sed -E 's/.*start= *([0-9]+), *size= *([0-9]+),.*/\1 \2/')"
+'' else if rootFsType == "hfs" then ''
+    img_sectors=$((2048 + esp_sectors + root_sectors + 2048))
+    truncate -s $((img_sectors * 512)) $img
+    sgdisk \
+      -n 1:2048:+${toString espMB}M -t 1:EF00       -c 1:"EFI System Partition" \
+      -n 2:0:+${toString rootMB}M   -t 2:$HFS_GUID  -c 2:"Darwin HFS Root" \
+      $img >/dev/null
+
+    read -r root_start root_size <<<"$(sfdisk -d $img | grep -i type=$HFS_GUID \
+      | sed -E 's/.*start= *([0-9]+), *size= *([0-9]+),.*/\1 \2/')"
+'' else ''
+    img_sectors=$((2048 + esp_sectors + root_sectors + 2048))
+    truncate -s $((img_sectors * 512)) $img
+    sgdisk \
+      -n 1:2048:+${toString espMB}M -t 1:EF00            -c 1:"EFI System Partition" \
+      -n 2:0:+${toString rootMB}M   -t 2:$LINUX_FS_GUID  -c 2:"Darwin ext4 Root"${lib.optionalString (rootUUID != null) " -u 2:${rootUUID}"} \
+      $img >/dev/null
+
+    read -r root_start root_size <<<"$(sfdisk -d $img | grep -i type=$LINUX_FS_GUID \
+      | sed -E 's/.*start= *([0-9]+), *size= *([0-9]+),.*/\1 \2/')"
+''}
+    read -r esp_start esp_size <<<"$(sfdisk -d $img | grep -i type=C12A7328 \
+      | sed -E 's/.*start= *([0-9]+), *size= *([0-9]+),.*/\1 \2/')"
+
+    truncate -s $((esp_size * 512)) esp.img
+    mkfs.vfat -F 32 -n EFI esp.img >/dev/null
+    mmd -i esp.img ::/EFI ::/EFI/BOOT
+${lib.optionalString (xnuLoader != null) "    mcopy -o -i esp.img ${xnuLoader}/img/EFI/BOOT/${efiBinary} ::/EFI/BOOT/${efiBinary}\n"}${lib.concatMapStrings (e: ''
+    mcopy -o -i esp.img ${e.loader}/img/EFI/BOOT/${e.efiBinary} ::/EFI/BOOT/${e.efiBinary}
+'') extraLoaders}
+    mcopy -o -i esp.img ${kc}/kernel                          ::/EFI/BOOT/kernel
+    printf '%s' ${lib.escapeShellArg bootArgs} > boot-args.txt
+    mcopy -o -i esp.img boot-args.txt                          ::/EFI/BOOT/boot-args.txt
+${lib.optionalString (boardDtb != null) ''
+    # the device tree and its licence texts and source note
+    mcopy -o -i esp.img ${boardDtb}/board.dtb                 ::/EFI/BOOT/board.dtb
+    mmd -i esp.img ::/EFI/BOOT/board-dtb
+    mcopy -s -o -i esp.img ${boardDtb}/SOURCE ${boardDtb}/licenses ::/EFI/BOOT/board-dtb/
+''}${lib.optionalString (legacyBoot != null) ''
+    # a stable 8.3 alias, the minimal FAT reader does not parse LFNs
+    mcopy -o -i esp.img boot-args.txt                          ::/EFI/BOOT/BOOTARGS.TXT
+''}
+${lib.optionalString (grubMultiboot != null || grubEfi != null) (let
+    grubLoader = if grubMultiboot != null then grubMultiboot else grubEfi;
+  in ''
+    cat > grub.cfg <<'GRUBCFG'
+serial --unit=0 --speed=115200
+terminal_input console serial
+terminal_output console serial
+set timeout=2
+${if grubProtocol == "linux" then ''
+menuentry "PureDarwin" {
+  set gfxpayload=1024x768x32,auto
+  linux /boot/xnu-loader.bzImage
+  initrd /boot/initrd.cpio
+  boot
+}
+'' else ''
+menuentry "PureDarwin" {
+  multiboot2 /boot/xnu-loader.elf
+  module2 /EFI/BOOT/kernel /EFI/BOOT/kernel
+  module2 /EFI/BOOT/boot-args.txt /EFI/BOOT/boot-args.txt
+  boot
+}
+''}GRUBCFG
+    mmd -D s -i esp.img ::/boot ::/boot/grub 2>/dev/null || true
+    mcopy -o -i esp.img grub.cfg                               ::/boot/grub/grub.cfg
+${if grubProtocol == "linux" then ''
+    mkdir -p initrd-root/EFI/BOOT
+    cp ${kc}/kernel initrd-root/EFI/BOOT/kernel
+    cp boot-args.txt initrd-root/EFI/BOOT/boot-args.txt
+    (cd initrd-root && find EFI | sort | cpio -o -H newc --reproducible --quiet) > initrd.cpio
+    mcopy -o -i esp.img ${grubLoader}/xnu-loader.bzImage       ::/boot/xnu-loader.bzImage
+    mcopy -o -i esp.img initrd.cpio                            ::/boot/initrd.cpio
+'' else ''
+    mcopy -o -i esp.img ${grubLoader}/xnu-loader.elf           ::/boot/xnu-loader.elf
+''}${lib.optionalString (grubEfi != null) ''
+    mcopy -o -i esp.img ${grubEfi}/grubx64.efi                 ::/EFI/BOOT/BOOTX64.EFI
+''}
+'')}
+    fi
+
+    if [ "$netboot_only" -eq 1 ]; then
+      printf '%s' ${lib.escapeShellArg bootArgs} > boot-args.txt
+    fi
+    staging="$PWD/root-staging"
+    cp -a ${systemTree} "$staging"
+    # the store strips write bits and special modes: u+w gives back the staged 644 and 755, the rest is set again
+    chmod -R u+w "$staging"
+    chmod 444  "$staging/etc/services" "$staging/etc/protocols"
+    chmod 1777 "$staging/private/tmp" "$staging/private/var/tmp" "$staging/private/tmp/.X11-unix" "$staging/var/run/dbus"
+    chmod 700  "$staging/var/root"
 ${lib.optionalString bootFilesInTree ''
     mkdir -p "$staging/usr/standalone/PureDarwin"
     cp ${xnuLoader}/img/EFI/BOOT/${efiBinary} ${kc}/kernel boot-args.txt "$staging/usr/standalone/PureDarwin/"
-''}    chmod 755  $staging/var/root/.cache
-    chmod 755  $staging/var/empty
+''}${lib.optionalString (auxLoad != [ ]) ''
+    # pdkext load-aux maps the aux KC from where macOS keeps it
+    mkdir -p "$staging/Library/KernelCollections"
+    cp ${kc}/aux.kc "$staging/Library/KernelCollections/AuxiliaryKernelExtensions.kc"
+    printf '%s\n' ${lib.escapeShellArgs auxLoad} > "$staging/etc/pdkext.load"
+''}${lib.optionalString (rootAuthorizedKeys != [ ]) ''
+    mkdir -p "$staging/var/root/.ssh"
+    printf '%s\n' ${lib.escapeShellArgs rootAuthorizedKeys} > "$staging/var/root/.ssh/authorized_keys"
+    chmod 700 "$staging/var/root/.ssh"
+    chmod 600 "$staging/var/root/.ssh/authorized_keys"
+''}${lib.optionalString nixStore ''
+    # the closure goes into /nix/store, registered so nix-store and the collector know it
+    mkdir -p "$staging/nix/store" "$staging/nix/var/nix/profiles" "$staging/run"
+    while read -r p; do
+      cp -a "$p" "$staging/nix/store/"
+    done < ${systemClosure}/store-paths
+    HOME=$TMPDIR nix-store --store "local?root=$staging" --option build-users-group "" \
+      --load-db < ${systemClosure}/registration
+
+    ln -s ${system} "$staging/nix/var/nix/profiles/system-1-link"
+    ln -s system-1-link "$staging/nix/var/nix/profiles/system"
+    ln -s /nix/var/nix/profiles/system "$staging/run/current-system"
+
+    # whole directories become links, the rest of the root stays real and writable
+    for d in usr/lib usr/bin usr/sbin usr/libexec usr/share bin sbin \
+             System/Library/Frameworks System/Library/PrivateFrameworks System/Library/CoreServices \
+             System/Library/LaunchDaemons System/Library/LaunchAgents System/Applications; do
+      [ -e "${systemTree}/$d" ] || continue
+      rm -rf "$staging/$d"
+      ln -s "/run/current-system/sw/$d" "$staging/$d"
+    done
+''}
 
 ${lib.optionalString useRamdisk ''
     # Build the netboot-style RAMDisk from the same minimal staging tree used
@@ -867,7 +1010,11 @@ FAKESCRIPT
     cat > ramdisk-debugfs.cmds <<'EOF'
 set_inode_field /var/empty mode 040755
 EOF
-    debugfs -w -f ramdisk-debugfs.cmds "$ramdisk_img" >/dev/null
+${lib.optionalString (auxLoad != [ ]) ''
+    # with SIP on the kernel maps only an aux KC carrying SF_RESTRICTED, ext4 keeps it in trusted.bsdflags
+    printf '\000\000\010\000' > restricted.bin
+    echo "ea_set -f restricted.bin /Library/KernelCollections/AuxiliaryKernelExtensions.kc trusted.bsdflags" >> ramdisk-debugfs.cmds
+''}    debugfs -w -f ramdisk-debugfs.cmds "$ramdisk_img" >/dev/null
 
     if [ "$netboot_only" -eq 0 ]; then
       mcopy -o -i esp.img "$ramdisk_img" ::/ramdisk.img
@@ -969,7 +1116,9 @@ ${lib.optionalString (rootFsType == "ext4") ''
     # not root. That breaks anything that checks for root ownership. This fixes that issue.
     fakeroot bash <<FAKESCRIPT
     chown -R 0:0 "$staging"
-    mke2fs -q -F -t ext4 \
+${lib.optionalString (defaultUser != null) ''
+    chown -R ${toString (defaultUser.uid or 501)}:20 "$staging/Users/${defaultUser.name}"
+''}    mke2fs -q -F -t ext4 \
       -b 4096 \
       -O ^orphan_file \
       -L darwin-ext4 ${lib.optionalString (rootUUID != null) "-U ${rootUUID} "}\
@@ -983,7 +1132,10 @@ FAKESCRIPT
     cat > root-debugfs.cmds <<'EOF'
 set_inode_field /var/empty mode 040755
 EOF
-    debugfs -w -f root-debugfs.cmds root.img >/dev/null
+${lib.optionalString (auxLoad != [ ]) ''
+    printf '\000\000\010\000' > restricted.bin
+    echo "ea_set -f restricted.bin /Library/KernelCollections/AuxiliaryKernelExtensions.kc trusted.bsdflags" >> root-debugfs.cmds
+''}    debugfs -w -f root-debugfs.cmds root.img >/dev/null
 
     dd if=root.img of=$img bs=512 seek=$root_start count=$root_size conv=notrunc,sparse status=none
 ''}
@@ -1033,7 +1185,11 @@ ${lib.optionalString netbootOnly ''
     cp ${kc}/kernel $out/kernel
     cp boot-args.txt $out/boot-args.txt
     cp ramdisk.img $out/ramdisk.img
-''}
+${lib.optionalString (boardDtb != null) ''
+    cp ${boardDtb}/board.dtb $out/board.dtb
+    mkdir -p $out/board-dtb
+    cp -r ${boardDtb}/SOURCE ${boardDtb}/licenses $out/board-dtb/
+''}''}
 ${lib.optionalString (!netbootOnly) ''
     cp --sparse=always puredarwin.img $out/${imageFileName}
 ''}
@@ -1042,6 +1198,8 @@ ${lib.optionalString rootfsTarball ''
 ''}
     runHook postInstall
   '';
+
+  passthru = { inherit systemTree system; };
 
   meta = with lib; {
     description = "Bootable PureDarwin GPT disk image (xnu-loader ESP + kc-tools kernel collection + ext4 BaseSystem root + APFS test container)";

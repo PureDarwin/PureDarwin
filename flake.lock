@@ -113,12 +113,25 @@
         "type": "github"
       }
     },
+    "pd-sb-key": {
+      "flake": false,
+      "locked": {
+        "path": "./nix/secureboot/no-key",
+        "type": "path"
+      },
+      "original": {
+        "path": "./nix/secureboot/no-key",
+        "type": "path"
+      },
+      "parent": []
+    },
     "root": {
       "inputs": {
         "corecrypto-src": "corecrypto-src",
         "iig-tools": "iig-tools",
         "kc-tools": "kc-tools",
         "nixpkgs": "nixpkgs_3",
+        "pd-sb-key": "pd-sb-key",
         "xnu-loader": "xnu-loader"
       }
     },

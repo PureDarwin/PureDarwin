@@ -10,9 +10,12 @@
       url = "path:./external/corecrypto";
       flake = false;
     };
+    # the MOK key pair that signs Secure Boot images, a placeholder until a build overrides it with
+    # --override-input pd-sb-key path:/path/to/keydir, see nix/secureboot/no-key/README
+    pd-sb-key = { url = "path:./nix/secureboot/no-key"; flake = false; };
   };
 
-  outputs = { self, nixpkgs, iig-tools, kc-tools, xnu-loader, corecrypto-src }:
+  outputs = { self, nixpkgs, iig-tools, kc-tools, xnu-loader, corecrypto-src, pd-sb-key }:
     let
       lib = nixpkgs.lib;
       systems = [ "x86_64-linux" "x86_64-darwin" "aarch64-linux" "aarch64-darwin" ];
@@ -236,7 +239,7 @@
           userlandBuild = (mkPureDarwinBuild {
             pname = "puredarwin-userland";
             src = userlandSource;
-            buildTargets = [ "sw_vers" "ps" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" "pdkext" "drmprobe" "sh" "gpt" ]
+            buildTargets = [ "sw_vers" "doubleagentd" "ps" "killall" "pkill" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" "pd-dmesg-save" "pdkext" "drmprobe" "sh" "gpt" ]
               # shell_cmds (+ tsort/uuencode/uudecode)
               ++ [ "basename" "chown" "dirname" "echo" "false" "getopt" "hostname" "jot" "kill" "logname" "mktemp" "nice" "nohup" "passwd" "printenv" "pwd" "renice" "seq" "shlock" "sleep" "tee" "test_cmd" "true" "tsort" "uname" "yes" "uuencode" "uudecode" ]
               # text_cmds
@@ -271,7 +274,7 @@
           userlandNoxBuild = mkPureDarwinBuild {
             pname = "puredarwin-userland-nox";
             src = userlandSource;
-            buildTargets = [ "sw_vers" "ps" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" "pdkext" "drmprobe" "sh" "gpt" ]
+            buildTargets = [ "sw_vers" "doubleagentd" "ps" "killall" "pkill" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" "pd-dmesg-save" "pdkext" "drmprobe" "sh" "gpt" ]
               ++ [ "basename" "chown" "dirname" "echo" "false" "getopt" "hostname" "jot" "kill" "logname" "mktemp" "nice" "nohup" "passwd" "printenv" "pwd" "renice" "seq" "shlock" "sleep" "tee" "test_cmd" "true" "tsort" "uname" "yes" "uuencode" "uudecode" ]
               ++ [ "banner" "cat" "colrm" "comm" "cut" "expand" "fold" "head" "lam" "look" "nl" "paste" "rev" "split" "tail" "tr" "unexpand" "uniq" "wc" ];
             enableProjects = false;
@@ -1086,8 +1089,6 @@
               waylandProtocols = waylandProtocolsBuild;
               waylandScanner = waylandScannerBuild;
               pdVirglShim = pdVirglShimBuild;
-              radeonWinsysSrc = ./nix/pkgs/mesa/radeon-puredarwin;
-              radeonAbiHeader = ./src/Kernel/Extensions/PDRadeonFramebuffer/PDRadeonRenderShared.h;
               corefoundation = coreFoundationBuild;
               iokit = iokitBuild;
               virglWinsysSrc = ./nix/pkgs/mesa/virgl-puredarwin;
@@ -1616,8 +1617,8 @@
           menubarBuild =
             pkgs.callPackage ./nix/pkgs/apps/menubar.nix {
               librsvg = pkgs.librsvg;
+              audiotoolbox = audiotoolboxBuild;
               iokit = iokitBuild;
-              iokitHeaders = iokitCFStaticBuild;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libobjc = libobjcBuild;
@@ -1641,7 +1642,6 @@
           pddecorBuild =
             pkgs.callPackage ./nix/pkgs/apps/pddecor.nix {
               iokit = iokitBuild;
-              iokitHeaders = iokitCFStaticBuild;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libobjc = libobjcBuild;
@@ -1725,12 +1725,41 @@
               mesa = mesaNoxBuild;
               src = ./src/Userspace/Finder;
             };
+          # the built-in utility apps, all built the same way with UtilityKit
+          utilityApp = args:
+            pkgs.callPackage ./nix/pkgs/apps/utility-app.nix ({
+              librsvg = pkgs.librsvg;
+              iokit = iokitBuild;
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              appkit = appkitBuild;
+              onyx2d = onyx2dBuild;
+              coretext = coretextBuild;
+              quartzcore = quartzcoreBuild;
+              coregraphics = coregraphicsBuild;
+              applicationservices = applicationservicesBuild;
+              coreservices = coreServicesBuild;
+              windowserver = windowserverBuild;
+              openglFramework = openglFrameworkNoxBuild;
+              mesa = mesaNoxBuild;
+              src = ./src/Userspace;
+            } // args);
+          textEditorBuild = utilityApp { appName = "Text Editor"; appDir = "TextEditor"; iconSvg = "texteditor.svg"; description = "PureDarwin Text Editor: plain text documents"; };
+          activityBuild = utilityApp { appName = "Activity"; appDir = "Activity"; installDir = "Applications/Utilities"; iconSvg = "activity.svg"; description = "PureDarwin Activity: processes, cores and memory"; };
+          logsBuild = utilityApp { appName = "Logs"; appDir = "Logs"; installDir = "Applications/Utilities"; iconSvg = "logs.svg"; description = "PureDarwin Logs: the kernel buffer and /var/log, followed live"; };
+          imageViewerBuild = utilityApp { appName = "Image Viewer"; appDir = "ImageViewer"; iconSvg = "imageviewer.svg"; description = "PureDarwin Image Viewer: pictures and their folder"; };
+          screenshotBuild = utilityApp { appName = "Screenshot"; appDir = "Screenshot"; installDir = "Applications/Utilities"; iconSvg = "screenshot.svg"; description = "PureDarwin Screenshot: capture the screen or a selection"; };
+          disksBuild = utilityApp { appName = "Disks"; appDir = "Disks"; installDir = "Applications/Utilities"; iconSvg = "disks.svg"; description = "PureDarwin Disks: drives, partitions and volumes"; };
+          utilityAppBuilds = [ textEditorBuild activityBuild logsBuild imageViewerBuild screenshotBuild disksBuild ];
           # PureDarwin's own system settings
           settingsBuild =
             pkgs.callPackage ./nix/pkgs/apps/settings.nix {
               librsvg = pkgs.librsvg;
+              audiotoolbox = audiotoolboxBuild;
               iokit = iokitBuild;
-              iokitHeaders = iokitCFStaticBuild;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libobjc = libobjcBuild;
@@ -1752,7 +1781,6 @@
           systemInformationBuild =
             pkgs.callPackage ./nix/pkgs/apps/system-information.nix {
               iokit = iokitBuild;
-              iokitHeaders = iokitCFStaticBuild;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libobjc = libobjcBuild;
@@ -1774,7 +1802,6 @@
           calculatorBuild =
             pkgs.callPackage ./nix/pkgs/apps/calculator.nix {
               iokit = iokitBuild;
-              iokitHeaders = iokitCFStaticBuild;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libobjc = libobjcBuild;
@@ -1796,7 +1823,6 @@
           installerBuild =
             pkgs.callPackage ./nix/pkgs/apps/installer.nix {
               iokit = iokitBuild;
-              iokitHeaders = iokitCFStaticBuild;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libobjc = libobjcBuild;
@@ -1814,15 +1840,40 @@
               mesa = mesaNoxBuild;
               src = ./src/Userspace/Installer;
             };
-          # neuswc plus the Terminal from launchd, the Wayland counterpart of startx with xterm
+          # the login screen and dsuser, local accounts kept in dslocal
+          loginwindowBuild =
+            pkgs.callPackage ./nix/pkgs/apps/loginwindow.nix {
+              iokit = iokitBuild;
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              appkit = appkitBuild;
+              onyx2d = onyx2dBuild;
+              coretext = coretextBuild;
+              quartzcore = quartzcoreBuild;
+              coregraphics = coregraphicsBuild;
+              applicationservices = applicationservicesBuild;
+              coreservices = coreServicesBuild;
+              windowserver = windowserverBuild;
+              openglFramework = openglFrameworkNoxBuild;
+              mesa = mesaNoxBuild;
+              src = ./src/Userspace/loginwindow;
+            };
+          # Argon, the desktop session: neuswc, the Dock, the menu bar and Terminal from launchd
           waylandSessionBuild =
-            pkgs.runCommand "puredarwin-wayland-session" { } ''
-              install -Dm755 ${./src/Userspace/wayland-session/pd-wayland-session} \
-                $out/usr/libexec/pd-wayland-session
-              install -Dm644 ${./src/Userspace/wayland-session/org.puredarwin.wayland-session.plist} \
-                $out/System/Library/LaunchDaemons/org.puredarwin.wayland-session.plist
+            pkgs.runCommand "puredarwin-argon-session" { } ''
+              install -Dm755 ${./src/Userspace/argon-session/argon-session} \
+                $out/usr/libexec/argon-session
+              install -Dm644 ${./src/Userspace/argon-session/org.puredarwin.argon.plist} \
+                $out/System/Library/LaunchDaemons/org.puredarwin.argon.plist
+              install -Dm755 ${./src/Userspace/argon-session/pd-user-session} \
+                $out/usr/libexec/pd-user-session
             '';
           systemFontsBuild = pkgs.callPackage ./nix/pkgs/base/system-fonts.nix { };
+          sharedMimeInfoBuild = pkgs.callPackage ./nix/pkgs/base/shared-mime-info.nix { };
+          minibrowserAppBuild = pkgs.callPackage ./nix/pkgs/apps/minibrowser-app.nix { };
           # Wayland-only image: cairo/dbus/mesa each bake an libX11 path into
           # their output unless their X11 backends are configured out.
           cairoNoxBuild =
@@ -2875,25 +2926,6 @@
               libXrandr = libXrandrSharedBuild;
               inherit (pkgs) xorgproto;
             };
-          radeonGlTestsBuild =
-            pkgs.callPackage ./nix/pkgs/gpu/radeon-gl-tests.nix {
-              inherit darwinCrossToolchain nativeLd appleSdk;
-              mesa = mesaNoxBuild;
-              libSystem = libSystemBuild;
-              corefoundation = coreFoundationBuild;
-              iokit = iokitBuild;
-              libdrmSrc = pkgs.libdrm.src;
-              vulkanHeaders = pkgs.vulkan-headers;
-            };
-          radeonTestsBuild =
-            pkgs.callPackage ./nix/pkgs/gpu/radeon-tests.nix {
-              inherit darwinCrossToolchain nativeLd appleSdk;
-              libSystem = libSystemBuild;
-              corefoundation = coreFoundationBuild;
-              iokit = iokitBuild;
-              libdrmSrc = pkgs.libdrm.src;
-              vulkanHeaders = pkgs.vulkan-headers;
-            };
           libdrmVirtgpuBuild =
             pkgs.callPackage ./nix/pkgs/gpu/libdrm-virtgpu.nix {
               inherit darwinCrossToolchain nativeLd appleSdk;
@@ -3087,6 +3119,26 @@
               openglFramework = openglFrameworkNoxBuild;
               mesa = mesaNoxBuild;
               src = ./tests/appkit-ff;
+            };
+          argonGfxTestBuild =
+            pkgs.callPackage ./nix/pkgs/apple/argon-gfx-test.nix {
+              inherit darwinCrossToolchain nativeLd appleSdk;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              appkit = appkitBuild;
+              carbon = carbonBuild;
+              onyx2d = onyx2dBuild;
+              coretext = coretextBuild;
+              quartzcore = quartzcoreBuild;
+              coregraphics = coregraphicsBuild;
+              applicationservices = applicationservicesBuild;
+              coreservices = coreServicesBuild;
+              windowserver = windowserverBuild;
+              openglFramework = openglFrameworkNoxBuild;
+              mesa = mesaNoxBuild;
+              src = ./tests/argon-gfx;
             };
           carbonBuild =
             pkgs.callPackage ./nix/pkgs/apple/carbon.nix {
@@ -3716,7 +3768,6 @@
               fontconfig = fontconfigBuild;
               freetype = freetype2Build;
               iokit = iokitBuild;
-              iokitHeaders = iokitCFStaticBuild;
               neuwld = neuwldBuild;
               mesaNox = mesaNoxBuild;
               pdsurface = pdsurfaceBuild;
@@ -3733,7 +3784,6 @@
               nativeMesonTools = nativeMesonToolsDir;
               libSystem = libSystemBuild;
               iokit = iokitBuild;
-              iokitHeaders = iokitCFStaticBuild;
               pdgopSource = ./src/Libraries/PDGOP;
               pdVirglShim = pdVirglShimBuild;
               libdrm = libdrmBuild;
@@ -3944,6 +3994,23 @@
               libSystem = libSystemBuild;
               libcxxDylib = libcxxDylibBuild;
               libcxxabiDylib = libcxxabiDylibBuild;
+            };
+          elfaotBuild = pkgs.callPackage ./nix/pkgs/apple/elfaot.nix { };
+          elfaotDarwinBuild =
+            pkgs.callPackage ./nix/pkgs/apple/elfaot-darwin.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+            };
+          elftransStageBuild =
+            pkgs.callPackage ./nix/pkgs/apple/elftrans-stage.nix {
+              elfaot = elfaotBuild;
+            };
+          elftransBuild =
+            pkgs.callPackage ./nix/pkgs/apple/elftrans.nix {
+              inherit darwinCrossToolchain nativeLd nativeMigcom;
+              libSystem = libSystemBuild;
+              elfaot = elfaotBuild;
+              elfaotDarwin = elfaotDarwinBuild;
             };
           objcTestBuild =
             pkgs.callPackage ./nix/pkgs/apple/objc-test.nix {
@@ -4275,6 +4342,11 @@
             mkArm64Build
             xvfbZlibArm64Build
             toyboxArm64Build
+            pdadbdArm64Build
+            mesaNouveauArm64Build
+            pdgltriNouveauArm64Build
+            tx1GlRootArm64Bundle
+            tx1DesktopArm64Bundle
             xzArm64Build
             fileArm64Build
             opensslArm64Build
@@ -4408,6 +4480,10 @@
             kernelArm64VirtAmpBuild
             kernelArm64T8010Build
             kernelArm64T8010DebugBuild
+            kernelArm64S8000Build
+            kernelArm64S8000DebugBuild
+            kernelArm64T8103Build
+            kernelArm64T8103DebugBuild
             kernelArm64Bcm2837Build
             kernelArm64Bcm2837DebugBuild
             kernelArm64Sun50iBuild
@@ -4440,6 +4516,11 @@
             # /usr/lib/swift and the Foundation path Xcode-built apps link
             swiftRuntimeArm64Build frameworkCompatArm64Build
           ];
+          certificatesBundleBuild =
+            pkgs.callPackage ./nix/pkgs/apple/certificates-bundle.nix {
+              src = ./src/Libraries/Security/certificates;
+            };
+          opensslThreadsBuild = opensslBuild.override { withThreads = true; };
           securityBuild =
             pkgs.callPackage ./nix/pkgs/apple/security.nix {
               inherit mkPureDarwinBuild;
@@ -4447,6 +4528,8 @@
               libobjc = libobjcBuild;
               foundation = foundationBuild;
               sqlite = sqliteBuild;
+              openssl = opensslThreadsBuild;
+              libz = libzDylibBuild;
               src = securitySource;
             };
           mkSystemConfigurationBuild = { corefoundation, libobjc, security, iokit, symptomReporter }:
@@ -4568,7 +4651,6 @@
               libSystem = libSystemBuild;
               corefoundation = coreFoundationBuild;
               iokit = iokitBuild;
-              iokitHeaders = iokitCFStaticBuild;
             };
           # Apple's SymptomReporter is a private framework with no source and
           # no SDK header; this is PureDarwin's own, recording symptoms through
@@ -5039,6 +5121,41 @@
             cp ${pkgs.linux-firmware.src}/LICENCE.nvidia $fw/LICENCE.nvidia 2>/dev/null || \
               cp ${pkgs.linux-firmware.src}/LICENSES/LICENCE.nvidia $fw/LICENCE.nvidia
           '';
+          # board device trees, built out of tree from the linux 6.14 tarball
+          dtbTegra210P2371_2180 = pkgs.callPackage ./nix/pkgs/boot/linux-dtb.nix {
+            linuxSrc = linux614Src;
+            dts = "nvidia/tegra210-p2371-2180.dts";
+            # mainline leaves the tx1's gpu disabled, only the nano's tree turns it on
+            fixups = [ { node = "/gpu@57000000"; prop = "status"; value = "okay"; } ];
+          };
+          # the gm20b slice of it for the jetson tx1's ramdisk, which has no room for the gsp images
+          nouveauFirmwareGm20b = pkgs.runCommand "puredarwin-nouveau-firmware-gm20b" { } ''
+            mkdir -p $out/Library/Firmware/nvidia
+            cp -r ${nouveauFirmware}/Library/Firmware/nvidia/gm20b $out/Library/Firmware/nvidia/
+            cp ${nouveauFirmware}/Library/Firmware/nvidia/LICENCE.nvidia $out/Library/Firmware/nvidia/
+          '';
+          # the tegra210 xusb falcon image PDTegraXUSB loads, under the same nvidia licence as gm20b
+          tegra210XusbFirmware = pkgs.runCommand "puredarwin-tegra210-xusb-firmware" { } ''
+            mkdir -p $out/Library/Firmware/nvidia/tegra210
+            cp ${pkgs.linux-firmware.src}/nvidia/tegra210/xusb.bin $out/Library/Firmware/nvidia/tegra210/
+            cp ${pkgs.linux-firmware.src}/LICENCE.nvidia $out/Library/Firmware/nvidia/LICENCE.nvidia 2>/dev/null || \
+              cp ${pkgs.linux-firmware.src}/LICENSES/LICENCE.nvidia $out/Library/Firmware/nvidia/LICENCE.nvidia
+          '';
+          # nouveau on arm64 for tegra210's gm20b, a device tree platform device, opt-in with pdnouveau=1
+          drmNouveauArm64Build = mkDrmKext [ "PDDRMnouveau" "PDDRMDri" ] {
+            pname = "puredarwin-drm-nouveau-arm64";
+            buildTargets = [ "PDDRMnouveau.kext" "PDDRMDri.kext" ];
+            enableUserspace = false;
+            installUserland = false;
+            installKernel = false;
+            installKexts = true;
+            installKextNames = [ "PDDRMnouveau.kext" "PDDRMDri.kext" ];
+            enableIOGraphicsFamily = true;
+            puredarwinArch = "arm64";
+            inherit arm64CrossToolchain;
+            extraCmakeFlags = [ "-DPD_DRMKMOD_DIR=${drmKmodNouveauSrc}" ];
+            ninjaFlags = [ "-k" "0" ];
+          };
           # i915 for gen7, gen9 and gen12+ intel graphics, attaches unless pdi915=0
           drmI915Build = mkPureDarwinBuild {
             pname = "puredarwin-drm-i915";
@@ -5117,8 +5234,11 @@
           # Image contents (see nix/image-contents.nix).
           imageContents = import ./nix/image-contents.nix {
             inherit kcGpuBuild gpuDefaultPackages;
+            tegra210Dtb = dtbTegra210P2371_2180;
+            mesaDefaultBuild = mesaGpuBuild;
             inherit
-              appkitBuild windowserverBuild applicationservicesBuild terminalBuild menubarBuild dockBuild finderBuild systemInformationBuild calculatorBuild installerBuild pddecorBuild localeDataBuild settingsBuild waylandSessionBuild
+              utilityAppBuilds
+              appkitBuild windowserverBuild applicationservicesBuild terminalBuild menubarBuild dockBuild finderBuild systemInformationBuild calculatorBuild installerBuild pddecorBuild loginwindowBuild localeDataBuild settingsBuild waylandSessionBuild
               nixPortPackages
               atspi2CoreBuild autoconfBuild automakeBuild bisonBuild bmakeBuild cairoBuild
               cairoGobjectBuild cctoolsBuild coreFoundationBuild curlBuild darwinCrossToolchain
@@ -5131,9 +5251,9 @@
               gnumakeBuild gtk3Build gtkLayerShellBuild gtk3NoxBuild gtkLayerShellNoxBuild onyx2dBuild coregraphicsBuild coretextBuild quartzcoreBuild corevideoBuild coredataBuild cgScreenDemoBuild systemFontsBuild cairoNoxBuild dbusNoxBuild pdEpollShimBuild tllistBuild fcftBuild footBuild userlandNoxBuild pangoNoxBuild netsurfNoxBuild libepoxyNoxBuild fastfetchNoxBuild harfbuzzNoxBuild atspi2CoreNoxBuild cairoGobjectNoxBuild xkbcommonNoxBuild mesaNoxBuild openglFrameworkNoxBuild mesaDemosNoxBuild librsvgNoxBuild harfbuzzBuild i3Build i3statusShimBuild iceauthBuild
               cursorThemeBuild iconThemesBuild icuCoreBuild imageExtraPackagesArm64 imageExtraPackagesArm64Nox imageExtraPackagesArm64Sg2002 splitBaseSystemArm64Sg2002 iographicsBuild iokitBuild asmjitTestArm64Build
               iomediacheckBuild ioregBuild isDarwin jsoncBuild kc-tools kernelArm64Build kernelArm64VirtBuild
-              kernelArm64VirtDebugBuild kernelArm64VirtAmpBuild kernelArm64T8010Build kernelArm64T8010DebugBuild kernelArm64Bcm2837Build kernelArm64Bcm2837DebugBuild kernelArm64Sun50iBuild kernelArm64Sun50iDebugBuild kernelArm64Sc8280xpBuild kernelArm64Sc8280xpDebugBuild kernelArm64Virt4kDebugBuild kernelArm32Bcm2835Build kernelArm32Bcm2835DebugBuild kernelArm32Bcm2835DevBuild
+              kernelArm64VirtDebugBuild kernelArm64VirtAmpBuild kernelArm64T8010Build kernelArm64T8010DebugBuild kernelArm64S8000Build kernelArm64S8000DebugBuild kernelArm64T8103Build kernelArm64T8103DebugBuild kernelArm64Bcm2837Build kernelArm64Bcm2837DebugBuild kernelArm64Sun50iBuild kernelArm64Sun50iDebugBuild kernelArm64Sc8280xpBuild kernelArm64Sc8280xpDebugBuild kernelArm64Virt4kDebugBuild kernelArm32Bcm2835Build kernelArm32Bcm2835DebugBuild kernelArm32Bcm2835DevBuild
               kextsArm32Bcm2835Build compilerRtArmv6Build
-              kernelBuild kernelDebugBuild kernelSource kextsArm64Build drmMsmArm64Build kextsBuild
+              kernelBuild kernelDebugBuild kernelSource kextsArm64Build drmMsmArm64Build kextsBuild drmNouveauArm64Build nouveauFirmwareGm20b tegra210XusbFirmware tx1GlRootArm64Bundle tx1DesktopArm64Bundle pdadbdArm64Build sharedMimeInfoBuild certificatesBundleBuild libdrmAmdgpuBuild libelfBuild
               launchctlBuild launchdBuild lib libSystemBuild libdrmBuild libXftBuild libapfsrwBuild libcssBuild waylandBuild waylandProtocolsBuild neuwldBuild neuswcBuild wlrootsBuild swayBuild wlrootsNoxBuild swayNoxBuild
               pdsurfaceBuild libgbmBuild libcurlDylibBuild libcxxDylibBuild libcxxTestBuild libcxxabiDylibBuild libdisplayInfoBuild
               libdomBuild libepoxyBuild libevBuild libffiBuild libhubbubBuild libiconvArm64Build
@@ -5248,11 +5368,25 @@
             vulkan-tools = vulkanToolsBuild;
             llvm-cross = llvmCrossBuild;
             compiler-rt = compilerRtBuild;
+            debugserver = pkgs.callPackage ./nix/pkgs/apps/debugserver.nix {
+              inherit darwinCrossToolchain nativeLd nativeMigcom;
+              libSystem = libSystemBuild;
+              libcxxDylib = libcxxDylibBuild;
+              libcxxabiDylib = libcxxabiDylibBuild;
+              corefoundation = coreFoundationBuild;
+              clang = pkgs.llvmPackages_21.clang-unwrapped;
+              llvmSrc = pkgs.llvmPackages_21.libllvm.monorepoSrc;
+              llvmVersion = pkgs.llvmPackages_21.llvm.version;
+            };
             mingw-aarch64-cc = mingwAarch64.cc;
             mingw-arm64ec-cc = mingwAarch64.arm64ecCc;
             fex-wow64 = fexWow64Build;
             mingw-aarch64-crt = mingwAarch64.mingw;
             asmjit-test = asmjitTestBuild;
+            elftrans = elftransBuild;
+            elftrans-stage = elftransStageBuild;
+            elfaot = elfaotBuild;
+            elfaot-darwin = elfaotDarwinBuild;
             clang = clangCrossBuild;
             kc-tools-guest = kcToolsGuestBuild;
             libgpg-error = libgpgErrorBuild;
@@ -5281,10 +5415,17 @@
             finder = finderBuild;
             system-information = systemInformationBuild;
             calculator = calculatorBuild;
+            text-editor = textEditorBuild;
+            activity = activityBuild;
+            logs = logsBuild;
+            image-viewer = imageViewerBuild;
+            screenshot = screenshotBuild;
+            disks = disksBuild;
             installer = installerBuild;
             pddecor = pddecorBuild;
             settings = settingsBuild;
-            wayland-session = waylandSessionBuild;
+            loginwindow = loginwindowBuild;
+            argon-session = waylandSessionBuild;
           };
           arm64Packages = {
             libSystem-armv6 = arm64.libSystemArmv6Build;
@@ -5305,6 +5446,7 @@
             kexts-arm32-bcm2835 = arm64.kextsArm32Bcm2835Build;
             zlib-arm64 = xvfbZlibArm64Build;
             toybox-arm64 = toyboxArm64Build;
+            pdadbd-arm64 = pdadbdArm64Build;
             xz-arm64 = xzArm64Build;
             file-arm64 = fileArm64Build;
             openssl-arm64 = opensslArm64Build;
@@ -5358,12 +5500,11 @@
             libdrm-arm64 = libdrmArm64Build;
             libdrm-dri-arm64 = libdrmDriArm64Build;
             libdrm-pdpvr-arm64 = libdrmPdpvrArm64Build;
-            radeon-gl-tests = radeonGlTestsBuild;
-            radeon-tests = radeonTestsBuild;
             libdrm-virtgpu = libdrmVirtgpuBuild;
             mesa-venus = mesaVenusBuild;
             venus-tests = venusTestsBuild;
             mesa-venus-wsi = mesaVenusWsiBuild;
+            mesa-venus-wayland = mesaVenusWaylandBuild;
             glfw-pd = glfwPdBuild;
             metal-pd = metalPdBuild;
             metal-objc = metalObjcPdBuild;
@@ -5379,6 +5520,7 @@
             framework-compat = frameworkCompatBuild;
             cocoa = cocoaBuild;
             app-frameworks = appFrameworksBuild;
+            certificates-bundle = certificatesBundleBuild;
             frameworks-ff-tests = frameworksFfTestsBuild;
             cg-ff-tests = cgFfTestsBuild;
             audiotoolbox = audiotoolboxBuild;
@@ -5390,6 +5532,7 @@
             coreaudiod = coreaudiodBuild;
             carbon = carbonBuild;
             akff-test = akffTestBuild;
+            argon-gfx-test = argonGfxTestBuild;
             iosurface = iosurfaceBuild;
             iosurface-tests = iosurfaceTestsBuild;
             mesa-pvr-native-tools = mesaPvrNativeToolsBuild;
@@ -5413,6 +5556,8 @@
             calculator-msm-arm64 = calculatorMsmArm64Build;
             argon-desktop-msm-arm64 = argonDesktopMsmArm64Bundle;
             pdgltri-msm-arm64 = pdgltriMsmArm64Build;
+            mesa-nouveau-arm64 = mesaNouveauArm64Build;
+            pdgltri-nouveau-arm64 = pdgltriNouveauArm64Build;
             vulkan-loader-arm64 = vulkanLoaderArm64Build;
             pdvktri-arm64 = pdvktriArm64Build;
             pdvkspin-arm64 = pdvkspinArm64Build;
@@ -5471,6 +5616,7 @@
             coreFoundation-arm64 = coreFoundationArm64Build;
             i3statusShim-arm64 = i3statusShimArm64Build;
             icuCore-arm64 = icuCoreArm64Build;
+            iokit = iokitBuild;
             iokit-arm64 = iokitArm64Build;
             libcxxDylib-arm64 = libcxxDylibArm64Build;
             libcxxabiDylib-arm64 = libcxxabiDylibArm64Build;
@@ -5501,6 +5647,9 @@
             gdkPixbuf-arm64 = gdkPixbufArm64Build;
             git-arm64 = gitArm64Build;
             gtk3-arm64 = gtk3Arm64Build;
+            gtk3-nox = gtk3NoxBuild;
+            shared-mime-info = sharedMimeInfoBuild;
+            minibrowser-app = minibrowserAppBuild;
             harfbuzz-arm64 = harfbuzzArm64Build;
             i3-arm64 = i3Arm64Build;
             ioreg-arm64 = ioregArm64Build;
@@ -5623,7 +5772,6 @@
             kexts = drmAmdgpuKexts;
             kcTools = kc-tools.packages.${system}.default;
             auxKexts = [ "PDDRMamdgpu.kext" ];
-            excludeKexts = [ "PDAmdGPU.kext" ];
           };
           amdgpuAuxFiles = pkgs.runCommand "puredarwin-amdgpu-aux" { } ''
             mkdir -p $out/Library/KernelCollections
@@ -5708,7 +5856,6 @@
             kexts = drmRadeonKexts;
             kcTools = kc-tools.packages.${system}.default;
             auxKexts = [ "PDDRMradeon.kext" ];
-            excludeKexts = [ "PDAmdGPU.kext" ];
           };
           radeonAuxFiles = pkgs.runCommand "puredarwin-radeon-aux" { } ''
             mkdir -p $out/Library/KernelCollections
@@ -5860,7 +6007,6 @@
             kexts = drmGpuKexts;
             kcTools = kc-tools.packages.${system}.default;
             auxKexts = [ "PDDRMamdgpu.kext" "PDDRMi915.kext" "PDDRMnouveau.kext" "PDFBSDrtwn.kext" "PDFBSDrun.kext" "PDFBSDix.kext" "PDSerialHID.kext" ];
-            excludeKexts = [ "PDAmdGPU.kext" ];
           };
           # what every desktop image carries for the drm drivers: the combined aux KC and firmware
           gpuDefaultPackages = [ gpuAuxFiles (mkAmdgpuFirmware [ "granite-ridge" "mendocino" "navi21" "navi22" "navi23" "navi24" "navi31" "navi32" "navi33" "raven" "renoir" "rembrandt" "kaveri" "kabini" "mullins" "polaris10" "polaris11" "polaris12" "vegam" ]) i915Firmware ];
@@ -5883,11 +6029,57 @@
             rootMB = old.rootMB + 600;
             bootArgs = "-v debug=0x210 -nogzalloc_mode keepsyms=1 gopconsole=1 -noprogress csr-active-config=0x3 fbsdkpi_debug=1 pdnouveau=1";
           });
+          # Fedora's Microsoft-signed shim and the step that turns an image into its Secure Boot twin
+          shimBuild = pkgs.callPackage ./nix/pkgs/boot/shim.nix { };
+          shimIa32Build = pkgs.callPackage ./nix/pkgs/boot/shim-ia32.nix { };
+          mkSecureBootImage = image: pkgs.callPackage ./nix/lib/secureboot.nix { shim = shimBuild; shimIa32 = shimIa32Build; } {
+            inherit image;
+            key = pd-sb-key;
+          };
           # the combined gpu image with the BIOS loader in the MBR
           imageGpuLegacyBuild = imageGpuBuild.override {
             legacyBoot = xnu-loader.packages.${system}.legacy-boot.override { stage2Lba = 34; };
             imageFileName = "puredarwin-gpu-legacy.img";
           };
+          # iwlwifi asks for bare names, the kext also looks in /Library/Firmware/iwlwifi.
+          # the newest three api versions of each family the matched cards use, plus pnvm
+          iwlwifiFirmwareBuild = pkgs.runCommand "puredarwin-iwlwifi-firmware" { } ''
+            fw=$out/Library/Firmware/iwlwifi
+            mkdir -p $fw
+            src=${pkgs.linux-firmware}/lib/firmware
+            for fam in 8265 9000-pu-b0-jf-b0 9260-th-b0-jf-b0 cc-a0 Qu-b0-hr-b0 Qu-b0-jf-b0 \
+                Qu-c0-hr-b0 Qu-c0-jf-b0 QuZ-a0-hr-b0 QuZ-a0-jf-b0 ty-a0-gf-a0 so-a0-gf-a0 \
+                so-a0-gf4-a0 bz-b0-fm-c0 gl-c0-fm-c0; do
+              for f in $(ls $src | grep -E "^iwlwifi-$fam-c?[0-9]+\.ucode(\.zst|\.xz)?$" | sort -V | tail -3) \
+                  $(ls $src | grep -E "^iwlwifi-$fam\.pnvm(\.zst|\.xz)?$"); do
+                case "$f" in
+                  *.zst) ${pkgs.zstd}/bin/zstd -dqf "$src/$f" -o "$fw/''${f%.zst}" ;;
+                  *.xz) ${pkgs.xz}/bin/xz -dc "$src/$f" > "$fw/''${f%.xz}" ;;
+                  *) cp -L "$src/$f" "$fw/" ;;
+                esac
+              done
+            done
+            cp ${pkgs.linux-firmware.src}/LICENSES/LICENCE.iwlwifi_firmware $fw/LICENCE.iwlwifi_firmware
+          '';
+          # intel wifi in the auxiliary KC, the boot KC has no room left under the loader's 64 MB
+          kcIwlwifiBuild = pkgs.callPackage ./nix/pkgs/toolchain/kc.nix {
+            kernel = kernelBuild;
+            inherit kernelSource;
+            kexts = kextsBuild;
+            kcTools = kc-tools.packages.${system}.default;
+            auxKexts = [ "PDFBSDiwlwifi.kext" ];
+          };
+          iwlwifiAuxFiles = pkgs.runCommand "puredarwin-iwlwifi-aux" { } ''
+            mkdir -p $out/Library/KernelCollections
+            cp ${kcIwlwifiBuild}/aux.kc $out/Library/KernelCollections/AuxiliaryKernelExtensions.kc
+          '';
+          # intel wifi bring-up: the wayland minimal desktop, pdkext loads the aux KC, driver logs on serial
+          imageIwlwifiBuild = linuxPackages.image-wayland-minimal.override (old: {
+            kc = kcIwlwifiBuild;
+            extraPackages = old.extraPackages ++ [ userlandBuild iwlwifiAuxFiles iwlwifiFirmwareBuild ];
+            imageFileName = "puredarwin-iwlwifi.img";
+            bootArgs = old.bootArgs + " csr-active-config=0x3 serial=3 fbsdkpi_debug=1";
+          });
           # every amdgpu firmware file linux-firmware has
           imageAmdgpuAllFwBuild = imageAmdgpuBuild.override (old: {
             extraPackages = old.extraPackages ++ [ (mkAmdgpuFirmware "all") ];
@@ -6001,11 +6193,15 @@
           });
         in {
           packages = {
+            iovirtiogpu-kext = kextBuilds.IOVirtIOGPU;
             apple-sdk = appleSdk;
             cg-screen-demo = cgScreenDemoBuild;
             drm-kmod-src = drmKmodSrc;
             drm-amdgpu = drmAmdgpuBuild;
             drm-msm-arm64 = drmMsmArm64Build;
+            drm-nouveau-arm64 = drmNouveauArm64Build;
+            nouveau-firmware-gm20b = nouveauFirmwareGm20b;
+            dtb-tegra210-p2371-2180 = dtbTegra210P2371_2180;
             libdrm-amdgpu = libdrmAmdgpuBuild;
             libelf = libelfBuild;
             mesa-amdgpu = mesaAmdgpuBuild;
@@ -6032,9 +6228,11 @@
             kc-i915 = kcI915Build;
             i915-firmware = i915Firmware;
             image-i915 = imageI915Build;
+            image-iwlwifi = imageIwlwifiBuild;
             image-i915-legacy = imageI915LegacyBuild;
             kc-gpu = kcGpuBuild;
             image-gpu = imageGpuBuild;
+            image-gpu-sb = mkSecureBootImage imageGpuBuild;
             image-gpu-legacy = imageGpuLegacyBuild;
             amdgpu-firmware-default = mkAmdgpuFirmware [ "granite-ridge" "mendocino" "navi21" "navi22" "navi23" "navi24" "renoir" "rembrandt" ];
             amdgpu-firmware-all = mkAmdgpuFirmware "all";
