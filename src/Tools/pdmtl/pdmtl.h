@@ -99,10 +99,13 @@ void pdmtl_fill(const struct PDDrawTex *t, const float rgba[4]);
 #define PDMTL_CLEAR_STENCIL 2
 void pdmtl_fill_depth(const struct PDDrawTex *t, float depth, unsigned stencil, int which);
 
-// resident resources on the Vulkan executor (vk.h): callers then mark texture bytes they write (pdmtl_dirty, while
-// buffers are compared by content) and bring GPU-written bytes back before reading them (pdmtl_sync)
+// resident resources on the Vulkan executor (vk.h), callers mark texture writes and managed buffer ranges
+// shared buffers use page faults or content hashes, and a sync comes before reading GPU-written bytes
 void pdmtl_resident(int on);
 void pdmtl_dirty(uint32_t off, uint32_t len);
+// managed buffers upload ranges reported by didModifyRange:
+void pdmtl_managed(uint32_t off, uint32_t len, int on);
+void pdmtl_modified(uint32_t off, uint32_t len);
 void pdmtl_sync(uint32_t off, uint32_t len);
 void pdmtl_sync_all(void);
 // the end of a command buffer: its batch is submitted, and buffers the GPU wrote come back

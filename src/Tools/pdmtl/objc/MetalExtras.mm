@@ -1,6 +1,7 @@
 // Metal API that darling-metal lacks, as categories on its classes. Debug groups and signposts only label work for
 // capture tools, which PD has none of. A command buffer runs in commit order, so enqueue has nothing to reserve
 #import <Metal/MTLBlitCommandEncoderInternal.h>
+#import <Metal/MTLFunctionConstantValues.h>
 #import <Metal/MTLCommandBufferInternal.h>
 #import <Metal/MTLCommandQueueInternal.h>
 #import <Metal/MTLComputeCommandEncoderInternal.h>
@@ -228,15 +229,12 @@ MTL_EXTERN NSString *const MTLCommonCounterTimestamp = @"GPUTimestamp";
 }
 @end
 
-// values for a function's constants, by index or name, each kept as its bytes
-@interface MTLFunctionConstantValues : NSObject <NSCopying> {
+// values for a function's constants, by index or name, each kept as its bytes (the public interface is in
+// Metal/MTLFunctionConstantValues.h)
+@interface MTLFunctionConstantValues () {
 @public
   NSMutableDictionary *_byIndex, *_byName;
 }
-- (void)setConstantValue:(const void *)value type:(NSUInteger)type atIndex:(NSUInteger)index;
-- (void)setConstantValues:(const void *)values type:(NSUInteger)type withRange:(NSRange)range;
-- (void)setConstantValue:(const void *)value type:(NSUInteger)type withName:(NSString *)name;
-- (void)reset;
 @end
 
 // bytes of one value of an MTLDataType: scalars and vectors (Apple's numbering), 0 for types constants cannot have
@@ -273,16 +271,16 @@ static size_t constantBytes(NSUInteger type) {
   [_byName release];
   [super dealloc];
 }
-- (void)setConstantValue:(const void *)value type:(NSUInteger)type atIndex:(NSUInteger)index {
+- (void)setConstantValue:(const void *)value type:(MTLDataType)type atIndex:(NSUInteger)index {
   size_t n = constantBytes(type);
   _byIndex[@(index)] = @[ @(type), [NSData dataWithBytes:value length:n ? n : 4] ];
 }
-- (void)setConstantValues:(const void *)values type:(NSUInteger)type withRange:(NSRange)range {
+- (void)setConstantValues:(const void *)values type:(MTLDataType)type withRange:(NSRange)range {
   size_t n = constantBytes(type) ? constantBytes(type) : 4;
   for (NSUInteger i = 0; i < range.length; i++)
     [self setConstantValue:(const uint8_t *)values + i * n type:type atIndex:range.location + i];
 }
-- (void)setConstantValue:(const void *)value type:(NSUInteger)type withName:(NSString *)name {
+- (void)setConstantValue:(const void *)value type:(MTLDataType)type withName:(NSString *)name {
   size_t n = constantBytes(type);
   _byName[name] = @[ @(type), [NSData dataWithBytes:value length:n ? n : 4] ];
 }
@@ -678,9 +676,13 @@ PD_FENCES(MTLRenderCommandEncoderInternal)
 
 // what the device can do: the Vulkan executor's limits, and no for features it has no path for. Timestamps are the
 // CPU's clock on both sides
+extern "C" int pd_vk_enabled(void) __attribute__((weak_import));
+
 @implementation MTLDeviceInternal (PDLimits)
+// no on the Vulkan executor: its GPU memory is apart from the arena, so MoltenVK picks managed storage and names
+// what it writes with didModifyRange:, and only those bytes upload. the CPU path reads the arena itself
 - (BOOL)hasUnifiedMemory {
-  return YES;
+  return !(pd_vk_enabled && pd_vk_enabled());
 }
 // what MoltenVK asks of a device while it sets up (seen in its message log on a Mac): the executor filters 32 bit
 // floats linearly, resolves 32 bit formats by copying and has the BC formats in its table

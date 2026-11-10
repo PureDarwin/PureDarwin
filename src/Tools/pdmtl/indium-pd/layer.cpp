@@ -8,8 +8,25 @@ namespace IndiumKit {
 };
 
 namespace IndiumPD {
-	Drawable::Drawable(std::shared_ptr<Device> device, struct pdmtl_drawable *drawable): _device(device), _drawable(drawable) {
+	Drawable::Drawable(std::shared_ptr<Device> device, struct pdmtl_drawable *drawable, std::shared_ptr<Flight> flight):
+		_device(device), _drawable(drawable), _flight(std::move(flight)) {
 		_texture = std::make_shared<Texture>(device, drawable);
+	}
+
+	Drawable::~Drawable() {
+		land();
+	}
+
+	// presented or dropped: the layer may hand out another
+	void Drawable::land() {
+		if (!_flight)
+			return;
+		{
+			std::lock_guard<std::mutex> lock(_flight->mu);
+			_flight->n--;
+		}
+		_flight->cv.notify_all();
+		_flight.reset();
 	}
 
 	void Drawable::present() {
@@ -18,7 +35,10 @@ namespace IndiumPD {
 		if (_presented)
 			return;
 		_presented = true;
-		if (pdmtl_present(_drawable)) {
+		int failed = pdmtl_present(_drawable);
+
+		land();
+		if (failed) {
 			static unsigned reported;
 			if (reported++ < 8) fprintf(stderr, "indium-pd: frame presentation failed\n");
 			return;
@@ -29,26 +49,39 @@ namespace IndiumPD {
 
 	class Layer: public IndiumKit::Layer {
 	public:
-		Layer(struct pdmtl_window *win, std::shared_ptr<Device> device): _win(win), _device(device) {}
+		Layer(struct pdmtl_window *win, std::shared_ptr<Device> device): _win(win), _device(device) {
+			pdmtl_window_set_drain(win, [](void *d) { static_cast<Device *>(d)->waitIdle(); }, device.get());
+		}
 		// a present still queued on the device thread uses the swapchain
 		~Layer() override {
 			_device->waitIdle();
 			pdmtl_window_destroy(_win);
 		}
 
-		// one drawable in flight: the executor and the presenter share one queue and one lent image
+		// zero-copy: two drawables in flight, the app encodes the next frame while the device thread draws and
+		// presents the last. Copy mode shares one staging path and waits for the device to go idle
 		std::shared_ptr<IndiumKit::Drawable> nextDrawable() override {
 			struct pdmtl_drawable *d;
 
 			uint64_t t0 = profiling() ? nowUs() : 0, t1;
 
-			_device->waitIdle();
+			if (pdmtl_window_zero_copy(_win)) {
+				std::unique_lock<std::mutex> lock(_flight->mu);
+
+				_flight->cv.wait(lock, [this] { return _flight->n < 2; });
+			} else {
+				_device->waitIdle();
+			}
 			t1 = t0 ? nowUs() : 0;
 			if (!(d = pdmtl_next_drawable(_win)))
 				return nullptr;
 			if (t0)
 				profileAcquire(t1 - t0, nowUs() - t1);
-			return std::make_shared<Drawable>(_device, d);
+			{
+				std::lock_guard<std::mutex> lock(_flight->mu);
+				_flight->n++;
+			}
+			return std::make_shared<Drawable>(_device, d, _flight);
 		}
 
 		// the swapchain is BGRA8Unorm or BGRA8Unorm_sRGB, other formats keep BGRA8Unorm
@@ -62,6 +95,7 @@ namespace IndiumPD {
 	private:
 		struct pdmtl_window *_win;
 		std::shared_ptr<Device> _device;
+		std::shared_ptr<Flight> _flight = std::make_shared<Flight>();
 		bool _srgb = false;
 	};
 };

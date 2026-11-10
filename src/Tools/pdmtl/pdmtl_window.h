@@ -54,6 +54,9 @@ int pdmtl_window_zero_copy(const struct pdmtl_window *win);
 // with the next drawable
 void pdmtl_window_set_srgb(struct pdmtl_window *win, int srgb);
 
+// what empties the device's queue: run before the swapchain is rebuilt while frames are in flight
+void pdmtl_window_set_drain(struct pdmtl_window *win, void (*drain)(void *), void *ctx);
+
 // waits for a swapchain image, 0 when the window is gone
 struct pdmtl_drawable *pdmtl_next_drawable(struct pdmtl_window *win);
 

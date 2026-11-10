@@ -52,14 +52,16 @@ namespace IndiumPD {
 
 	class Buffer: public Indium::Buffer {
 	public:
-		Buffer(std::shared_ptr<Device> device, size_t length);
+		// managed: 1 managed storage, 2 private, 0 shared
+		Buffer(std::shared_ptr<Device> device, size_t length, int managed = 0);
 		// a placed buffer: length bytes at arena offset off, inside memory that backing keeps
 		Buffer(std::shared_ptr<Device> device, size_t length, uint32_t off, std::shared_ptr<void> backing);
 		~Buffer() override;
 		std::shared_ptr<Indium::Device> device() override;
 		size_t length() const override { return _length; }
 		void *contents() override;
-		void didModifyRange(Indium::Range<size_t>) override {}
+		// managed storage: what the app wrote, the only bytes the GPU executor takes as changed
+		void didModifyRange(Indium::Range<size_t> range) override;
 		uint64_t gpuAddress() override { return _off; }
 		uint32_t offset() const { return _off; }
 
@@ -68,6 +70,7 @@ namespace IndiumPD {
 		size_t _length;
 		uint32_t _off;
 		bool _owned = true;
+		int _managed = 0;
 		std::shared_ptr<void> _backing;
 	};
 
@@ -320,9 +323,17 @@ namespace IndiumPD {
 	void runDraw(struct PDDrawRequest &r);
 	void runCompute(struct PDComputeRequest &r);
 
+	// the drawables a layer has handed out and not yet presented
+	struct Flight {
+		std::mutex mu;
+		std::condition_variable cv;
+		int n = 0;
+	};
+
 	class Drawable: public IndiumKit::Drawable {
 	public:
-		Drawable(std::shared_ptr<Device> device, struct pdmtl_drawable *drawable);
+		Drawable(std::shared_ptr<Device> device, struct pdmtl_drawable *drawable, std::shared_ptr<Flight> flight = nullptr);
+		~Drawable() override;
 		std::shared_ptr<Indium::Texture> texture() override { return _texture; }
 		// on the device's thread when a command buffer presents it, else right away
 		void present() override;
@@ -333,5 +344,8 @@ namespace IndiumPD {
 		std::shared_ptr<Texture> _texture;
 		struct pdmtl_drawable *_drawable;
 		bool _presented = false;
+		std::shared_ptr<Flight> _flight;
+
+		void land();
 	};
 };

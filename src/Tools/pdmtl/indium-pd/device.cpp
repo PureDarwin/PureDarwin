@@ -67,21 +67,19 @@ namespace Indium {
 		}
 		IndiumPD::heap.init(arenaBytes - ((size_t)64 << 20));
 
-		// a window system's extensions mean presenting: the executor's device is the presenter's
-		if (count && !(getenv("AIRJITD_OPENGL") && strcmp(getenv("AIRJITD_OPENGL"),"0"))) {
+		// a window system's extensions mean presenting, which is always through the executor's Vulkan device
+		if (count) {
 			pd_vk_want_extensions(extensions, (unsigned)count, swapchain, 1);
 			if (!pd_vk_start(&h)) {
 				globalInstance = (VkInstance)h.instance;
 				globalGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)h.gipa;
-			}
-			// resources stay on the executor's device between jobs (PDMTL_RESIDENT=0: the per-job path)
-			if (!getenv("PDMTL_RESIDENT") || strcmp(getenv("PDMTL_RESIDENT"), "0"))
-				pdmtl_resident(1);
-			else
+			} else {
 				fprintf(stderr, "indium-pd: no Vulkan to present with: %s\n", pd_vk_reason());
+			}
 		}
-        if (getenv("AIRJITD_OPENGL") && strcmp(getenv("AIRJITD_OPENGL"),"0") &&
-            (!getenv("PDMTL_RESIDENT") || strcmp(getenv("PDMTL_RESIDENT"),"0"))) pdmtl_resident(1);
+		// resources stay on the executor's device between jobs (PDMTL_RESIDENT=0: the per-job path)
+		if (!getenv("PDMTL_RESIDENT") || strcmp(getenv("PDMTL_RESIDENT"), "0"))
+			pdmtl_resident(1);
 	}
 
 	void init(const char **extensions, size_t count, bool) {
@@ -99,6 +97,8 @@ namespace Indium {
 		static std::weak_ptr<IndiumPD::Device> one;
 		auto d = one.lock();
 
+		// like MTLCreateSystemDefaultDevice the GPU comes up with the device, so a window can present with it
+		ensureStarted();
 		if (!d)
 			one = d = std::make_shared<IndiumPD::Device>();
 		return d;
@@ -247,17 +247,28 @@ namespace IndiumPD {
 		return (height + b - 1) / b;
 	}
 
-	Buffer::Buffer(std::shared_ptr<Device> device, size_t length): _device(device), _length(length) {
+	Buffer::Buffer(std::shared_ptr<Device> device, size_t length, int managed): _device(device), _length(length), _managed(managed) {
 		_off = heap.alloc(length);
 		memset(pdmtl_arena() + _off, 0, length);
+		if (_managed)
+			pdmtl_managed(_off, (uint32_t)length, _managed);
+		pdmtl_modified(_off, (uint32_t)length);
 	}
 
 	Buffer::Buffer(std::shared_ptr<Device> device, size_t length, uint32_t off, std::shared_ptr<void> backing):
 		_device(device), _length(length), _off(off), _owned(false), _backing(std::move(backing)) {}
 
 	Buffer::~Buffer() {
+		if (_managed)
+			pdmtl_managed(_off, (uint32_t)_length, 0);
 		if (_owned)
 			heap.free(_off);
+	}
+
+	void Buffer::didModifyRange(Indium::Range<size_t> range) {
+		if (range.start >= _length)
+			return;
+		pdmtl_modified(_off + (uint32_t)range.start, (uint32_t)std::min(range.length, _length - range.start));
 	}
 
 	std::shared_ptr<Indium::Device> Buffer::device() {
@@ -569,6 +580,17 @@ namespace IndiumPD {
 		                                  pdmtl_fn_specialize(fn, c.data(), (unsigned)c.size()), name);
 	}
 
+	std::vector<std::string> functionNames(std::shared_ptr<Indium::Library> library) {
+		auto l = std::dynamic_pointer_cast<Library>(library);
+		std::vector<std::string> out;
+
+		if (!l)
+			return out;
+		for (unsigned i = 0; i < pdmtl_lib_count(l->lib()); i++)
+			out.push_back(pdmtl_lib_name(l->lib(), i));
+		return out;
+	}
+
 	std::shared_ptr<Indium::Device> Library::device() {
 		return _device.lock();
 	}
@@ -650,16 +672,27 @@ namespace IndiumPD {
 		return std::make_shared<ComputePipelineState>(shared_from_this(), f);
 	}
 
-	std::shared_ptr<Indium::Buffer> Device::newBuffer(size_t length, Indium::ResourceOptions) {
-		Indium::ensureStarted();
-		return std::make_shared<Buffer>(shared_from_this(), length);
+	// managed and private buffers change only where reported (didModifyRange, blits, jobs), never hashed: 1 managed,
+	// 2 private (the CPU never reads it either, what the GPU writes stays there), 0 shared
+	static int isManaged(Indium::ResourceOptions o) {
+		size_t mode = (size_t)o & ((size_t)0xf << 4);
+
+		if (mode == (size_t)Indium::ResourceOptions::StorageModeManaged)
+			return 1;
+		return mode == (size_t)Indium::ResourceOptions::StorageModePrivate ? 2 : 0;
 	}
 
-	std::shared_ptr<Indium::Buffer> Device::newBuffer(const void *pointer, size_t length, Indium::ResourceOptions) {
+	std::shared_ptr<Indium::Buffer> Device::newBuffer(size_t length, Indium::ResourceOptions options) {
 		Indium::ensureStarted();
-		auto b = std::make_shared<Buffer>(shared_from_this(), length);
+		return std::make_shared<Buffer>(shared_from_this(), length, isManaged(options));
+	}
+
+	std::shared_ptr<Indium::Buffer> Device::newBuffer(const void *pointer, size_t length, Indium::ResourceOptions options) {
+		Indium::ensureStarted();
+		auto b = std::make_shared<Buffer>(shared_from_this(), length, isManaged(options));
 
 		memcpy(b->contents(), pointer, length);
+		pdmtl_modified(b->offset(), (uint32_t)length);
 		return b;
 	}
 
@@ -734,8 +767,7 @@ namespace IndiumPD {
 			cb.reset();
 			lock.lock();
 			_busy = false;
-			if (_queue.empty())
-				_idle.notify_all();
+			_idle.notify_all();
 		}
 	}
 

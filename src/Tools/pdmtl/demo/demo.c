@@ -1,5 +1,5 @@
 // demo [-l LIB] [-s SECONDS] [-w W -h H]: an Apple-compiled metallib drawn into a pdmtl window, Esc or q
-// quits. AIRJITD_VULKAN=1 runs the Vulkan executor, PDMTL_PRESENT=copy copies instead of drawing in place
+// quits. AIRJITD_BACKEND=vk|gl|cpu picks the executor, PDMTL_PRESENT=copy copies instead of drawing in place
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -57,8 +57,7 @@ int main(int argc, char **argv) {
     return 4;
   }
   ub = pdmtl_new_buffer(&u, sizeof(u));
-  mode = !getenv("AIRJITD_VULKAN") ? "cpu" : pdmtl_window_zero_copy(win) ? "vulkan-zero-copy" : "vulkan-copy";
-  printf("demo: %s, %s\n", mode, libpath);
+  mode = "cpu";
 
   t0 = tlast = now_s();
   while (!quit) {
@@ -95,6 +94,12 @@ int main(int argc, char **argv) {
       }
     }
     b = now_s();
+    if (!total) {
+      // the executor is known once the first frame ran
+      mode = pdmtl_last_on_vulkan() ? pdmtl_window_zero_copy(win) ? "vulkan-zero-copy" : "vulkan-copy"
+             : pdmtl_last_on_opengl() ? "opengl" : "cpu";
+      printf("demo: %s, %s\n", mode, libpath);
+    }
     pdmtl_present(d);
     c = now_s();
     render += b - a, present += c - b;

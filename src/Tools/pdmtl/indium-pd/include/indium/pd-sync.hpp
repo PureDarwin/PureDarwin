@@ -53,4 +53,7 @@ namespace IndiumPD {
 	std::vector<FunctionConstant> functionConstants(std::shared_ptr<Indium::Function> function);
 	std::shared_ptr<Indium::Function> specializeFunction(std::shared_ptr<Indium::Library> library, const std::string &name,
 	                                                     const std::vector<ConstantValue> &values);
+
+	// the names of a library's functions, in the order the metallib lists them
+	std::vector<std::string> functionNames(std::shared_ptr<Indium::Library> library);
 };

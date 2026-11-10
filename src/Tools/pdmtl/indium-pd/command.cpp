@@ -58,7 +58,7 @@ namespace IndiumPD {
 	// sums since the last line, all in microseconds
 	static struct {
 		std::mutex mu;
-		uint64_t start, jobs_us, idle, acquire, present, vk, gl, cpu, frames;
+		uint64_t start, jobs_us, idle, acquire, present, finish, vk, gl, cpu, frames;
 		struct pd_vk_stats s;
 	} prof;
 
@@ -72,6 +72,21 @@ namespace IndiumPD {
 		if (!vulkan)
 			return;
 		s.translate += l.translate, s.pipeline += l.pipeline, s.upload += l.upload, s.run += l.run, s.readback += l.readback;
+		s.barrier_us += l.barrier_us, s.barriers += l.barriers;
+		s.binds_skipped += l.binds_skipped;
+		s.buffer_us += l.buffer_us, s.drawcmd_us += l.drawcmd_us;
+		s.buffer_scan_us += l.buffer_scan_us, s.buffer_hash_us += l.buffer_hash_us, s.buffer_hash_bytes += l.buffer_hash_bytes;
+		s.buffer_sync_us += l.buffer_sync_us, s.buffer_copy_us += l.buffer_copy_us;
+		s.buffer_watch_us += l.buffer_watch_us, s.buffer_watch_checks += l.buffer_watch_checks;
+		s.buffer_watch_fast += l.buffer_watch_fast, s.buffer_watch_pages += l.buffer_watch_pages;
+		s.image_copy_us += l.image_copy_us, s.image_copy_bytes += l.image_copy_bytes;
+		s.image_create_us += l.image_create_us, s.image_creates += l.image_creates;
+		s.attachment_us += l.attachment_us, s.bind_us += l.bind_us;
+		s.range_hash_calls += l.range_hash_calls, s.range_hash_hits += l.range_hash_hits;
+		s.range_hash_misses += l.range_hash_misses, s.range_hash_collisions += l.range_hash_collisions;
+		s.range_hash_stale += l.range_hash_stale, s.range_hash_bytes += l.range_hash_bytes;
+		s.buffer_overlap_us += l.buffer_overlap_us, s.res_slot_us += l.res_slot_us;
+		s.res_overlap_us += l.res_overlap_us, s.res_lru_us += l.res_lru_us;
 		s.wait += l.wait, s.up_bytes += l.up_bytes, s.down_bytes += l.down_bytes, s.teardown += l.teardown;
 		s.submits += l.submits, s.allocs += l.allocs, s.pipeline_cached += l.pipeline_cached;
 	}
@@ -95,15 +110,36 @@ namespace IndiumPD {
 		auto &s = prof.s;
 		fprintf(stderr,
 		        "indium-pd: %.1f fps, per frame ms: jobs %.2f (%llu vk %llu gl %llu cpu) [translate %.2f pipeline %.2f upload %.2f run %.2f "
-		        "readback %.2f teardown %.2f; waits %.2f in %.1f submits, %.1f allocs, %.2f MB up %.2f MB back, %.1f pipelines cached] "
-		        "idle-wait %.2f acquire %.2f present %.2f\n",
+		        "readback %.2f teardown %.2f; buffers %.2f (scan %.2f hash %.2f/%.2fMB overlap %.2f watch %.2f %llu/%llu fast %llu pages sync %.2f copy %.2f; slot %.2f overlap %.2f LRU %.2f) drawcmd %.2f, barriers %.2f ms/%llu, %llu binds skipped, waits %.2f in %.1f submits, %.1f allocs, %.2f MB up %.2f MB back, %.1f pipelines cached] "
+		        "idle-wait %.2f acquire %.2f present %.2f finish %.2f\n",
 		        prof.frames / sec, prof.jobs_us / f / 1e3, (unsigned long long)prof.vk, (unsigned long long)prof.gl, (unsigned long long)prof.cpu, s.translate / f / 1e3,
-		        s.pipeline / f / 1e3, s.upload / f / 1e3, s.run / f / 1e3, s.readback / f / 1e3, s.teardown / f / 1e3, s.wait / f / 1e3,
+		        s.pipeline / f / 1e3, s.upload / f / 1e3, s.run / f / 1e3, s.readback / f / 1e3, s.teardown / f / 1e3,
+		        s.buffer_us / f / 1e3, s.buffer_scan_us / f / 1e3, s.buffer_hash_us / f / 1e3, s.buffer_hash_bytes / f / 1e6,
+		        s.buffer_overlap_us / f / 1e3, s.buffer_watch_us / f / 1e3,
+		        (unsigned long long)(s.buffer_watch_fast / f), (unsigned long long)(s.buffer_watch_checks / f),
+		        (unsigned long long)(s.buffer_watch_pages / f), s.buffer_sync_us / f / 1e3, s.buffer_copy_us / f / 1e3,
+		        s.res_slot_us / f / 1e3, s.res_overlap_us / f / 1e3, s.res_lru_us / f / 1e3,
+		        s.drawcmd_us / f / 1e3, s.barrier_us / f / 1e3,
+		        (unsigned long long)(s.barriers / f), (unsigned long long)(s.binds_skipped / f), s.wait / f / 1e3,
 		        s.submits / f, s.allocs / f, s.up_bytes / f / 1e6, s.down_bytes / f / 1e6, s.pipeline_cached / f, prof.idle / f / 1e3,
-		        prof.acquire / f / 1e3, prof.present / f / 1e3);
-		prof.jobs_us = prof.idle = prof.acquire = prof.present = prof.vk = prof.gl = prof.cpu = prof.frames = 0;
+		        prof.acquire / f / 1e3, prof.present / f / 1e3, prof.finish / f / 1e3);
+		fprintf(stderr, "indium-pd: upload detail per frame ms: attachments %.2f bind %.2f image-create %.2f (%llu) image-copy %.2f ms / %.2f MB\n",
+		        s.attachment_us / f / 1e3, s.bind_us / f / 1e3, s.image_create_us / f / 1e3,
+		        (unsigned long long)(s.image_creates / f), s.image_copy_us / f / 1e3, s.image_copy_bytes / f / 1e6);
+		fprintf(stderr, "indium-pd: range hashes per frame: %llu calls %llu hits %llu misses %llu collisions %llu stale / %.2f MB hashed\n",
+		        (unsigned long long)(s.range_hash_calls / f), (unsigned long long)(s.range_hash_hits / f),
+		        (unsigned long long)(s.range_hash_misses / f), (unsigned long long)(s.range_hash_collisions / f),
+		        (unsigned long long)(s.range_hash_stale / f), s.range_hash_bytes / f / 1e6);
+		prof.jobs_us = prof.idle = prof.acquire = prof.present = prof.finish = prof.vk = prof.gl = prof.cpu = prof.frames = 0;
 		memset(&prof.s, 0, sizeof(prof.s));
 		prof.start = t;
+	}
+
+	static void profileFinish(uint64_t us) {
+		if (!profiling())
+			return;
+		std::lock_guard<std::mutex> lock(prof.mu);
+		prof.finish += us;
 	}
 
 	void runDraw(struct PDDrawRequest &r) {
@@ -753,6 +789,7 @@ namespace IndiumPD {
 				pdmtl_sync(s->offset() + (uint32_t)srcOff, (uint32_t)size);
 				pdmtl_sync(d->offset() + (uint32_t)dstOff, (uint32_t)size);
 				memmove((uint8_t *)d->contents() + dstOff, (uint8_t *)s->contents() + srcOff, size);
+				pdmtl_modified(d->offset() + (uint32_t)dstOff, (uint32_t)size);
 			});
 		}
 		void copy(std::shared_ptr<Indium::Buffer> src, size_t srcOff, size_t srcBpr, size_t srcBpi, Indium::Size size,
@@ -824,6 +861,8 @@ namespace IndiumPD {
 						       from + (origin.y / blk + y) * s->levelBytesPerRow(level) + origin.x / blk * bpp, row);
 					}
 				}
+				if (dstOff < d->length())
+					pdmtl_modified(d->offset() + (uint32_t)dstOff, (uint32_t)std::min(depth * image, d->length() - dstOff));
 			});
 		}
 		void copy(std::shared_ptr<Indium::Texture> src, std::shared_ptr<Indium::Texture> dst) override {
@@ -870,6 +909,7 @@ namespace IndiumPD {
 			add([=] {
 				pdmtl_sync(b->offset() + (uint32_t)range.start, (uint32_t)range.length);
 				memset((uint8_t *)b->contents() + range.start, value, range.length);
+				pdmtl_modified(b->offset() + (uint32_t)range.start, (uint32_t)range.length);
 			});
 		}
 		void generateMipmapsForTexture(std::shared_ptr<Indium::Texture> texture) override {
@@ -966,7 +1006,10 @@ namespace IndiumPD {
 			d->present();
 		}
 		// the batch goes to the GPU, buffers it wrote come back for the CPU
+		uint64_t finishStart = profiling() ? nowUs() : 0;
 		pdmtl_finish();
+		if (finishStart)
+			profileFinish(nowUs() - finishStart);
 		// what it rendered into surfaces goes back to them, before anyone is told the work completed
 		for (auto &t: _surfaceWrites)
 			if (auto link = t->surfaceLink(); link && link->push)

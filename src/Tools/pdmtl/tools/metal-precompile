@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# metal-precompile: metallibs for PureDarwin, which has no Metal compiler, built by Apple's metal and metallib
-# on a Mac over ssh and kept in a cache keyed by content.
+# metal-precompile: metallibs for PureDarwin, kept in a cache keyed by content. They are built on this machine by
+# mslc, the compiler PureDarwin itself carries; --mac (or $MTL_PD_MAC) builds them with Apple's metal and metallib
+# on a Mac over ssh instead, to compare.
 #
 #   metal-precompile [opts] A.metal B.metal ...            one metallib per file, keyed like newLibraryWithSource:
 #                                                         (SHA-256 of the source, plus the -D macros), for
@@ -8,7 +9,7 @@
 #                                                         /usr/local/share/metal-pd/library-cache
 #   metal-precompile --default [opts] A.metal B.metal ...  all files linked into one library (an app's
 #                                                         default.metallib), keyed by --key
-#   metal-precompile --key [opts] A.metal B.metal ...      print the default library's key and stop (no Mac)
+#   metal-precompile --key [opts] A.metal B.metal ...      print the default library's key and stop (compiles nothing)
 #   metal-precompile --missing DIR [opts]                  every source newLibraryWithSource: saved in DIR
 #                                                         (a guest's /var/tmp/metal-pd-missing)
 #
@@ -16,12 +17,16 @@
 #       -I DIR      header search path; its *.h count toward the default key
 #       -D N[=V]    preprocessor macro
 #       --std STD   language standard (default macos-metal2.3)
+#       --mslc M    the mslc to run (default $MSLC, or mslc on PATH)
+#       --mac       build on the Mac instead, also chosen by setting $MTL_PD_MAC
 #       --host H    the Mac (default vali@10.0.0.39, or $MTL_PD_MAC)
 #       --developer-dir D   Xcode developer dir on the Mac (default Xcode-13, or $MTL_PD_DEVELOPER_DIR)
 set -euo pipefail
 
 mode=source out=./metallib-cache std=macos-metal2.3 missing= fastmath=1 mathmode= fpfuncs=
 host=${MTL_PD_MAC:-vali@10.0.0.39}
+backend=mslc mslc=${MSLC:-mslc}
+[ -n "${MTL_PD_MAC:-}" ] && backend=mac
 devdir=${MTL_PD_DEVELOPER_DIR:-/Applications/Xcode-13.app/Contents/Developer}
 incs=() defs=() files=()
 
@@ -36,7 +41,9 @@ while [ $# -gt 0 ]; do
     -D) defs+=("$2"); shift ;;
     -D*) defs+=("${1#-D}") ;;
     --std) std=$2; shift ;;
-    --host) host=$2; shift ;;
+    --host) host=$2 backend=mac; shift ;;
+    --mac) backend=mac ;;
+    --mslc) mslc=$2; shift ;;
     --developer-dir) devdir=$2; shift ;;
     -h|--help) sed -n '2,/^set -e/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
     -*) echo "metal-precompile: unknown option $1" >&2; exit 2 ;;
@@ -75,7 +82,11 @@ headers() {
 default_key() {
   local f
   {
-    echo "toolchain $(basename "$(dirname "$(dirname "$devdir")")")"
+    if [ $backend = mac ]; then
+      echo "toolchain $(basename "$(dirname "$(dirname "$devdir")")")"
+    else
+      echo "toolchain mslc"
+    fi
     echo "std $std"
     macro_lines
     for f in "${files[@]}" $(headers); do echo "$(sha < "$f") $(basename "$f")"; done | LC_ALL=C sort
@@ -128,6 +139,42 @@ fetch() {
   echo "$out/$key.metallib"
 }
 
+# the sources through mslc straight into the cache: -I as given (a source's own directory is searched by its
+# quoted includes anyway), the standard, macros and math settings as for the Mac
+build_mslc() {
+  local key=$1 what=$2; shift 2
+  local args=(-std="$std") d
+  [ -n "$mathmode" ] && args+=(-fmetal-math-mode="$mathmode")
+  [ -z "$mathmode" ] && [ "$fastmath" = 0 ] && args+=(-fno-fast-math)
+  [ -n "$fpfuncs" ] && args+=(-fmetal-math-fp32-functions="$fpfuncs")
+  for d in ${incs[@]+"${incs[@]}"}; do args+=(-I "$d"); done
+  while read -r d; do [ -n "$d" ] && args+=(-D "$d"); done < <(macro_lines)
+  mkdir -p "$out"
+  "$mslc" "${args[@]}" "$@" -o "$out/$key.metallib.tmp"
+  mv "$out/$key.metallib.tmp" "$out/$key.metallib"
+  {
+    echo "$what"
+    echo "std $std"
+    [ -n "$mathmode" ] && echo "math mode $mathmode"
+    [ -n "$fpfuncs" ] && echo "fp32 functions $fpfuncs"
+    [ -z "$mathmode" ] && [ "$fastmath" = 0 ] && echo "fast math off"
+    macro_lines | sed 's/^/macro /'
+    echo "compiler mslc"
+  } > "$out/$key.meta"
+  echo "$out/$key.metallib"
+}
+
+# key, description, sources: built by the chosen backend
+build() {
+  local key=$1 what=$2; shift 2
+  if [ $backend = mac ]; then
+    r=$(build_on_mac "$key" "$@")
+    fetch "$r" "$key" "$what"
+  else
+    build_mslc "$key" "$what" "$@"
+  fi
+}
+
 case $mode in
   key)
     [ ${#files[@]} -gt 0 ] || { echo "metal-precompile: no sources" >&2; exit 2; }
@@ -136,8 +183,7 @@ case $mode in
     [ ${#files[@]} -gt 0 ] || { echo "metal-precompile: no sources" >&2; exit 2; }
     key=$(default_key)
     if [ -f "$out/$key.metallib" ]; then echo "$out/$key.metallib"; exit 0; fi
-    r=$(build_on_mac "$key" "${files[@]}")
-    fetch "$r" "$key" "default library: $(for f in "${files[@]}"; do basename "$f"; done | tr '\n' ' ')" ;;
+    build "$key" "default library: $(for f in "${files[@]}"; do basename "$f"; done | tr '\n' ' ')" "${files[@]}" ;;
   source)
     [ ${#files[@]} -gt 0 ] || { echo "metal-precompile: no sources" >&2; exit 2; }
     all=("${files[@]}")
@@ -145,8 +191,7 @@ case $mode in
       key=$(source_key "$f")
       if [ -f "$out/$key.metallib" ]; then echo "$out/$key.metallib"; continue; fi
       files=("$f")
-      r=$(build_on_mac "$key" "$f")
-      fetch "$r" "$key" "source $(basename "$f")"
+      build "$key" "source $(basename "$f")" "$f"
     done ;;
   missing)
     # NAME.macros holds the macro lines when the app passed preprocessorMacros; NAME.options the language
@@ -182,7 +227,6 @@ case $mode in
       [ "$key" = "$(basename "${f%.metal}")" ] || { echo "metal-precompile: $f hashes to $key, skipped" >&2; continue; }
       if [ -f "$out/$key.metallib" ]; then echo "$out/$key.metallib"; continue; fi
       files=("$f")
-      r=$(build_on_mac "$key" "$f")
-      fetch "$r" "$key" "source $(basename "$f") (saved by newLibraryWithSource:)"
+      build "$key" "source $(basename "$f") (saved by newLibraryWithSource:)" "$f"
     done ;;
 esac

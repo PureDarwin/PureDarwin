@@ -74,6 +74,13 @@ int pd_guarded(void (*fn)(void *), void *arg) {
 
 void pd_job_abort(int sig, const char *why) {
   fprintf(stderr, "pdmtl: job aborted (signal %d): %s\n", sig, why ? why : "");
+  if (sig > 0) {
+    sigset_t s;
+
+    sigemptyset(&s);
+    sigaddset(&s, sig);
+    sigprocmask(SIG_UNBLOCK, &s, 0);
+  }
   siglongjmp(job_jb, 1);
 }
 
@@ -182,6 +189,14 @@ static void on_signal(int sig, siginfo_t *si, void *uc) {
     g->sig = sig;
     siglongjmp(g->jmp, 1);
   }
+  // the jobs' jump point saves no signal mask (two syscalls a draw): this signal is unblocked by hand
+  {
+    sigset_t s;
+
+    sigemptyset(&s);
+    sigaddset(&s, sig);
+    sigprocmask(SIG_UNBLOCK, &s, 0);
+  }
   siglongjmp(job_jb, 1);
 }
 
@@ -208,7 +223,8 @@ int pdmtl_init(size_t bytes) {
   // the request block sits where the kext puts it
   arena_top = PD_BRIDGE_REQ + 0x10000;
   // AIRJITD_VERBOSE: the executor's per-draw lines, as airjitd -v gives the daemon
-  pd_log_verbose = getenv("AIRJITD_VERBOSE") != NULL;
+  // AIRJITD_VERBOSE=2 adds the per-draw lines
+  pd_log_verbose = getenv("AIRJITD_VERBOSE") ? atoi(getenv("AIRJITD_VERBOSE")) > 1 ? 2 : 1 : 0;
   pd_llvm_backend.init();
 
   memset(&sa, 0, sizeof(sa));
@@ -573,7 +589,7 @@ int pdmtl_dispatch_threads(struct pdmtl_fn *fn, const struct pdmtl_buf *bufs, un
     r->buf[i].off = bufs[i].off;
     r->buf[i].size = bufs[i].size;
   }
-  if (sigsetjmp(job_jb, 1))
+  if (sigsetjmp(job_jb, 0))
     return PD_ERR_FAULT;
   return pd_exec_compute(r, arena, (uint32_t)arena_size, ready);
 }
@@ -593,7 +609,7 @@ int pdmtl_draw(struct pdmtl_fn *vfn, struct pdmtl_fn *ffn, uint32_t prim, uint32
   }
   r->targetOff = t->off, r->tw = t->w, r->th = t->h, r->tbpr = t->bpr, r->tfmt = t->fmt;
   r->viewport[2] = t->w, r->viewport[3] = t->h, r->viewport[5] = 1;
-  if (sigsetjmp(job_jb, 1))
+  if (sigsetjmp(job_jb, 0))
     return PD_ERR_FAULT;
   return pd_exec_draw(r, arena, (uint32_t)arena_size, 1, ready);
 }
@@ -614,7 +630,7 @@ int pdmtl_last_on_vulkan(void) {
 }
 
 int pdmtl_fn_compile(struct pdmtl_fn *fn) {
-  if (sigsetjmp(job_jb, 1))
+  if (sigsetjmp(job_jb, 0))
     return PD_ERR_FAULT;
   return ready(fn->id, arena + fn->off, fn->size, fn->name);
 }
@@ -639,7 +655,7 @@ int pdmtl_exec_compute(void *req) {
   struct PDComputeRequest *r = (struct PDComputeRequest *)(arena + PD_BRIDGE_REQ);
 
   memcpy(r, req, sizeof(*r));
-  if (sigsetjmp(job_jb, 1))
+  if (sigsetjmp(job_jb, 0))
     return PD_ERR_FAULT;
   return pd_exec_compute(r, arena, (uint32_t)arena_size, ready);
 }
@@ -648,7 +664,7 @@ int pdmtl_exec_draw(void *req) {
   struct PDDrawRequest *r = (struct PDDrawRequest *)(arena + PD_BRIDGE_REQ);
 
   memcpy(r, req, sizeof(*r));
-  if (sigsetjmp(job_jb, 1))
+  if (sigsetjmp(job_jb, 0))
     return PD_ERR_FAULT;
   return pd_exec_draw(r, arena, (uint32_t)arena_size, 1, ready);
 }
@@ -657,7 +673,7 @@ int pdmtl_exec_tile(void *req) {
   struct PDTileRequest *r = (struct PDTileRequest *)(arena + PD_BRIDGE_REQ);
 
   memcpy(r, req, sizeof(*r));
-  if (sigsetjmp(job_jb, 1))
+  if (sigsetjmp(job_jb, 0))
     return PD_ERR_FAULT;
   return pd_exec_tile(r, arena, (uint32_t)arena_size, ready);
 }
@@ -681,7 +697,7 @@ int pdmtl_draw_ex(const struct pdmtl_draw_desc *d, struct pdmtl_tex *t) {
   if (d->blend)
     r->blend |= 2u | 4u << 2 | 5u << 7 | 1u << 12 | 5u << 17;
   r->viewport[2] = t->w, r->viewport[3] = t->h, r->viewport[5] = 1;
-  if (sigsetjmp(job_jb, 1))
+  if (sigsetjmp(job_jb, 0))
     return PD_ERR_FAULT;
   return pd_exec_draw(r, arena, (uint32_t)arena_size, 1, ready);
 }
@@ -710,6 +726,24 @@ void pdmtl_dirty(uint32_t off, uint32_t len) {
   (void)off, (void)len;
 }
 
+void pdmtl_managed(uint32_t off, uint32_t len, int on) {
+#ifdef AIRJITD_VULKAN
+  pd_vk_managed(off, len, on);
+#endif
+  (void)off, (void)len, (void)on;
+}
+
+// the CPU path reads the arena itself, OpenGL re-uploads what is dirty
+void pdmtl_modified(uint32_t off, uint32_t len) {
+#ifdef AIRJITD_OPENGL
+  pd_gl_dirty(off, len);
+#endif
+#ifdef AIRJITD_VULKAN
+  pd_vk_modified(off, len);
+#endif
+  (void)off, (void)len;
+}
+
 void pdmtl_sync(uint32_t off, uint32_t len) {
 #ifdef AIRJITD_OPENGL
   if (pd_gl_sync(off, len)) fprintf(stderr, "pdmtl: OpenGL readback failed\n");
@@ -730,6 +764,10 @@ void pdmtl_sync_all(void) {
 }
 
 void pdmtl_finish(void) {
+#ifdef AIRJITD_OPENGL
+  if (pd_gl_enabled())
+    pd_gl_finish();
+#endif
 #ifdef AIRJITD_VULKAN
   pd_vk_finish();
 #endif

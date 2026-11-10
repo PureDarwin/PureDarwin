@@ -12,13 +12,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <time.h>
 
 #include "vulkan/vk.h"
 
 #define VK_FUNCS(X)                                                                                                   \
   X(vkGetPhysicalDeviceSurfaceSupportKHR) X(vkGetPhysicalDeviceSurfaceCapabilitiesKHR)                              \
-  X(vkGetPhysicalDeviceSurfaceFormatsKHR) X(vkGetPhysicalDeviceMemoryProperties) X(vkGetDeviceProcAddr)              \
+  X(vkGetPhysicalDeviceSurfaceFormatsKHR) X(vkGetPhysicalDeviceSurfacePresentModesKHR)                              \
+  X(vkGetPhysicalDeviceMemoryProperties) X(vkGetDeviceProcAddr)                                                      \
   X(vkDestroySurfaceKHR)
 
 #define VK_DEV_FUNCS(X)                                                                                               \
@@ -57,13 +59,21 @@ struct pdmtl_window {
   VkImageView views[MAX_IMAGES];
   uint32_t nimages, w, h;
   int stale;
-  VkCommandPool pool;
-  VkCommandBuffer cb;
   VkFence fence;
-  // the command buffer's own fence (reused once it signalled), and the semaphore a present waits on
-  VkFence cb_fence;
-  int cb_busy;
-  VkSemaphore rendered;
+  // a slot per swapchain image, so the app acquires the next one while the device thread presents the last
+  // each has its own pool, with command buffers recorded on either thread
+  struct slot {
+    struct pdmtl_drawable d;
+    VkCommandPool pool;
+    VkCommandBuffer cb;
+    VkFence fence;
+    int busy;
+  } slots[MAX_IMAGES];
+  // the semaphore a present waits on, one per image
+  VkSemaphore rendered[MAX_IMAGES];
+  // empties the device's queue before the swapchain is rebuilt under frames in flight
+  void (*drain)(void *);
+  void *drain_ctx;
   VkBuffer staging;
   VkDeviceMemory staging_mem;
   void *staging_map;
@@ -133,34 +143,37 @@ static void barrier(VkCommandBuffer cb, VkImage im, VkImageLayout from, VkImageL
   vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, 0, 0, 0, 1, &b);
 }
 
-static void begin(struct pdmtl_window *w) {
+static void begin(struct pdmtl_window *w, struct slot *s) {
   VkCommandBufferBeginInfo bi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
 
-  if (w->cb_busy) {
-    vkWaitForFences(w->dev, 1, &w->cb_fence, 1, UINT64_MAX);
-    vkResetFences(w->dev, 1, &w->cb_fence);
-    w->cb_busy = 0;
+  if (s->busy) {
+    vkWaitForFences(w->dev, 1, &s->fence, 1, UINT64_MAX);
+    vkResetFences(w->dev, 1, &s->fence);
+    s->busy = 0;
   }
-  vkResetCommandBuffer(w->cb, 0);
+  vkResetCommandBuffer(s->cb, 0);
   bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-  vkBeginCommandBuffer(w->cb, &bi);
+  vkBeginCommandBuffer(s->cb, &bi);
 }
 
 // on the executor's queue: its barriers order these after everything the executor submitted before. Nothing
 // waits here, signal sets the semaphore a present waits on
-static void submit_signal(struct pdmtl_window *w, int signal) {
+static void submit_signal(struct pdmtl_window *w, struct slot *s, int signal) {
   VkSubmitInfo si = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
 
-  vkEndCommandBuffer(w->cb);
-  si.commandBufferCount = 1, si.pCommandBuffers = &w->cb;
+  vkEndCommandBuffer(s->cb);
+  si.commandBufferCount = 1, si.pCommandBuffers = &s->cb;
+  // one semaphore per swapchain image: a present may still hold the last image's
   if (signal)
-    si.signalSemaphoreCount = 1, si.pSignalSemaphores = &w->rendered;
-  vkQueueSubmit(w->queue, 1, &si, w->cb_fence);
-  w->cb_busy = 1;
+    si.signalSemaphoreCount = 1, si.pSignalSemaphores = &w->rendered[s->d.index];
+  pd_vk_lock();
+  vkQueueSubmit(w->queue, 1, &si, s->fence);
+  pd_vk_unlock();
+  s->busy = 1;
 }
 
-static void submit(struct pdmtl_window *w) {
-  submit_signal(w, 0);
+static void submit(struct pdmtl_window *w, struct slot *s) {
+  submit_signal(w, s, 0);
 }
 
 static void destroy_swapchain(struct pdmtl_window *w) {
@@ -183,9 +196,12 @@ static int make_swapchain(struct pdmtl_window *w) {
   VkSwapchainCreateInfoKHR ci = { VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR };
   VkSurfaceFormatKHR fmts[64];
   VkFormat vkfmt;
-  uint32_t nf = 64, i;
+  VkPresentModeKHR modes[16], present = VK_PRESENT_MODE_FIFO_KHR;
+  uint32_t nf = 64, nm = 16, i;
   int fw, fh;
 
+  if (w->swap && w->drain)
+    w->drain(w->drain_ctx);
   destroy_swapchain(w);
   fw = w->req_w, fh = w->req_h;
   if (w->glfw)
@@ -194,6 +210,12 @@ static int make_swapchain(struct pdmtl_window *w) {
     return -1;
   vkGetPhysicalDeviceSurfaceCapabilitiesKHR(w->phys, w->surface, &caps);
   vkGetPhysicalDeviceSurfaceFormatsKHR(w->phys, w->surface, &nf, fmts);
+  // mailbox lets acquire take a free image without waiting for a vblank, every surface has FIFO
+  if (vkGetPhysicalDeviceSurfacePresentModesKHR(w->phys, w->surface, &nm, modes) == VK_SUCCESS) {
+    for (i = 0; i < nm; i++)
+      if (modes[i] == VK_PRESENT_MODE_MAILBOX_KHR)
+        present = VK_PRESENT_MODE_MAILBOX_KHR;
+  }
   vkfmt = w->srgb ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM;
   for (i = 0; i < nf && fmts[i].format != vkfmt; i++) {
   }
@@ -219,7 +241,7 @@ static int make_swapchain(struct pdmtl_window *w) {
   ci.imageUsage = (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                    VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT) & caps.supportedUsageFlags;
   ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE, ci.preTransform = caps.currentTransform;
-  ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, ci.presentMode = VK_PRESENT_MODE_FIFO_KHR, ci.clipped = 1;
+  ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, ci.presentMode = present, ci.clipped = 1;
   if (vkCreateSwapchainKHR(w->dev, &ci, 0, &w->swap) != VK_SUCCESS)
     return -1;
   w->nimages = MAX_IMAGES;
@@ -233,12 +255,16 @@ static int make_swapchain(struct pdmtl_window *w) {
     vkCreateImageView(w->dev, &vi, 0, &w->views[i]);
   }
 
-  // the drawable's place in the arena: the CPU path draws there, zero-copy only uses its offset
-  w->drawable.texture.w = w->w, w->drawable.texture.h = w->h, w->drawable.texture.fmt = w->srgb ? 18 : 0;
-  w->drawable.texture.bpr = w->w * 4;
-  w->drawable.texture.off = pdmtl_alloc((size_t)w->w * w->h * 4);
-  w->drawable.texture.contents = pdmtl_arena() + w->drawable.texture.off;
-  w->drawable.win = w;
+  // each image's place in the arena: the CPU path draws there, zero-copy only uses its offset
+  for (i = 0; i < w->nimages; i++) {
+    struct pdmtl_drawable *d = &w->slots[i].d;
+
+    d->texture.w = w->w, d->texture.h = w->h, d->texture.fmt = w->srgb ? 18 : 0;
+    d->texture.bpr = w->w * 4;
+    d->texture.off = pdmtl_alloc((size_t)w->w * w->h * 4);
+    d->texture.contents = pdmtl_arena() + d->texture.off;
+    d->win = w, d->index = i;
+  }
 
   // copy mode presents through it every frame, zero-copy only a frame the CPU finished
   {
@@ -402,14 +428,20 @@ static int attach(struct pdmtl_window *w) {
     VkFenceCreateInfo fi = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
 
     pci.queueFamilyIndex = w->qfam, pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    vkCreateCommandPool(w->dev, &pci, 0, &w->pool);
-    ai.commandPool = w->pool, ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, ai.commandBufferCount = 1;
-    vkAllocateCommandBuffers(w->dev, &ai, &w->cb);
     vkCreateFence(w->dev, &fi, 0, &w->fence);
-    vkCreateFence(w->dev, &fi, 0, &w->cb_fence);
+    for (unsigned i = 0; i < MAX_IMAGES; i++) {
+      struct slot *s = &w->slots[i];
+
+      vkCreateCommandPool(w->dev, &pci, 0, &s->pool);
+      ai.commandPool = s->pool, ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, ai.commandBufferCount = 1;
+      vkAllocateCommandBuffers(w->dev, &ai, &s->cb);
+      vkCreateFence(w->dev, &fi, 0, &s->fence);
+    }
     {
       VkSemaphoreCreateInfo sci = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-      vkCreateSemaphore(w->dev, &sci, 0, &w->rendered);
+      for (unsigned i = 0; i < MAX_IMAGES; i++) {
+        vkCreateSemaphore(w->dev, &sci, 0, &w->rendered[i]);
+      }
     }
   }
   return make_swapchain(w);
@@ -452,7 +484,18 @@ struct pdmtl_drawable *pdmtl_next_drawable(struct pdmtl_window *w) {
         continue;
       }
     }
-    r = vkAcquireNextImageKHR(w->dev, w->swap, UINT64_MAX, VK_NULL_HANDLE, w->fence, &w->drawable.index);
+    uint32_t index;
+    struct slot *s;
+
+    // the swapchain is the device thread's too (its presents): acquire under the queue lock, never blocking in it
+    for (;;) {
+      pd_vk_lock();
+      r = vkAcquireNextImageKHR(w->dev, w->swap, 0, VK_NULL_HANDLE, w->fence, &index);
+      pd_vk_unlock();
+      if (r != VK_NOT_READY && r != VK_TIMEOUT)
+        break;
+      usleep(500);
+    }
     if (r == VK_ERROR_OUT_OF_DATE_KHR) {
       w->stale = 1;
       continue;
@@ -463,15 +506,15 @@ struct pdmtl_drawable *pdmtl_next_drawable(struct pdmtl_window *w) {
     }
     vkWaitForFences(w->dev, 1, &w->fence, 1, UINT64_MAX);
     vkResetFences(w->dev, 1, &w->fence);
+    s = &w->slots[index];
     if (w->zero) {
       // GENERAL is the layout the executor's render passes expect, contents start undefined like Metal's
-      begin(w);
-      barrier(w->cb, w->images[w->drawable.index], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-      submit(w);
-      pd_vk_external_attachment(w->drawable.texture.off, (uint64_t)w->images[w->drawable.index],
-                                (uint64_t)w->views[w->drawable.index]);
+      begin(w, s);
+      barrier(s->cb, w->images[index], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+      submit(w, s);
+      pd_vk_external_attachment(s->d.texture.off, (uint64_t)w->images[index], (uint64_t)w->views[index]);
     }
-    return &w->drawable;
+    return &s->d;
   }
   fprintf(stderr, "pdmtl: no drawable, no swapchain for %dx%d\n", w->req_w, w->req_h);
   return 0;
@@ -488,9 +531,11 @@ void pdmtl_clear(struct pdmtl_drawable *d, float r, float g, float b, float a) {
     VkClearColorValue c = { { r, g, b, a } };
     VkImageSubresourceRange sr = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
 
-    begin(w);
-    vkCmdClearColorImage(w->cb, w->images[d->index], VK_IMAGE_LAYOUT_GENERAL, &c, 1, &sr);
-    submit(w);
+    struct slot *s = &w->slots[d->index];
+
+    begin(w, s);
+    vkCmdClearColorImage(s->cb, w->images[d->index], VK_IMAGE_LAYOUT_GENERAL, &c, 1, &sr);
+    submit(w, s);
   } else {
     uint8_t px[4] = { (uint8_t)(b * 255 + 0.5f), (uint8_t)(g * 255 + 0.5f), (uint8_t)(r * 255 + 0.5f),
                       (uint8_t)(a * 255 + 0.5f) };
@@ -513,6 +558,7 @@ int pdmtl_present(struct pdmtl_drawable *d) {
   struct pdmtl_window *w = d->win;
   VkPresentInfoKHR pi = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
   VkImage im = w->images[d->index];
+  struct slot *s = &w->slots[d->index];
   VkResult r;
 
   if (w->gl) {
@@ -587,28 +633,35 @@ int pdmtl_present(struct pdmtl_drawable *d) {
   pd_vk_flush(0);
   if (!w->zero)
     pdmtl_sync(d->texture.off, d->texture.bpr * d->texture.h);
-  begin(w);
-  if (w->zero && !pd_vk_external_written()) {
-    barrier(w->cb, im, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+  begin(w, s);
+  if (w->zero && !pd_vk_external_written(d->texture.off)) {
+    barrier(s->cb, im, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
   } else {
     // copy mode, or a frame the CPU finished (a multisample resolve): the arena's pixels go up
     if (w->zero)
       pdmtl_sync(d->texture.off, d->texture.bpr * d->texture.h);
     VkBufferImageCopy cp = { 0 };
 
+    // one staging buffer for every image: the last copy out of it finishes first
+    pd_vk_lock();
+    vkQueueWaitIdle(w->queue);
+    pd_vk_unlock();
     memcpy(w->staging_map, d->texture.contents, (size_t)w->w * w->h * 4);
-    barrier(w->cb, im, w->zero ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    barrier(s->cb, im, w->zero ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     cp.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, cp.imageSubresource.layerCount = 1;
     cp.imageExtent.width = w->w, cp.imageExtent.height = w->h, cp.imageExtent.depth = 1;
-    vkCmdCopyBufferToImage(w->cb, w->staging, im, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &cp);
-    barrier(w->cb, im, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    vkCmdCopyBufferToImage(s->cb, w->staging, im, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &cp);
+    barrier(s->cb, im, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
   }
-  submit_signal(w, 1);
-  pd_vk_external_attachment(0, 0, 0);
+  submit_signal(w, s, 1);
+  pd_vk_external_attachment(d->texture.off, 0, 0);
 
-  pi.waitSemaphoreCount = 1, pi.pWaitSemaphores = &w->rendered;
+  pi.waitSemaphoreCount = 1, pi.pWaitSemaphores = &w->rendered[d->index];
   pi.swapchainCount = 1, pi.pSwapchains = &w->swap, pi.pImageIndices = &d->index;
+  // the queue is the executor's, its submits run on another thread
+  pd_vk_lock();
   r = vkQueuePresentKHR(w->queue, &pi);
+  pd_vk_unlock();
   if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
     w->stale = 1;
   return r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR || r == VK_ERROR_OUT_OF_DATE_KHR ? 0 : -1;
@@ -643,4 +696,8 @@ void pdmtl_window_destroy(struct pdmtl_window *w) {
     glfwTerminate();
   }
   free(w);
+}
+
+void pdmtl_window_set_drain(struct pdmtl_window *w, void (*drain)(void *), void *ctx) {
+  w->drain = drain, w->drain_ctx = ctx;
 }
