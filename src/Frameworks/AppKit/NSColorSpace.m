@@ -108,7 +108,7 @@ static NSColorSpace *spaceNamed(CFStringRef name) {
    return name!=NULL ? (NSString *)name : @"Device";
 }
 
-// the space's ICC profile, nil for the device spaces Onyx2D has, which carry none
+// the space's ICC profile, sRGB for the RGB spaces
 -(NSData *)ICCProfileData {
    CFDataRef data=_cgColorSpace==NULL ? NULL : CGColorSpaceCopyICCData(_cgColorSpace);
 
