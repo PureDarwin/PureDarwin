@@ -1,5 +1,6 @@
 // PDAudioServer.h - what CoreAudio's HAL and coreaudiod share: the Mach service, the device table and a client's ring
 // Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef PDAUDIOSERVER_H
 #define PDAUDIOSERVER_H
 
@@ -65,8 +66,8 @@ struct pd_audio_device_info {
     char manufacturer[64];
 };
 
-// one per client, mapped by both sides: the client writes interleaved float frames at the ring's rate and
-// moves writeFrame, coreaudiod mixes from readFrame each period and signals the client's semaphore
+// one ring per client mapped by both sides, output written by the client and mixed by coreaudiod each period,
+// input appended by coreaudiod at writeFrame and read by the client from readFrame
 struct pd_audio_ring {
     uint32_t version;
     uint32_t channels;
@@ -86,11 +87,12 @@ static inline size_t pd_audio_ring_size(uint32_t channels, uint32_t frames)
     return sizeof(struct pd_audio_ring) + (size_t)channels * frames * sizeof(float);
 }
 
-// the client sends this with a send-once reply port
+// the client sends this with a send-once reply port, input asks for a capture ring of the device, or of
+// the default input when device is kPDAudioFollowDefaultOutput
 typedef struct {
     mach_msg_header_t header;
     uint32_t device;
-    uint32_t pad;
+    uint32_t input;
 } pd_audio_connect_msg;
 
 // ring is a memory entry for the client's pd_audio_ring, wake a semaphore coreaudiod signals each period,

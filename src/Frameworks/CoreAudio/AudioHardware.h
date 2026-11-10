@@ -110,6 +110,7 @@ enum {
 
     kAudioDeviceTransportTypeBuiltIn = 'bltn',
     kAudioStreamTerminalTypeSpeaker = 'spkr',
+    kAudioStreamTerminalTypeMicrophone = 'micr',
 };
 
 Boolean AudioObjectHasProperty(AudioObjectID inObjectID, const AudioObjectPropertyAddress *inAddress);

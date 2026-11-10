@@ -2,7 +2,8 @@
 // Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 
 // the alias device kPDAudioOutputDevice has a ring coreaudiod plays on the current default, so its IOProcs
-// keep running across a default change
+// keep running across a default change. an input device's ring runs the other way, its IOProcs get the
+// captured frames as their input data
 
 #include "PDAudioClient.h"
 #include <mach/mach_time.h>
@@ -26,6 +27,7 @@ struct ioproc {
 struct haldev {
     AudioObjectID id;
     Boolean connected;
+    Boolean input;
     struct pd_audio_session session;
     struct ioproc procs[MAX_PROCS];
     Boolean inCycle;
@@ -38,7 +40,7 @@ static pthread_cond_t sStarted = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t sCycleDone = PTHREAD_COND_INITIALIZER;
 static struct haldev sDevices[MAX_DEVICES];
 
-static Boolean connectDevice(AudioObjectID device, struct pd_audio_session *s)
+static Boolean connectDevice(AudioObjectID device, Boolean input, struct pd_audio_session *s)
 {
     mach_port_t server = PDAudioServerPort(), reply;
     // a combined send and receive uses one buffer, the reply lands where the request was
@@ -59,6 +61,7 @@ static Boolean connectDevice(AudioObjectID device, struct pd_audio_session *s)
     out->header.msgh_size = sizeof(*out);
     out->header.msgh_id = kPDAudioServerConnect;
     out->device = device == kPDAudioOutputDevice ? kPDAudioFollowDefaultOutput : device;
+    out->input = input;
     kern_return_t kr = mach_msg(&out->header, MACH_SEND_MSG | MACH_RCV_MSG | MACH_RCV_TIMEOUT, sizeof(*out), sizeof(in), reply,
                                 2000, MACH_PORT_NULL);
     mach_port_mod_refs(mach_task_self(), reply, MACH_PORT_RIGHT_RECEIVE, -1);
@@ -102,15 +105,21 @@ static struct haldev *deviceLocked(AudioObjectID device, Boolean connect)
         return d;
     if (!connect)
         return NULL;
-    if (device != kPDAudioOutputDevice && !PDAudioCopyDeviceInfo(device, NULL))
-        return NULL;
+    struct pd_audio_device_info info;
+    Boolean input = false;
+    if (device != kPDAudioOutputDevice) {
+        if (!PDAudioCopyDeviceInfo(device, &info))
+            return NULL;
+        input = !(info.flags & kPDAudioDeviceHasOutput) && (info.flags & kPDAudioDeviceHasInput);
+    }
     if (!d)
         d = findDevice(0);
     if (!d)
         return NULL;
-    if (!connectDevice(device, &d->session))
+    if (!connectDevice(device, input, &d->session))
         return NULL;
     d->id = device;
+    d->input = input;
     d->connected = true;
     return d;
 }
@@ -162,6 +171,59 @@ static Float64 ticksPerFrame(const struct haldev *d)
     return 1e9 / d->session.sampleRate * tb.denom / tb.numer;
 }
 
+// input: every started IOProc sees each buffer of captured frames, read out of the ring as coreaudiod fills it
+static void captureCycles(struct haldev *d, UInt32 frames, Float64 tpf)
+{
+    struct pd_audio_ring *r = d->session.ring;
+    UInt32 ch = d->session.channels;
+    float *buf = malloc((size_t)frames * ch * sizeof(float));
+
+    if (!buf)
+        return;
+    while (r->writeFrame - r->readFrame >= frames) {
+        struct ioproc procs[MAX_PROCS];
+        int n = 0;
+
+        pthread_mutex_lock(&sLock);
+        for (int i = 0; i < MAX_PROCS; i++) {
+            if (d->procs[i].used && d->procs[i].running)
+                procs[n++] = d->procs[i];
+        }
+        d->inCycle = n > 0;
+        pthread_mutex_unlock(&sLock);
+        if (n == 0)
+            break;
+
+        for (UInt32 f = 0; f < frames; f++)
+            memcpy(&buf[f * ch], &r->data[((r->readFrame + f) % r->frames) * ch], ch * sizeof(float));
+        UInt64 behind = r->writeFrame - r->readFrame;
+        AudioTimeStamp now = { 0 }, inTime = { 0 };
+        AudioBufferList list = { 1, { { ch, frames * ch * (UInt32)sizeof(float), buf } } };
+        AudioBufferList none = { 0 };
+
+        now.mSampleTime = (Float64)r->readFrame;
+        now.mHostTime = mach_absolute_time();
+        now.mFlags = kAudioTimeStampSampleHostTimeValid;
+        // readHostTime dates the frame at writeFrame, the first frame read here came that many frames earlier
+        inTime.mSampleTime = (Float64)r->readFrame;
+        inTime.mHostTime = r->readHostTime - (UInt64)(behind * tpf);
+        inTime.mRateScalar = 1.0;
+        inTime.mFlags = kAudioTimeStampSampleHostTimeValid | kAudioTimeStampRateScalarValid;
+        for (int i = 0; i < n; i++)
+            procs[i].proc(d->id, &now, &list, &inTime, &none, &now, procs[i].data);
+        __sync_synchronize();
+        r->readFrame += frames;
+
+        pthread_mutex_lock(&sLock);
+        d->inCycle = false;
+        pthread_cond_broadcast(&sCycleDone);
+        pthread_mutex_unlock(&sLock);
+    }
+    free(buf);
+    mach_timespec_t wait = { 0, 50 * 1000 * 1000 };
+    semaphore_timedwait(d->session.wake, wait);
+}
+
 // runs every started IOProc once per buffer while the ring has room, each into its own buffer, and sums them
 static void *ioThread(void *arg)
 {
@@ -184,6 +246,10 @@ static void *ioThread(void *arg)
         UInt32 frames = PDAudioOutputBufferFrameSize();
         if (frames > r->frames / 2)
             frames = r->frames / 2;
+        if (d->input) {
+            captureCycles(d, frames, tpf);
+            continue;
+        }
         if (frames > capacity) {
             free(mix);
             free(one);
@@ -350,6 +416,9 @@ static OSStatus setRunning(AudioObjectID device, AudioDeviceIOProcID id, Boolean
         pthread_mutex_unlock(&sLock);
         return kAudioHardwareIllegalOperationError;
     }
+    // a capture starts at the newest frame, what came before the start is not this client's
+    if (run && d->input && !anyRunning(d))
+        d->session.ring->readFrame = d->session.ring->writeFrame;
     p->running = run;
     while (!run && d->inCycle && otherThread(d))
         pthread_cond_wait(&sCycleDone, &sLock);

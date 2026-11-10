@@ -560,10 +560,35 @@ OSStatus AudioQueueRemovePropertyListener(AudioQueueRef q, AudioQueuePropertyID 
     return result;
 }
 
-OSStatus AudioQueueGetCurrentTime(AudioQueueRef q, void *timeline, AudioTimeStamp *outTime, Boolean *outDiscontinuity)
+// a timeline flags a break in the queue's sample time, a device change on macOS: output here stays
+// on one device, so a timeline only ties itself to its queue and never reports one
+struct OpaqueAudioQueueTimeline {
+    AudioQueueRef queue;
+};
+
+OSStatus AudioQueueCreateTimeline(AudioQueueRef q, AudioQueueTimelineRef *outTimeline)
 {
-    (void)timeline;
-    if (q == NULL || outTime == NULL)
+    if (q == NULL || outTimeline == NULL)
+        return kAudio_ParamError;
+    AudioQueueTimelineRef t = calloc(1, sizeof(*t));
+    if (t == NULL)
+        return kAudio_MemFullError;
+    t->queue = q;
+    *outTimeline = t;
+    return noErr;
+}
+
+OSStatus AudioQueueDisposeTimeline(AudioQueueRef q, AudioQueueTimelineRef timeline)
+{
+    if (q == NULL || timeline == NULL || timeline->queue != q)
+        return kAudio_ParamError;
+    free(timeline);
+    return noErr;
+}
+
+OSStatus AudioQueueGetCurrentTime(AudioQueueRef q, AudioQueueTimelineRef timeline, AudioTimeStamp *outTime, Boolean *outDiscontinuity)
+{
+    if (q == NULL || outTime == NULL || (timeline != NULL && timeline->queue != q))
         return kAudio_ParamError;
     memset(outTime, 0, sizeof(*outTime));
     outTime->mSampleTime = q->sampleTime;

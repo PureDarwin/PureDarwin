@@ -1,7 +1,8 @@
 // AudioUnit.c - the HAL, default and system output units, all on the HAL's output device
 // Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 
-// an IOProc converts the client's callback into the device's float format, there is no input device
+// an IOProc converts the client's callback into the device's float format, EnableIO on element 1 adds
+// an input IOProc that calls the input callback, and AudioUnitRender on bus 1 returns its capture
 
 #include <AudioToolbox/AudioToolbox.h>
 #include <mach/mach_time.h>
@@ -90,6 +91,15 @@ struct ComponentInstanceRecord {
     AudioDeviceIOProcID ioProc;
     AudioStreamBasicDescription device;
     AudioConverterRef converter;
+    // element 1: the capture side
+    UInt32 inputEnabled;
+    AudioDeviceID inputDevice;
+    AudioDeviceIOProcID inputProc;
+    AudioStreamBasicDescription inputClient, inputFormat;
+    AudioConverterRef inputConverter;
+    float *capture;
+    UInt32 captureFrames, captureUsed;
+    uint8_t *inputMemory;
     uint8_t *clientMemory;
     union {
         AudioBufferList list;
@@ -101,6 +111,29 @@ struct ComponentInstanceRecord {
 static AudioStreamBasicDescription floatStereo(Float64 rate)
 {
     return (AudioStreamBasicDescription){ rate, kAudioFormatLinearPCM, kAudioFormatFlagsNativeFloatPacked, 8, 1, 8, 2, 32, 0 };
+}
+
+static AudioDeviceID defaultInputDevice(void)
+{
+    AudioObjectPropertyAddress a = { kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal,
+                                     kAudioObjectPropertyElementMain };
+    AudioDeviceID d = kAudioObjectUnknown;
+    UInt32 size = sizeof(d);
+
+    AudioObjectGetPropertyData(kAudioObjectSystemObject, &a, 0, NULL, &size, &d);
+    return d;
+}
+
+// the input device's float format, mono or stereo at its rate
+static AudioStreamBasicDescription inputDeviceFormat(AudioDeviceID device)
+{
+    AudioStreamBasicDescription f = floatStereo(48000);
+    AudioObjectPropertyAddress a = { kAudioDevicePropertyStreamFormat, kAudioObjectPropertyScopeInput, kAudioObjectPropertyElementMain };
+    UInt32 size = sizeof(f);
+
+    if (device != kAudioObjectUnknown)
+        AudioObjectGetPropertyData(device, &a, 0, NULL, &size, &f);
+    return f;
 }
 
 static AudioStreamBasicDescription deviceFormat(void)
@@ -169,16 +202,43 @@ static OSStatus allocateClientBuffers(AudioUnit u)
     return noErr;
 }
 
+// the input device's format, the client's capture format defaulting to it, a converter between them when
+// they differ, and room for the largest capture buffer
+static OSStatus initializeInput(AudioUnit u)
+{
+    u->inputDevice = defaultInputDevice();
+    if (u->inputDevice == kAudioObjectUnknown)
+        return kAudioUnitErr_NoConnection;
+    u->inputFormat = inputDeviceFormat(u->inputDevice);
+    if (u->inputClient.mSampleRate == 0)
+        u->inputClient = u->inputFormat;
+    if (memcmp(&u->inputClient, &u->inputFormat, sizeof(u->inputFormat)) != 0 &&
+        AudioConverterNew(&u->inputFormat, &u->inputClient, &u->inputConverter) != noErr)
+        return kAudioUnitErr_FormatNotSupported;
+    u->capture = calloc((size_t)MAX_SLICE * u->inputFormat.mChannelsPerFrame, sizeof(float));
+    u->inputMemory = calloc(MAX_SLICE, u->inputClient.mBytesPerFrame ? u->inputClient.mBytesPerFrame * u->inputClient.mChannelsPerFrame : 8);
+    if (!u->capture || !u->inputMemory)
+        return kAudio_MemFullError;
+    return noErr;
+}
+
 OSStatus AudioUnitInitialize(AudioUnit u)
 {
     if (u == NULL)
         return kAudio_ParamError;
     if (u->initialized)
         return noErr;
+    OSStatus err;
+    if (u->inputEnabled && (err = initializeInput(u)) != noErr)
+        return err;
+    if (!u->outputEnabled) {
+        u->initialized = true;
+        return noErr;
+    }
     if (!PDAudioOutputDeviceIsPresent())
         return kAudioUnitErr_NoConnection;
     u->device = deviceFormat();
-    OSStatus err = AudioConverterNew(&u->client, &u->device, &u->converter);
+    err = AudioConverterNew(&u->client, &u->device, &u->converter);
     if (err != noErr)
         return kAudioUnitErr_FormatNotSupported;
     if ((err = allocateClientBuffers(u)) != noErr) {
@@ -200,6 +260,16 @@ OSStatus AudioUnitUninitialize(AudioUnit u)
     if (u->ioProc)
         AudioDeviceDestroyIOProcID(kPDAudioOutputDevice, u->ioProc);
     u->ioProc = NULL;
+    if (u->inputProc)
+        AudioDeviceDestroyIOProcID(u->inputDevice, u->inputProc);
+    u->inputProc = NULL;
+    if (u->inputConverter)
+        AudioConverterDispose(u->inputConverter);
+    u->inputConverter = NULL;
+    free(u->capture);
+    free(u->inputMemory);
+    u->capture = NULL;
+    u->inputMemory = NULL;
     if (u->converter)
         AudioConverterDispose(u->converter);
     u->converter = NULL;
@@ -233,10 +303,11 @@ static OSStatus propertyInfo(AudioUnit u, AudioUnitPropertyID id, AudioUnitScope
         return kAudioUnitErr_InvalidScope;
     switch (id) {
     case kAudioUnitProperty_StreamFormat:
-        if (element != 0)
+        if (element > 1)
             return kAudioUnitErr_InvalidElement;
         *size = sizeof(AudioStreamBasicDescription);
-        w = scope == kAudioUnitScope_Input;
+        // element 0 takes the client's playback format on its input, element 1 its capture format on its output
+        w = element == 0 ? scope == kAudioUnitScope_Input : scope == kAudioUnitScope_Output;
         break;
     case kAudioUnitProperty_SampleRate:
         *size = sizeof(Float64);
@@ -319,7 +390,11 @@ OSStatus AudioUnitGetProperty(AudioUnit u, AudioUnitPropertyID id, AudioUnitScop
     pthread_mutex_lock(&u->lock);
     switch (id) {
     case kAudioUnitProperty_StreamFormat: {
-        AudioStreamBasicDescription f = scope == kAudioUnitScope_Input ? u->client : deviceFormat();
+        AudioStreamBasicDescription f;
+        if (element == 1)
+            f = scope == kAudioUnitScope_Output && u->inputClient.mSampleRate ? u->inputClient : inputDeviceFormat(defaultInputDevice());
+        else
+            f = scope == kAudioUnitScope_Input ? u->client : deviceFormat();
         memcpy(out, &f, sizeof(f));
         break;
     }
@@ -337,10 +412,10 @@ OSStatus AudioUnitGetProperty(AudioUnit u, AudioUnitPropertyID id, AudioUnitScop
         value = PDAudioOutputDeviceIsPresent() ? kPDAudioOutputDevice : kAudioObjectUnknown;
         break;
     case kAudioOutputUnitProperty_EnableIO:
-        value = element == 0 ? u->outputEnabled : 0;
+        value = element == 0 ? u->outputEnabled : u->inputEnabled;
         break;
     case kAudioOutputUnitProperty_HasIO:
-        value = element == 0 && PDAudioOutputDeviceIsPresent();
+        value = element == 0 ? PDAudioOutputDeviceIsPresent() : defaultInputDevice() != kAudioObjectUnknown;
         break;
     case kAudioOutputUnitProperty_IsRunning:
         value = u->running;
@@ -416,6 +491,13 @@ OSStatus AudioUnitSetProperty(AudioUnit u, AudioUnitPropertyID id, AudioUnitScop
             err = kAudioUnitErr_Initialized;
         } else if (!PDAudioPCMFormatIsSupported(f)) {
             err = kAudioUnitErr_FormatNotSupported;
+        } else if (element == 1) {
+            u->inputClient = *f;
+            UInt32 sample = f->mBitsPerChannel / 8;
+            if (u->inputClient.mBytesPerFrame == 0)
+                u->inputClient.mBytesPerFrame = (f->mFormatFlags & kAudioFormatFlagIsNonInterleaved) ? sample : sample * f->mChannelsPerFrame;
+            u->inputClient.mBytesPerPacket = u->inputClient.mBytesPerFrame;
+            u->inputClient.mFramesPerPacket = 1;
         } else {
             u->client = *f;
             UInt32 sample = f->mBitsPerChannel / 8;
@@ -439,10 +521,13 @@ OSStatus AudioUnitSetProperty(AudioUnit u, AudioUnitPropertyID id, AudioUnitScop
             err = kAudioUnitErr_InvalidPropertyValue;
         break;
     case kAudioOutputUnitProperty_EnableIO:
-        // there is no input device to enable
-        if (element == 1 && value)
+        if (u->initialized)
+            err = kAudioUnitErr_Initialized;
+        else if (element == 1 && value && defaultInputDevice() == kAudioObjectUnknown)
             err = kAudioUnitErr_InvalidPropertyValue;
-        else if (element == 0)
+        else if (element == 1)
+            u->inputEnabled = value != 0;
+        else
             u->outputEnabled = value != 0;
         break;
     case kAudioUnitProperty_MaximumFramesPerSlice:
@@ -560,7 +645,79 @@ OSStatus AudioUnitReset(AudioUnit u, AudioUnitScope scope, AudioUnitElement elem
     return noErr;
 }
 
-// pulling the output bus runs the client's render callback, the input bus has no device
+// the converter's input on the capture side: the captured device frames, handed over once
+static OSStatus captureInput(AudioConverterRef converter, UInt32 *packets, AudioBufferList *ioData,
+                             AudioStreamPacketDescription **descriptions, void *userData)
+{
+    AudioUnit u = userData;
+    UInt32 left = u->captureFrames - u->captureUsed, n = *packets < left ? *packets : left;
+    UInt32 bpf = u->inputFormat.mBytesPerFrame;
+
+    (void)converter;
+    (void)descriptions;
+    ioData->mBuffers[0].mData = (uint8_t *)u->capture + (size_t)u->captureUsed * bpf;
+    ioData->mBuffers[0].mDataByteSize = n * bpf;
+    ioData->mBuffers[0].mNumberChannels = u->inputFormat.mChannelsPerFrame;
+    u->captureUsed += n;
+    *packets = n;
+    return noErr;
+}
+
+// bus 1 hands out the last capture in the client's format, into the caller's buffers or into the unit's own
+static OSStatus renderCapture(AudioUnit u, UInt32 frames, AudioBufferList *ioData)
+{
+    if (!u->inputEnabled || !u->capture)
+        return kAudioUnitErr_NoConnection;
+    if (frames > u->captureFrames)
+        frames = u->captureFrames;
+    for (UInt32 i = 0; i < ioData->mNumberBuffers; i++) {
+        if (ioData->mBuffers[i].mData == NULL) {
+            ioData->mBuffers[i].mData = u->inputMemory + (size_t)i * frames * u->inputClient.mBytesPerFrame;
+            ioData->mBuffers[i].mDataByteSize = frames * u->inputClient.mBytesPerFrame;
+        }
+    }
+    if (!u->inputConverter) {
+        UInt32 bytes = frames * u->inputFormat.mBytesPerFrame;
+        if (ioData->mBuffers[0].mDataByteSize < bytes)
+            bytes = ioData->mBuffers[0].mDataByteSize;
+        memcpy(ioData->mBuffers[0].mData, u->capture, bytes);
+        ioData->mBuffers[0].mDataByteSize = bytes;
+        return noErr;
+    }
+    UInt32 n = frames;
+    u->captureUsed = 0;
+    OSStatus err = AudioConverterFillComplexBuffer(u->inputConverter, captureInput, u, &n, ioData, NULL);
+    for (UInt32 i = 0; i < ioData->mNumberBuffers; i++)
+        ioData->mBuffers[i].mDataByteSize = n * u->inputClient.mBytesPerFrame;
+    return err;
+}
+
+// the input device's IOProc: keep the capture and tell the client it can render bus 1
+static OSStatus inputProc(AudioObjectID device, const AudioTimeStamp *now, const AudioBufferList *input, const AudioTimeStamp *inputTime,
+                          AudioBufferList *output, const AudioTimeStamp *outputTime, void *data)
+{
+    AudioUnit u = data;
+    UInt32 bpf = u->inputFormat.mBytesPerFrame;
+
+    (void)device;
+    (void)now;
+    (void)output;
+    (void)outputTime;
+    if (!input || !input->mNumberBuffers || !bpf)
+        return noErr;
+    UInt32 frames = input->mBuffers[0].mDataByteSize / bpf;
+    if (frames > MAX_SLICE)
+        frames = MAX_SLICE;
+    memcpy(u->capture, input->mBuffers[0].mData, (size_t)frames * bpf);
+    u->captureFrames = frames;
+    if (u->input.inputProc) {
+        AudioUnitRenderActionFlags flags = 0;
+        u->input.inputProc(u->input.inputProcRefCon, &flags, inputTime, 1, frames, NULL);
+    }
+    return noErr;
+}
+
+// pulling the output bus runs the client's render callback, the input bus hands out the capture
 OSStatus AudioUnitRender(AudioUnit u, AudioUnitRenderActionFlags *flags, const AudioTimeStamp *timeStamp, UInt32 bus, UInt32 frames,
                          AudioBufferList *ioData)
 {
@@ -568,6 +725,8 @@ OSStatus AudioUnitRender(AudioUnit u, AudioUnitRenderActionFlags *flags, const A
         return kAudio_ParamError;
     if (!u->initialized)
         return kAudioUnitErr_Uninitialized;
+    if (bus == 1)
+        return renderCapture(u, frames, ioData);
     if (bus != 0)
         return kAudioUnitErr_NoConnection;
     if (frames > u->maxFrames)
@@ -651,16 +810,24 @@ OSStatus AudioOutputUnitStart(AudioUnit u)
         return kAudio_ParamError;
     if (!u->initialized)
         return kAudioUnitErr_Uninitialized;
-    if (!u->outputEnabled)
+    if (!u->outputEnabled && !u->inputEnabled)
         return kAudioUnitErr_NoConnection;
     pthread_mutex_lock(&u->lock);
     if (u->running) {
         pthread_mutex_unlock(&u->lock);
         return noErr;
     }
-    OSStatus err = u->ioProc ? noErr : AudioDeviceCreateIOProcID(kPDAudioOutputDevice, outputProc, u, &u->ioProc);
-    if (err == noErr)
-        err = AudioDeviceStart(kPDAudioOutputDevice, u->ioProc);
+    OSStatus err = noErr;
+    if (u->inputEnabled) {
+        err = u->inputProc ? noErr : AudioDeviceCreateIOProcID(u->inputDevice, inputProc, u, &u->inputProc);
+        if (err == noErr)
+            err = AudioDeviceStart(u->inputDevice, u->inputProc);
+    }
+    if (err == noErr && u->outputEnabled) {
+        err = u->ioProc ? noErr : AudioDeviceCreateIOProcID(kPDAudioOutputDevice, outputProc, u, &u->ioProc);
+        if (err == noErr)
+            err = AudioDeviceStart(kPDAudioOutputDevice, u->ioProc);
+    }
     u->running = err == noErr;
     pthread_mutex_unlock(&u->lock);
     if (err != noErr)
@@ -680,9 +847,12 @@ OSStatus AudioOutputUnitStop(AudioUnit u)
         return noErr;
     }
     u->running = false;
-    AudioDeviceIOProcID proc = u->ioProc;
+    AudioDeviceIOProcID proc = u->ioProc, in = u->inputProc;
     pthread_mutex_unlock(&u->lock);
-    AudioDeviceStop(kPDAudioOutputDevice, proc);
+    if (proc)
+        AudioDeviceStop(kPDAudioOutputDevice, proc);
+    if (in)
+        AudioDeviceStop(u->inputDevice, in);
     notifyListeners(u, kAudioOutputUnitProperty_IsRunning, kAudioUnitScope_Global, 0);
     return noErr;
 }

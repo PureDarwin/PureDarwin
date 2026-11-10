@@ -308,7 +308,11 @@ OSStatus AudioQueueAddPropertyListener(AudioQueueRef inAQ, AudioQueuePropertyID 
                                        void *inUserData);
 OSStatus AudioQueueRemovePropertyListener(AudioQueueRef inAQ, AudioQueuePropertyID inID, AudioQueuePropertyListenerProc inProc,
                                           void *inUserData);
-OSStatus AudioQueueGetCurrentTime(AudioQueueRef inAQ, void *inTimeline, AudioTimeStamp *outTimeStamp, Boolean *outTimelineDiscontinuity);
+typedef struct OpaqueAudioQueueTimeline *AudioQueueTimelineRef;
+OSStatus AudioQueueCreateTimeline(AudioQueueRef inAQ, AudioQueueTimelineRef *outTimeline);
+OSStatus AudioQueueDisposeTimeline(AudioQueueRef inAQ, AudioQueueTimelineRef inTimeline);
+OSStatus AudioQueueGetCurrentTime(AudioQueueRef inAQ, AudioQueueTimelineRef inTimeline, AudioTimeStamp *outTimeStamp,
+                                  Boolean *outTimelineDiscontinuity);
 
 typedef UInt32 AudioFormatPropertyID;
 

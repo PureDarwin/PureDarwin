@@ -334,12 +334,23 @@ static void deviceShape(AudioObjectID device, const struct pd_audio_device_info 
     *channels = s ? s->channels : info->outputChannels;
 }
 
-static AudioStreamBasicDescription deviceFormat(AudioObjectID device, const struct pd_audio_device_info *info)
+// an input device's scope is input whatever the caller names, it has nothing else
+static Boolean isInputDirection(const struct pd_audio_device_info *info, AudioObjectPropertyScope scope)
+{
+    if (scope == kAudioObjectPropertyScopeInput)
+        return true;
+    return scope != kAudioObjectPropertyScopeOutput && !(info->flags & kPDAudioDeviceHasOutput) &&
+           (info->flags & kPDAudioDeviceHasInput);
+}
+
+static AudioStreamBasicDescription deviceFormat(AudioObjectID device, const struct pd_audio_device_info *info, Boolean input)
 {
     Float64 rate;
     UInt32 ch;
 
     deviceShape(device, info, &rate, &ch);
+    if (input)
+        ch = info->inputChannels;
     return (AudioStreamBasicDescription){ rate, kAudioFormatLinearPCM, kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
                                           4 * ch, 1, 4 * ch, ch, 32, 0 };
 }
@@ -425,12 +436,17 @@ static OSStatus systemProperty(const pd_audio_state_reply *st, const AudioObject
 static OSStatus deviceProperty(AudioObjectID device, const struct pd_audio_device_info *info, const AudioObjectPropertyAddress *a,
                                void *out, UInt32 *size)
 {
-    Boolean output = isOutputScope(a->mScope) && (info->flags & kPDAudioDeviceHasOutput);
-    AudioStreamID stream = device == kPDAudioOutputDevice ? kPDAudioOutputStream : device + 1;
+    Boolean input = isInputDirection(info, a->mScope);
+    // output names the scope that has streams: output on a playback device, input on a capture one
+    Boolean output = input ? (info->flags & kPDAudioDeviceHasInput) != 0
+                           : isOutputScope(a->mScope) && (info->flags & kPDAudioDeviceHasOutput);
+    AudioStreamID stream = device == kPDAudioOutputDevice ? kPDAudioOutputStream : device + (input ? 2 : 1);
     Float64 rate;
     UInt32 channels;
 
     deviceShape(device, info, &rate, &channels);
+    if (input)
+        channels = info->inputChannels;
     if (!output)
         channels = 0;
     switch (a->mSelector) {
@@ -516,7 +532,7 @@ static OSStatus deviceProperty(AudioObjectID device, const struct pd_audio_devic
     case kAudioDevicePropertyStreamFormat:
         if (!output)
             return kNoProperty;
-        VALUE(AudioStreamBasicDescription, deviceFormat(device, info));
+        VALUE(AudioStreamBasicDescription, deviceFormat(device, info, input));
     // element 0 is the main control, every channel shares it
     case kAudioDevicePropertyVolumeScalar:
         if (!output)
@@ -530,8 +546,8 @@ static OSStatus deviceProperty(AudioObjectID device, const struct pd_audio_devic
     return kNoProperty;
 }
 
-static OSStatus streamProperty(AudioObjectID device, const struct pd_audio_device_info *info, const AudioObjectPropertyAddress *a,
-                               void *out, UInt32 *size)
+static OSStatus streamProperty(AudioObjectID device, const struct pd_audio_device_info *info, Boolean input,
+                               const AudioObjectPropertyAddress *a, void *out, UInt32 *size)
 {
     switch (a->mSelector) {
     case kAudioObjectPropertyClass:
@@ -541,16 +557,16 @@ static OSStatus streamProperty(AudioObjectID device, const struct pd_audio_devic
     case kAudioObjectPropertyOwner:
         VALUE(AudioObjectID, device);
     case kAudioStreamPropertyDirection:
-        VALUE(UInt32, 0);
+        VALUE(UInt32, input ? 1 : 0);
     case kAudioStreamPropertyTerminalType:
-        VALUE(UInt32, kAudioStreamTerminalTypeSpeaker);
+        VALUE(UInt32, input ? kAudioStreamTerminalTypeMicrophone : kAudioStreamTerminalTypeSpeaker);
     case kAudioStreamPropertyStartingChannel:
         VALUE(UInt32, 1);
     case kAudioStreamPropertyLatency:
         VALUE(UInt32, 0);
     case kAudioStreamPropertyVirtualFormat:
     case kAudioStreamPropertyPhysicalFormat:
-        VALUE(AudioStreamBasicDescription, deviceFormat(device, info));
+        VALUE(AudioStreamBasicDescription, deviceFormat(device, info, input));
     }
     return kNoProperty;
 }
@@ -582,14 +598,17 @@ static OSStatus lookup(AudioObjectID object, const AudioObjectPropertyAddress *a
                 info = (struct pd_audio_device_info){ .flags = kPDAudioDeviceHasOutput, .volume = 1, .name = "Output",
                                                       .manufacturer = "PureDarwin", .uid = "PureDarwinDefaultOutput" };
             r = object == kPDAudioOutputDevice ? deviceProperty(object, &info, a, out, size)
-                                               : streamProperty(kPDAudioOutputDevice, &info, a, out, size);
+                                               : streamProperty(kPDAudioOutputDevice, &info, false, a, out, size);
         }
     } else {
-        const struct pd_audio_device_info *dev = have ? infoIn(st, object) : NULL, *str = have ? infoIn(st, object - 1) : NULL;
+        const struct pd_audio_device_info *dev = have ? infoIn(st, object) : NULL;
+        const struct pd_audio_device_info *out1 = have ? infoIn(st, object - 1) : NULL, *in2 = have ? infoIn(st, object - 2) : NULL;
         if (dev)
             r = deviceProperty(object, dev, a, out, size);
-        else if (str && (str->flags & kPDAudioDeviceHasOutput))
-            r = streamProperty(object - 1, str, a, out, size);
+        else if (out1 && (out1->flags & kPDAudioDeviceHasOutput))
+            r = streamProperty(object - 1, out1, false, a, out, size);
+        else if (in2 && (in2->flags & kPDAudioDeviceHasInput))
+            r = streamProperty(object - 2, in2, true, a, out, size);
         else
             r = kAudioHardwareBadObjectError;
     }

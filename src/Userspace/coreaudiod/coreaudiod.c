@@ -7,6 +7,7 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOKitLib.h>
+#include <IOKit/IOMessage.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
 #include <mach/semaphore.h>
@@ -63,6 +64,9 @@ typedef struct {
 struct engine {
     bool used;
     bool gone;
+    // a capture engine, its stream is an input one and its clients read
+    bool input;
+    io_object_t interest;
     struct pd_audio_device_info info;
     io_service_t service;
     io_connect_t connect;
@@ -87,6 +91,7 @@ struct engine {
 };
 
 struct client {
+    bool input;
     mach_port_t session;
     semaphore_t wake;
     struct pd_audio_ring *ring;
@@ -105,6 +110,7 @@ static mach_port_t sNotifyPort;
 static uint32_t sGeneration;
 static uint32_t sDefaultOutput, sDefaultSystemOutput, sDefaultInput;
 static CFMutableDictionaryRef sPrefs;
+static IONotificationPortRef sIOPort;
 
 static struct {
     char uid[128];
@@ -185,7 +191,10 @@ static uint32_t idForUID(const char *uid)
 // the engine a client plays on right now: its own device, or the current default output
 static struct engine *clientEngine(const struct client *c)
 {
-    return engineWithID(c->device == kPDAudioFollowDefaultOutput ? sDefaultOutput : c->device);
+    uint32_t follow = c->input ? sDefaultInput : sDefaultOutput;
+    struct engine *e = engineWithID(c->device == kPDAudioFollowDefaultOutput ? follow : c->device);
+
+    return e && e->input == c->input ? e : NULL;
 }
 
 static void broadcastLocked(uint32_t what)
@@ -381,9 +390,15 @@ static bool findStreams(struct engine *e)
             CFDictionaryRef format = IORegistryEntryCreateCFProperty(child, CFSTR("IOAudioStreamFormat"), kCFAllocatorDefault, 0);
             uint32_t ch = dictNumber(format, CFSTR("IOAudioStreamNumChannels"), 2);
 
-            if (dir == kIOAudioStreamDirectionOutput && !found) {
+            if (dir == kIOAudioStreamDirectionOutput && (!found || e->input)) {
                 e->streamID = numberProperty(child, CFSTR("IOAudioStreamID"), 0);
                 e->channels = ch;
+                e->input = false;
+                found = true;
+            } else if (dir == kIOAudioStreamDirectionInput && !found) {
+                e->streamID = numberProperty(child, CFSTR("IOAudioStreamID"), 0);
+                e->channels = ch;
+                e->input = true;
                 found = true;
             }
             if (format)
@@ -435,7 +450,7 @@ static bool openEngine(struct engine *e)
     if (!stringProperty(e->service, CFSTR("IOAudioEngineGlobalUniqueID"), e->info.uid, sizeof(e->info.uid)))
         snprintf(e->info.uid, sizeof(e->info.uid), "IOAudioEngine:%u", e->service);
     if (!findStreams(e)) {
-        fprintf(stderr, "coreaudiod: %s has no output stream\n", e->info.uid);
+        fprintf(stderr, "coreaudiod: %s has no stream\n", e->info.uid);
         return false;
     }
     e->bufferFrames = numberProperty(e->service, CFSTR("IOAudioEngineNumSampleFramesPerBuffer"), 0);
@@ -476,15 +491,19 @@ static bool openEngine(struct engine *e)
     mach_timebase_info(&tb);
     e->ticksPerFrame = 1e9 / e->rate * tb.denom / tb.numer;
 
-    e->info.flags |= kPDAudioDeviceHasOutput;
+    e->info.flags |= e->input ? kPDAudioDeviceHasInput : kPDAudioDeviceHasOutput;
     e->info.sampleRate = e->rate;
-    e->info.outputChannels = e->channels;
+    if (e->input)
+        e->info.inputChannels = e->channels;
+    else
+        e->info.outputChannels = e->channels;
     e->info.latencyFrames = e->sampleOffset + 2 * PERIOD_FRAMES;
     e->info.volume = 1.0f;
-    findControls(e);
+    if (!e->input)
+        findControls(e);
     deviceNames(e);
-    fprintf(stderr, "coreaudiod: %s (%s) at %u Hz, %u channels, %u frame buffer, offset %u%s%s\n", e->info.name, e->info.uid,
-            e->rate, e->channels, e->bufferFrames, e->sampleOffset, e->volumeControl ? ", hardware volume" : "",
+    fprintf(stderr, "coreaudiod: %s %s (%s) at %u Hz, %u channels, %u frame buffer, offset %u%s%s\n", e->info.name,
+            e->input ? "input" : "output", e->info.uid, e->rate, e->channels, e->bufferFrames, e->sampleOffset, e->volumeControl ? ", hardware volume" : "",
             e->muteControl ? ", hardware mute" : "");
     return true;
 }
@@ -518,6 +537,7 @@ static void setEngineRunning(struct engine *e, bool run)
         return;
     }
     e->running = run;
+    fprintf(stderr, "coreaudiod: %s %s\n", e->info.name, run ? "started" : "stopped");
     if (run)
         e->info.flags |= kPDAudioDeviceRunning;
     else
@@ -632,10 +652,39 @@ static void mixClients(struct engine *e, uint64_t engineFrame)
     }
 }
 
+// one captured period, appended to every running input client's ring that has room for it
+static void deliverInput(struct engine *e, uint64_t engineFrame)
+{
+    const float *in = e->mix->fData;
+
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        struct client *c = &sClients[i];
+        struct pd_audio_ring *r = c->ring;
+
+        if (!r || clientEngine(c) != e)
+            continue;
+        if (r->running) {
+            uint64_t space = r->frames - (r->writeFrame - r->readFrame);
+            uint32_t n = space < PERIOD_FRAMES ? (uint32_t)space : PERIOD_FRAMES;
+
+            for (uint32_t f = 0; f < n; f++) {
+                float *dst = &r->data[((r->writeFrame + f) % r->frames) * r->channels];
+                for (uint32_t c2 = 0; c2 < r->channels; c2++)
+                    dst[c2] = c2 < e->channels ? in[f * e->channels + c2] : in[f * e->channels];
+            }
+            __sync_synchronize();
+            r->writeFrame += n;
+        }
+        r->readHostTime = hostTimeOfFrame(e, engineFrame + PERIOD_FRAMES);
+        semaphore_signal(c->wake);
+    }
+}
+
 static void *ioThread(void *arg)
 {
     struct engine *e = arg;
     uint64_t next = 0;
+    bool primed = false;
     uint32_t lead = e->sampleOffset + PERIOD_FRAMES;
     uint64_t interval;
 
@@ -651,6 +700,7 @@ static void *ioThread(void *arg)
 
             setEngineRunning(e, false);
             next = 0;
+            primed = false;
             clock_gettime(CLOCK_REALTIME, &idle);
             idle.tv_nsec += 10 * 1000 * 1000;
             if (idle.tv_nsec >= 1000000000) {
@@ -672,6 +722,38 @@ static void *ioThread(void *arg)
             continue;
         }
 
+        e->mix->fActualNumSampleFrames = PERIOD_FRAMES;
+        e->mix->fActualDataByteSize = PERIOD_FRAMES * e->channels * sizeof(float);
+        e->mix->fTotalDataByteSize = (uint32_t)e->mixSize;
+        e->mix->fNominalDataByteSize = e->mix->fActualDataByteSize;
+
+        // capture: a period is read once the head is past it by the engine's offset, a reader that fell
+        // a whole buffer behind starts again at the newest period
+        if (e->input) {
+            uint64_t head = frameNow(e);
+            if (!primed || next + e->bufferFrames / 2 < head) {
+                if (primed)
+                    fprintf(stderr, "coreaudiod: %s input fell behind, skipping to the head\n", e->info.name);
+                next = head > PERIOD_FRAMES + e->sampleOffset ? head - PERIOD_FRAMES - e->sampleOffset : 0;
+                primed = true;
+            }
+            if (next + PERIOD_FRAMES + e->sampleOffset > head) {
+                mach_wait_until(hostTimeOfFrame(e, next + PERIOD_FRAMES + e->sampleOffset));
+                continue;
+            }
+            kern_return_t kr = IOConnectTrap6(e->connect, kIOAudioEngineTrapPerformClientIO,
+                                              (uintptr_t)(next % e->bufferFrames), (uintptr_t)(next / e->bufferFrames), 1,
+                                              0, (uintptr_t)(interval >> 32), (uintptr_t)(interval & 0xffffffff));
+            if (kr != KERN_SUCCESS)
+                fprintf(stderr, "coreaudiod: input performClientIO at %llu (head %llu) on %s failed: 0x%x\n",
+                        (unsigned long long)next, (unsigned long long)head, e->info.name, kr);
+            pthread_mutex_lock(&sLock);
+            deliverInput(e, next);
+            pthread_mutex_unlock(&sLock);
+            next += PERIOD_FRAMES;
+            continue;
+        }
+
         uint64_t now = frameNow(e);
         if (next != 0 && next < now + e->sampleOffset)
             fprintf(stderr, "coreaudiod: %s late by %lld frames, skipping ahead\n", e->info.name,
@@ -682,10 +764,6 @@ static void *ioThread(void *arg)
         pthread_mutex_lock(&sLock);
         mixClients(e, next);
         pthread_mutex_unlock(&sLock);
-        e->mix->fActualNumSampleFrames = PERIOD_FRAMES;
-        e->mix->fActualDataByteSize = PERIOD_FRAMES * e->channels * sizeof(float);
-        e->mix->fTotalDataByteSize = (uint32_t)e->mixSize;
-        e->mix->fNominalDataByteSize = e->mix->fActualDataByteSize;
         kern_return_t kr = IOConnectTrap6(e->connect, kIOAudioEngineTrapPerformClientIO,
                                           (uintptr_t)(next % e->bufferFrames), (uintptr_t)(next / e->bufferFrames), 0,
                                           0, (uintptr_t)(interval >> 32), (uintptr_t)(interval & 0xffffffff));
@@ -716,6 +794,8 @@ static void startIOThread(struct engine *e)
 
 static void closeEngine(struct engine *e)
 {
+    if (e->interest)
+        IOObjectRelease(e->interest);
     if (e->connect)
         IOServiceClose(e->connect);
     if (e->mix)
@@ -728,6 +808,8 @@ static void closeEngine(struct engine *e)
         IOObjectRelease(e->service);
     memset(e, 0, sizeof(*e));
 }
+
+static void engineInterest(void *refcon, io_service_t service, natural_t type, void *argument);
 
 static void engineArrived(io_service_t service)
 {
@@ -761,6 +843,8 @@ static void engineArrived(io_service_t service)
     if (mute && CFGetTypeID(mute) == CFBooleanGetTypeID())
         e->info.mute = CFBooleanGetValue(mute);
     e->used = true;
+    if (sIOPort)
+        IOServiceAddInterestNotification(sIOPort, e->service, kIOGeneralInterest, engineInterest, e, &e->interest);
     applyVolume(e);
     startIOThread(e);
     uint32_t what = kPDAudioChangedDevices;
@@ -771,19 +855,12 @@ static void engineArrived(io_service_t service)
     pthread_mutex_unlock(&sLock);
 }
 
-static void engineTerminated(io_service_t service)
+// the device leaves the table and the defaults move on as soon as the engine starts terminating, the
+// engine itself is closed once the family has finished with it
+static void engineLeavingLocked(struct engine *e)
 {
-    struct engine *e = NULL;
-
-    pthread_mutex_lock(&sLock);
-    for (int i = 0; i < kPDAudioMaxDevices && !e; i++) {
-        if (sEngines[i].used && !sEngines[i].gone && IOObjectIsEqualTo(sEngines[i].service, service))
-            e = &sEngines[i];
-    }
-    if (!e) {
-        pthread_mutex_unlock(&sLock);
+    if (e->gone)
         return;
-    }
     fprintf(stderr, "coreaudiod: %s went away\n", e->info.name);
     e->gone = true;
     uint32_t what = kPDAudioChangedDevices;
@@ -791,6 +868,31 @@ static void engineTerminated(io_service_t service)
         what |= kPDAudioChangedDefaults;
     broadcastLocked(what);
     pthread_cond_broadcast(&sClientsChanged);
+}
+
+static void engineInterest(void *refcon, io_service_t service, natural_t type, void *argument)
+{
+    if (type != kIOMessageServiceIsTerminated)
+        return;
+    pthread_mutex_lock(&sLock);
+    engineLeavingLocked(refcon);
+    pthread_mutex_unlock(&sLock);
+}
+
+static void engineTerminated(io_service_t service)
+{
+    struct engine *e = NULL;
+
+    pthread_mutex_lock(&sLock);
+    for (int i = 0; i < kPDAudioMaxDevices && !e; i++) {
+        if (sEngines[i].used && IOObjectIsEqualTo(sEngines[i].service, service))
+            e = &sEngines[i];
+    }
+    if (!e) {
+        pthread_mutex_unlock(&sLock);
+        return;
+    }
+    engineLeavingLocked(e);
     pthread_mutex_unlock(&sLock);
 
     if (e->threadUp)
@@ -848,6 +950,7 @@ static void handleConnect(mach_msg_header_t *in)
     uint32_t channels, rate, latency;
 
     c.device = in->msgh_size >= sizeof(pd_audio_connect_msg) ? ((pd_audio_connect_msg *)in)->device : kPDAudioFollowDefaultOutput;
+    c.input = in->msgh_size >= sizeof(pd_audio_connect_msg) && ((pd_audio_connect_msg *)in)->input;
     pthread_mutex_lock(&sLock);
     for (int i = 0; i < MAX_CLIENTS && slot < 0; i++) {
         if (!sClients[i].ring)
@@ -908,6 +1011,7 @@ static void handleConnect(mach_msg_header_t *in)
         return;
     }
 
+    fprintf(stderr, "coreaudiod: client %d connected to %s%s\n", slot, e->info.name, c.input ? " for input" : "");
     pthread_mutex_lock(&sLock);
     sClients[slot] = c;
     pthread_cond_broadcast(&sClientsChanged);
@@ -1020,8 +1124,10 @@ static void handleNoSenders(mach_port_t session)
 {
     pthread_mutex_lock(&sLock);
     for (int i = 0; i < MAX_CLIENTS; i++) {
-        if (sClients[i].ring && sClients[i].session == session)
+        if (sClients[i].ring && sClients[i].session == session) {
+            fprintf(stderr, "coreaudiod: client %d left, it wrote %llu frames\n", i, (unsigned long long)sClients[i].ring->writeFrame);
             dropClient(&sClients[i]);
+        }
     }
     pthread_mutex_unlock(&sLock);
 }
@@ -1046,6 +1152,7 @@ int main(void)
 
     // engines come and go with their hardware, a machine without one still answers with no devices
     IONotificationPortRef ioPort = IONotificationPortCreate(kIOMasterPortDefault);
+    sIOPort = ioPort;
     mach_port_t ioMachPort = IONotificationPortGetMachPort(ioPort);
     mach_port_move_member(mach_task_self(), ioMachPort, sNotifyPort);
     IOServiceAddMatchingNotification(ioPort, kIOTerminatedNotification, IOServiceMatching("IOAudioEngine"), enginesMatched,
