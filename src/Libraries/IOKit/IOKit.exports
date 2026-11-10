@@ -249,8 +249,12 @@ _IOPMConnectionAcknowledgeEventWithOptions
 _IOPMConnectionCreate
 _IOPMConnectionRelease
 _IOPMConnectionScheduleWithRunLoop
+_IOPMAssertionCreateWithDescription
+_IOPMAssertionCreateWithName
+_IOPMAssertionRelease
 _IOPMConnectionSetNotification
 _IOPMConnectionUnscheduleFromRunLoop
+_IOPMCopyAssertionsByProcess
 _IOPMCopyAssertionsStatus
 _IOPMCopyScheduledPowerEvents
 _IOPMRequestSysWake
@@ -260,6 +264,7 @@ _IOPSCopyPowerSourcesList
 _IOPSGetPowerSourceDescription
 _IOPSNotificationCreateRunLoopSource
 _IORegisterClient
+_IODeregisterForSystemPower
 _IORegisterForSystemPower
 _IORegistryCreateEnumerator
 _IORegistryCreateIterator
@@ -488,6 +493,13 @@ _io_service_set_authorization_id
 _io_service_wait_quiet
 _io_service_wait_quiet_with_options
 _iokit_user_client_trap
+_kIOMainPortDefault
 _kIOMasterPortDefault
+_kIOMainPortDefault
+_IOMainPort
 _previouslySerialized
 _recordObjectInIDRefDictionary
+_IOPMCopyCPUPowerStatus
+_IOMainPort
+_SCDynamicStoreCopyValue
+_IOHIDCheckAccess

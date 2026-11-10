@@ -145,8 +145,7 @@ target_link_options(ipconfig PRIVATE
     -Wl,-platform_version,macos,26.5,26.5
     -Wl,-dylinker_install_name,/usr/lib/dyld
     "${PUREDARWIN_COREFOUNDATION_PREFIX}/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
-    -Wl,-L,${PUREDARWIN_IOKIT_PREFIX}/usr/lib
-    -lIOKitCF
+    "${PUREDARWIN_IOKIT_PREFIX}/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit"
     $<TARGET_FILE:SystemConfiguration>
     -lSystem)
 

@@ -320,6 +320,8 @@ public:
 		bool			verboseMapping;
 		bool			verboseRebase;
 		bool			verboseBind;
+		// survey aid: missing libraries and symbols are logged and bound to 0
+		bool			pdMissingOk;
 		bool			verboseWeakBind;
 		bool			verboseInit;
 		bool			verboseDOF;

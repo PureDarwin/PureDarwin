@@ -1047,6 +1047,19 @@ void ImageLoaderMachOCompressed::doApplyFixups(const LinkContext& context, const
 			targetAddrs.push_back((void*)(symbolAddress + addend));
 		}
 		catch (const char* msg) {
+			if ( context.pdMissingOk ) {
+				// an inserted survey shim may export it, any image will do
+				const Symbol* sym;
+				const ImageLoader* image;
+				if ( context.flatExportFinder(symbolName, &sym, &image) ) {
+					dyld::log("dyld: PD-MISSING symbol %s from %s found in %s\n", symbolName, this->getPath(), image->getPath());
+					targetAddrs.push_back((void*)(image->getExportedSymbolAddress(sym, context, this, true) + addend));
+					return;
+				}
+				dyld::log("dyld: PD-MISSING symbol %s from %s\n", symbolName, this->getPath());
+				targetAddrs.push_back(NULL);
+				return;
+			}
 			stop = true;
 			diag.error("%s", msg);
 		}

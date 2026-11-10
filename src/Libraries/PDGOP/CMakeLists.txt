@@ -1,3 +1,8 @@
+# needs IOKit.framework, which only its own build and fbdoom enable
+if(NOT TARGET IOKit)
+    return()
+endif()
+
 add_darwin_static_library(PDGOP)
 
 target_sources(PDGOP PRIVATE
@@ -7,6 +12,7 @@ target_sources(PDGOP PRIVATE
 target_include_directories(PDGOP
     PUBLIC include
     PRIVATE ${CMAKE_SOURCE_DIR}/src/Libraries/libSystem/libsystem_kernel/mach
+        ${PUREDARWIN_COREFOUNDATION_PREFIX}/include
 )
 
 target_link_libraries(PDGOP PUBLIC IOKit)

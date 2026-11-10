@@ -59,6 +59,18 @@ CF_EXPORT OSStatus UCKeyTranslate(const UCKeyboardLayout *keyLayoutPtr, UInt16 v
                                   UInt32 *deadKeyState, UniCharCount maxStringLength, UniCharCount *actualStringLength,
                                   UniChar unicodeString[]);
 
+// Icon Services: icons by creator and type
+enum {
+    invalidIconRefErr = -2580,
+    noSuchIconErr = -2582,
+};
+enum {
+    kOnSystemDisk = -32768,
+    kSystemIconsCreator = 'macs',
+};
+CF_EXPORT OSErr GetIconRef(SInt16 vRefNum, OSType creator, OSType iconType, IconRef *theIconRef);
+CF_EXPORT OSErr ReleaseIconRef(IconRef theIconRef);
+
 CF_EXTERN_C_END
 
 #endif

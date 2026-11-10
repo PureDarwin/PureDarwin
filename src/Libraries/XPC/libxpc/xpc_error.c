@@ -27,6 +27,10 @@ OS_OBJECT_OBJC_CLASS_DECL(xpc_object);
 const char *const _xpc_error_key_description = _XPC_ERROR_KEY_DESCRIPTION_STR;
 
 /*
+* XPC_ERROR_* objects have type XPC_TYPE_ERROR, as on macOS, so handlers that
+* test for errors see them. They keep a dictionary's layout so
+* xpc_dictionary_get_string(error, XPC_ERROR_KEY_DESCRIPTION) works.
+*
 * XPC_ERROR_* constants are declared to be of type `struct _xpc_dictionary_s`
 * in Apple's <xpc/connection.h>, yet we want `struct _xpc_dictionary_s *` to
 * be interchangable with `struct xpc_object *`, because both types get passed
@@ -77,7 +81,7 @@ const struct _xpc_dictionary_s _xpc_error_connection_interrupted = {
 			.ref_cnt = _OS_OBJECT_GLOBAL_REFCNT,
 			.xref_cnt = _OS_OBJECT_GLOBAL_REFCNT
 		},
-		.xo_xpc_type = XPC_TYPE_DICTIONARY,
+		.xo_xpc_type = XPC_TYPE_ERROR,
 		.xo_size = 1,
 		.xo_u = {
 			.dict = {
@@ -121,7 +125,7 @@ const struct _xpc_dictionary_s _xpc_error_connection_invalid = {
 			.ref_cnt = _OS_OBJECT_GLOBAL_REFCNT,
 			.xref_cnt = _OS_OBJECT_GLOBAL_REFCNT
 		},
-		.xo_xpc_type = XPC_TYPE_DICTIONARY,
+		.xo_xpc_type = XPC_TYPE_ERROR,
 		.xo_size = 1,
 		.xo_u = {
 			.dict = {
@@ -165,7 +169,7 @@ const struct _xpc_dictionary_s _xpc_error_termination_imminent = {
 			.ref_cnt = _OS_OBJECT_GLOBAL_REFCNT,
 			.xref_cnt = _OS_OBJECT_GLOBAL_REFCNT
 		},
-		.xo_xpc_type = XPC_TYPE_DICTIONARY,
+		.xo_xpc_type = XPC_TYPE_ERROR,
 		.xo_size = 1,
 		.xo_u = {
 			.dict = {

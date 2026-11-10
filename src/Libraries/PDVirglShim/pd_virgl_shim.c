@@ -11,7 +11,7 @@ static inline io_connect_t conn_of(pd_virgl_conn *c)
    return (io_connect_t)(uintptr_t)c;
 }
 
-pd_virgl_conn *pd_virgl_open(void)
+static pd_virgl_conn *pd_virgl_open_type(uint32_t type)
 {
    mach_port_t master = MACH_PORT_NULL;
    if (IOMasterPort(MACH_PORT_NULL, &master) != KERN_SUCCESS)
@@ -24,12 +24,23 @@ pd_virgl_conn *pd_virgl_open(void)
        svc == IO_SERVICE_NULL)
       return 0;
    io_connect_t conn = IO_CONNECT_NULL;
-   kern_return_t kr = IOServiceOpen(svc, mach_task_self(),
-                                    kIOVirtIOGPU3DConnectType, &conn);
+   kern_return_t kr = IOServiceOpen(svc, mach_task_self(), type, &conn);
    IOObjectRelease(svc);
    if (kr != KERN_SUCCESS)
       return 0;
    return (pd_virgl_conn *)(uintptr_t)conn;
+}
+
+pd_virgl_conn *pd_virgl_open(void)
+{
+   return pd_virgl_open_type(kIOVirtIOGPU3DConnectType);
+}
+
+// the 3D connection when there is one, else the 2D framebuffer client (type 0), which has the cursor calls too
+pd_virgl_conn *pd_virgl_open_cursor(void)
+{
+   pd_virgl_conn *c = pd_virgl_open_type(kIOVirtIOGPU3DConnectType);
+   return c ? c : pd_virgl_open_type(0);
 }
 
 void pd_virgl_close(pd_virgl_conn *c)

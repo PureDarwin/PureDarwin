@@ -18,6 +18,8 @@ target_sources(XPC_libinfo_static PRIVATE
     dns.subproj/herror.c
     gen.subproj/vars.c
     gen.subproj/getifaddrs.c
+    # Apple's getifmaddrs, multicast group memberships from NET_RT_IFLIST2 (netstat -g)
+    gen.subproj/getifmaddrs.c
     # Real if_nametoindex (built on getifaddrs above). The pd_net_compat.c stub
     # returned 0 = "not found" for every name, which made mDNSPosix's
     # SetupInterfaceList() 'continue' past every interface, so mDNS_Init()

@@ -25,6 +25,9 @@
  *
  */
 
+#include <stdio.h>
+#include <syslog.h>
+#include <stdarg.h>
 #include <sys/types.h>
 #include <mach/mach.h>
 #include <xpc/launchd.h>
@@ -80,6 +83,8 @@ nv2xpc(const nvlist_t *nv, mach_port_t (^port_deserializer)(int64_t port_id))
 				return _xpc_prim_create(XPC_TYPE_FD, val, 0);
 			} else if (strcmp(type, "date") == 0) {
 				return xpc_date_create(nvlist_get_int64(nv, "date"));
+			} else if (strcmp(type, "data") == 0) {
+				return xpc_data_create(NULL, 0);
 			} else if (strcmp(type, "double") == 0) {
 				size_t value_size;
 				double *value = (double *)nvlist_get_binary(nv, "double", &value_size);
@@ -208,6 +213,12 @@ xpc2nv_primitive(nvlist_t *nv, const char *key, xpc_object_t value, int64_t (^po
 		nvlist_add_int64(inner_nv, "date", xotmp->xo_u.i);
 		nvlist_add_nvlist(nv, key, inner_nv);
 		nvlist_destroy(inner_nv);
+	} else if (xotmp->xo_xpc_type == XPC_TYPE_DATA && xpc_data_get_length(xotmp) == 0) {
+		// libnv refuses zero-length binaries, so empty data travels as a tagged entry
+		inner_nv = nvlist_create_dictionary(0);
+		nvlist_add_string(inner_nv, NVLIST_XPC_TYPE, "data");
+		nvlist_add_nvlist(nv, key, inner_nv);
+		nvlist_destroy(inner_nv);
 	} else if (xotmp->xo_xpc_type == XPC_TYPE_DATA) {
 		nvlist_add_binary(nv, key, xpc_data_get_bytes_ptr(xotmp), xpc_data_get_length(xotmp));
 	} else if (xotmp->xo_xpc_type == XPC_TYPE_STRING) {
@@ -235,6 +246,21 @@ xpc2nv_primitive(nvlist_t *nv, const char *key, xpc_object_t value, int64_t (^po
 	}
 }
 
+// a value libnv rejects leaves the list unusable, name the first one so the sender sees what it was
+static void
+xpc2nv_check(nvlist_t *nv, const char *key, xpc_object_t value)
+{
+	static __thread bool reported;
+
+	if (nvlist_error(nv) != 0 && !reported) {
+		reported = true;
+		syslog(LOG_ERR, "xpc: cannot serialize key \"%s\" of type %s: %s", key,
+		    _xpc_get_type_name(value), strerror(nvlist_error(nv)));
+		fprintf(stderr, "xpc: cannot serialize key \"%s\" of type %s: %s\n", key,
+		    _xpc_get_type_name(value), strerror(nvlist_error(nv)));
+	}
+}
+
 nvlist_t *
 xpc2nv(struct xpc_object *xo, int64_t (^port_serializer)(mach_port_t port))
 {
@@ -251,6 +277,7 @@ xpc2nv(struct xpc_object *xo, int64_t (^port_serializer)(mach_port_t port))
 				return ((bool)true);
 			}
 			xpc2nv_primitive(nv, k, v, port_serializer);
+			xpc2nv_check(nv, k, v);
 			return ((bool)true);
 		});
 
@@ -263,6 +290,7 @@ xpc2nv(struct xpc_object *xo, int64_t (^port_serializer)(mach_port_t port))
 		xpc_array_apply(xo, ^(size_t index, xpc_object_t v) {
 			asprintf(&key, "%ld", index);
 			xpc2nv_primitive(nv, key, v, port_serializer);
+			xpc2nv_check(nv, key, v);
 			free(key);
 			return ((bool)true);
 		});
@@ -424,6 +452,15 @@ xpc_dictionary_set_value(xpc_object_t xdict, const char *key, xpc_object_t value
 
 }
 
+// the value for the key when it is a dictionary, NULL otherwise
+xpc_object_t
+xpc_dictionary_get_dictionary(xpc_object_t xdict, const char *key)
+{
+	xpc_object_t value = xpc_dictionary_get_value(xdict, key);
+
+	return (value != NULL && xpc_get_type(value) == XPC_TYPE_DICTIONARY) ? value : NULL;
+}
+
 xpc_object_t
 xpc_dictionary_get_value(xpc_object_t xdict, const char *key)
 {
@@ -434,7 +471,9 @@ xpc_dictionary_get_value(xpc_object_t xdict, const char *key)
 	struct xpc_dict_pair *pair;
 
 	xo = xdict;
-	xpc_assert_type(xo, XPC_TYPE_DICTIONARY);
+	// an error object is read like a dictionary
+	xpc_precondition(xo->xo_xpc_type == XPC_TYPE_DICTIONARY || xo->xo_xpc_type == XPC_TYPE_ERROR,
+	    "object type mismatch: Expected XPC_TYPE_DICTIONARY");
 	head = &xo->xo_dict;
 
 	TAILQ_FOREACH(pair, head, xo_link) {
@@ -692,7 +731,8 @@ xpc_dictionary_apply(xpc_object_t xdict, xpc_dictionary_applier_t applier)
 	struct xpc_dict_pair *pair;
 
 	xpc_assert_nonnull(xdict);
-	xpc_assert_type(xo, XPC_TYPE_DICTIONARY);
+	xpc_precondition(xo->xo_xpc_type == XPC_TYPE_DICTIONARY || xo->xo_xpc_type == XPC_TYPE_ERROR,
+	    "object type mismatch: Expected XPC_TYPE_DICTIONARY");
 
 	head = &xo->xo_dict;
 
@@ -702,4 +742,108 @@ xpc_dictionary_apply(xpc_object_t xdict, xpc_dictionary_applier_t applier)
 	}
 
 	return (true);
+}
+
+// "{key: value, ...}" where a key is %string or a bare word and a value is %value, %string, %bool,
+// %int64, %uint64 or %double, each % taking its argument in order
+static bool
+xpc_format_fill(xpc_object_t dict, const char *format, va_list ap)
+{
+	const char *p = format;
+	char word[128];
+
+	while (*p == ' ')
+		p++;
+	if (*p++ != '{')
+		return false;
+	for (;;) {
+		const char *key;
+		size_t len;
+
+		while (*p == ' ' || *p == ',')
+			p++;
+		if (*p == '}')
+			return true;
+		if (strncmp(p, "%string", 7) == 0) {
+			key = va_arg(ap, const char *);
+			p += 7;
+		} else {
+			for (len = 0; p[len] && p[len] != ':' && p[len] != ' ' && len < sizeof(word) - 1; len++)
+				word[len] = p[len];
+			if (len == 0)
+				return false;
+			word[len] = 0;
+			key = word;
+			p += len;
+		}
+		while (*p == ' ')
+			p++;
+		if (*p++ != ':')
+			return false;
+		while (*p == ' ')
+			p++;
+		if (strncmp(p, "%value", 6) == 0) {
+			xpc_object_t value = va_arg(ap, xpc_object_t);
+
+			if (value != NULL)
+				xpc_dictionary_set_value(dict, key, value);
+			p += 6;
+		} else if (strncmp(p, "%string", 7) == 0) {
+			const char *value = va_arg(ap, const char *);
+
+			if (value != NULL)
+				xpc_dictionary_set_string(dict, key, value);
+			p += 7;
+		} else if (strncmp(p, "%bool", 5) == 0) {
+			xpc_dictionary_set_bool(dict, key, va_arg(ap, int) != 0);
+			p += 5;
+		} else if (strncmp(p, "%int64", 6) == 0) {
+			xpc_dictionary_set_int64(dict, key, va_arg(ap, int64_t));
+			p += 6;
+		} else if (strncmp(p, "%uint64", 7) == 0) {
+			xpc_dictionary_set_uint64(dict, key, va_arg(ap, uint64_t));
+			p += 7;
+		} else if (strncmp(p, "%double", 7) == 0) {
+			xpc_dictionary_set_double(dict, key, va_arg(ap, double));
+			p += 7;
+		} else
+			return false;
+	}
+}
+
+xpc_object_t
+xpc_create_with_format(const char *format, ...)
+{
+	xpc_object_t dict = xpc_dictionary_create(NULL, NULL, 0);
+	va_list ap;
+	bool ok;
+
+	va_start(ap, format);
+	ok = xpc_format_fill(dict, format, ap);
+	va_end(ap);
+	if (!ok) {
+		xpc_release(dict);
+		return NULL;
+	}
+	return dict;
+}
+
+// a reply to the original message, so it goes back to the sender, with the formatted contents
+xpc_object_t
+xpc_create_reply_with_format(xpc_object_t original, const char *format, ...)
+{
+	xpc_object_t dict = xpc_dictionary_create_reply(original);
+	va_list ap;
+	bool ok;
+
+	if (dict == NULL)
+		return NULL;
+	va_start(ap, format);
+	ok = xpc_format_fill(dict, format, ap);
+	va_end(ap);
+	if (!ok) {
+		xpc_release(dict);
+		return NULL;
+	}
+	return dict;
 }

@@ -141,13 +141,24 @@ IORegisterForSystemPower(void *refcon, IONotificationPortRef *thePortRef,
 {
 	(void)refcon;
 	(void)callback;
+	// a real port that never fires, callers add its run loop source unconditionally
 	if (thePortRef != NULL) {
-		*thePortRef = NULL;
+		*thePortRef = IONotificationPortCreate(kIOMasterPortDefault);
 	}
 	if (notifier != NULL) {
 		*notifier = IO_OBJECT_NULL;
 	}
 	return MACH_PORT_NULL;
+}
+
+// no thermal or power throttling is reported, as on a Mac without CPU power limits
+IOReturn
+IOPMCopyCPUPowerStatus(CFDictionaryRef *cpuPowerStatus)
+{
+	if (cpuPowerStatus != NULL) {
+		*cpuPowerStatus = NULL;
+	}
+	return kIOReturnNotFound;
 }
 
 CFArrayRef
@@ -168,6 +179,7 @@ IOPMRequestSysWake(CFDictionaryRef request)
 // PureDarwin never sleeps, so every assertion is honoured by construction
 // they are tracked so that releasing an unknown ID still fails as powerd's would
 #include <pthread.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <mach/mach_time.h>
 
@@ -289,6 +301,42 @@ IOPMCopyAssertionsStatus(CFDictionaryRef *AssertionsStatus)
 	pthread_mutex_unlock(&assertionLock);
 	CFRelease(onNumber);
 	*AssertionsStatus = status;
+	return kIOReturnSuccess;
+}
+
+// assertions are held by this process only, so the map has one entry, our pid and the assertions we hold
+IOReturn
+IOPMCopyAssertionsByProcess(CFDictionaryRef *AssertionsByPID)
+{
+	if (AssertionsByPID == NULL) {
+		return kIOReturnBadArgument;
+	}
+
+	CFMutableDictionaryRef byPID = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+	    &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+	CFMutableArrayRef held = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
+
+	pthread_mutex_lock(&assertionLock);
+	if (assertions != NULL) {
+		CFIndex count = CFDictionaryGetCount(assertions);
+		const void **values = malloc(sizeof(void *) * (count ? count : 1));
+
+		CFDictionaryGetKeysAndValues(assertions, NULL, values);
+		for (CFIndex i = 0; i < count; i++) {
+			CFArrayAppendValue(held, values[i]);
+		}
+		free(values);
+	}
+	pthread_mutex_unlock(&assertionLock);
+	if (CFArrayGetCount(held) > 0) {
+		int pid = getpid();
+		CFNumberRef pidNumber = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &pid);
+
+		CFDictionarySetValue(byPID, pidNumber, held);
+		CFRelease(pidNumber);
+	}
+	CFRelease(held);
+	*AssertionsByPID = byPID;
 	return kIOReturnSuccess;
 }
 

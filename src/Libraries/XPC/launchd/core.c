@@ -6636,6 +6636,8 @@ machservice_setup_options(launch_data_t obj, const char *key, void *context)
 				job_log(ms->job, LOG_WARNING, "Tried to set a reserved host special port: %d", which_port);
 			}
 		}
+		// falling into the bool case read the integer as a bool, which our libxpc aborts on
+		break;
 	case LAUNCH_DATA_BOOL:
 		b = launch_data_get_bool(obj);
 		if (strcasecmp(key, LAUNCH_JOBKEY_MACH_ENTERKERNELDEBUGGERONCLOSE) == 0) {

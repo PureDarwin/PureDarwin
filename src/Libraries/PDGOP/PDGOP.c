@@ -42,11 +42,7 @@ kern_return_t
 PDGOPOpen(PDGOPFramebuffer *fb)
 {
     kern_return_t kr;
-#ifdef _PD_IOKITLIB_H
-    char *matching;
-#else
     CFDictionaryRef matching;
-#endif
     uint64_t scalarOut[2] = {0, 0};
     uint32_t scalarOutCnt = 2;
     uint64_t scalarIn[3];
@@ -80,13 +76,8 @@ PDGOPOpen(PDGOPFramebuffer *fb)
         if (matching == NULL) {
             continue;
         }
-#ifdef _PD_IOKITLIB_H
-        kr = IOServiceGetMatchingService(fb->masterPort, matching,
-            &fb->service);
-#else
         fb->service = IOServiceGetMatchingService(fb->masterPort, matching);
         kr = fb->service != IO_OBJECT_NULL ? KERN_SUCCESS : KERN_FAILURE;
-#endif
         if (fb->service != IO_OBJECT_NULL) {
             char serviceName[128] = {0};
             if (IORegistryEntryGetName(fb->service, serviceName) == KERN_SUCCESS)

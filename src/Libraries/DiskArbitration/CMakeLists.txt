@@ -52,8 +52,7 @@ target_include_directories(DiskArbitration PRIVATE
     ${CMAKE_SOURCE_DIR}/src/Kernel/xnu/libkern
     ${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/libc/pd-compat-include
     ${CMAKE_CURRENT_SOURCE_DIR}/../CrashReporterClient/include
-    # Apple's CoreFoundation-based IOKitLib (IOKitUser), not PureDarwin's
-    # CF-free PDIOKitLib - DA needs IOBSDNameMatching, the registry property
+    # IOKitUser's headers, DA needs IOBSDNameMatching, the registry property
     # calls and kIOServicePlane.
     ${CMAKE_CURRENT_SOURCE_DIR}/../IOKit/iokituser/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../XPC/libxpc/include
@@ -119,8 +118,7 @@ target_link_options(DiskArbitration PRIVATE
     -Wl,-platform_version,macos,26.5,26.5
     "${PUREDARWIN_COREFOUNDATION_PREFIX}/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
     $<TARGET_FILE:CrashReporterClient>
-    -Wl,-L,${PUREDARWIN_IOKIT_PREFIX}/usr/lib
-    -lIOKitCF
+    "${PUREDARWIN_IOKIT_PREFIX}/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit"
     "${PUREDARWIN_SECURITY_PREFIX}/System/Library/Frameworks/Security.framework/Versions/A/Security"
     -lSystem)
 
@@ -239,8 +237,7 @@ target_link_options(diskarbitrationd PRIVATE
     "${PUREDARWIN_COREFOUNDATION_PREFIX}/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
     "${PUREDARWIN_SECURITY_PREFIX}/System/Library/Frameworks/Security.framework/Versions/A/Security"
     "${PUREDARWIN_SYSTEMCONFIGURATION_PREFIX}/System/Library/Frameworks/SystemConfiguration.framework/Versions/A/SystemConfiguration"
-    -Wl,-L,${PUREDARWIN_IOKIT_PREFIX}/usr/lib
-    -lIOKitCF
+    "${PUREDARWIN_IOKIT_PREFIX}/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit"
     $<TARGET_FILE:CrashReporterClient>
     -lSystem)
 

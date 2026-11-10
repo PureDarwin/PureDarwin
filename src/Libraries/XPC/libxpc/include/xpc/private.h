@@ -75,6 +75,29 @@ xpc_object_t
 xpc_connection_copy_entitlement_value(xpc_connection_t connection,
                                       const char *entitlement);
 
+// exits the process once no transaction is open, at once if none is
+__OSX_AVAILABLE_STARTING(__MAC_10_7, __IPHONE_5_0)
+XPC_EXPORT
+void
+xpc_transaction_exit_clean(void);
+
+// the audit token of the peer's last message
+__OSX_AVAILABLE_STARTING(__MAC_10_7, __IPHONE_5_0)
+XPC_EXPORT XPC_NONNULL1
+void
+xpc_connection_get_audit_token(xpc_connection_t connection, audit_token_t *token);
+
+// a dictionary, or a reply to original, filled from a format such as "{%string: %value}"
+__OSX_AVAILABLE_STARTING(__MAC_10_7, __IPHONE_5_0)
+XPC_EXPORT
+xpc_object_t
+xpc_create_with_format(const char *format, ...);
+
+__OSX_AVAILABLE_STARTING(__MAC_10_7, __IPHONE_5_0)
+XPC_EXPORT
+xpc_object_t
+xpc_create_reply_with_format(xpc_object_t original, const char *format, ...);
+
 #ifdef __cplusplus
 }
 #endif

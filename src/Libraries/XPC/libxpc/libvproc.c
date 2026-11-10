@@ -479,10 +479,12 @@ _vprocmgr_switch_to_session(const char *target_session, vproc_flags_t flags __at
 	return !issetugid() ? _vproc_post_fork_ping() : NULL;
 }
 
-vproc_err_t 
+// launchd has no per-session bootstraps any more, so as on current macOS there is nothing to leave.
+// switching to the Background session failed here and made nohup exit 127
+vproc_err_t
 _vprocmgr_detach_from_console(vproc_flags_t flags __attribute__((unused)))
 {
-	return _vprocmgr_switch_to_session(VPROCMGR_SESSION_BACKGROUND, 0);
+	return NULL;
 }
 
 vproc_err_t

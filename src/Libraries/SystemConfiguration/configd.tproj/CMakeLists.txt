@@ -149,8 +149,8 @@ target_include_directories(configd PRIVATE
     ${CMAKE_SOURCE_DIR}/src/Libraries/XPC/launchd/System-compat            # sandbox.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../../libSystem/libc/pd-compat-include
     ${CMAKE_CURRENT_SOURCE_DIR}/../../CrashReporterClient/include
-    # IOKitUser (Apple's CoreFoundation-based IOKitLib) must come before both
-    # PureDarwin's CF-free PDIOKitLib headers and xnu's kernel-side IOKit, or
+    # IOKitUser (Apple's CoreFoundation-based IOKitLib) must come before
+    # xnu's kernel-side IOKit, or
     # InterfaceNamer gets the kernel IOTypes.h and loses IONotificationPortRef,
     # IORegistryEntryIDMatching and IOConnectSetCFProperties.
     ${CMAKE_CURRENT_SOURCE_DIR}/../../IOKit/iokituser/include
@@ -204,9 +204,8 @@ target_link_options(configd PRIVATE
     "${PUREDARWIN_SECURITY_PREFIX}/System/Library/Frameworks/Security.framework/Versions/A/Security"
     $<TARGET_FILE:CrashReporterClient>
     # InterfaceNamer talks to IONetworkStack's user client and walks the
-    # registry, so it needs IOKitUser's CF-based IOKitLib.
-    -Wl,-L,${PUREDARWIN_IOKIT_PREFIX}/usr/lib
-    -lIOKitCF
+    # registry, so it needs IOKit.framework.
+    "${PUREDARWIN_IOKIT_PREFIX}/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit"
     # IPConfiguration's report_symptoms.c submits DHCP acquisition symptoms.
     "${PUREDARWIN_SYMPTOMREPORTER_PREFIX}/System/Library/PrivateFrameworks/SymptomReporter.framework/Versions/A/SymptomReporter"
     -lSystem)

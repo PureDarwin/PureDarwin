@@ -25,6 +25,8 @@
  *
  */
 
+#include <stdlib.h>
+#include <vproc_priv.h>
 #include <errno.h>
 #include <mach/mach.h>
 #include <servers/bootstrap.h>
@@ -56,7 +58,7 @@ xpc_connection_create(const char *name, dispatch_queue_t targetq)
 		return (NULL);
 	}
 
-	memset(conn, 0, sizeof(struct xpc_connection));
+	// calloc'd already, the header holds the isa and the first reference
 	conn->xc_xpc_type = XPC_TYPE_CONNECTION;
 	conn->xc_name = name != NULL ? strdup(name) : NULL;
 	conn->xc_last_id = 1;
@@ -249,8 +251,11 @@ xpc_connection_send_message(xpc_connection_t xconn,
 	if (id == 0)
 		id = XPC_CONNECTION_NEXT_ID(conn);
 
+	// the caller may release the message as soon as this returns, the send is still queued
+	xpc_retain(message);
 	dispatch_async(conn->xc_send_queue, ^{
 		xpc_send(conn, message, id);
+		xpc_release(message);
 	});
 }
 
@@ -293,7 +298,8 @@ xpc_connection_send_message_with_reply_sync(xpc_connection_t conn,
 
 	xpc_connection_send_message_with_reply(conn, message, NULL,
 	    ^(xpc_object_t o) {
-		result = o;
+		// the receive path releases o after this block, the caller owns the reply it gets back
+		result = xpc_retain(o);
 		dispatch_semaphore_signal(sem);
 	});
 
@@ -423,6 +429,8 @@ xpc_main(xpc_connection_handler_t handler)
 	dispatch_main();
 }
 
+static _Atomic bool xpc_exit_when_clean;
+
 void
 xpc_transaction_begin(void)
 {
@@ -433,6 +441,17 @@ void
 xpc_transaction_end(void)
 {
 	vproc_transaction_end(NULL, NULL);
+	if (xpc_exit_when_clean && _vproc_transaction_count() == 0)
+		exit(EXIT_SUCCESS);
+}
+
+// the process exits as soon as no transaction is open, now if none is
+void
+xpc_transaction_exit_clean(void)
+{
+	xpc_exit_when_clean = true;
+	if (_vproc_transaction_count() == 0)
+		exit(EXIT_SUCCESS);
 }
 
 static void
@@ -474,6 +493,24 @@ xpc_connection_set_credentials(struct xpc_connection *conn, audit_token_t *tok)
 	conn->xc_remote_guid = tok->val[2];
 	conn->xc_remote_pid = tok->val[5];
 	conn->xc_remote_asid = tok->val[6];
+	conn->xc_remote_audit_token = *tok;
+}
+
+// the token of the peer's last message, all zeroes before one arrives
+void
+xpc_connection_get_audit_token(xpc_connection_t xconn, audit_token_t *token)
+{
+	struct xpc_connection *conn = (struct xpc_connection *)xconn;
+
+	if (token != NULL)
+		*token = conn->xc_remote_audit_token;
+}
+
+// a connection starts inactive, activating it is its first resume
+void
+xpc_connection_activate(xpc_connection_t xconn)
+{
+	xpc_connection_resume(xconn);
 }
 
 static void
@@ -503,7 +540,8 @@ xpc_connection_recv_message(void *context)
 			if (remote == peer->xc_remote_port) {
 				((struct xpc_object *)result)->xo_remote_connection = peer;
 				dispatch_async(peer->xc_target_queue, ^{
-					peer->xc_handler(result);
+					if (peer->xc_handler != NULL)
+						peer->xc_handler(result);
 					xpc_release(result);
 				});
 				return;
@@ -521,15 +559,16 @@ xpc_connection_recv_message(void *context)
 
 		TAILQ_INSERT_TAIL(&conn->xc_peers, peer, xc_link);
 
-		dispatch_async(conn->xc_target_queue, ^{
-			conn->xc_handler(peer);
-		});
-
 		((struct xpc_object *)result)->xo_remote_connection = peer;
 
-		dispatch_async(peer->xc_target_queue, ^{
-			peer->xc_handler(result);
-			xpc_release(result);
+		// the listener sets the peer's handler and queue, so its first message waits for that
+		dispatch_async(conn->xc_target_queue, ^{
+			conn->xc_handler(peer);
+			dispatch_async(peer->xc_target_queue, ^{
+				if (peer->xc_handler != NULL)
+					peer->xc_handler(result);
+				xpc_release(result);
+			});
 		});
 
 	} else {

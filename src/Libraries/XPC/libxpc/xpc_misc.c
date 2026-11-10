@@ -159,7 +159,7 @@ xpc_copy_description_level(xpc_object_t obj, struct sbuf *sbuf, int level)
 
 	sbuf_printf(sbuf, "(%s) ", _xpc_get_type_name(obj));
 
-	if (xo->xo_xpc_type == XPC_TYPE_DICTIONARY) {
+	if (xo->xo_xpc_type == XPC_TYPE_DICTIONARY || xo->xo_xpc_type == XPC_TYPE_ERROR) {
 		sbuf_printf(sbuf, "\n");
 		xpc_dictionary_apply(xo, ^(const char *k, xpc_object_t v) {
 			sbuf_printf(sbuf, "%*s\"%s\": ", level * 4, " ", k);

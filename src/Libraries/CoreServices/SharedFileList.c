@@ -215,3 +215,16 @@ CFTypeRef MDItemCopyAttribute(MDItemRef item, CFStringRef name)
     }
     return value ? CFRetain(value) : NULL;
 }
+
+// there is no system icon catalog to look types up in, callers draw their own icon instead
+OSErr GetIconRef(SInt16 vRefNum, OSType creator, OSType iconType, IconRef *theIconRef)
+{
+    if (theIconRef == NULL) return paramErr;
+    *theIconRef = NULL;
+    return noSuchIconErr;
+}
+
+OSErr ReleaseIconRef(IconRef theIconRef)
+{
+    return theIconRef ? noErr : invalidIconRefErr;
+}

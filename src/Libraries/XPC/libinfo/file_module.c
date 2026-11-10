@@ -773,6 +773,367 @@ _fsi_check_netgroup_cache(si_mod_t *si)
 	pthread_mutex_unlock(&file_mutex);
 }
 
+// DSLOCAL
+
+static si_item_t *_fsi_parse_user(si_mod_t *si, const char *name, uid_t uid, int which, char *data, int format, uint64_t va, uint64_t vb);
+
+// accounts made the macOS way live as one plist per record under dslocal, every attribute an array of strings
+#define DSLOCAL_USERS "/var/db/dslocal/nodes/Default/users"
+#define DSLOCAL_GROUPS "/var/db/dslocal/nodes/Default/groups"
+// the user records hold password hashes and are root's alone, others read this hash-free index dsuser keeps
+#define DSLOCAL_USERS_INDEX "/var/db/dslocal/nodes/Default/users.passwd"
+
+static char *
+_ds_read_file(const char *path)
+{
+	FILE *f;
+	long len;
+	char *buf;
+
+	f = fopen(path, "r");
+	if (f == NULL) return NULL;
+	if (fseek(f, 0, SEEK_END) != 0 || (len = ftell(f)) <= 0 || len > (1 << 22) || fseek(f, 0, SEEK_SET) != 0)
+	{
+		fclose(f);
+		return NULL;
+	}
+	buf = malloc(len + 1);
+	if (buf != NULL && fread(buf, 1, len, f) != (size_t)len)
+	{
+		free(buf);
+		buf = NULL;
+	}
+	if (buf != NULL) buf[len] = '\0';
+	fclose(f);
+
+	// a binary plist would need the full parser, dsuser writes XML
+	if (buf != NULL && strncmp(buf, "bplist", 6) == 0)
+	{
+		free(buf);
+		buf = NULL;
+	}
+	return buf;
+}
+
+// XML text into a plain string, the five predefined entities only
+static char *
+_ds_unescape(const char *s, size_t n)
+{
+	char *out = malloc(n + 1), *o = out;
+	size_t i;
+
+	if (out == NULL) return NULL;
+	for (i = 0; i < n; i++)
+	{
+		if (s[i] == '&')
+		{
+			if (strncmp(s + i, "&amp;", 5) == 0) { *o++ = '&'; i += 4; continue; }
+			if (strncmp(s + i, "&lt;", 4) == 0) { *o++ = '<'; i += 3; continue; }
+			if (strncmp(s + i, "&gt;", 4) == 0) { *o++ = '>'; i += 3; continue; }
+			if (strncmp(s + i, "&quot;", 6) == 0) { *o++ = '"'; i += 5; continue; }
+			if (strncmp(s + i, "&apos;", 6) == 0) { *o++ = '\''; i += 5; continue; }
+		}
+		*o++ = s[i];
+	}
+	*o = '\0';
+	return out;
+}
+
+// the strings of one attribute, a NULL-terminated array the caller frees with _ds_free_values
+static char **
+_ds_values(const char *xml, const char *key)
+{
+	char want[128], **vals = NULL;
+	const char *p, *end;
+	int n = 0;
+
+	snprintf(want, sizeof(want), "<key>%s</key>", key);
+	p = strstr(xml, want);
+	if (p == NULL) return NULL;
+	p += strlen(want);
+	while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
+	if (strncmp(p, "<array>", 7) != 0)
+	{
+		// a bare string also counts as one value
+		if (strncmp(p, "<string>", 8) != 0) return NULL;
+		end = strstr(p + 8, "</string>");
+		if (end == NULL) return NULL;
+		vals = calloc(2, sizeof(char *));
+		if (vals != NULL) vals[0] = _ds_unescape(p + 8, end - (p + 8));
+		return vals;
+	}
+	end = strstr(p, "</array>");
+	if (end == NULL) return NULL;
+	for (p += 7; (p = strstr(p, "<string>")) != NULL && p < end; )
+	{
+		const char *close = strstr(p + 8, "</string>");
+		char **grown;
+
+		if (close == NULL || close > end) break;
+		grown = realloc(vals, (n + 2) * sizeof(char *));
+		if (grown == NULL) break;
+		vals = grown;
+		vals[n++] = _ds_unescape(p + 8, close - (p + 8));
+		vals[n] = NULL;
+		p = close + 9;
+	}
+	return vals;
+}
+
+static void
+_ds_free_values(char **vals)
+{
+	int i;
+
+	if (vals == NULL) return;
+	for (i = 0; vals[i] != NULL; i++) free(vals[i]);
+	free(vals);
+}
+
+// the first value of an attribute, or the fallback
+static char *
+_ds_value(const char *xml, const char *key, const char *fallback)
+{
+	char **vals = _ds_values(xml, key), *v;
+
+	if (vals != NULL && vals[0] != NULL)
+	{
+		v = strdup(vals[0]);
+		_ds_free_values(vals);
+		return v;
+	}
+	_ds_free_values(vals);
+	return fallback ? strdup(fallback) : NULL;
+}
+
+static int
+_ds_record_name_ok(const char *name)
+{
+	// a lookup name becomes a file name, so no path tricks
+	return name != NULL && name[0] != '\0' && name[0] != '.' && strchr(name, '/') == NULL && strlen(name) < 256;
+}
+
+static si_item_t *
+_ds_user_from_xml(si_mod_t *si, const char *xml, const char *name, uid_t uid, int which)
+{
+	char *rname, *ruid, *rgid, *gecos, *home, *shell;
+	si_item_t *item = NULL;
+	uid_t xuid;
+
+	rname = _ds_value(xml, "name", NULL);
+	ruid = _ds_value(xml, "uid", NULL);
+	if (rname == NULL || ruid == NULL)
+	{
+		free(rname);
+		free(ruid);
+		return NULL;
+	}
+	xuid = (uid_t)strtol(ruid, NULL, 10);
+	if ((which == SEL_ALL) || ((which == SEL_NAME) && string_equal(name, rname)) || ((which == SEL_NUMBER) && (uid == xuid)))
+	{
+		rgid = _ds_value(xml, "gid", "20");
+		gecos = _ds_value(xml, "realname", "");
+		home = _ds_value(xml, "home", "/var/empty");
+		shell = _ds_value(xml, "shell", "/bin/zsh");
+		// the password stays in ShadowHashData, struct passwd carries the macOS placeholder
+		item = (si_item_t *)LI_ils_create("L4488ss44LssssL", (unsigned long)si, CATEGORY_USER, 1, (uint64_t)0, (uint64_t)0, rname, "********", xuid, (gid_t)strtol(rgid, NULL, 10), (time_t)0, "", gecos, home, shell, (time_t)0);
+		free(rgid);
+		free(gecos);
+		free(home);
+		free(shell);
+	}
+	free(rname);
+	free(ruid);
+	return item;
+}
+
+// users from the record plists when root, from the public index otherwise
+static void *
+_ds_get_user(si_mod_t *si, const char *name, uid_t uid, int which, si_list_t *all)
+{
+	char path[MAXPATHLEN], *xml, *line;
+	si_item_t *item;
+	struct dirent *dp;
+	DIR *dir;
+	FILE *f;
+
+	if (geteuid() != 0)
+	{
+		f = fopen(DSLOCAL_USERS_INDEX, "r");
+		if (f == NULL) return all;
+		while ((line = _fsi_get_line(f)) != NULL)
+		{
+			item = (line[0] == '#') ? NULL : _fsi_parse_user(si, name, uid, which, line, 1, 0, 0);
+			free(line);
+			if (item == NULL) continue;
+			if (which != SEL_ALL)
+			{
+				fclose(f);
+				return item;
+			}
+			all = si_list_add(all, item);
+			si_item_release(item);
+		}
+		fclose(f);
+		return all;
+	}
+
+	if (which == SEL_NAME)
+	{
+		if (!_ds_record_name_ok(name)) return NULL;
+		snprintf(path, sizeof(path), DSLOCAL_USERS "/%s.plist", name);
+		xml = _ds_read_file(path);
+		if (xml == NULL) return NULL;
+		item = _ds_user_from_xml(si, xml, name, uid, which);
+		free(xml);
+		return item;
+	}
+
+	dir = opendir(DSLOCAL_USERS);
+	if (dir == NULL) return all;
+	while ((dp = readdir(dir)) != NULL)
+	{
+		size_t len = strlen(dp->d_name);
+
+		if (dp->d_name[0] == '.' || len < 7 || strcmp(dp->d_name + len - 6, ".plist") != 0) continue;
+		snprintf(path, sizeof(path), DSLOCAL_USERS "/%s", dp->d_name);
+		xml = _ds_read_file(path);
+		if (xml == NULL) continue;
+		item = _ds_user_from_xml(si, xml, name, uid, which);
+		free(xml);
+		if (item == NULL) continue;
+		if (which != SEL_ALL)
+		{
+			closedir(dir);
+			return item;
+		}
+		all = si_list_add(all, item);
+		si_item_release(item);
+	}
+	closedir(dir);
+	return all;
+}
+
+// a group record: name, gid, and its members in users (groupmembership on older records)
+static si_item_t *
+_ds_group_from_xml(si_mod_t *si, const char *xml, const char *name, gid_t gid, int which)
+{
+	char *rname, *rgid, **members;
+	si_item_t *item = NULL;
+	gid_t xgid;
+
+	rname = _ds_value(xml, "name", NULL);
+	rgid = _ds_value(xml, "gid", NULL);
+	if (rname == NULL || rgid == NULL)
+	{
+		free(rname);
+		free(rgid);
+		return NULL;
+	}
+	xgid = (gid_t)strtol(rgid, NULL, 10);
+	if ((which == SEL_ALL) || ((which == SEL_NAME) && string_equal(name, rname)) || ((which == SEL_NUMBER) && (gid == xgid)))
+	{
+		members = _ds_values(xml, "users");
+		if (members == NULL) members = _ds_values(xml, "groupmembership");
+		if (members == NULL) members = calloc(1, sizeof(char *));
+		item = (si_item_t *)LI_ils_create("L4488ss4*", (unsigned long)si, CATEGORY_GROUP, 1, (uint64_t)0, (uint64_t)0, rname, "*", xgid, members);
+		_ds_free_values(members);
+	}
+	free(rname);
+	free(rgid);
+	return item;
+}
+
+static void *
+_ds_get_group(si_mod_t *si, const char *name, gid_t gid, int which, si_list_t *all)
+{
+	char path[MAXPATHLEN], *xml;
+	si_item_t *item;
+	struct dirent *dp;
+	DIR *dir;
+
+	if (which == SEL_NAME)
+	{
+		if (!_ds_record_name_ok(name)) return NULL;
+		snprintf(path, sizeof(path), DSLOCAL_GROUPS "/%s.plist", name);
+		xml = _ds_read_file(path);
+		if (xml == NULL) return NULL;
+		item = _ds_group_from_xml(si, xml, name, gid, which);
+		free(xml);
+		return item;
+	}
+
+	dir = opendir(DSLOCAL_GROUPS);
+	if (dir == NULL) return all;
+	while ((dp = readdir(dir)) != NULL)
+	{
+		size_t len = strlen(dp->d_name);
+
+		if (dp->d_name[0] == '.' || len < 7 || strcmp(dp->d_name + len - 6, ".plist") != 0) continue;
+		snprintf(path, sizeof(path), DSLOCAL_GROUPS "/%s", dp->d_name);
+		xml = _ds_read_file(path);
+		if (xml == NULL) continue;
+		item = _ds_group_from_xml(si, xml, name, gid, which);
+		free(xml);
+		if (item == NULL) continue;
+		if (which != SEL_ALL)
+		{
+			closedir(dir);
+			return item;
+		}
+		all = si_list_add(all, item);
+		si_item_release(item);
+	}
+	closedir(dir);
+	return all;
+}
+
+// the dslocal groups that list user, added to the ones /etc/group gave
+static gid_t *
+_ds_add_grouplist(const char *user, gid_t *gidlist, int *gidcount)
+{
+	char path[MAXPATHLEN], *xml, **members, *rgid;
+	struct dirent *dp;
+	DIR *dir;
+	int i;
+
+	dir = opendir(DSLOCAL_GROUPS);
+	if (dir == NULL) return gidlist;
+	while ((dp = readdir(dir)) != NULL)
+	{
+		size_t len = strlen(dp->d_name);
+
+		if (dp->d_name[0] == '.' || len < 7 || strcmp(dp->d_name + len - 6, ".plist") != 0) continue;
+		snprintf(path, sizeof(path), DSLOCAL_GROUPS "/%s", dp->d_name);
+		xml = _ds_read_file(path);
+		if (xml == NULL) continue;
+		members = _ds_values(xml, "users");
+		if (members == NULL) members = _ds_values(xml, "groupmembership");
+		rgid = _ds_value(xml, "gid", NULL);
+		for (i = 0; members != NULL && members[i] != NULL && rgid != NULL; i++)
+		{
+			if (string_equal(user, members[i]))
+			{
+				gid_t *grown = reallocf(gidlist, (*gidcount + 1) * sizeof(gid_t));
+
+				if (grown == NULL)
+				{
+					*gidcount = 0;
+					break;
+				}
+				gidlist = grown;
+				gidlist[(*gidcount)++] = (gid_t)strtol(rgid, NULL, 10);
+				break;
+			}
+		}
+		_ds_free_values(members);
+		free(rgid);
+		free(xml);
+	}
+	closedir(dir);
+	return gidlist;
+}
+
 /* USERS */
 
 static si_item_t *
@@ -857,7 +1218,7 @@ _fsi_get_user(si_mod_t *si, const char *name, uid_t uid, int which)
 		fmt = 1;
 	}
 
-	if (f == NULL) return NULL;
+	if (f == NULL) return _ds_get_user(si, name, uid, which, NULL);
 
 
 	forever
@@ -889,7 +1250,8 @@ _fsi_get_user(si_mod_t *si, const char *name, uid_t uid, int which)
 		return item;
 	}
 	fclose(f);
-	return all;
+	// system accounts come from the files, people from dslocal
+	return _ds_get_user(si, name, uid, which, all);
 }
 
 /* GROUPS */
@@ -951,7 +1313,7 @@ _fsi_get_group(si_mod_t *si, const char *name, gid_t gid, int which)
 	f = NULL;
 
 	f = fopen(_PATH_GROUP, "r");
-	if (f == NULL) return NULL;
+	if (f == NULL) return _ds_get_group(si, name, gid, which, NULL);
 
 	_fsi_get_validation(si, VALIDATION_GROUP, _PATH_GROUP, f, &va, &vb);
 
@@ -985,7 +1347,7 @@ _fsi_get_group(si_mod_t *si, const char *name, gid_t gid, int which)
 	}
 
 	fclose(f);
-	return all;
+	return _ds_get_group(si, name, gid, which, all);
 }
 
 static void *
@@ -1077,6 +1439,7 @@ _fsi_get_grouplist(si_mod_t *si, const char *user)
 	}
 
 	fclose(f);
+	gidlist = _ds_add_grouplist(user, gidlist, &gidcount);
 
 	if (gidcount != 0) {
 		item = (si_item_t *)LI_ils_create("L4488s4@", (unsigned long)si, CATEGORY_GROUPLIST, 1, va, vb, user, gidcount, 

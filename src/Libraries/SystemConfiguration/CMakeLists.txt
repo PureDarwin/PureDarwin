@@ -112,8 +112,7 @@ target_include_directories(SystemConfiguration PRIVATE
     # Security publishes libDER's headers here, under the security_libDER/
     # spelling its own SecCertificatePriv.h uses.
     ${PUREDARWIN_SECURITY_PREFIX}/include
-    # Apple's CoreFoundation-based IOKitLib (IOKitUser), not PureDarwin's
-    # CF-free PDIOKitLib.
+    # Apple's CoreFoundation-based IOKitLib (IOKitUser).
     ${CMAKE_CURRENT_SOURCE_DIR}/../IOKit/iokituser/include
     ${CMAKE_SOURCE_DIR}/src/Kernel/xnu/iokit                     # IOKit/IOBSD.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../XPC/libxpc/include

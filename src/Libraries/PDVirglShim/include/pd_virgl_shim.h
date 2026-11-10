@@ -11,6 +11,9 @@ extern "C" {
 typedef struct pd_virgl_conn pd_virgl_conn;
 
 pd_virgl_conn *pd_virgl_open(void);
+// the 3D connection when there is one, else the 2D framebuffer client, which has the
+// VirtIO hardware cursor calls too
+pd_virgl_conn *pd_virgl_open_cursor(void);
 void           pd_virgl_close(pd_virgl_conn *c);
 
 uint32_t pd_virgl_create_context(pd_virgl_conn *c);

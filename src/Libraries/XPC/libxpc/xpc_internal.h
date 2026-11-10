@@ -132,6 +132,7 @@ struct xpc_connection {
 	gid_t			xc_remote_guid;
 	pid_t			xc_remote_pid;
 	au_asid_t		xc_remote_asid;
+	audit_token_t		xc_remote_audit_token;
 	TAILQ_HEAD(, xpc_pending_call) xc_pending;
 	TAILQ_HEAD(, xpc_connection) xc_peers;
 	TAILQ_ENTRY(xpc_connection) xc_link;

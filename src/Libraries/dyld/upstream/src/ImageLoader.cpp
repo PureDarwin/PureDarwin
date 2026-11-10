@@ -802,7 +802,9 @@ void ImageLoader::recursiveLoadLibraries(const LinkContext& context, bool prefli
 			catch (const char* msg) {
 				//if ( context.verbosePrebinding )
 				//	fprintf(stderr, "dyld: exception during processing for %s referencing %s\n", this->getPath(), dependentLib->getPath());		
-				if ( requiredLibInfo.required ) {
+				if ( requiredLibInfo.required && context.pdMissingOk )
+					dyld::log("dyld: PD-MISSING library %s from %s\n", requiredLibInfo.name, this->getRealPath());
+				else if ( requiredLibInfo.required ) {
 					fState = dyld_image_state_mapped;
 					// record values for possible use by CrashReporter or Finder
 					if ( strstr(msg, "Incompatible library version") != NULL )

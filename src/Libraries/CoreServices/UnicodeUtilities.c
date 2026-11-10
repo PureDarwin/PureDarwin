@@ -312,6 +312,72 @@ OSStatus UCCompareText(CollatorRef collatorRef, const UniChar *text1Ptr, UniChar
     return noErr;
 }
 
+// a collation key carries its collator's flags and locale and the text, so comparing two keys needs no collator.
+// layout in UCCollationValues: magic, flags, locale identifier length, text length, then the UTF-16 of both
+#define kPDCollationKeyMagic 0x50444b31
+
+static UniCharCount keyChars(UniCharCount n)
+{
+    return (n + 1) / 2;
+}
+
+OSStatus UCGetCollationKey(CollatorRef collatorRef, const UniChar *textPtr, UniCharCount textLength,
+                           ItemCount maxKeySize, ItemCount *actualKeyLength, UCCollationValue collationKey[])
+{
+    if (!collatorRef || (!textPtr && textLength) || !actualKeyLength) return paramErr;
+
+    CFStringRef ident = collatorRef->locale ? CFLocaleGetIdentifier(collatorRef->locale) : CFSTR("");
+    CFIndex identLength = CFStringGetLength(ident);
+    ItemCount needed = 4 + keyChars(identLength) + keyChars(textLength);
+
+    *actualKeyLength = needed;
+    if (!collationKey) return noErr;
+    if (maxKeySize < needed) return kUCOutputBufferTooSmall;
+    memset(collationKey, 0, needed * sizeof(UCCollationValue));
+    collationKey[0] = kPDCollationKeyMagic;
+    collationKey[1] = (UCCollationValue)collatorRef->flags;
+    collationKey[2] = (UCCollationValue)identLength;
+    collationKey[3] = (UCCollationValue)textLength;
+    CFStringGetCharacters(ident, CFRangeMake(0, identLength), (UniChar *)(collationKey + 4));
+    if (textLength) memcpy((UniChar *)(collationKey + 4 + keyChars(identLength)), textPtr, textLength * sizeof(UniChar));
+    return noErr;
+}
+
+static Boolean keyParts(const UCCollationValue *key, ItemCount length, CFStringRef *ident, CFStringRef *text,
+                        CFStringCompareFlags *flags)
+{
+    if (!key || length < 4 || key[0] != kPDCollationKeyMagic) return false;
+    if (4 + keyChars(key[2]) + keyChars(key[3]) > length) return false;
+    *flags = key[1];
+    *ident = CFStringCreateWithCharacters(kCFAllocatorDefault, (const UniChar *)(key + 4), key[2]);
+    *text = CFStringCreateWithCharacters(kCFAllocatorDefault, (const UniChar *)(key + 4 + keyChars(key[2])), key[3]);
+    return *ident && *text;
+}
+
+OSStatus UCCompareCollationKeys(const UCCollationValue *key1Ptr, ItemCount key1Length, const UCCollationValue *key2Ptr,
+                                ItemCount key2Length, Boolean *equivalent, SInt32 *order)
+{
+    CFStringRef ident1 = NULL, text1 = NULL, ident2 = NULL, text2 = NULL;
+    CFStringCompareFlags flags1 = 0, flags2 = 0;
+    OSStatus status = paramErr;
+
+    if (keyParts(key1Ptr, key1Length, &ident1, &text1, &flags1) && keyParts(key2Ptr, key2Length, &ident2, &text2, &flags2)) {
+        CFLocaleRef locale = CFStringGetLength(ident1) ? CFLocaleCreate(kCFAllocatorDefault, ident1) : NULL;
+        CFComparisonResult r = CFStringCompareWithOptionsAndLocale(text1, text2, CFRangeMake(0, CFStringGetLength(text1)),
+                                                                   flags1, locale);
+
+        if (locale) CFRelease(locale);
+        if (equivalent) *equivalent = (r == kCFCompareEqualTo);
+        if (order) *order = (SInt32)r;
+        status = noErr;
+    }
+    if (ident1) CFRelease(ident1);
+    if (text1) CFRelease(text1);
+    if (ident2) CFRelease(ident2);
+    if (text2) CFRelease(text2);
+    return status;
+}
+
 // user activity resets the idle time that IOKit's HIDIdleTime and CoreGraphics read
 extern uint32_t notify_register_check(const char *name, int *out_token);
 extern uint32_t notify_set_state(int token, uint64_t state);

@@ -37,6 +37,13 @@ Boolean SCDynamicStoreSetNotificationKeys(SCDynamicStoreRef store, CFArrayRef ke
     return fn ? fn(store, keys, patterns) : false;
 }
 
+CFPropertyListRef SCDynamicStoreCopyValue(SCDynamicStoreRef store, CFStringRef key)
+{
+    CFPropertyListRef (*fn)(SCDynamicStoreRef, CFStringRef) = scSymbol("SCDynamicStoreCopyValue");
+
+    return fn ? fn(store, key) : NULL;
+}
+
 int SCError(void)
 {
     int (*fn)(void) = scSymbol("SCError");

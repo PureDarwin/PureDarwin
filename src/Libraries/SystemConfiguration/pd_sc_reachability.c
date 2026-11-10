@@ -28,6 +28,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <dispatch/dispatch.h>
 
 /*
  * The target is a CFDictionary holding the validated options, so that CFRetain
@@ -201,6 +202,19 @@ SCNetworkReachabilityCreateWithAddress(CFAllocatorRef allocator,
 	return target;
 }
 
+// a pair asks whether traffic from the local address reaches the remote one, which is
+// the remote address's route, the local half is only a source and needs no target of its own
+SCNetworkReachabilityRef
+SCNetworkReachabilityCreateWithAddressPair(CFAllocatorRef allocator,
+					   const struct sockaddr *localAddress,
+					   const struct sockaddr *remoteAddress)
+{
+	if (remoteAddress != NULL) {
+		return SCNetworkReachabilityCreateWithAddress(allocator, remoteAddress);
+	}
+	return SCNetworkReachabilityCreateWithAddress(allocator, localAddress);
+}
+
 Boolean
 SCNetworkReachabilityGetFlags(SCNetworkReachabilityRef target,
 			      SCNetworkReachabilityFlags *flags)
@@ -321,4 +335,13 @@ SCNetworkReachabilityUnscheduleFromRunLoop(SCNetworkReachabilityRef target,
 	(void)runLoop;
 	(void)runLoopMode;
 	return FALSE;
+}
+
+// a NULL queue unschedules, which always succeeds
+Boolean
+SCNetworkReachabilitySetDispatchQueue(SCNetworkReachabilityRef target,
+				      dispatch_queue_t queue)
+{
+	(void)target;
+	return (queue == NULL);
 }

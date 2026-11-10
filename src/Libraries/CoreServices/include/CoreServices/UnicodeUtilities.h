@@ -31,6 +31,13 @@ CF_EXPORT OSStatus UCDisposeCollator(CollatorRef *collatorRef);
 CF_EXPORT OSStatus UCCompareText(CollatorRef collatorRef, const UniChar *text1Ptr, UniCharCount text1Length,
                                  const UniChar *text2Ptr, UniCharCount text2Length, Boolean *equivalent, SInt32 *order);
 
+typedef UInt32 UCCollationValue;
+CF_EXPORT OSStatus UCGetCollationKey(CollatorRef collatorRef, const UniChar *textPtr, UniCharCount textLength,
+                                     ItemCount maxKeySize, ItemCount *actualKeyLength, UCCollationValue collationKey[]);
+CF_EXPORT OSStatus UCCompareCollationKeys(const UCCollationValue *key1Ptr, ItemCount key1Length,
+                                          const UCCollationValue *key2Ptr, ItemCount key2Length, Boolean *equivalent,
+                                          SInt32 *order);
+
 // UpdateSystemActivity tells the system the user is active, which resets the idle time
 enum {
     OverallAct = 0,

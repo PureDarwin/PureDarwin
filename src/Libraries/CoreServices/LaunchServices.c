@@ -173,6 +173,11 @@ static void registerApplication(CFStringRef path)
     if (identifier != NULL && !CFDictionaryContainsKey(sIdentifierMap, identifier)) {
         CFDictionarySetValue(sIdentifierMap, identifier, appURL);
     }
+    // apps look the file viewer up by its macOS id, which resolves to PD's Finder.app
+    if (identifier != NULL && CFEqual(identifier, CFSTR("org.puredarwin.Finder")) &&
+        !CFDictionaryContainsKey(sIdentifierMap, CFSTR("com.apple.finder"))) {
+        CFDictionarySetValue(sIdentifierMap, CFSTR("com.apple.finder"), appURL);
+    }
 
     registerBundleTypes(bundle, appURL);
 
@@ -292,6 +297,16 @@ static Boolean urlIsApplication(CFURLRef url)
     Boolean isApp = CFStringHasSuffix(path, CFSTR(".app"));
     CFRelease(path);
     return isApp;
+}
+
+static Boolean urlIsFile(CFURLRef url)
+{
+    CFStringRef scheme = CFURLCopyScheme(url);
+    Boolean isFile = scheme == NULL || CFStringCompare(scheme, CFSTR("file"), kCFCompareCaseInsensitive) == kCFCompareEqualTo;
+
+    if (scheme != NULL)
+        CFRelease(scheme);
+    return isFile;
 }
 
 // the user's chosen handlers, kept as macOS keeps them: LSHandlers dictionaries in LaunchServices' preferences
@@ -525,8 +540,18 @@ static OSStatus spawnApplication(CFURLRef appURL, CFArrayRef itemURLs)
     for (CFIndex i = 0; i < itemCount; i++) {
         CFURLRef item = CFArrayGetValueAtIndex(itemURLs, i);
         char buffer[PATH_MAX];
-        if (CFURLGetFileSystemRepresentation(item, true, (UInt8 *)buffer, sizeof(buffer))) {
-            argv[argc++] = strdup(buffer);
+
+        // a file goes as its path, any other url whole, since its path alone loses scheme and host
+        if (urlIsFile(item)) {
+            if (CFURLGetFileSystemRepresentation(item, true, (UInt8 *)buffer, sizeof(buffer)))
+                argv[argc++] = strdup(buffer);
+        } else {
+            CFURLRef absolute = CFURLCopyAbsoluteURL(item);
+            CFStringRef string = CFURLGetString(absolute);
+
+            if (CFStringGetCString(string, buffer, sizeof(buffer), kCFStringEncodingUTF8))
+                argv[argc++] = strdup(buffer);
+            CFRelease(absolute);
         }
     }
     argv[argc] = NULL;

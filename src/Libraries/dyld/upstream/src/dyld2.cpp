@@ -2224,6 +2224,9 @@ void processDyldEnvironmentVariable(const char* key, const char* value, const ch
 	else if ( strcmp(key, "DYLD_PRINT_BINDINGS") == 0 ) {
 		gLinkContext.verboseBind = true;
 	}
+	else if ( strcmp(key, "DYLD_PD_MISSING_OK") == 0 ) {
+		gLinkContext.pdMissingOk = true;
+	}
 	else if ( strcmp(key, "DYLD_PRINT_WEAK_BINDINGS") == 0 ) {
 		gLinkContext.verboseWeakBind = true;
 	}

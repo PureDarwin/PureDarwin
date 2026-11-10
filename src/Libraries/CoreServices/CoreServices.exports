@@ -28,6 +28,7 @@ _FSFindFolder
 _FSPathMakeRef
 _FSPathMakeRefWithOptions
 _FSRefMakePath
+_GetIconRef
 _LSCopyAllApplicationURLs
 _LSCopyApplicationForMIMEType
 _LSCopyApplicationURLsForBundleIdentifier
@@ -59,9 +60,12 @@ _MDItemCopyAttribute
 _MDItemCreate
 _MPCurrentTaskID
 _MPTaskIsPreemptive
+_ReleaseIconRef
+_UCCompareCollationKeys
 _UCCompareText
 _UCCreateCollator
 _UCDisposeCollator
+_UCGetCollationKey
 _UCKeyTranslate
 _UTTypeConformsTo
 _UTTypeCopyDeclaration

@@ -46,27 +46,13 @@ PDSurfaceDeviceOpen(PDSurfaceDeviceRef *outDevice)
     for (size_t i = 0;
          i < sizeof(kSurfaceProviderClasses) / sizeof(kSurfaceProviderClasses[0]);
          i++) {
-        /* PureDarwin's IOKitLib and Apple's disagree on both the matching
-         * dictionary's type and this call's signature, and which one is in
-         * scope depends on the include path. PDGOP splits the same way. */
-#ifdef _PD_IOKITLIB_H
-        char *matching = IOServiceMatching(kSurfaceProviderClasses[i]);
-#else
         CFDictionaryRef matching = IOServiceMatching(kSurfaceProviderClasses[i]);
-#endif
         if (matching == NULL) {
             continue;
         }
 
         io_service_t service = IO_OBJECT_NULL;
-#ifdef _PD_IOKITLIB_H
-        if (IOServiceGetMatchingService(device->masterPort, matching,
-                                        &service) != KERN_SUCCESS) {
-            continue;
-        }
-#else
         service = IOServiceGetMatchingService(device->masterPort, matching);
-#endif
         if (service == IO_OBJECT_NULL) {
             continue;
         }

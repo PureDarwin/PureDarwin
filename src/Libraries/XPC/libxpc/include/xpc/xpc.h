@@ -1890,6 +1890,15 @@ xpc_object_t
 xpc_dictionary_get_value(xpc_object_t xdict, const char *key);
 
 /*!
+ * @function xpc_dictionary_get_dictionary
+ * The value for the key when it is a dictionary, NULL when it is missing or of another type.
+ */
+__OSX_AVAILABLE_STARTING(__MAC_10_7, __IPHONE_5_0)
+XPC_EXPORT XPC_WARN_RESULT XPC_NONNULL1 XPC_NONNULL2
+xpc_object_t
+xpc_dictionary_get_dictionary(xpc_object_t xdict, const char *key);
+
+/*!
  * @function xpc_dictionary_get_count
  *
  * @abstract

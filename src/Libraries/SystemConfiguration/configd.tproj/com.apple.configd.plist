@@ -16,6 +16,12 @@
 		     launchd only hands out ports for services this job declares. -->
 		<key>com.apple.network.IPConfiguration</key>
 		<true/>
+		<!-- the dnsinfo and nwi XPC servers built into configd, res_init and
+		     getaddrinfo wait on DNSConfiguration -->
+		<key>com.apple.SystemConfiguration.DNSConfiguration</key>
+		<true/>
+		<key>com.apple.SystemConfiguration.NetworkInformation</key>
+		<true/>
 	</dict>
 	<key>POSIXSpawnType</key>
 	<string>Interactive</string>

@@ -365,6 +365,15 @@ void
 xpc_connection_resume(xpc_connection_t connection);
 
 /*!
+ * @function xpc_connection_activate
+ * Activates a connection created inactive, the same as its first resume.
+ */
+__OSX_AVAILABLE_STARTING(__MAC_10_7, __IPHONE_5_0)
+XPC_EXPORT XPC_NONNULL_ALL
+void
+xpc_connection_activate(xpc_connection_t connection);
+
+/*!
  * @function xpc_connection_send_message
  * Sends a message over the connection to the destination service.
  * 

@@ -113,6 +113,7 @@ gIOKitLibSerializeOptions = kIOCFSerializeToBinary;
 
 extern 	mach_port_t 	mach_task_self();
 const 	mach_port_t 	kIOMasterPortDefault = MACH_PORT_NULL;
+const 	mach_port_t 	kIOMainPortDefault = MACH_PORT_NULL;
 
 static mach_port_t
 __IOGetDefaultMasterPort()
@@ -124,6 +125,12 @@ __IOGetDefaultMasterPort()
 	masterPort = MACH_PORT_NULL;
 
     return( masterPort );
+}
+
+kern_return_t
+IOMainPort( mach_port_t bootstrapPort, mach_port_t * mainPort )
+{
+    return IOMasterPort(bootstrapPort, mainPort);
 }
 
 kern_return_t

@@ -1711,3 +1711,11 @@ exit:
     
     return state;
 }
+
+// input monitoring and event posting are not gated on PureDarwin, so access is granted
+// IOHIDAccessType: 0 granted, 1 denied, 2 unknown
+uint32_t IOHIDCheckAccess(uint32_t requestType)
+{
+    (void)requestType;
+    return 0;
+}
