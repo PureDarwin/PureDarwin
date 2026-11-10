@@ -1028,6 +1028,8 @@ let
           "PDQcomTLMM" "PDQcomGeniI2C" "PDI2CHID" "AppleUSBOHCI"
           # the usb host stays: PDTegraXUSB hands the xusb xhci to RavynXHCIPort for hid input
           "AppleUSBEHCI" "PDDiskImages2" "IOGOPFramebuffer" "PDEcamPCI" "PDI2CFamily"
+          # the e1000 nic and FileVault have nothing on this board
+          "PDFBSDem" "PDKeyStore"
         ];
       };
       kcArm64Sun50iDebugBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
