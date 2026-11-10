@@ -1071,6 +1071,7 @@ static NSRect titleLineRect(NSAttributedString *title,NSFont *font,CGFloat x,CGF
 }
 
 -(NSRect)drawTitle:(NSAttributedString *)title withFrame:(NSRect)titleRect inView:(NSView *)controlView {
+    PD_TRACE(@"%@ drawTitle \"%@\" rect=%@",[self class],[title string],NSStringFromRect(titleRect));
 
     [title _clipAndDrawInRect:titleRect];
 
@@ -1375,7 +1376,15 @@ static NSSize scaledImageSizeInFrameSize(NSSize imageSize,NSSize frameSize,NSIma
     return result;
 }
 
+// the button type is not stored, the trace reports the masks it set
+-(int)_pdButtonType {
+   return (int)(_highlightsBy*16+_showsStateBy);
+}
+
 -(void)drawWithFrame:(NSRect)frame inView:(NSView *)control {
+   PD_TRACE(@"NSButtonCell %@ type=%d bezel=%d size=%d state=%d enabled=%d highlighted=%d bordered=%d title=\"%@\" frame=%@ flipped=%d %@ controlView=%@",
+            [self class],(int)[self _pdButtonType],(int)_bezelStyle,(int)_controlSize,(int)[self state],[self isEnabled],[self isHighlighted],[self isBordered],[self title],
+            NSStringFromRect(frame),PDContextIsFlipped(),PDTraceAppearance(control),control ? NSStringFromClass([control class]) : @"nil");
    _controlView=control;
 
    if([self isTransparent])

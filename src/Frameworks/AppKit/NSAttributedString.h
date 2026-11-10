@@ -34,6 +34,9 @@ APPKIT_EXPORT NSString *const NSExpansionAttributeName;
 APPKIT_EXPORT NSString *const NSCursorAttributeName;
 APPKIT_EXPORT NSString *const NSToolTipAttributeName;
 APPKIT_EXPORT NSString *const NSBackgroundColorDocumentAttribute;
+APPKIT_EXPORT NSString *const NSDocumentTypeDocumentAttribute;
+APPKIT_EXPORT NSString *const NSHTMLTextDocumentType;
+APPKIT_EXPORT NSString *const NSRTFTextDocumentType;
 
 APPKIT_EXPORT NSString *const NSSpellingStateAttributeName;
 

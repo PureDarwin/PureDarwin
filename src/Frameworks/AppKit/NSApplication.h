@@ -116,6 +116,8 @@ typedef NS_ENUM(NSInteger, NSApplicationActivationPolicy) {
     NSApplicationActivationPolicyProhibited = 2,
 };
 
+@class NSMenuItem;
+
 @interface NSApplication : NSResponder {
     NSString *bundleID;
     NSDisplay *_display;
@@ -273,6 +275,8 @@ typedef NS_ENUM(NSInteger, NSApplicationActivationPolicy) {
 
 - (mach_port_t)_wsServicePort;
 
+- (BOOL)validateMenuItem:(NSMenuItem *)item;
+
 @end
 
 @interface NSObject (NSApplication_serviceRequest)
@@ -366,6 +370,7 @@ typedef NS_ENUM(NSInteger, NSApplicationActivationPolicy) {
 
 
 APPKIT_EXPORT int NSApplicationMain(int argc, const char *argv[]);
+APPKIT_EXPORT BOOL NSApplicationLoad(void);
 
 APPKIT_EXPORT void NSUpdateDynamicServices(void);
 APPKIT_EXPORT BOOL NSPerformService(NSString *itemName, NSPasteboard *pasteboard);

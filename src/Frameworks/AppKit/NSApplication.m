@@ -44,10 +44,17 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSWindowController.h>
 #import <objc/message.h>
 #import <pthread.h>
+#include <dispatch/dispatch.h>
 
 /* libdispatch's Cocoa integration entry point. CFRunLoop normally calls this;
  * AppKit uses Foundation's select-driven NSRunLoop, so NSApplication must. */
 extern void _dispatch_main_queue_callback_4CF(void *);
+
+// the menu client requests' main-thread halves
+@interface NSApplication (PDMenuClientMain)
+- (void)_activateApplicationFromDock;
+- (void)_activateMenuItemAtPath:(NSArray *)indexPath forWindow:(NSNumber *)windowId;
+@end
 
 #include <sys/types.h>
 #include <sys/un.h>
@@ -137,8 +144,11 @@ static NSDictionary *pdSerializeMenu(NSMenu *menu)
 @end
 
 // the zeroing-weak calls libobjc exports (objc-internal.h)
+// libobjc2 declares its own in objc-arc.h
+#if !ARGON_LIBOBJC2
 OBJC_EXPORT id objc_storeWeak(id *location, id obj);
 OBJC_EXPORT id objc_storeWeakOrNil(id *location, id obj);
+#endif
 
 @implementation NSApplication
 
@@ -303,6 +313,12 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
                                                                  withObject:[NSValue valueWithPoint:NSMakePoint(me.x, me.y)]
                                                               waitUntilDone:NO];
                                     break;
+                                // visibleFrame follows the compositor's usable area, as macOS follows the dock
+                                case WS_EVENT_USABLE_AREA:
+                                    [_display performSelectorOnMainThread:@selector(_screenParametersChanged)
+                                                               withObject:nil
+                                                            waitUntilDone:NO];
+                                    break;
                                 case WS_EVENT_CLOSE:
                                     if(window != nil)
                                         [window performSelectorOnMainThread:@selector(performClose:)
@@ -322,6 +338,7 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
                                     break;
                                 case NSKeyUp:
                                 case NSKeyDown: {
+                                    [NSEvent _setKeyCode:me.keycode down:me.code == NSKeyDown];
                                     NSEvent *e = [NSEvent keyEventWithType:me.code
                                                   location:NSMakePoint(me.x, me.y)
                                              modifierFlags:me.mods
@@ -649,9 +666,9 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
 
     NSBundle *mainBundle = [NSBundle mainBundle];
 
-   bundleID = [mainBundle bundleIdentifier];
+   bundleID = [[mainBundle bundleIdentifier] retain];
     if(bundleID == nil)
-        bundleID = [NSString stringWithFormat:@"unix.%u", getpid()];
+        bundleID = [[NSString alloc] initWithFormat:@"unix.%u", getpid()];
 
     /* Event delivery is owned by libWindowServer in this process. The old
      * bootstrap registration targeted a separate Mach service and left the
@@ -965,6 +982,37 @@ static BOOL pdIsMenuAgent(void)
     return [flag respondsToSelector:@selector(boolValue)] && [flag boolValue];
 }
 
+// the window holding the compositor's keyboard focus, the app is active while it has one
+static NSWindow *serverFocusWindow;
+
+-(void)_setActiveFromServer:(BOOL)active {
+   if(active==_isActive)
+    return;
+   [[NSNotificationCenter defaultCenter] postNotificationName:active ? NSApplicationWillBecomeActiveNotification
+                                                                      : NSApplicationWillResignActiveNotification object:self];
+   _isActive=active;
+   [[NSNotificationCenter defaultCenter] postNotificationName:active ? NSApplicationDidBecomeActiveNotification
+                                                                      : NSApplicationDidResignActiveNotification object:self];
+   [self updateWindows];
+}
+
+-(void)_serverFocusSettled {
+   if(serverFocusWindow==nil)
+    [self _setActiveFromServer:NO];
+}
+
+// focus moving between this app's windows arrives as a loss then a gain, so a loss waits a moment
+-(void)_serverFocusWindow:(NSWindow *)window gained:(BOOL)gained {
+   if(gained){
+    serverFocusWindow=window;
+    [self _setActiveFromServer:YES];
+    return;
+   }
+   if(serverFocusWindow==window)
+    serverFocusWindow=nil;
+   [self performSelector:@selector(_serverFocusSettled) withObject:nil afterDelay:0.1];
+}
+
 // called when one of our windows gains keyboard focus from the compositor
 - (void)_menuBarActivateWindow:(NSWindow *)window
 {
@@ -1006,6 +1054,20 @@ static BOOL pdIsMenuAgent(void)
     NSDictionary *menuData = pdSerializeMenu(_mainMenu);
     BOOL published = NO;
 
+    // as on macOS the first menu is shown under the application's name whatever its title, Qt titles it "Apple"
+    NSArray *topItems = [menuData objectForKey:@"items"];
+    if ([topItems count] > 0) {
+        NSString *name = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleName"];
+        NSMutableArray *items = [[topItems mutableCopy] autorelease];
+        NSMutableDictionary *first = [[[items objectAtIndex:0] mutableCopy] autorelease];
+
+        if ([name length] == 0)
+            name = [[NSProcessInfo processInfo] processName];
+        [first setObject:name forKey:@"title"];
+        [items replaceObjectAtIndex:0 withObject:first];
+        menuData = [NSDictionary dictionaryWithObjectsAndKeys:[menuData objectForKey:@"title"], @"title", items, @"items", nil];
+    }
+
     NS_DURING
         for (NSWindow *window in _windows) {
             if (![window isKindOfClass:[NSPanel class]] && [window windowNumber] != 0) {
@@ -1032,26 +1094,89 @@ static BOOL pdIsMenuAgent(void)
     }
 }
 
-// an item's title, state or enabled flag changed, the menu bar gets the menu again
+// an item title, state or enabled flag changed, the menu bar gets the menu again
 -(void)_pdMenuItemChanged {
     pdMenuNeedsPublish = YES;
+}
+
+// the old connection points at a menu bar that is gone, the key window app is the active one
+- (void)_menuServerStarted:(NSNotification *)note
+{
+    NSWindow *key = [self keyWindow];
+
+    [pdMenuServerProxy release];
+    pdMenuServerProxy = nil;
+    pdMenuNeedsPublish = YES;
+    [self _publishMainMenu];
+    if (key != nil)
+        [self _menuBarActivateWindow:key];
+}
+
+// distributed objects requests arrive on the connection's own queue, AppKit state lives on the main thread
+static void pdRunOnMain(void (^work)(void))
+{
+    if (pthread_main_np())
+        work();
+    else
+        dispatch_async(dispatch_get_main_queue(), work);
 }
 
 - (oneway void)requestMenuUpdateForWindow:(NSNumber *)windowId
 {
     (void)windowId;
-    pdMenuNeedsPublish = YES;
-    [self _publishMainMenu];
+    pdRunOnMain(^{
+        pdMenuNeedsPublish = YES;
+        [self _publishMainMenu];
+    });
+}
+
+- (oneway void)activateApplicationFromDock
+{
+    pdRunOnMain(^{ [self _activateApplicationFromDock]; });
+}
+
+- (void)_activateApplicationFromDock
+{
+    NSWindow *front = [self mainWindow];
+
+    if (front == nil || ![front isVisible]) {
+        front = nil;
+        for (NSWindow *window in _windows) {
+            if (![window isKindOfClass:[NSPanel class]] && [window windowNumber] != 0 &&
+                ([window isVisible] || [window isMiniaturized])) {
+                front = window;
+                break;
+            }
+        }
+    }
+    [self activateIgnoringOtherApps:YES];
+    if (front == nil)
+        return;
+    if ([front isMiniaturized])
+        [front deminiaturize:nil];
+    [front orderFront:nil];
+    if (!_windowServerActivateWindow((int)[front windowNumber]))
+        NSLog(@"NSApplication: the compositor cannot bring window %ld forward", (long)[front windowNumber]);
 }
 
 - (bycopy id)validateMenuStateForWindow:(NSNumber *)windowId
 {
+    __block id menu = nil;
+
     (void)windowId;
-    return pdSerializeMenu(_mainMenu);
+    if (pthread_main_np())
+        return pdSerializeMenu(_mainMenu);
+    dispatch_sync(dispatch_get_main_queue(), ^{ menu = [pdSerializeMenu(_mainMenu) retain]; });
+    return [menu autorelease];
 }
 
 - (oneway void)activateMenuItemAtPath:(NSArray *)indexPath
                             forWindow:(NSNumber *)windowId
+{
+    pdRunOnMain(^{ [self _activateMenuItemAtPath:indexPath forWindow:windowId]; });
+}
+
+- (void)_activateMenuItemAtPath:(NSArray *)indexPath forWindow:(NSNumber *)windowId
 {
     NSMenu *menu = _mainMenu;
     NSMenuItem *item = nil;
@@ -1233,6 +1358,11 @@ static BOOL pdIsMenuAgent(void)
     [self sendMenusToWindowServer];
 }
 
+// private on macOS but called by GLFW and SDL, the app menu is the one named NSAppleMenu
+-(void)setAppleMenu:(NSMenu *)menu {
+   [menu setValue:@"NSAppleMenu" forKey:@"name"];
+}
+
 
 -(void)addWindowsItem:(NSWindow *)window title:(NSString *)title filename:(BOOL)isFilename {
     NSMenuItem *item;
@@ -1336,6 +1466,10 @@ static BOOL pdIsMenuAgent(void)
    BOOL               needsUntitled=YES;
 
    [self _listenForOtherApplications];
+
+   // a menu bar that restarts starts empty, so publish to it again
+   [[NSDistributedNotificationCenter defaultCenter] addObserver:self selector:@selector(_menuServerStarted:)
+                                                           name:PDMenuServerStartedNotification object:nil];
 
    NS_DURING
     [[NSNotificationCenter defaultCenter] postNotificationName: NSApplicationWillFinishLaunchingNotification object:self];
@@ -1519,6 +1653,17 @@ static BOOL pdIsMenuAgent(void)
     if(event == nil)
         return;
 
+   // PD_EVENT_TRACE=1: what reaches the application and which window it resolves to
+   if(getenv("PD_EVENT_TRACE") && [event type]!=NSMouseMoved && [event type]!=NSAppKitDefined && [event type]!=NSPeriodic)
+    fprintf(stderr,"PD-APPEVENT type %d windowNumber %ld window %s %p class %s\n",(int)[event type],(long)[event windowNumber],
+     [event window] ? object_getClassName([event window]) : "nil",[event window],object_getClassName(event));
+
+   // the menu bar runs in its own process and never sees a click or Escape in ours, so tell it
+   // to close any open menu, which it does when a window of ours activates
+   if([event type]==NSLeftMouseDown || [event type]==NSRightMouseDown ||
+      ([event type]==NSKeyDown && [[event charactersIgnoringModifiers] isEqualToString:@"\e"]))
+    [self _menuBarActivateWindow:[event window]];
+
    if([event type]==NSKeyDown){
     unsigned modifierFlags=[event modifierFlags];
 
@@ -1527,6 +1672,9 @@ static BOOL pdIsMenuAgent(void)
       return;
    }
 
+   // an event whose window does not resolve has nowhere to go, so the trace reports it
+   if([event window]==nil && getenv("PD_EVENT_TRACE") && [event type]!=NSAppKitDefined && [event type]!=NSApplicationDefined && [event type]!=NSPeriodic)
+    fprintf(stderr,"PD-APPEVENT dropped type %d windowNumber %ld: no window\n",(int)[event type],(long)[event windowNumber]);
    [[event window] sendEvent:event];
 }
 
@@ -2196,6 +2344,18 @@ static const char *kReopenNotification="org.puredarwin.appkit.reopen";
    // nobody waits on the reply, documents arrive through the delegate only
 }
 
+// the application's own menu actions, as macOS validates them: hiding needs a shown app,
+// window commands need windows, and the other-application commands are always offered
+-(BOOL)validateMenuItem:(NSMenuItem *)item {
+   SEL action=[item action];
+
+   if(action==@selector(hide:))
+    return ![self isHidden];
+   if(action==@selector(arrangeInFront:) || action==@selector(miniaturizeAll:))
+    return [[self windows] count]>0;
+   return YES;
+}
+
 -(void)arrangeInFront:sender {
 #define CASCADE_DELTA   20      // ? isn't there a call for this?
     NSMutableArray *visibleWindows = [NSMutableArray new];
@@ -2441,6 +2601,12 @@ standardAboutPanel] retain];
 
 @end
 
+
+// code that uses Cocoa from outside NSApplicationMain calls this first, the shared application is all it needs
+BOOL NSApplicationLoad(void) {
+   [NSApplication sharedApplication];
+   return YES;
+}
 
 int NSApplicationMain(int argc, const char *argv[]) {
     __NSInitializeProcess(argc, argv);

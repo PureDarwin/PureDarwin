@@ -243,6 +243,7 @@ APPKIT_EXPORT NSString *const NSAccessibilityValueIndicatorRole;
 APPKIT_EXPORT NSString *const NSAccessibilityWindowRole;
 
 APPKIT_EXPORT NSString *const NSAccessibilityCloseButtonSubrole;
+APPKIT_EXPORT NSString *const NSAccessibilityTabButtonSubrole;
 APPKIT_EXPORT NSString *const NSAccessibilityDecrementArrowSubrole;
 APPKIT_EXPORT NSString *const NSAccessibilityDecrementPageSubrole;
 APPKIT_EXPORT NSString *const NSAccessibilityDialogSubrole;
@@ -337,10 +338,13 @@ APPKIT_EXPORT NSString *const NSAccessibilityRoleDescription(
     NSString *role,
     NSString *subrole);
 
+APPKIT_EXPORT NSArray *NSAccessibilityUnignoredChildren(NSArray *originalChildren);
+APPKIT_EXPORT NSArray *NSAccessibilityUnignoredChildrenForOnlyChild(id originalChild);
 APPKIT_EXPORT id NSAccessibilityUnignoredAncestor(
     id element);
 
 @interface NSObject (NSAccessibility)
 - (NSArray *)accessibilityAttributeNames;
 - accessibilityAttributeValue:(NSString *)attribute;
+- (BOOL)accessibilityIsIgnored;
 @end

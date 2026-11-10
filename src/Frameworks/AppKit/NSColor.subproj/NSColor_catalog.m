@@ -55,6 +55,23 @@ NSColor *NSColorGetCatalogColor(NSString *catalogName,NSString *colorName);
         [[self class] description], _catalogName, _colorName, _color];
 }
 
+-(NSString *)catalogNameComponent {
+   return _catalogName;
+}
+
+-(NSString *)colorNameComponent {
+   return _colorName;
+}
+
+// no catalogs are localized here, the names are what users see
+-(NSString *)localizedCatalogNameComponent {
+   return _catalogName;
+}
+
+-(NSString *)localizedColorNameComponent {
+   return _colorName;
+}
+
 +(NSColor *)colorWithCatalogName:(NSString *)catalogName colorName:(NSString *)colorName color:(NSColor *)color {
    return [[[self alloc] initWithCatalogName:catalogName colorName:colorName color:color] autorelease];
 }
@@ -193,6 +210,19 @@ NSColor *NSColorGetCatalogColor(NSString *catalogName,NSString *colorName);
 }
 
 -(NSString *)colorNameComponent {
+   return _name;
+}
+
+// named system colors live in the System catalog, as on macOS
+-(NSString *)catalogNameComponent {
+   return @"System";
+}
+
+-(NSString *)localizedCatalogNameComponent {
+   return @"System";
+}
+
+-(NSString *)localizedColorNameComponent {
    return _name;
 }
 

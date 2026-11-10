@@ -339,7 +339,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
      break;
    }
 
-        if (_boxType != NSBoxSeparator) {
+        if (_boxType != NSBoxSeparator && _boxType != NSBoxCustom) {
                 // Separator are transparent except for drawing a line
                 [[NSColor controlColor] setFill];
                 NSRectFill(grooveRect);
@@ -347,14 +347,16 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
         if (_boxType == NSBoxCustom){
 
-                // Ignoring corner radius for now.
-                [[self fillColor] set];
-                NSRectFill(rect);
+                // a custom box without colours of its own draws only the 1 point grey line macOS draws
+                if([self fillColor]!=nil){
+                        [[self fillColor] set];
+                        NSRectFill(rect);
+                }
 
                 if (_borderType != NSNoBorder)
                 {
-                        [[self borderColor] set];
-                        NSFrameRectWithWidth(_bounds,[self borderWidth]);
+                        [([self borderColor]?:[NSColor colorWithCalibratedWhite:0.46 alpha:1]) set];
+                        NSFrameRectWithWidth(_bounds,[self borderWidth]>0 ? [self borderWidth] : 1);
                 }
         } else if (_boxType == NSBoxSeparator) {
                 // These are just the simple divider lines

@@ -6,6 +6,7 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
+#import <AppKit/PDControlDrawing.h>
 #import <sys/param.h>
 #import <AppKit/NSCell.h>
 #import <AppKit/NSFont.h>
@@ -771,9 +772,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(void)drawInteriorWithFrame:(NSRect)frame inView:(NSView *)view {
+   PD_TRACE(@"%@ drawInteriorWithFrame frame=%@",[self class],NSStringFromRect(frame));
 }
 
 -(void)drawWithFrame:(NSRect)frame inView:(NSView *)view {
+   PD_TRACE(@"%@ NSCell drawWithFrame frame=%@ view=%@",[self class],NSStringFromRect(frame),view ? NSStringFromClass([view class]) : @"nil");
 
    if([self type]==NSTextCellType){
     if([self isBezeled])
@@ -784,6 +787,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(void)highlight:(BOOL)highlight withFrame:(NSRect)frame inView:(NSView *)view {
+   PD_TRACE(@"%@ highlight=%d frame=%@ view=%@",[self class],highlight,NSStringFromRect(frame),view ? NSStringFromClass([view class]) : @"nil");
    if(_isHighlighted!=highlight){
     _isHighlighted=highlight;
    }

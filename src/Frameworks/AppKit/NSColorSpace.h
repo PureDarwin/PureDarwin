@@ -40,6 +40,7 @@ typedef NS_ENUM(NSInteger, NSColorSpaceModel) {
 - initWithCGColorSpace:(CGColorSpaceRef)cgColorSpace;
 
 - (CGColorSpaceRef)CGColorSpace;
+- (NSData *)ICCProfileData;
 - (NSColorSpaceModel)colorSpaceModel;
 - (NSInteger)numberOfColorComponents;
 - (NSString *)localizedName;

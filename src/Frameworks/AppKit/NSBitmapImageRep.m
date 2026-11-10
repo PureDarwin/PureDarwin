@@ -692,8 +692,10 @@ NSString* NSImageCompressionFactor = @"NSImageCompressionFactor";
 -(CGBitmapInfo)CGBitmapInfo {
    CGBitmapInfo result=kCGBitmapByteOrderDefault;
 
+   // a pixel wider than its samples carries a padding byte, as Wine's 3-sample 32-bit reps do
    if(![self hasAlpha])
-    result|=kCGImageAlphaNone;
+    result|=([self bitsPerPixel]>[self samplesPerPixel]*[self bitsPerSample])?
+     ((_bitmapFormat&NSAlphaFirstBitmapFormat)?kCGImageAlphaNoneSkipFirst:kCGImageAlphaNoneSkipLast):kCGImageAlphaNone;
    else {
     if(_bitmapFormat&NSAlphaFirstBitmapFormat){
      if(_bitmapFormat&NSAlphaNonpremultipliedBitmapFormat)

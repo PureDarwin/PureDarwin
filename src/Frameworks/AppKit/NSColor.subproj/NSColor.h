@@ -19,6 +19,13 @@ APPKIT_EXPORT NSString *const NSSystemColorsDidChangeNotification;
 
 @class NSAppearance;
 
+typedef NSInteger NSColorType;
+enum {
+    NSColorTypeComponentBased = 0,
+    NSColorTypePattern = 1,
+    NSColorTypeCatalog = 2,
+};
+
 @interface NSColor : NSObject <NSCopying, NSCoding>
 
 + (NSColor *)highlightColor;
@@ -39,6 +46,7 @@ APPKIT_EXPORT NSString *const NSSystemColorsDidChangeNotification;
 + (NSColor *)underPageBackgroundColor;
 + (NSColor *)selectedContentBackgroundColor;
 + (NSColor *)unemphasizedSelectedContentBackgroundColor;
++ (NSColor *)unemphasizedSelectedTextColor;
 + (NSColor *)findHighlightColor;
 
 + (NSColor *)alternateSelectedControlTextColor;
@@ -143,6 +151,13 @@ APPKIT_EXPORT NSString *const NSSystemColorsDidChangeNotification;
 - (NSColor *)colorWithAlphaComponent:(CGFloat)alpha;
 - (NSColor *)highlightWithLevel:(CGFloat)level;
 - (NSColor *)shadowWithLevel:(CGFloat)level;
+
+- (NSColorType)type;
+- (NSString *)catalogNameComponent;
+- (NSString *)colorNameComponent;
+- (NSString *)localizedCatalogNameComponent;
+- (NSString *)localizedColorNameComponent;
+- (NSColor *)colorUsingType:(NSColorType)type;
 
 - (NSColor *)colorUsingColorSpaceName:(NSString *)colorSpace;
 - (NSColor *)colorUsingColorSpace:(NSColorSpace *)space;

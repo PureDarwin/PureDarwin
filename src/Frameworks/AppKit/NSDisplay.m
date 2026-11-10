@@ -21,6 +21,7 @@ SOFTWARE. */
 
 #import <AppKit/NSDisplay.h>
 #import <AppKit/NSPanel.h>
+#import <AppKit/NSOpenPanel.h>
 #import <AppKit/NSDraggingManager.h>
 #import <AppKit/NSApplication.h>
 #import <AppKit/NSScreen.h>
@@ -34,6 +35,18 @@ SOFTWARE. */
 #import <WindowServer/rpc.h>
 
 #define MENU_BAR_HEIGHT 24  // exclude from visibleFrame height
+
+// the compositor's usable area, the screen less the menu bar and dock, as macOS reports it
+static NSRect visibleFrameForFrame(NSRect frame) {
+    struct wsRPCSimple data = { { kWSGetUsableArea, sizeof(struct wsRPCSimple) - sizeof(struct wsRPCBase) }, 0, 0, 0, 0 };
+    int len = sizeof(data);
+    NSRect visFrame = frame;
+
+    if (_windowServerRPC(&data, sizeof(data), &data, &len) == KERN_SUCCESS && data.val3 > 0 && data.val4 > 0)
+        return NSIntersectionRect(frame, NSMakeRect(data.val1, data.val2, data.val3, data.val4));
+    visFrame.size.height -= MENU_BAR_HEIGHT;
+    return visFrame;
+}
 
 @interface NSScreen (NSDisplayModeChange)
 -(void)_setFrame:(NSRect)frame visibleFrame:(NSRect)visibleFrame;
@@ -84,8 +97,7 @@ static void displayReconfigured(CGDirectDisplayID display, CGDisplayChangeSummar
         return nil;
     }
     NSRect frame = NSMakeRect(0, 0, CGDisplayModeGetWidth(mode), CGDisplayModeGetHeight(mode));
-    NSRect visFrame = frame;
-    visFrame.size.height -= MENU_BAR_HEIGHT;
+    NSRect visFrame = visibleFrameForFrame(frame);
     NSScreen *screen = [[[NSScreen alloc] initWithFrame:frame visibleFrame:visFrame] retain];
     [screen _propertiesFromMode:mode colorSpace:cs displayID:mainDisplay];
     CGDisplayModeRelease(mode);
@@ -114,10 +126,9 @@ static void displayReconfigured(CGDirectDisplayID display, CGDisplayChangeSummar
 -(void)_screenParametersChanged {
     CGDisplayModeRef mode = CGDisplayCopyDisplayMode(CGMainDisplayID());
     NSRect frame = NSMakeRect(0, 0, CGDisplayModeGetWidth(mode), CGDisplayModeGetHeight(mode));
-    NSRect visFrame = frame;
+    NSRect visFrame = visibleFrameForFrame(frame);
 
     CGDisplayModeRelease(mode);
-    visFrame.size.height -= MENU_BAR_HEIGHT;
     [[_screens objectAtIndex:0] _setFrame:frame visibleFrame:visFrame];
     [[NSNotificationCenter defaultCenter] postNotificationName:NSApplicationDidChangeScreenParametersNotification object:NSApp];
 }
@@ -323,8 +334,8 @@ static NSUInteger lastModifierFlags;
    return standard;
 }
 
+// there is no alert sound yet, so NSBeep is silent
 -(void)beep {
-   NSUnimplementedMethod();
 }
 
 -(NSSet *)allFontFamilyNames {
@@ -433,14 +444,13 @@ static NSUInteger lastModifierFlags;
    return nil;
 }
 
+// the panels are AppKit windows on every display, these stay for callers of the older display API
 -(int)savePanel:(NSSavePanel *)savePanel runModalForDirectory:(NSString *)directory file:(NSString *)file {
-   NSUnimplementedMethod();
-   return 0;
+   return [savePanel runModalForDirectory:directory file:file];
 }
 
 -(int)openPanel:(NSOpenPanel *)openPanel runModalForDirectory:(NSString *)directory file:(NSString *)file types:(NSArray *)types {
-   NSUnimplementedMethod();
-   return 0;
+   return [openPanel runModalForDirectory:directory file:file types:types];
 }
 
 -(NSPoint)mouseLocation {

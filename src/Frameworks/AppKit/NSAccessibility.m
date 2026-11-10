@@ -243,6 +243,7 @@ NSString * const NSAccessibilityValueIndicatorRole=@"NSAccessibilityValueIndicat
 NSString * const NSAccessibilityWindowRole=@"NSAccessibilityWindowRole";
 
 NSString * const NSAccessibilityCloseButtonSubrole=@"NSAccessibilityCloseButtonSubrole";
+NSString * const NSAccessibilityTabButtonSubrole=@"AXTabButton";
 NSString * const NSAccessibilityDecrementArrowSubrole=@"NSAccessibilityDecrementArrowSubrole";
 NSString * const NSAccessibilityDecrementPageSubrole=@"NSAccessibilityDecrementPageSubrole";
 NSString * const NSAccessibilityDialogSubrole=@"NSAccessibilityDialogSubrole";
@@ -350,6 +351,26 @@ id NSAccessibilityUnignoredAncestor (
    id element
 ) {
    return nil;
+}
+
+// an ignored element stands in the tree for its own unignored children
+NSArray *NSAccessibilityUnignoredChildren(NSArray *originalChildren) {
+    NSMutableArray *result = [NSMutableArray array];
+
+    for (id child in originalChildren) {
+        if ([child respondsToSelector:@selector(accessibilityIsIgnored)] && [child accessibilityIsIgnored]) {
+            NSArray *grandchildren = [child respondsToSelector:@selector(accessibilityAttributeValue:)] ?
+                [child accessibilityAttributeValue:NSAccessibilityChildrenAttribute] : nil;
+
+            [result addObjectsFromArray:NSAccessibilityUnignoredChildren(grandchildren)];
+        } else
+            [result addObject:child];
+    }
+    return result;
+}
+
+NSArray *NSAccessibilityUnignoredChildrenForOnlyChild(id originalChild) {
+    return originalChild ? NSAccessibilityUnignoredChildren([NSArray arrayWithObject:originalChild]) : [NSArray array];
 }
 
 // the spoken names of the standard actions

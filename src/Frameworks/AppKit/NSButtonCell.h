@@ -57,6 +57,7 @@ typedef enum {
     NSRoundRectBezelStyle = 12,
     NSRecessedBezelStyle = 13,
     NSRoundedDisclosureBezelStyle = 14,
+    NSInlineBezelStyle = 15,
     // the names macOS 10.12 and later use
     NSBezelStyleRounded = 1,
     NSBezelStyleRegularSquare = 2,
@@ -70,6 +71,7 @@ typedef enum {
     NSBezelStyleRoundRect = 12,
     NSBezelStyleRecessed = 13,
     NSBezelStyleRoundedDisclosure = 14,
+    NSBezelStyleInline = 15,
     NSBezelStylePush = 1,
     NSBezelStyleFlexiblePush = 2,
     NSBezelStyleToolbar = 11,

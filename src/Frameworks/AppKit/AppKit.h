@@ -32,6 +32,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSColorList.h>
 #import <AppKit/NSAppearance.h>
 #import <AppKit/NSColorPanel.h>
+#import <AppKit/NSColorSampler.h>
 #import <AppKit/NSColorPicker.h>
 #import <AppKit/NSColorSpace.h>
 #import <AppKit/NSColorWell.h>
@@ -67,6 +68,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSGraphicsContext.h>
 #import <AppKit/NSHelpManager.h>
 #import <AppKit/NSImage.h>
+#import <AppKit/NSImageSymbolConfiguration.h>
 #import <AppKit/NSImageCell.h>
 #import <AppKit/NSImageRep.h>
 #import <AppKit/NSImageView.h>
@@ -173,6 +175,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSHapticFeedback.h>
 #import <AppKit/NSSharingService.h>
 #import <AppKit/NSAccessibilityCustomAction.h>
+#import <AppKit/NSAccessibilityElement.h>
 #import <AppKit/NSModernAppKit.h>
 #import <AppKit/NSLayoutAnchor.h>
 #import <AppKit/NSGlassEffectView.h>

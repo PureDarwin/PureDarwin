@@ -89,6 +89,29 @@ static NSUInteger pressedButtons;
    return pressedButtons;
 }
 
+// keys held now by virtual key code, as Carbon's KeyMap lays them out: code k at byte k >> 3, bit k & 7
+static uint8_t pressedKeys[16];
+
++(void)_setKeyCode:(unsigned short)keyCode down:(BOOL)down {
+   if(keyCode>=128)
+    return;
+   if(down)
+    __atomic_fetch_or(&pressedKeys[keyCode>>3],(uint8_t)(1<<(keyCode&7)),__ATOMIC_RELAXED);
+   else
+    __atomic_fetch_and(&pressedKeys[keyCode>>3],(uint8_t)~(1<<(keyCode&7)),__ATOMIC_RELAXED);
+}
+
++(BOOL)_isKeyCodeDown:(unsigned short)keyCode {
+   if(keyCode>=128)
+    return NO;
+   return (__atomic_load_n(&pressedKeys[keyCode>>3],__ATOMIC_RELAXED)>>(keyCode&7))&1;
+}
+
++(void)_copyPressedKeys:(uint8_t *)keyMap {
+   for(int i=0;i<16;i++)
+    keyMap[i]=__atomic_load_n(&pressedKeys[i],__ATOMIC_RELAXED);
+}
+
 
 +(NSTimeInterval)doubleClickInterval {
    return [[NSDisplay currentDisplay] doubleClickInterval];

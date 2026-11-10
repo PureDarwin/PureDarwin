@@ -6,6 +6,8 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
+#include <dispatch/dispatch.h>
+#include <pthread.h>
 #import <AppKit/NSColor.h>
 #import <AppKit/NSColorSpace.h>
 #import <AppKit/NSDisplay.h>
@@ -231,11 +233,21 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
         value = [(id)v intValue];
         CFRelease(v);
     }
+    static NSColor *shared[sizeof(accents) / sizeof(accents[0])];
+    static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+    unsigned index = 5; // blue
+
+    // one shared color per accent, so a color kept unretained stays valid when the preference changes
     for (unsigned i = 0; i < sizeof(accents) / sizeof(accents[0]); i++) {
         if (accents[i].value == value)
-            return [NSColor colorWithCalibratedRed:accents[i].r / 255 green:accents[i].g / 255 blue:accents[i].b / 255 alpha:1];
+            index = i;
     }
-    return [NSColor colorWithCalibratedRed:0x2f / 255.0 green:0x6f / 255.0 blue:0xdb / 255.0 alpha:1];
+    pthread_mutex_lock(&lock);
+    if (shared[index] == nil)
+        shared[index] = [[NSColor colorWithCalibratedRed:accents[index].r / 255 green:accents[index].g / 255
+                                                    blue:accents[index].b / 255 alpha:1] retain];
+    pthread_mutex_unlock(&lock);
+    return shared[index];
 }
 
 +(NSColor *)alternateSelectedControlColor {
@@ -401,6 +413,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return [NSColor colorWithCatalogName:@"System" colorName:@"unemphasizedSelectedContentBackgroundColor"];
 }
 
++(NSColor *)unemphasizedSelectedTextColor {
+   return [NSColor colorWithCatalogName:@"System" colorName:@"unemphasizedSelectedTextColor"];
+}
+
 +(NSColor *)findHighlightColor {
    return [NSColor colorWithCatalogName:@"System" colorName:@"findHighlightColor"];
 }
@@ -430,8 +446,13 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return [NSColor colorWithCatalogName:@"System" colorName:@"menuItemTextColor"];
 }
 
+// the constant colors are shared and never freed, as on macOS
 +(NSColor *)clearColor {
-   return [NSColor colorWithCalibratedRed:0 green:0 blue:0 alpha:0];
+   static NSColor *color;
+   static dispatch_once_t once;
+
+   dispatch_once(&once, ^{ color = [[NSColor colorWithCalibratedRed:0 green:0 blue:0 alpha:0] retain]; });
+   return color;
 }
 
 +(NSColor *)darkGrayColor {
@@ -447,7 +468,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 +(NSColor *)blackColor {
-   return [NSColor colorWithCalibratedWhite:0 alpha:1.0];
+   static NSColor *color;
+   static dispatch_once_t once;
+
+   dispatch_once(&once, ^{ color = [[NSColor colorWithCalibratedWhite:0 alpha:1.0] retain]; });
+   return color;
 }
 
 +(NSColor *)blueColor {
@@ -504,7 +529,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 +(NSColor *)whiteColor {
-   return [NSColor colorWithCalibratedWhite:1 alpha:1.0];
+   static NSColor *color;
+   static dispatch_once_t once;
+
+   dispatch_once(&once, ^{ color = [[NSColor colorWithCalibratedWhite:1 alpha:1.0] retain]; });
+   return color;
 }
 
 +(NSColor *)colorWithDeviceWhite:(CGFloat)white alpha:(CGFloat)alpha {
@@ -599,6 +628,7 @@ static const struct { const char *name; CGFloat r, g, b, a; } _pdSystemColors[] 
     {"underPageBackgroundColor",      0.59, 0.59, 0.59, 1.0},
     {"selectedContentBackgroundColor",            0.00, 0.39, 0.88, 1.0},
     {"unemphasizedSelectedContentBackgroundColor", 0.86, 0.86, 0.86, 1.0},
+    {"unemphasizedSelectedTextColor", 0.00, 0.00, 0.00, 1.0},
     {"findHighlightColor",            1.00, 1.00, 0.00, 1.0},
     {NULL, 0, 0, 0, 0}
 };
@@ -643,6 +673,7 @@ static const struct { const char *name; CGFloat r, g, b, a; } _pdSystemDarkColor
     {"linkColor",                     0.25, 0.61, 1.00, 1.0},
     {"underPageBackgroundColor",      0.16, 0.16, 0.16, 1.0},
     {"unemphasizedSelectedContentBackgroundColor", 0.27, 0.27, 0.27, 1.0},
+    {"unemphasizedSelectedTextColor", 1.00, 1.00, 1.00, 1.0},
     {"findHighlightColor",            0.84, 0.70, 0.00, 1.0},
     {NULL, 0, 0, 0, 0}
 };
@@ -709,12 +740,36 @@ static const struct { const char *name; CGFloat r, g, b, a; } _pdSystemDarkColor
 }
 
 +(NSColor *)colorWithCatalogName:(NSString *)catalogName colorName:(NSString *)colorName {
+    // system colors are shared and never freed, as on macOS, where apps keep them unretained in static tables.
+    // each resolves against the drawing appearance when used, so one instance per name serves every appearance
     if([catalogName isEqualToString:@"System"]) {
+        static NSMutableDictionary *shared;
+        static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+        NSColor *color;
+
+        // resolving a color can ask for other system colors, so the lock covers only the table
+        pthread_mutex_lock(&lock);
+        if(shared == nil)
+            shared = [NSMutableDictionary new];
+        color = [[[shared objectForKey:colorName] retain] autorelease];
+        pthread_mutex_unlock(&lock);
+        if(color != nil)
+            return color;
+
         NSColor *light = [self _systemColorNamed:colorName dark:NO];
 
-        if (light == nil)
+        if(light == nil) {
             NSLog(@"*** no system color named %@", colorName);
-        return light ? [NSColor_catalog colorWithCatalogName:catalogName colorName:colorName color:light] : nil;
+            return nil;
+        }
+        color = [NSColor_catalog colorWithCatalogName:catalogName colorName:colorName color:light];
+        pthread_mutex_lock(&lock);
+        // another thread may have made it first, everyone keeps the first
+        if([shared objectForKey:colorName] == nil)
+            [shared setObject:color forKey:colorName];
+        color = [[[shared objectForKey:colorName] retain] autorelease];
+        pthread_mutex_unlock(&lock);
+        return color;
     }
     NSColorList *list = [NSColorList colorListNamed:catalogName];
     if(!list) {
@@ -974,6 +1029,25 @@ static void releasePatternInfo(void *info){
                                     green:[rgb greenComponent] * scale
                                      blue:[rgb blueComponent] * scale
                                     alpha:[rgb alphaComponent]];
+}
+
+// catalog and pattern colors say so by their space name, the rest have components
+-(NSColorType)type {
+   NSString *name=[self colorSpaceName];
+
+   if([name isEqualToString:NSNamedColorSpace])
+    return NSColorTypeCatalog;
+   if([name isEqualToString:NSPatternColorSpace])
+    return NSColorTypePattern;
+   return NSColorTypeComponentBased;
+}
+
+-(NSColor *)colorUsingType:(NSColorType)type {
+   if([self type]==type)
+    return self;
+   if(type==NSColorTypeComponentBased && [self type]==NSColorTypeCatalog)
+    return [self colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+   return nil;
 }
 
 -(NSColor *)colorUsingColorSpaceName:(NSString *)colorSpace {
