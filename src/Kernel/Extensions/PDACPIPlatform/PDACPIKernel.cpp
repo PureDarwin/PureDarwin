@@ -1,4 +1,4 @@
-// uACPI's full-mode kernel interface over IOKit and xnu: allocation, locks, events, port and pci
+// uACPI's full-mode kernel interface over IOKit and xnu: allocation, semaphores, port and pci
 // config access, timing, deferred work and the SCI. Table mapping and logging stay in PDACPIGlue.cpp.
 
 #include <IOKit/IOLib.h>
@@ -7,6 +7,8 @@
 #include <IOKit/IOInterrupts.h>
 #include <kern/thread_call.h>
 #include <kern/clock.h>
+#include <kern/sched_prim.h>
+#include <libkern/OSAtomic.h>
 #include <architecture/i386/pio.h>
 
 extern "C" {
@@ -169,98 +171,67 @@ uacpi_status uacpi_kernel_io_write8(uacpi_handle h, uacpi_size off, uacpi_u8 v) 
 uacpi_status uacpi_kernel_io_write16(uacpi_handle h, uacpi_size off, uacpi_u16 v) { outw(PORT(h, off), v); return UACPI_STATUS_OK; }
 uacpi_status uacpi_kernel_io_write32(uacpi_handle h, uacpi_size off, uacpi_u32 v) { outl(PORT(h, off), v); return UACPI_STATUS_OK; }
 
-// aml mutexes take a timeout in ms, 0xffff waits forever
-uacpi_handle uacpi_kernel_create_mutex(void)
-{
-    return IOLockAlloc();
-}
-
-void uacpi_kernel_free_mutex(uacpi_handle h)
-{
-    IOLockFree((IOLock *)h);
-}
-
-uacpi_status uacpi_kernel_acquire_mutex(uacpi_handle h, uacpi_u16 timeout)
-{
-    IOLock *lock = (IOLock *)h;
-    if (timeout == 0xffff) {
-        IOLockLock(lock);
-        return UACPI_STATUS_OK;
-    }
-    for (uint32_t waited = 0;; waited++) {
-        if (IOLockTryLock(lock))
-            return UACPI_STATUS_OK;
-        if (waited >= timeout)
-            return UACPI_STATUS_TIMEOUT;
-        IOSleep(1);
-    }
-}
-
-void uacpi_kernel_release_mutex(uacpi_handle h)
-{
-    IOLockUnlock((IOLock *)h);
-}
-
-// a counting event: signal adds one, a wait takes one
-struct PDACPIEvent {
-    IOLock  *lock;
-    uint32_t count;
+// a counting semaphore under a spinlock, signal may come from interrupt context
+struct PDACPISemaphore {
+    IOSimpleLock *lock;
+    uint32_t      units;
 };
 
-uacpi_handle uacpi_kernel_create_event(void)
+uacpi_handle uacpi_kernel_create_semaphore(uacpi_u32 initial_units)
 {
-    PDACPIEvent *e = (PDACPIEvent *)IOMallocZero(sizeof(*e));
-    if (e == NULL)
+    PDACPISemaphore *s = (PDACPISemaphore *)IOMallocZero(sizeof(*s));
+    if (s == NULL)
         return UACPI_NULL;
-    e->lock = IOLockAlloc();
-    return e;
+    s->lock = IOSimpleLockAlloc();
+    if (s->lock == NULL) {
+        IOFree(s, sizeof(*s));
+        return UACPI_NULL;
+    }
+    s->units = initial_units;
+    return s;
 }
 
-void uacpi_kernel_free_event(uacpi_handle h)
+void uacpi_kernel_free_semaphore(uacpi_handle h)
 {
-    PDACPIEvent *e = (PDACPIEvent *)h;
-    IOLockFree(e->lock);
-    IOFree(e, sizeof(*e));
+    PDACPISemaphore *s = (PDACPISemaphore *)h;
+    IOSimpleLockFree(s->lock);
+    IOFree(s, sizeof(*s));
 }
 
-uacpi_bool uacpi_kernel_wait_for_event(uacpi_handle h, uacpi_u16 timeout)
+// timeout is in ms, 0xffff waits forever
+uacpi_status uacpi_kernel_wait_for_semaphore(uacpi_handle h, uacpi_u16 timeout)
 {
-    PDACPIEvent *e = (PDACPIEvent *)h;
+    PDACPISemaphore *s = (PDACPISemaphore *)h;
     uint64_t deadline = 0;
     if (timeout != 0xffff)
         clock_interval_to_deadline(timeout, kMillisecondScale, &deadline);
 
-    IOLockLock(e->lock);
-    while (e->count == 0) {
-        if (timeout == 0)
-            break;
-        int r = timeout == 0xffff ? IOLockSleep(e->lock, e, THREAD_UNINT)
-                                  : IOLockSleepDeadline(e->lock, e, deadline, THREAD_UNINT);
-        if (r == THREAD_TIMED_OUT)
-            break;
+    for (;;) {
+        IOInterruptState is = IOSimpleLockLockDisableInterrupt(s->lock);
+        if (s->units > 0) {
+            s->units--;
+            IOSimpleLockUnlockEnableInterrupt(s->lock, is);
+            return UACPI_STATUS_OK;
+        }
+        if (timeout == 0 || (timeout != 0xffff && mach_absolute_time() >= deadline)) {
+            IOSimpleLockUnlockEnableInterrupt(s->lock, is);
+            return UACPI_STATUS_TIMEOUT;
+        }
+
+        // queue on the event before dropping the lock so a signal in between is not lost
+        assert_wait_deadline((event_t)s, THREAD_UNINT, timeout == 0xffff ? 0 : deadline);
+        IOSimpleLockUnlockEnableInterrupt(s->lock, is);
+        thread_block(THREAD_CONTINUE_NULL);
     }
-    bool got = e->count > 0;
-    if (got)
-        e->count--;
-    IOLockUnlock(e->lock);
-    return got;
 }
 
-void uacpi_kernel_signal_event(uacpi_handle h)
+void uacpi_kernel_signal_semaphore(uacpi_handle h)
 {
-    PDACPIEvent *e = (PDACPIEvent *)h;
-    IOLockLock(e->lock);
-    e->count++;
-    IOLockWakeup(e->lock, e, true);
-    IOLockUnlock(e->lock);
-}
-
-void uacpi_kernel_reset_event(uacpi_handle h)
-{
-    PDACPIEvent *e = (PDACPIEvent *)h;
-    IOLockLock(e->lock);
-    e->count = 0;
-    IOLockUnlock(e->lock);
+    PDACPISemaphore *s = (PDACPISemaphore *)h;
+    IOInterruptState is = IOSimpleLockLockDisableInterrupt(s->lock);
+    s->units++;
+    thread_wakeup_one((event_t)s);
+    IOSimpleLockUnlockEnableInterrupt(s->lock, is);
 }
 
 uacpi_thread_id uacpi_kernel_get_thread_id(void)
@@ -319,47 +290,58 @@ struct PDACPIWork {
     thread_call_t      call;
 };
 
-static IOLock  *gWorkLock;
-static uint32_t gWorkPending;
+static IOLock           *gWorkLock;
+static volatile SInt32   gWorkPending;
 
 static void pd_acpi_run_work(thread_call_param_t p0, thread_call_param_t)
 {
+    // the handler may reschedule or free the item, so nothing reads it afterwards
     PDACPIWork *w = (PDACPIWork *)p0;
-    w->handler(w->ctx);
-    thread_call_free(w->call);
-    IOFree(w, sizeof(*w));
+    uacpi_work_handler handler = w->handler;
+    uacpi_handle ctx = w->ctx;
+    handler(ctx);
 
     IOLockLock(gWorkLock);
-    if (--gWorkPending == 0)
-        IOLockWakeup(gWorkLock, &gWorkPending, false);
+    if (OSDecrementAtomic(&gWorkPending) == 1)
+        IOLockWakeup(gWorkLock, (void *)&gWorkPending, false);
     IOLockUnlock(gWorkLock);
 }
 
-uacpi_status uacpi_kernel_schedule_work(uacpi_work_type type, uacpi_work_handler handler, uacpi_handle ctx)
+uacpi_handle uacpi_kernel_create_work_item(void)
 {
-    PDACPIWork *w = (PDACPIWork *)IOMalloc(sizeof(*w));
+    PDACPIWork *w = (PDACPIWork *)IOMallocZero(sizeof(*w));
     if (w == NULL)
-        return UACPI_STATUS_OUT_OF_MEMORY;
-    w->handler = handler;
-    w->ctx = ctx;
+        return UACPI_NULL;
     w->call = thread_call_allocate(pd_acpi_run_work, w);
     if (w->call == NULL) {
         IOFree(w, sizeof(*w));
-        return UACPI_STATUS_OUT_OF_MEMORY;
+        return UACPI_NULL;
     }
+    return w;
+}
 
-    IOLockLock(gWorkLock);
-    gWorkPending++;
-    IOLockUnlock(gWorkLock);
+void uacpi_kernel_free_work_item(uacpi_handle h)
+{
+    PDACPIWork *w = (PDACPIWork *)h;
+    thread_call_free(w->call);
+    IOFree(w, sizeof(*w));
+}
+
+// allocates nothing so it is safe from the sci
+void uacpi_kernel_schedule_work(uacpi_work_type type, uacpi_handle item, uacpi_work_handler handler, uacpi_handle ctx)
+{
+    PDACPIWork *w = (PDACPIWork *)item;
+    w->handler = handler;
+    w->ctx = ctx;
+    OSIncrementAtomic(&gWorkPending);
     thread_call_enter(w->call);
-    return UACPI_STATUS_OK;
 }
 
 uacpi_status uacpi_kernel_wait_for_work_completion(void)
 {
     IOLockLock(gWorkLock);
     while (gWorkPending != 0)
-        IOLockSleep(gWorkLock, &gWorkPending, THREAD_UNINT);
+        IOLockSleep(gWorkLock, (void *)&gWorkPending, THREAD_UNINT);
     IOLockUnlock(gWorkLock);
     return UACPI_STATUS_OK;
 }

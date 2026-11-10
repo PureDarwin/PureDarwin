@@ -1124,6 +1124,16 @@ unsigned PDACPIPlatformExpert::enumerateProcessorsFromMADT(void) {
 		}
 	}
 
+	// apple's madt lists cpus by apic id and xnu starts them in that order, interleaved
+	// firmware (hyperthread siblings last) gets the same order here, the boot cpu stays first
+	for (unsigned i = 2; i < count; i++) {
+		uint32_t id = fLapicIds[i];
+		unsigned j = i;
+		for (; j > 1 && fLapicIds[j - 1] > id; j--)
+			fLapicIds[j] = fLapicIds[j - 1];
+		fLapicIds[j] = id;
+	}
+
 	kprintf("PDACPIPlatform: MADT reports %u enabled processor%s (boot LAPIC %u)\n",
 	        count, count == 1 ? "" : "s", bootLapic);
 	return count;

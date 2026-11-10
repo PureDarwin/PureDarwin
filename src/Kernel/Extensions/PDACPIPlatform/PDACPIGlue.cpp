@@ -19,7 +19,8 @@ extern "C" {
 extern "C" void kprintf(const char *fmt, ...);
 
 // unmap() gets only an address, so the map must be findable from it.
-#define kMaxMappings 64
+// every SystemMemory operation region keeps its mapping, laptop firmware declares well over 64
+#define kMaxMappings 1024
 
 struct PDACPIMapping {
     void        *virt;
@@ -144,8 +145,9 @@ uacpi_kernel_get_rsdp(uacpi_phys_addr *out_rsdp_address)
 void *
 uacpi_kernel_map(uacpi_phys_addr addr, uacpi_size len)
 {
+    // uacpi checks for UACPI_MAP_FAILED, a NULL it would read through as a mapping
     if (len == 0)
-        return UACPI_NULL;
+        return UACPI_MAP_FAILED;
 
     // A table can start mid-page: map from the boundary, offset back.
     uacpi_phys_addr pageBase = addr & ~(uacpi_phys_addr)(PAGE_SIZE - 1);
@@ -154,13 +156,17 @@ uacpi_kernel_map(uacpi_phys_addr addr, uacpi_size len)
 
     IOMemoryDescriptor *desc = IOMemoryDescriptor::withPhysicalAddress(
         (IOPhysicalAddress)pageBase, (IOByteCount)mapLen, kIODirectionInOut);
-    if (desc == NULL)
-        return UACPI_NULL;
+    if (desc == NULL) {
+        IOLog("PDACPIPlatform: could not map 0x%llx+0x%llx\n", (unsigned long long)addr, (unsigned long long)len);
+        return UACPI_MAP_FAILED;
+    }
 
     IOMemoryMap *map = desc->map(kIOMapAnywhere);
     desc->release();   // the map holds its own reference
-    if (map == NULL)
-        return UACPI_NULL;
+    if (map == NULL) {
+        IOLog("PDACPIPlatform: could not map 0x%llx+0x%llx\n", (unsigned long long)addr, (unsigned long long)len);
+        return UACPI_MAP_FAILED;
+    }
 
     void *virt = (void *)(map->getVirtualAddress() + offset);
 
@@ -180,7 +186,7 @@ uacpi_kernel_map(uacpi_phys_addr addr, uacpi_size len)
         // Better to fail than return a mapping unmap() cannot find.
         IOLog("PDACPIPlatform: out of mapping slots (max %u)\n", kMaxMappings);
         map->release();
-        return UACPI_NULL;
+        return UACPI_MAP_FAILED;
     }
 
     return virt;
@@ -189,7 +195,7 @@ uacpi_kernel_map(uacpi_phys_addr addr, uacpi_size len)
 void
 uacpi_kernel_unmap(void *addr, uacpi_size len)
 {
-    if (addr == UACPI_NULL)
+    if (addr == UACPI_NULL || addr == UACPI_MAP_FAILED)
         return;
 
     IOMemoryMap *map = NULL;
@@ -229,7 +235,11 @@ uacpi_kernel_log(uacpi_log_level level, const uacpi_char *text)
     default:              tag = "?";     break;
     }
 
-    IOLog("PDACPIPlatform[%s]: %s", tag, text);
+    // warnings and errors also go to serial, IOLog alone never reaches it
+    if (level <= UACPI_LOG_WARN)
+        kprintf("PDACPIPlatform[%s]: %s", tag, text);
+    else
+        IOLog("PDACPIPlatform[%s]: %s", tag, text);
 }
 
 } // extern "C"

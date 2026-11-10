@@ -16,6 +16,10 @@ extern "C" {
 #include <uacpi/utilities.h>
 #include <uacpi/acpi.h>
 #include <uacpi/tables.h>
+#if defined(__x86_64__)
+#include <architecture/i386/pio.h>
+#endif
+#include <uacpi/tables.h>
 }
 
 #include "PDACPIPlatformExpert.h"
@@ -166,6 +170,20 @@ static void pd_acpi_init(thread_call_param_t, thread_call_param_t)
 
     st = uacpi_install_fixed_event_handler(UACPI_FIXED_EVENT_POWER_BUTTON, pd_fixed_power_button, UACPI_NULL);
     kprintf("PDACPIPlatform: fixed power button %s\n", uacpi_status_to_string(st));
+#if defined(__x86_64__)
+    // a pm1 block the chipset does not decode reads back all ones
+    struct acpi_fadt *fadt = NULL;
+    if (uacpi_table_fadt(&fadt) == UACPI_STATUS_OK && fadt != NULL) {
+        UInt16 evt = (UInt16)fadt->pm1a_evt_blk, cnt = (UInt16)fadt->pm1a_cnt_blk;
+        kprintf("PDACPIPlatform: pm1a evt 0x%x len %u (sts 0x%04x en 0x%04x) cnt 0x%x (0x%04x) smi_cmd 0x%x enable 0x%x\n",
+                evt, fadt->pm1_evt_len, inw(evt), inw(evt + fadt->pm1_evt_len / 2), cnt, inw(cnt),
+                fadt->smi_cmd, fadt->acpi_enable);
+        kprintf("PDACPIPlatform: fadt rev %u x_pm1a_evt space %u width %u offset %u access %u addr 0x%llx\n",
+                fadt->hdr.revision, fadt->x_pm1a_evt_blk.address_space_id, fadt->x_pm1a_evt_blk.register_bit_width,
+                fadt->x_pm1a_evt_blk.register_bit_offset, fadt->x_pm1a_evt_blk.access_size,
+                (unsigned long long)fadt->x_pm1a_evt_blk.address);
+    }
+#endif
     uacpi_find_devices("PNP0C0C", pd_found_button, UACPI_NULL);
     pd_acpi_publish_i2c_hid(sExpert);
     uacpi_finalize_gpe_initialization();
