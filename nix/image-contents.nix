@@ -1907,7 +1907,8 @@ let
             ]
             ++ lib.optionals network [
               (q "-device") (q "virtio-net,netdev=net0")
-              (q "-netdev") (q "user,id=net0")
+              # the guest's ssh on the host, PUREDARWIN_VM_SSH_PORT picks another port for a second VM
+              (q "-netdev") ''"user,id=net0,hostfwd=tcp::''${PUREDARWIN_VM_SSH_PORT:-2222}-:22"''
             ]
             ++ [
               (q "-device") (q "qemu-xhci,id=xhci")
