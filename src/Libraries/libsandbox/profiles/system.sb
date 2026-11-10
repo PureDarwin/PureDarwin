@@ -1,0 +1,62 @@
+;; system.sb - what any sandboxed PureDarwin process needs, imported by named profiles.
+;;
+;; Copyright (c) 2026 The PureDarwin Project
+;;
+;; SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
+(version 1)
+
+;; path resolution walks every directory above a file
+(allow file-read-metadata
+	(literal "/")
+	(literal "/private")
+	(literal "/private/var")
+	(literal "/var")
+	(literal "/tmp")
+	(literal "/etc"))
+
+;; dyld, the shared libraries and the system frameworks
+(allow file-read*
+	(literal "/usr/lib/dyld")
+	(subpath "/usr/lib")
+	(subpath "/System/Library/Frameworks")
+	(subpath "/System/Library/PrivateFrameworks")
+	(literal "/System/Library/CoreServices/SystemVersion.plist")
+	(subpath "/System/Cryptexes"))
+
+;; libc: locales, time zones, users and hosts
+(allow file-read*
+	(subpath "/usr/share/locale")
+	(subpath "/usr/share/zoneinfo")
+	(subpath "/private/var/db/timezone")
+	(literal "/private/etc/localtime")
+	(literal "/private/etc/passwd")
+	(literal "/private/etc/group")
+	(literal "/private/etc/hosts")
+	(literal "/private/etc/resolv.conf")
+	(literal "/private/etc/services")
+	(literal "/private/etc/protocols"))
+
+;; the device nodes libSystem opens on its own
+(allow file-read* file-write-data
+	(literal "/dev/null")
+	(literal "/dev/zero")
+	(literal "/dev/dtracehelper"))
+(allow file-read*
+	(literal "/dev/random")
+	(literal "/dev/urandom")
+	(literal "/dev/autofs_nowait"))
+
+(allow sysctl-read)
+(allow process-info* (target self))
+
+;; logging, notifications and directory services
+(allow mach-lookup
+	(global-name "com.apple.logd")
+	(global-name "com.apple.system.logger")
+	(global-name "com.apple.system.notification_center")
+	(global-name "com.apple.system.opendirectoryd.libinfo")
+	(global-name "com.apple.system.DirectoryService.libinfo_v1")
+	(global-name "com.apple.diagnosticd"))
+(allow ipc-posix-shm-read-data
+	(ipc-posix-name "apple.shm.notification_center"))

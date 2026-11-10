@@ -57,13 +57,32 @@ set_error(char **errorbuf, const char *format, ...)
 	va_end(ap);
 }
 
+// a named profile outside the built-in table is <name>.sb in the profile directory
+static char *
+read_named_profile(const char *name)
+{
+	char *path = NULL, *source;
+
+	if (name[0] == '\0' || strchr(name, '/') != NULL || strcmp(name, "..") == 0) {
+		errno = ENOENT;
+		return NULL;
+	}
+	if (asprintf(&path, "%s/%s.sb", SBPL_PROFILE_DIR, name) < 0) {
+		errno = ENOMEM;
+		return NULL;
+	}
+	source = sbpl_read_file(path);
+	free(path);
+	return source;
+}
+
 int
 sandbox_init_with_parameters(const char *profile, uint64_t flags,
     const char *const parameters[], char **errorbuf)
 {
 	const char *source = profile;
 	struct sb_set_profile_args args;
-	char *error = NULL;
+	char *error = NULL, *loaded = NULL;
 	void *blob;
 	size_t size;
 	int saved;
@@ -84,9 +103,13 @@ sandbox_init_with_parameters(const char *profile, uint64_t flags,
 			}
 		}
 		if (source == NULL) {
-			set_error(errorbuf, "unknown profile name '%s'", profile);
-			errno = EINVAL;
-			return -1;
+			loaded = read_named_profile(profile);
+			if (loaded == NULL) {
+				set_error(errorbuf, "unknown profile name '%s': %s", profile, strerror(errno));
+				errno = EINVAL;
+				return -1;
+			}
+			source = loaded;
 		}
 	} else if (flags != 0) {
 		set_error(errorbuf, "unsupported flags 0x%llx", (unsigned long long)flags);
@@ -94,7 +117,8 @@ sandbox_init_with_parameters(const char *profile, uint64_t flags,
 		return -1;
 	}
 
-	if (sbpl_compile(source, parameters, &blob, &size, &error) != 0) {
+	if (sbpl_compile(source, parameters, NULL, &blob, &size, &error) != 0) {
+		free(loaded);
 		if (errorbuf != NULL) {
 			*errorbuf = error;
 		} else {
@@ -103,6 +127,7 @@ sandbox_init_with_parameters(const char *profile, uint64_t flags,
 		errno = EINVAL;
 		return -1;
 	}
+	free(loaded);
 
 	args.profile = (uint64_t)(uintptr_t)blob;
 	args.size = size;

@@ -127,6 +127,9 @@ extern void libdispatch_init(void);
 extern void pd_libdyld_tlv_initializer(void);
 
 #include "../libc/darwin/libc_private.h"
+
+// pd_dirhelper.c, the per-user directories confstr hands out
+extern char *_dirhelper(int which, char *path, size_t pathlen);
 extern void _malloc_fork_prepare(void);
 extern void _malloc_fork_parent(void);
 extern void _malloc_fork_child(void);
@@ -295,7 +298,7 @@ static void pd_libSystem_initializer(int argc, const char *argv[], const char *e
 			.atfork_prepare = pd_atfork_prepare,
 			.atfork_parent = pd_atfork_parent,
 			.atfork_child = pd_atfork_child,
-			.dirhelper = NULL,
+			.dirhelper = _dirhelper,
 		};
 		_libc_initializer(&libc_funcs, envp, apple, vars);
 	}

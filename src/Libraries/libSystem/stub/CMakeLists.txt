@@ -25,6 +25,7 @@ add_custom_command(TARGET libSystem_B_stub POST_BUILD
 target_sources(libSystem_B_stub PRIVATE
     empty.c
     pd_libSystem_init.c
+    pd_dirhelper.c
     pd_libSystem_compat.c
     pd_chkstk_darwin.s
     ${CMAKE_SOURCE_DIR}/src/Libraries/dyld/pd_libc_common_storage.c

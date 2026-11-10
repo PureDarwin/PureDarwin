@@ -1,0 +1,30 @@
+;; com.apple.corefoundation.sb - defines (corefoundation) for profiles of CoreFoundation clients.
+;;
+;; Copyright (c) 2026 The PureDarwin Project
+;;
+;; SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
+(version 1)
+
+(define (corefoundation)
+	;; CFBundle, CFLocale and CFTimeZone data
+	(allow file-read*
+		(subpath "/usr/share/icu")
+		(subpath "/System/Library/CoreServices")
+		(literal "/Library/Preferences/.GlobalPreferences.plist")
+		(regex #"^/Users/[^/]+/Library/Preferences/\.GlobalPreferences[^/]*\.plist$")
+		(regex #"^/private/var/root/Library/Preferences/\.GlobalPreferences[^/]*\.plist$"))
+	(allow file-read-metadata
+		(literal "/Library")
+		(literal "/Library/Preferences")
+		(literal "/Users")
+		(literal "/private/var/root"))
+
+	;; preferences go through cfprefsd
+	(allow user-preference-read
+		(preference-domain ".GlobalPreferences")
+		(preference-domain "kCFPreferencesAnyApplication"))
+	(allow mach-lookup
+		(global-name "com.apple.cfprefsd.daemon")
+		(global-name "com.apple.cfprefsd.agent")
+		(global-name "com.apple.CoreServices.coreservicesd")))

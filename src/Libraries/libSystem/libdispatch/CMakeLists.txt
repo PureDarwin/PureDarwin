@@ -140,3 +140,11 @@ target_include_directories(libdispatch_static PRIVATE
 
 target_include_directories(libdispatch_static PRIVATE
     ${CMAKE_BINARY_DIR}/generated-headers/dlfcn)
+
+# the public headers guest programs build against, CoreFoundation own headers include them.
+# os/object.h replaces the kernel copy libc header tree carries
+file(GLOB _dispatch_public_headers ${CMAKE_CURRENT_SOURCE_DIR}/dispatch/*.h)
+install(FILES ${_dispatch_public_headers} DESTINATION usr/include/dispatch COMPONENT DeveloperTools)
+install(FILES os/object.h os/clock.h os/workgroup.h os/workgroup_base.h os/workgroup_interval.h
+    os/workgroup_object.h os/workgroup_parallel.h DESTINATION usr/include/os COMPONENT DeveloperTools)
+install(FILES src/BlocksRuntime/Block.h DESTINATION usr/include COMPONENT DeveloperTools)

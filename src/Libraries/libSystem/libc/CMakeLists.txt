@@ -53,6 +53,7 @@ target_include_directories(libc_headers_gen_private INTERFACE
 
 # This is the only public header directory
 install(DIRECTORY ${libc_headers_dir}/usr/include DESTINATION usr COMPONENT DeveloperTools)
+install(FILES include/MacTypes.h DESTINATION usr/include COMPONENT DeveloperTools)
 
 add_subdirectory(libm/openlibm)
 
@@ -277,6 +278,9 @@ target_sources(libc_static PRIVATE
     gen/clock_gettime.c          # _clock_gettime / _clock_settime
     gen/FreeBSD/sethostname.c    # _sethostname
     net/FreeBSD/inet_ntoa.c      # _inet_ntoa
+    net/FreeBSD/inet_lnaof.c     # _inet_lnaof (netstat's network names)
+    net/FreeBSD/inet_netof.c     # _inet_netof
+    net/FreeBSD/inet_network.c   # _inet_network (getent networks, netstat)
     net/inet_ntop.c              # _inet_ntop (inet_ntoa's formatter)
     net/inet_pton.c              # _inet_pton (libresolv res_init/dns.c server-address parsing)
     string/FreeBSD/wmemcmp.c     # _wmemcmp (TRE regexec wide compares)

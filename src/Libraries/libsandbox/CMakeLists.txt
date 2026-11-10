@@ -35,3 +35,10 @@ target_link_libraries(libsandbox_static PRIVATE
     libc_features
 )
 add_dependencies(libsandbox_static libc_features)
+
+# named profiles for SANDBOX_NAMED and the files they import
+install(FILES
+    profiles/system.sb
+    profiles/com.apple.corefoundation.sb
+    DESTINATION System/Library/Sandbox/Profiles
+    COMPONENT BaseSystem)

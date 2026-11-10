@@ -6,17 +6,22 @@
  * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
  */
 
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "sandbox_profile.h"
 #include "sbpl.h"
 
 #define MAX_DEPTH 64
+#define MAX_IMPORT_DEPTH 8
 
 enum node_type { NODE_LIST, NODE_SYMBOL, NODE_STRING, NODE_REGEX, NODE_BOOL };
 
@@ -43,8 +48,17 @@ struct binding {
 	struct value value;
 };
 
+// a (define (name args...) body...) form
+struct function {
+	const char *name;
+	const struct node *form;
+};
+
 struct compiler {
 	const char *source;
+	const char *file;
+	const char *import_dir;
+	unsigned import_depth;
 	size_t pos;
 	int line;
 	bool failed;
@@ -53,6 +67,13 @@ struct compiler {
 	struct binding *bindings;
 	size_t binding_count;
 	size_t binding_capacity;
+	struct function *functions;
+	size_t function_count;
+	size_t function_capacity;
+	// parsed imports, kept until the end since bindings point into them
+	struct node **imports;
+	size_t import_count;
+	size_t import_capacity;
 	struct sb_rule *rules;
 	size_t rule_count;
 	size_t rule_capacity;
@@ -124,7 +145,12 @@ fail(struct compiler *c, int line, const char *format, ...)
 	}
 	va_end(ap);
 
-	if (asprintf(&c->error, "line %d: %s", line, message ? message : "out of memory") < 0) {
+	if (c->file != NULL) {
+		if (asprintf(&c->error, "%s: line %d: %s", c->file, line,
+		    message ? message : "out of memory") < 0) {
+			c->error = NULL;
+		}
+	} else if (asprintf(&c->error, "line %d: %s", line, message ? message : "out of memory") < 0) {
 		c->error = NULL;
 	}
 	free(message);
@@ -426,6 +452,9 @@ emit_rule(struct compiler *c, int line, uint32_t ops, uint8_t action,
 {
 	struct sb_rule rule = { .ops = ops, .action = action, .filter = filter };
 
+	if (ops == 0) {
+		return;
+	}
 	if (string != NULL) {
 		size_t length = strlen(string);
 
@@ -561,6 +590,42 @@ compile_address(struct compiler *c, const struct node *f, uint32_t ops, uint8_t 
 	fail(c, f->line, "unsupported address type '%s'", kind);
 }
 
+static const char *const non_path_filters[] = {
+	"preference-domain", "global-name", "local-name", "xpc-service-name",
+	"ipc-posix-name", "ipc-posix-name-prefix", "ipc-posix-name-regex",
+	"iokit-property", "iokit-user-client-class", "iokit-registry-entry-class",
+	"sysctl-name", "sysctl-name-prefix", "target", "notification-name",
+	"global-name-prefix", "global-name-regex", "socket-domain", "socket-type",
+	"socket-protocol", "nvram-variable", "right-name", "signing-identifier",
+};
+
+static bool
+is_non_path_filter(const char *name)
+{
+	for (size_t i = 0; i < sizeof(non_path_filters) / sizeof(non_path_filters[0]); i++) {
+		if (strcmp(non_path_filters[i], name) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// the kernel matches resolved vnode paths, so a path behind a symlink is also emitted resolved
+static void
+emit_path_rule(struct compiler *c, int line, uint32_t ops, uint8_t action,
+    uint8_t filter, const char *path)
+{
+	char resolved[PATH_MAX];
+
+	emit_rule(c, line, ops, action, filter, path);
+	if (ops == 0 || path[0] != '/' || realpath(path, resolved) == NULL) {
+		return;
+	}
+	if (strcmp(resolved, path) != 0) {
+		emit_rule(c, line, ops, action, filter, resolved);
+	}
+}
+
 static void
 compile_filter(struct compiler *c, const struct node *f, uint32_t ops, uint8_t action, unsigned depth)
 {
@@ -595,6 +660,13 @@ compile_filter(struct compiler *c, const struct node *f, uint32_t ops, uint8_t a
 		compile_address(c, f, ops & SB_OP_NETWORK_ALL, action);
 		return;
 	}
+	if (is_non_path_filter(name)) {
+		// these name mach services, preference domains and the like, so no file or network check matches them
+		if (f->count < 2) {
+			fail(c, f->line, "%s expects an argument", name);
+		}
+		return;
+	}
 	if (strcmp(name, "literal") == 0 || strcmp(name, "path-literal") == 0) {
 		filter = SB_FILTER_LITERAL;
 	} else if (strcmp(name, "subpath") == 0) {
@@ -620,7 +692,7 @@ compile_filter(struct compiler *c, const struct node *f, uint32_t ops, uint8_t a
 			fail(c, f->items[i]->line, "%s expects a string", name);
 			return;
 		}
-		if (filter == SB_FILTER_REGEX && !regex_supported(v.string)) {
+		if (filter == SB_FILTER_REGEX && ops != 0 && !regex_supported(v.string)) {
 			fail(c, f->items[i]->line, "unsupported regular expression \"%s\"", v.string);
 			return;
 		}
@@ -636,8 +708,10 @@ compile_filter(struct compiler *c, const struct node *f, uint32_t ops, uint8_t a
 			while (length > 1 && path[length - 1] == '/') {
 				path[--length] = '\0';
 			}
-			emit_rule(c, f->line, ops, action, filter, path);
+			emit_path_rule(c, f->line, ops, action, filter, path);
 			free(path);
+		} else if (filter == SB_FILTER_LITERAL) {
+			emit_path_rule(c, f->line, ops, action, filter, v.string);
 		} else {
 			emit_rule(c, f->line, ops, action, filter, v.string);
 		}
@@ -683,9 +757,8 @@ compile_rule(struct compiler *c, const struct node *form, uint8_t action)
 		fail(c, form->line, "%s needs an operation", form->items[0]->text);
 		return;
 	}
-	if (ops == 0) {
-		return;
-	}
+
+	// rules for unenforced operations still have their filters checked, then emit nothing
 
 	for (; i < form->count && !c->failed; i++) {
 		const struct node *f = form->items[i];
@@ -700,6 +773,193 @@ compile_rule(struct compiler *c, const struct node *form, uint8_t action)
 	if (!had_filter) {
 		emit_rule(c, form->line, ops, action, SB_FILTER_ANY, NULL);
 	}
+}
+
+static void compile_form(struct compiler *c, const struct node *form, unsigned depth);
+static void compile_source(struct compiler *c, const char *source, const char *file, unsigned depth);
+
+static bool
+push_binding(struct compiler *c, int line, const char *name, struct value v)
+{
+	if (c->binding_count == c->binding_capacity) {
+		size_t capacity = c->binding_capacity ? c->binding_capacity * 2 : 8;
+		struct binding *bindings = realloc(c->bindings, capacity * sizeof(*bindings));
+
+		if (bindings == NULL) {
+			fail(c, line, "out of memory");
+			return false;
+		}
+		c->bindings = bindings;
+		c->binding_capacity = capacity;
+	}
+	c->bindings[c->binding_count].name = name;
+	c->bindings[c->binding_count].value = v;
+	c->binding_count++;
+	return true;
+}
+
+static void
+define_function(struct compiler *c, const struct node *form)
+{
+	const struct node *signature = form->items[1];
+
+	for (size_t i = 0; i < signature->count; i++) {
+		if (signature->items[i]->type != NODE_SYMBOL) {
+			fail(c, form->line, "define expects symbol names");
+			return;
+		}
+	}
+	if (c->function_count == c->function_capacity) {
+		size_t capacity = c->function_capacity ? c->function_capacity * 2 : 8;
+		struct function *functions = realloc(c->functions, capacity * sizeof(*functions));
+
+		if (functions == NULL) {
+			fail(c, form->line, "out of memory");
+			return;
+		}
+		c->functions = functions;
+		c->function_capacity = capacity;
+	}
+	c->functions[c->function_count].name = signature->items[0]->text;
+	c->functions[c->function_count].form = form;
+	c->function_count++;
+}
+
+static const struct function *
+lookup_function(struct compiler *c, const char *name)
+{
+	for (size_t i = c->function_count; i-- > 0;) {
+		if (strcmp(c->functions[i].name, name) == 0) {
+			return &c->functions[i];
+		}
+	}
+	return NULL;
+}
+
+// arguments are bound by value for the body, which is compiled as a sequence of forms
+static void
+call_function(struct compiler *c, const struct function *fn, const struct node *form, unsigned depth)
+{
+	const struct node *signature = fn->form->items[1];
+	size_t saved = c->binding_count;
+
+	if (form->count != signature->count) {
+		fail(c, form->line, "%s expects %zu arguments", fn->name, signature->count - 1);
+		return;
+	}
+	for (size_t i = 1; i < form->count && !c->failed; i++) {
+		struct value v = eval(c, form->items[i]);
+
+		if (!c->failed) {
+			push_binding(c, form->line, signature->items[i]->text, v);
+		}
+	}
+	for (size_t i = 2; i < fn->form->count && !c->failed; i++) {
+		compile_form(c, fn->form->items[i], depth + 1);
+	}
+	c->binding_count = saved;
+}
+
+char *
+sbpl_read_file(const char *path)
+{
+	size_t limit = SB_PROFILE_MAX_SIZE;
+	char *buffer = NULL;
+	size_t length = 0, capacity = 0;
+	int fd = open(path, O_RDONLY | O_CLOEXEC);
+
+	if (fd < 0) {
+		return NULL;
+	}
+	for (;;) {
+		ssize_t n;
+
+		if (length + 1 >= capacity) {
+			size_t grown = capacity ? capacity * 2 : 4096;
+			char *p;
+
+			if (grown > limit + 1) {
+				grown = limit + 1;
+			}
+			if (grown <= length + 1) {
+				errno = EFBIG;
+				goto fail;
+			}
+			p = realloc(buffer, grown);
+			if (p == NULL) {
+				goto fail;
+			}
+			buffer = p;
+			capacity = grown;
+		}
+		n = read(fd, buffer + length, capacity - length - 1);
+		if (n < 0 && errno == EINTR) {
+			continue;
+		}
+		if (n < 0) {
+			goto fail;
+		}
+		if (n == 0) {
+			break;
+		}
+		length += (size_t)n;
+	}
+	close(fd);
+	buffer[length] = '\0';
+	return buffer;
+fail:
+	close(fd);
+	free(buffer);
+	return NULL;
+}
+
+static void
+import_profile(struct compiler *c, const struct node *form, unsigned depth)
+{
+	struct value name;
+	char *path = NULL;
+	char *source;
+
+	if (form->count != 2) {
+		fail(c, form->line, "import expects a file name");
+		return;
+	}
+	name = eval(c, form->items[1]);
+	if (c->failed) {
+		return;
+	}
+	if (name.kind != VALUE_STRING || name.string[0] == '\0') {
+		fail(c, form->line, "import expects a file name");
+		return;
+	}
+	if (c->import_depth >= MAX_IMPORT_DEPTH) {
+		fail(c, form->line, "imports nested too deeply");
+		return;
+	}
+	if (name.string[0] == '/') {
+		path = strdup(name.string);
+	} else if (strstr(name.string, "..") != NULL) {
+		fail(c, form->line, "import name \"%s\" leaves the profile directory", name.string);
+		return;
+	} else if (asprintf(&path, "%s/%s", c->import_dir ? c->import_dir : SBPL_PROFILE_DIR,
+	    name.string) < 0) {
+		path = NULL;
+	}
+	if (path == NULL) {
+		fail(c, form->line, "out of memory");
+		return;
+	}
+	source = sbpl_read_file(path);
+	if (source == NULL) {
+		fail(c, form->line, "cannot import %s: %s", path, strerror(errno));
+		free(path);
+		return;
+	}
+	c->import_depth++;
+	compile_source(c, source, path, depth + 1);
+	c->import_depth--;
+	free(source);
+	free(path);
 }
 
 static void
@@ -731,6 +991,15 @@ compile_form(struct compiler *c, const struct node *form, unsigned depth)
 		compile_rule(c, form, SB_ACTION_DENY);
 		return;
 	}
+	if (strcmp(head, "import") == 0) {
+		import_profile(c, form, depth);
+		return;
+	}
+	if (strcmp(head, "define") == 0 && form->count >= 2 && form->items[1]->type == NODE_LIST &&
+	    form->items[1]->count > 0) {
+		define_function(c, form);
+		return;
+	}
 	if (strcmp(head, "define") == 0) {
 		struct value v;
 
@@ -742,20 +1011,7 @@ compile_form(struct compiler *c, const struct node *form, unsigned depth)
 		if (c->failed) {
 			return;
 		}
-		if (c->binding_count == c->binding_capacity) {
-			size_t capacity = c->binding_capacity ? c->binding_capacity * 2 : 8;
-			struct binding *bindings = realloc(c->bindings, capacity * sizeof(*bindings));
-
-			if (bindings == NULL) {
-				fail(c, form->line, "out of memory");
-				return;
-			}
-			c->bindings = bindings;
-			c->binding_capacity = capacity;
-		}
-		c->bindings[c->binding_count].name = form->items[1]->text;
-		c->bindings[c->binding_count].value = v;
-		c->binding_count++;
+		push_binding(c, form->line, form->items[1]->text, v);
 		return;
 	}
 	if (strcmp(head, "if") == 0) {
@@ -782,15 +1038,68 @@ compile_form(struct compiler *c, const struct node *form, unsigned depth)
 		}
 		return;
 	}
+	if (lookup_function(c, head) != NULL) {
+		call_function(c, lookup_function(c, head), form, depth);
+		return;
+	}
 	fail(c, form->line, "unsupported form '%s'", head);
 }
 
+// parses and compiles one profile text, keeping its nodes alive until sbpl_compile returns
+static void
+compile_source(struct compiler *c, const char *source, const char *file, unsigned depth)
+{
+	const char *saved_source = c->source, *saved_file = c->file;
+	size_t saved_pos = c->pos;
+	int saved_line = c->line;
+	struct node *root;
+
+	if (c->import_count == c->import_capacity) {
+		size_t capacity = c->import_capacity ? c->import_capacity * 2 : 4;
+		struct node **imports = realloc(c->imports, capacity * sizeof(*imports));
+
+		if (imports == NULL) {
+			fail(c, c->line, "out of memory");
+			return;
+		}
+		c->imports = imports;
+		c->import_capacity = capacity;
+	}
+	c->source = source;
+	c->file = file;
+	c->pos = 0;
+	c->line = 1;
+	root = node_new(c, NODE_LIST);
+	if (root != NULL) {
+		c->imports[c->import_count++] = root;
+		for (;;) {
+			struct node *n;
+
+			skip_space(c);
+			if (source[c->pos] == '\0') {
+				break;
+			}
+			n = parse_node(c, 0);
+			if (n == NULL || !node_append(c, root, n)) {
+				break;
+			}
+		}
+		for (size_t i = 0; i < root->count && !c->failed; i++) {
+			compile_form(c, root->items[i], depth);
+		}
+	}
+	// the strings of parsed nodes are copies, so the source buffer may go away now
+	c->source = saved_source;
+	c->file = saved_file;
+	c->pos = saved_pos;
+	c->line = saved_line;
+}
+
 int
-sbpl_compile(const char *source, const char *const parameters[],
+sbpl_compile(const char *source, const char *const parameters[], const char *import_dir,
     void **profile, size_t *size, char **error)
 {
-	struct compiler c = { .source = source, .line = 1, .parameters = parameters };
-	struct node *root = node_new(&c, NODE_LIST);
+	struct compiler c = { .line = 1, .parameters = parameters, .import_dir = import_dir };
 	uint8_t *blob = NULL;
 	size_t total = 0;
 
@@ -798,23 +1107,7 @@ sbpl_compile(const char *source, const char *const parameters[],
 	*size = 0;
 	*error = NULL;
 
-	if (root != NULL) {
-		for (;;) {
-			struct node *n;
-
-			skip_space(&c);
-			if (source[c.pos] == '\0') {
-				break;
-			}
-			n = parse_node(&c, 0);
-			if (n == NULL || !node_append(&c, root, n)) {
-				break;
-			}
-		}
-		for (size_t i = 0; i < root->count && !c.failed; i++) {
-			compile_form(&c, root->items[i], 0);
-		}
-	}
+	compile_source(&c, source, NULL, 0);
 
 	if (!c.failed) {
 		size_t rules_size = c.rule_count * sizeof(struct sb_rule);
@@ -842,7 +1135,11 @@ sbpl_compile(const char *source, const char *const parameters[],
 		}
 	}
 
-	node_free(root);
+	for (size_t i = 0; i < c.import_count; i++) {
+		node_free(c.imports[i]);
+	}
+	free(c.imports);
+	free(c.functions);
 	free(c.bindings);
 	free(c.rules);
 	free(c.strings);
