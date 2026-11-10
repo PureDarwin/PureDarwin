@@ -69,10 +69,14 @@ i386_smp_init(int nmi_vector, i386_intr_func_t nmi_handler, int ipi_vector, i386
 }
 
 void
-i386_start_cpu(int lapic_id, __unused int cpu_num )
+i386_start_cpu(int lapic_id, __unused int cpu_num)
 {
+	// intel's init-sipi-sipi: a remote socket can miss a lone sipi sent 100us after init
 	LAPIC_WRITE_ICR(lapic_id, LAPIC_ICR_DM_INIT);
-	delay(100);
+	delay(10000);
+	LAPIC_WRITE_ICR(lapic_id,
+	    LAPIC_ICR_DM_STARTUP | (REAL_MODE_BOOTSTRAP_OFFSET >> 12));
+	delay(200);
 	LAPIC_WRITE_ICR(lapic_id,
 	    LAPIC_ICR_DM_STARTUP | (REAL_MODE_BOOTSTRAP_OFFSET >> 12));
 }

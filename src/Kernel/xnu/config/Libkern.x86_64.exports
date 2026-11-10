@@ -8,3 +8,5 @@ _strcpy
 _vsprintf
 
 __ZN15OSMetaClassBase25_RESERVEDOSMetaClassBase3Ev:__ZN15OSMetaClassBase8DispatchE5IORPC
+_disable_preemption
+_enable_preemption

@@ -100,20 +100,32 @@ iokit_post_constructor_init(void)
 	IORegistryEntry *           root;
 	OSObject *                  obj;
 
+	printf("PD-IOK 20 IOCPUInitialize\n");
 	IOCPUInitialize();
+	printf("PD-IOK 21 IOPlatformActionsInitialize\n");
 	IOPlatformActionsInitialize();
+	printf("PD-IOK 22 IORegistryEntry::initialize\n");
 	root = IORegistryEntry::initialize();
 	assert( root );
+	printf("PD-IOK 23 IOService::initialize\n");
 	IOService::initialize();
+	printf("PD-IOK 24 IOCatalogue::initialize\n");
 	IOCatalogue::initialize();
+	printf("PD-IOK 25 IOStatistics::initialize\n");
 	IOStatistics::initialize();
+	printf("PD-IOK 26 OSKext::initialize\n");
 	OSKext::initialize();
+	printf("PD-IOK 27 IOUserClient::initialize\n");
 	IOUserClient::initialize();
+	printf("PD-IOK 28 IOMemoryDescriptor::initialize\n");
 	IOMemoryDescriptor::initialize();
+	printf("PD-IOK 29 IORootParent::initialize\n");
 	IORootParent::initialize();
+	printf("PD-IOK 30 IOReporter::initialize\n");
 	IOReporter::initialize();
 
 	// Initializes IOPMinformeeList class-wide shared lock
+	printf("PD-IOK 31 IOPMinformeeList lock\n");
 	IOPMinformeeList::getSharedRecursiveLock();
 
 	obj = OSString::withCString( version );
@@ -147,28 +159,36 @@ InitIOKit(void *dtTop)
 	// of iokit basic service initialisation, or better we have IOLib stuff
 	// initialise as basic OS services.
 	//
+	printf("PD-IOK 10 IOLibInit\n");
 	IOLibInit();
+	printf("PD-IOK 11 OSlibkernInit\n");
 	OSlibkernInit();
+	printf("PD-IOK 12 IOMachPortInitialize\n");
 	IOMachPortInitialize();
 
 	gIOProgressBackbufferKey  = OSSymbol::withCStringNoCopy(kIOProgressBackbufferKey);
 	gIORemoveOnReadProperties = OSSet::withObjects((const OSObject **) &gIOProgressBackbufferKey, 1);
 
+	printf("PD-IOK 13 interruptAccountingInit\n");
 	interruptAccountingInit();
 
+	printf("PD-IOK 14 new IOPlatformExpertDevice\n");
 	gRootNub = new IOPlatformExpertDevice;
 	if (__improbable(gRootNub == NULL)) {
 		panic("Failed to allocate IOKit root nub");
 	}
+	printf("PD-IOK 15 gRootNub->init\n");
 	bool ok = gRootNub->init(dtTop);
 	if (__improbable(!ok)) {
 		panic("Failed to initialize IOKit root nub");
 	}
+	printf("PD-IOK 16 attach\n");
 	gRootNub->attach(NULL);
 
 	/* If the bootstrap segment set up a function to record startup
 	 * extensions, call it now.
 	 */
+	printf("PD-IOK 17 record_startup_extensions\n");
 	if (record_startup_extensions_function) {
 		record_startup_extensions_function();
 	}

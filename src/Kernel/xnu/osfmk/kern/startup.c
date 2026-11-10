@@ -213,6 +213,42 @@ __SECTION_END_SYM(STARTUP_HOOK_SEGMENT, STARTUP_HOOK_SECTION);
 static struct startup_entry *__startup_data startup_entry_cur = startup_entries;
 
 SECURITY_READ_ONLY_LATE(startup_subsystem_id_t) startup_phase = STARTUP_SUB_NONE;
+#if defined(SUN50I) && defined(__arm64__)
+// on msm8916 hardware startup_phase's page turns read-only before machine_lockdown(), each probe rewrites it
+// and prints va's translation (system registers, then each 4K level from TTBR1_EL1) before the store
+static void
+pd_ro_walk(vm_offset_t va)
+{
+	uint64_t sctlr = __builtin_arm_rsr64("SCTLR_EL1"), tcr = __builtin_arm_rsr64("TCR_EL1");
+	uint64_t ttbr1 = __builtin_arm_rsr64("TTBR1_EL1");
+	unsigned t1sz = (unsigned)((tcr >> 16) & 0x3f);
+	// 4K granule: level 0 resolves VA bit 47 down to 39, level 1 bit 38 down to 30, level 2 29..21
+	unsigned level = t1sz <= 24 ? 0 : (t1sz <= 33 ? 1 : 2);
+	uint64_t table = ttbr1 & 0x0000fffffffff000ULL;
+	printf("PD-WALK va 0x%lx sctlr 0x%llx tcr 0x%llx ttbr1 0x%llx\n", (unsigned long)va,
+	    sctlr, tcr, ttbr1);
+	for (; level <= 3; level++) {
+		unsigned shift = 39 - 9 * level;
+		uint64_t idx = ((uint64_t)va >> shift) & 0x1ff;
+		if (level == (t1sz <= 24 ? 0u : (t1sz <= 33 ? 1u : 2u))) {
+			idx = ((uint64_t)va >> shift) & ((1ULL << (64 - t1sz - shift)) - 1);   // the short top level
+		}
+		uint64_t desc = ((volatile uint64_t *)phystokv(table))[idx];
+		printf("PD-WALK  L%u[%llu] = 0x%016llx (AP %llu)\n", level, idx, desc, (desc >> 6) & 3);
+		if ((desc & 3) != 3 || level == 3) {
+			break;                              // block, invalid, or the page itself
+		}
+		table = desc & 0x0000fffffffff000ULL;
+	}
+}
+#define PD_RO_PROBE(n) do { \
+	printf("PD-RO %d\n", (n)); \
+	pd_ro_walk((vm_offset_t)&startup_phase); \
+	*(volatile startup_subsystem_id_t *)&startup_phase = startup_phase; \
+} while (0)
+#else
+#define PD_RO_PROBE(n) do { } while (0)
+#endif
 
 TUNABLE(startup_debug_t, startup_debug, "startup_debug", 0);
 
@@ -498,6 +534,13 @@ kernel_startup_initialize_upto(startup_subsystem_id_t upto)
 	    upto >= STARTUP_SUB_KPRINTF) {
 		kprintf("%s: reached phase %d\n", __func__, upto);
 	}
+#if defined(SUN50I) && defined(__arm64__)
+	// on msm8916 hardware this store faulted as read-only, so every cached translation is dropped first
+	if (upto == STARTUP_SUB_LOCKDOWN) {
+		printf("PD-RO: lockdown phase store, TLB flushed first\n");
+		__asm__ volatile ("dsb ishst; tlbi vmalle1; dsb ish; isb" ::: "memory");
+	}
+#endif
 	startup_phase = upto;
 }
 
@@ -781,6 +824,7 @@ kernel_bootstrap_thread(void)
 #endif /* __arm64__ && (DEVELOPMENT || DEBUG) */
 
 #if MACH_KDP
+	PD_RO_PROBE(1);
 	kernel_bootstrap_log("kdp_init");
 	kdp_init();
 #endif
@@ -810,6 +854,7 @@ kernel_bootstrap_thread(void)
 	vm_kernel_addrhash_salt_ext = early_random();
 
 #ifdef  IOKIT
+	PD_RO_PROBE(2);
 	kernel_bootstrap_log("PE_init_iokit");
 	PE_init_iokit();
 #endif
@@ -840,15 +885,18 @@ kernel_bootstrap_thread(void)
 	vm_commpage_text_init();
 
 #if CONFIG_MACF
+	PD_RO_PROBE(3);
 	kernel_bootstrap_log("mac_policy_initmach");
 	mac_policy_initmach();
 #if CONFIG_VNGUARD
+	PD_RO_PROBE(4);
 	kernel_bootstrap_log("vnguard_policy_init");
 	vnguard_policy_init();
 #endif
 #endif
 
 #if CONFIG_DTRACE
+	PD_RO_PROBE(5);
 	kernel_bootstrap_log("dtrace_early_init");
 	dtrace_early_init();
 	sdt_early_init();
@@ -873,14 +921,17 @@ kernel_bootstrap_thread(void)
 	csm_initialize_provisioning_profiles();
 #endif
 
+	PD_RO_PROBE(6);
 	kernel_bootstrap_log("trust_cache_init");
 
 	/* Initialize the runtime for the trust cache interface */
 	trust_cache_runtime_init();
 
+	PD_RO_PROBE(7);
 	/* Load the static and engineering trust caches */
 	load_static_trust_cache();
 
+	PD_RO_PROBE(8);
 	kernel_startup_initialize_upto(STARTUP_SUB_LOCKDOWN);
 
 	/*

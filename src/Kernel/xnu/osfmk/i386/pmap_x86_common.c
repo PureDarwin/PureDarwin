@@ -2780,3 +2780,60 @@ pmap_supported_feature(pmap_t pmap, pmap_feature_flags_t feat)
 		return false;
 	}
 }
+
+// a bit per page of [addr, addr + len) written since the last ask, an absent page counts as written
+// the dirty bit moves from the PTE into the page's attributes, the range's TLBs are flushed once
+kern_return_t
+pd_page_modified64(uint64_t addr, uint64_t len, uint64_t ubits)
+{
+	pmap_t pmap = current_map()->pmap;
+	vm_map_offset_t start = addr & ~(uint64_t)PAGE_MASK, end, va;
+	boolean_t is_ept = is_ept_pmap(pmap);
+	uint64_t npages, i, bytes;
+	uint8_t *bits;
+	int flush = 0;
+	kern_return_t kr = KERN_SUCCESS;
+
+	if (!len || len > (1ULL << 30) || os_add_overflow(addr, len, &end) || end > MACH_VM_MAX_ADDRESS) {
+		return KERN_INVALID_ARGUMENT;
+	}
+	end = (end + PAGE_MASK) & ~(uint64_t)PAGE_MASK;
+	npages = (end - start) >> PAGE_SHIFT, bytes = (npages + 7) / 8;
+	bits = kalloc_data(bytes, Z_WAITOK | Z_ZERO);
+	if (!bits) {
+		return KERN_RESOURCE_SHORTAGE;
+	}
+
+	PMAP_LOCK_SHARED(pmap);
+	for (va = start, i = 0; va < end; va += PAGE_SIZE, i++) {
+		pt_entry_t *ptep = pmap_pte(pmap, va), pte;
+		int pai;
+
+		if (!ptep || !((pte = *ptep) & PTE_VALID_MASK(is_ept)) || (pte & PTE_PS)) {
+			bits[i / 8] |= (uint8_t)(1u << (i % 8));
+			continue;
+		}
+		if (!(pte & PTE_MOD(is_ept))) {
+			continue;
+		}
+		bits[i / 8] |= (uint8_t)(1u << (i % 8));
+		pai = ppn_to_pai((ppnum_t)i386_btop(pte_to_pa(pte)));
+		if (IS_MANAGED_PAGE(pai)) {
+			LOCK_PVH(pai);
+			pmap_phys_attributes[pai] |= is_ept ? ept_refmod_to_physmap(PTE_MOD(is_ept)) : PHYS_MODIFIED;
+			UNLOCK_PVH(pai);
+		}
+		pmap_update_pte(is_ept, ptep, PTE_MOD(is_ept), 0, true);
+		flush = 1;
+	}
+	if (flush) {
+		PMAP_UPDATE_TLBS(pmap, start, end);
+	}
+	PMAP_UNLOCK_SHARED(pmap);
+
+	if (copyout(bits, ubits, bytes)) {
+		kr = KERN_INVALID_ADDRESS;
+	}
+	kfree_data(bits, bytes);
+	return kr;
+}

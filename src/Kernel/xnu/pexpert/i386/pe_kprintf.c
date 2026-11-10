@@ -139,6 +139,8 @@ _kprintf(const char *format, ...)
 #define MP_DEBUG_KPRINTF(x...)
 #endif /* MP_DEBUG */
 
+extern bool pd_kprintf_cpu_ready(void);
+
 static int cpu_last_locked = 0;
 
 #define KPRINTF_LOCKWAIT_PATIENT (LockTimeOut)
@@ -181,6 +183,10 @@ kprintf(const char *fmt, ...)
 			va_end(listp2);
 			return;
 		}
+
+		// a starting AP must not take the video console lock, it wedges the BSP
+		if (PE_kputc == console_write_unbuffered && !pd_kprintf_cpu_ready())
+			return;
 
 		va_start(listp, fmt);
 		va_copy(listp2, listp);

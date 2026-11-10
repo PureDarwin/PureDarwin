@@ -85,6 +85,8 @@ extern kern_return_t            hv_thread_trap(uint64_t, uint64_t);
 
 extern kern_return_t            thread_fast_set_cthread_self(uint32_t);
 extern kern_return_t            thread_fast_set_cthread_self64(uint64_t);
+extern kern_return_t            thread_fast_set_fs_base64(uint64_t);
+extern kern_return_t            pd_page_modified64(uint64_t, uint64_t, uint64_t);
 extern kern_return_t            thread_set_user_ldt(uint32_t, uint32_t, uint32_t);
 
 extern int              i386_set_ldt(uint32_t *, uint32_t, uint32_t, uint32_t);

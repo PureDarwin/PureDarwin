@@ -1580,7 +1580,8 @@ default_setxattr(vnode_t vp, const char *name, uio_t uio, int options,
 		    context, port);
 		ipc_port_release_send(port);
 	} else {
-		error = ENOATTR;
+		// without doubleagentd there is nowhere to keep it, ENOATTR wrongly said the name was missing
+		error = ENOTSUP;
 	}
 	return error;
 }

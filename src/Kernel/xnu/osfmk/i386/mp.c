@@ -72,6 +72,7 @@
 #include <i386/fpu.h>
 #include <i386/machine_cpu.h>
 #include <i386/pmCPU.h>
+#include <i386/tsc.h>
 #if CONFIG_MCA
 #include <i386/machine_check.h>
 #endif
@@ -126,6 +127,7 @@ uint32_t                TSC_sync_margin = 0xFFF;
 // match each ap's IA32_TSC_ADJUST to the boot cpu, then correct whatever skew is left
 static boolean_t        tsc_adjust_ok;
 static uint64_t         tsc_adjust_boot;
+#define TSC_ADJUST_MAX          0x7fffffffULL
 volatile boolean_t      force_immediate_debugger_NMI = FALSE;
 volatile boolean_t      pmap_tlb_flush_timeout = FALSE;
 #if DEBUG || DEVELOPMENT
@@ -247,8 +249,12 @@ smp_init(void)
 	// intel only, the only place it was needed and tested
 	if (TSC_sync_margin && (cpuid_leaf7_features() & CPUID_LEAF7_FEATURE_TSCOFF) &&
 	    strncmp(cpuid_info()->cpuid_vendor, CPUID_VID_INTEL, sizeof(CPUID_VID_INTEL)) == 0) {
-		tsc_adjust_ok = TRUE;
 		tsc_adjust_boot = rdmsr64(MSR_IA32_TSC_ADJUST);
+		// copying a negative or above 0x7fffffff value would stop every ap's tsc deadline timer firing
+		tsc_adjust_ok = tsc_adjust_boot <= TSC_ADJUST_MAX;
+		if (!tsc_adjust_ok) {
+			kprintf("TSC_ADJUST 0x%llx on the boot cpu left alone\n", tsc_adjust_boot);
+		}
 	}
 	smp_initialized = TRUE;
 
@@ -273,6 +279,17 @@ static volatile uint64_t        tsc_target        __attribute__((aligned(64)));
 static volatile int64_t         tsc_fix_delta     __attribute__((aligned(64)));
 static volatile long            tsc_fix_ready     __attribute__((aligned(64)));
 static volatile long            tsc_fix_done      __attribute__((aligned(64)));
+// set by the starter when it gives up on the handshake, the target stops waiting too
+static volatile long            tsc_sync_abort    __attribute__((aligned(64)));
+// what the starter saw, printed once interrupts are back on
+static volatile const char      *tsc_sync_fail;
+
+// the handshake takes microseconds, a second means the other side is gone
+static inline uint64_t
+tsc_sync_deadline(void)
+{
+	return rdtsc64() + (tscFreq ? tscFreq : 3000000000ULL);
+}
 
 /*
  * Poll a CPU to see when it has marked itself as running.
@@ -280,11 +297,18 @@ static volatile long            tsc_fix_done      __attribute__((aligned(64)));
 static void
 mp_wait_for_cpu_up(int slot_num, unsigned int iters, unsigned int usecdelay)
 {
-	while (iters-- > 0) {
-		if (cpu_datap(slot_num)->cpu_running) {
+	uint64_t now = mach_absolute_time();
+	uint64_t deadline, interval;
+
+	// a tsc deadline only, nothing here needs interrupts or timers
+	nanoseconds_to_absolutetime((uint64_t)iters * usecdelay * NSEC_PER_USEC, &interval);
+	deadline = now + interval;
+	while (!cpu_datap(slot_num)->cpu_running) {
+		now = mach_absolute_time();
+		if (now >= deadline) {
 			break;
 		}
-		delay(usecdelay);
+		cpu_pause();
 	}
 }
 
@@ -351,24 +375,37 @@ started_cpu(void)
 		 * I've just started-up, synchronize again with the starter cpu
 		 * and then snap my TSC.
 		 */
+		uint64_t deadline;
+
 		if (tsc_adjust_ok) {
 			wrmsr64(MSR_IA32_TSC_ADJUST, tsc_adjust_boot);
 		}
 		tsc_target   = 0;
 		atomic_decl(&tsc_entry_barrier, 1);
+		deadline = tsc_sync_deadline();
 		while (tsc_entry_barrier != 0) {
-			;       /* spin for starter and target at barrier */
+			if (tsc_sync_abort || rdtsc64() > deadline) {
+				return;
+			}
+			cpu_pause();
 		}
 		tsc_target = rdtsc64();
 		atomic_decl(&tsc_exit_barrier, 1);
 
 		if (tsc_adjust_ok) {
+			deadline = tsc_sync_deadline();
 			while (tsc_fix_ready == 0) {
-				;       // spin for the starter's verdict
+				if (tsc_sync_abort || rdtsc64() > deadline) {
+					return;
+				}
+				cpu_pause();
 			}
-			if (tsc_fix_delta != 0) {
-				wrmsr64(MSR_IA32_TSC_ADJUST,
-				    rdmsr64(MSR_IA32_TSC_ADJUST) - (uint64_t)tsc_fix_delta);
+			uint64_t adj = rdmsr64(MSR_IA32_TSC_ADJUST) - (uint64_t)tsc_fix_delta;
+
+			if (tsc_fix_delta != 0 && adj <= TSC_ADJUST_MAX) {
+				wrmsr64(MSR_IA32_TSC_ADJUST, adj);
+			} else {
+				tsc_fix_delta = 0;
 			}
 			tsc_fix_done = 1;
 		}
@@ -405,6 +442,12 @@ start_cpu(void *arg)
 
 	mp_wait_for_cpu_up(psip->target_cpu, i * 100, 100);
 
+	if (!cpu_datap(psip->target_cpu)->cpu_running) {
+		// park it with an init so a late start can't run on behind our back
+		LAPIC_WRITE_ICR(psip->target_lapic, LAPIC_ICR_DM_INIT);
+		cpu_datap(psip->target_cpu)->cpu_running = FALSE;
+	}
+
 	KERNEL_DEBUG_CONSTANT(
 		TRACE_MP_CPU_START | DBG_FUNC_END,
 		psip->target_cpu,
@@ -420,14 +463,28 @@ start_cpu(void *arg)
 		 */
 		uint64_t        tsc_starter;
 		int64_t         tsc_delta;
+		uint64_t        deadline;
+
 		atomic_decl(&tsc_entry_barrier, 1);
+		deadline = tsc_sync_deadline();
 		while (tsc_entry_barrier != 0) {
-			;       /* spin for both processors at barrier */
+			if (rdtsc64() > deadline) {
+				tsc_sync_abort = 1;
+				tsc_sync_fail = "never reached the entry barrier";
+				return;
+			}
+			cpu_pause();
 		}
 		tsc_starter = rdtsc64();
 		atomic_decl(&tsc_exit_barrier, 1);
+		deadline = tsc_sync_deadline();
 		while (tsc_exit_barrier != 0) {
-			;       /* spin for target to store its TSC */
+			if (rdtsc64() > deadline) {
+				tsc_sync_abort = 1;
+				tsc_sync_fail = "never stored its TSC";
+				return;
+			}
+			cpu_pause();
 		}
 		tsc_delta = tsc_target - tsc_starter;
 		kprintf("TSC sync for cpu %d: 0x%016llx delta 0x%llx (%lld)\n",
@@ -443,10 +500,16 @@ start_cpu(void *arg)
 			// the target pulls its tsc back by the measured skew, then reports done
 			tsc_fix_delta = (ABS(tsc_delta) > (int64_t) TSC_sync_margin) ? tsc_delta : 0;
 			tsc_fix_ready = 1;
+			deadline = tsc_sync_deadline();
 			while (tsc_fix_done == 0) {
-				;       // spin for the target to apply it
+				if (rdtsc64() > deadline) {
+					tsc_sync_abort = 1;
+					tsc_sync_fail = "never applied the TSC_ADJUST correction";
+					break;
+				}
+				cpu_pause();
 			}
-			if (tsc_fix_delta != 0) {
+			if (tsc_fix_done && tsc_fix_delta != 0) {
 				kprintf("TSC sync for cpu %d: corrected by %lld via TSC_ADJUST\n",
 				    psip->target_cpu, tsc_fix_delta);
 				tsc_delta = 0;
@@ -503,6 +566,8 @@ intel_startCPU(
 	tsc_fix_delta = 0;
 	tsc_fix_ready = 0;
 	tsc_fix_done = 0;
+	tsc_sync_abort = 0;
+	tsc_sync_fail = NULL;
 
 	/*
 	 * Perform the processor startup sequence with all running
@@ -517,15 +582,15 @@ intel_startCPU(
 	lck_mtx_unlock(&mp_cpu_boot_lock);
 
 	if (!cpu_datap(slot_num)->cpu_running) {
-		kprintf("Failed to start CPU %02d\n", slot_num);
-		printf("Failed to start CPU %02d, rebooting...\n", slot_num);
-		delay(1000000);
-		halt_cpu();
-		return KERN_SUCCESS;
-	} else {
-		kprintf("Started cpu %d (lapic id %08x)\n", slot_num, lapic);
-		return KERN_SUCCESS;
+		printf("cpu %d (lapic %d) did not come up, continuing without it\n", slot_num, lapic);
+		return KERN_FAILURE;
 	}
+	if (tsc_sync_fail != NULL) {
+		printf("cpu %d (lapic %d): TSC sync gave up, the cpu %s\n",
+		    slot_num, lapic, (const char *)tsc_sync_fail);
+	}
+	kprintf("Started cpu %d (lapic id %08x)\n", slot_num, lapic);
+	return KERN_SUCCESS;
 }
 
 #if     MP_DEBUG
@@ -1590,6 +1655,16 @@ mp_cpus_kick(cpumask_t cpus)
 
 	simple_unlock(&x86_topo_lock);
 	ml_set_interrupts_enabled(intrs_enabled);
+}
+
+// the boot cpu and fully started cpus may print to the video console
+bool pd_kprintf_cpu_ready(void);
+bool
+pd_kprintf_cpu_ready(void)
+{
+	cpu_data_t      *cdp = current_cpu_datap();
+
+	return cdp->cpu_number == 0 || cdp->cpu_running;
 }
 
 void

@@ -588,6 +588,12 @@ cpu_idle(void)
 	cpc_cpu_transition(CPC_CPU_IDLE, cpu_data_ptr);
 #endif /* CONFIG_CPU_COUNTERS */
 
+#if defined(SUN50I)
+	// an idle cpu (with wfi=0 a busy one) keeps a board watchdog quiet, see sleh.c
+	extern void pd_sun50i_wdt_pet(void);
+	pd_sun50i_wdt_pet();
+#endif
+
 	if (wfi) {
 #if !defined(APPLE_ARM64_ARCH_FAMILY)
 		platform_cache_idle_enter();
@@ -756,7 +762,8 @@ cpu_init(void)
 			int big = part == 0xd0b, little = part == 0xd05;	// Cortex-A76, Cortex-A55
 			int type = cdp->cpu_cluster_type;
 
-			printf("cpu %d: MIDR part 0x%03x, cluster type %s%s\n", cdp->cpu_number, part,
+			// secondaries get here with interrupts off, where console printf panics
+			kprintf("cpu %d: MIDR part 0x%03x, cluster type %s%s\n", cdp->cpu_number, part,
 			    type == CLUSTER_TYPE_P ? "P" : type == CLUSTER_TYPE_E ? "E" : "SMP",
 			    (type == CLUSTER_TYPE_P && little) || (type == CLUSTER_TYPE_E && big) ? " (MISMATCH)" : "");
 		}

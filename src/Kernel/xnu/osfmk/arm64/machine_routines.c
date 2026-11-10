@@ -1988,6 +1988,11 @@ ml_static_protect(
 	vm_size_t size,
 	vm_prot_t new_prot __unused)
 {
+#if defined(SUN50I)
+	// bring-up (msm8916): who turns startup_phase's page read-only before lockdown
+	printf("PD-PROT 0x%lx+0x%lx prot %d from %p\n", (unsigned long)vaddr, (unsigned long)size,
+	    (int)new_prot, __builtin_return_address(0));
+#endif
 #if CONFIG_SPTM
 	/**
 	 * Retype any frames that may be passed to the VM to XNU_DEFAULT.
@@ -3441,7 +3446,16 @@ ml_unsafe_kernel_text_init(void)
 	    size == sizeof(int)) {
 		_unsafe_kernel_text_initialized = true;
 		_unsafe_kernel_text = (0 == *(const int *)value);
+		return;
 	}
+	// no such property from a loader for a core without CTRR/KTRR (A9 under Inferno):
+	// text is only protected when this kernel enforces it itself
+	_unsafe_kernel_text_initialized = true;
+#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
+	_unsafe_kernel_text = false;
+#else
+	_unsafe_kernel_text = true;
+#endif
 }
 STARTUP(TUNABLES, STARTUP_RANK_FIRST, ml_unsafe_kernel_text_init);
 

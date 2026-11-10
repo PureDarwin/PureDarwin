@@ -985,6 +985,7 @@ cpuid_set_cpufamily(i386_cpu_info_t *info_p)
 		return cpufamily;
 	}
 
+
 	switch (info_p->cpuid_family) {
 	case 6:
 		switch (info_p->cpuid_model) {
@@ -1096,6 +1097,24 @@ cpuid_set_cpufamily(i386_cpu_info_t *info_p)
 	 * AMD families. Note these values cannot collide with the Intel cases
 	 * above: Intel only ever reports family 5, 6 or 0x0f here.
 	 */
+	// amd before bulldozer, families apple never shipped. 0xf is also intel netburst, which stays unknown
+	case 0x0f:
+		if (info_p->cpuid_ven == CPUID_VEN_AMD) {
+			cpufamily = CPUFAMILY_AMD_K8;
+		}
+		break;
+	case 0x10:
+		cpufamily = CPUFAMILY_AMD_K10;
+		break;
+	case 0x11:
+		cpufamily = CPUFAMILY_AMD_GRIFFIN;
+		break;
+	case 0x12:
+		cpufamily = CPUFAMILY_AMD_LLANO;
+		break;
+	case 0x14:
+		cpufamily = CPUFAMILY_AMD_BOBCAT;
+		break;
 	case 0x15:
 		switch (info_p->cpuid_model) {
 		case CPUID_MODEL_AMD_ZAMBEZI:           /* ZURICH, VALENCIA, INTERLAGOS */

@@ -276,6 +276,7 @@ make_brand_string SYSCTL_HANDLER_ARGS
 	}
 
 	const char *impl;
+	const char *core = NULL;
 
 	switch (cpuid_info()->arm_info.arm_implementor) {
 	case CPU_VID_APPLE:
@@ -289,8 +290,32 @@ make_brand_string SYSCTL_HANDLER_ARGS
 		break;
 	}
 
+	// arm's own cores by midr part number (arm cortex technical reference manuals)
+	if (cpuid_info()->arm_info.arm_implementor == CPU_VID_ARM) {
+		switch (cpuid_info()->arm_info.arm_part) {
+		case 0xd03: core = "Cortex-A53"; break;
+		case 0xd04: core = "Cortex-A35"; break;
+		case 0xd05: core = "Cortex-A55"; break;
+		case 0xd07: core = "Cortex-A57"; break;
+		case 0xd08: core = "Cortex-A72"; break;
+		case 0xd09: core = "Cortex-A73"; break;
+		case 0xd0a: core = "Cortex-A75"; break;
+		case 0xd0b: core = "Cortex-A76"; break;
+		case 0xd0c: core = "Neoverse-N1"; break;
+		case 0xd41: core = "Cortex-A78"; break;
+		case 0xd44: core = "Cortex-X1"; break;
+		case 0xd46: core = "Cortex-A510"; break;
+		case 0xd47: core = "Cortex-A710"; break;
+		default: break;
+		}
+	}
+
 	char buf[80];
-	snprintf(buf, sizeof(buf), "%s processor", impl);
+	if (core != NULL) {
+		snprintf(buf, sizeof(buf), "%s %s", impl, core);
+	} else {
+		snprintf(buf, sizeof(buf), "%s processor", impl);
+	}
 	return SYSCTL_OUT(req, buf, strlen(buf) + 1);
 }
 

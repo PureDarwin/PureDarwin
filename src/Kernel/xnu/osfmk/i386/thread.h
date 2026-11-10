@@ -127,6 +127,7 @@ struct machine_thread {
 
 #ifdef  MACH_BSD
 	uint64_t                cthread_self;   /* for use of cthread package */
+	uint64_t                linux_fs_base;
 	struct real_descriptor  cthread_desc;
 	unsigned long           uldt_selector;  /* user ldt selector to set */
 	struct real_descriptor  uldt_desc;      /* actual user setable ldt */

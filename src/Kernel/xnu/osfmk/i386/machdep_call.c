@@ -50,6 +50,7 @@ const machdep_call_t            machdep_call_table[] = {
 	MACHDEP_CALL_ROUTINE(thread_set_user_ldt, 3),
 	MACHDEP_BSD_CALL_ROUTINE(i386_set_ldt, 3),
 	MACHDEP_BSD_CALL_ROUTINE(i386_get_ldt, 3),
+	MACHDEP_CALL_ROUTINE(kern_invalid, 0),
 };
 const machdep_call_t            machdep_call_table64[] = {
 #if HYPERVISOR
@@ -59,11 +60,13 @@ const machdep_call_t            machdep_call_table64[] = {
 	MACHDEP_CALL_ROUTINE(kern_invalid, 0),
 	MACHDEP_CALL_ROUTINE(kern_invalid, 0),
 #endif
-	MACHDEP_CALL_ROUTINE(kern_invalid, 0),
+	MACHDEP_CALL_ROUTINE64(thread_fast_set_fs_base64, 1),
 	MACHDEP_CALL_ROUTINE64(thread_fast_set_cthread_self64, 1),
 	MACHDEP_CALL_ROUTINE(kern_invalid, 0),
 	MACHDEP_BSD_CALL_ROUTINE64(i386_set_ldt64, 3),
-	MACHDEP_BSD_CALL_ROUTINE64(i386_get_ldt64, 3)
+	MACHDEP_BSD_CALL_ROUTINE64(i386_get_ldt64, 3),
+	// pd: the written pages of a range, for userspace GPU drivers
+	MACHDEP_CALL_ROUTINE64(pd_page_modified64, 3)
 };
 
 int     machdep_call_count =

@@ -362,7 +362,8 @@ cpc_early_init(void)
 		return;
 	}
 	i386_cpu_info_t *info = cpuid_info();
-	if (info->cpuid_arch_perf_leaf.version >= 2) {
+	// the register code below assumes 4 general counters, core 2 has 2 and faults on EVNTSEL2
+	if (info->cpuid_arch_perf_leaf.version >= 2 && info->cpuid_arch_perf_leaf.number >= 4) {
 		lapic_set_pmi_func(_cpc_lapic_pmi);
 		cpc_cpmu_supported = true;
 		_cpc_x86_64_cpmu_fixed_count = info->cpuid_arch_perf_leaf.fixed_number;

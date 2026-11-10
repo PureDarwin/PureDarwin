@@ -35,6 +35,7 @@
 #include <i386/cpuid.h>
 #include <i386/machine_cpu.h>
 #include <i386/pmCPU.h>
+#include <pexpert/pexpert.h>
 #include <i386/bit_routines.h>
 
 #define DIVISOR_GUARD(denom)                            \
@@ -127,6 +128,9 @@ topo_core_id(uint32_t apicID)
 static inline uint32_t
 topo_die_id(uint32_t apicID)
 {
+	// hybrid parts are one die, their e-core apic ids sit past the boot core's llc shift
+	if (topoHybrid)
+		return apicID >> topoPackageShift;
 	return apicID >> topoLLCShift;
 }
 
@@ -333,8 +337,9 @@ initTopoParms(void)
 	topoHybrid = (cpuinfo->cpuid_leaf7_extfeatures & CPUID_LEAF7_EXTFEATURE_HYBRID) != 0 ||
 	    (cpuinfo->core_count != 0 && (cpuinfo->thread_count % cpuinfo->core_count) != 0);
 	if (topoHybrid) {
+		topoParms.nLDiesPerPackage = 1;
 		topoParms.nLThreadsPerPackage = cpuinfo->thread_count;
-		topoParms.nLThreadsPerDie = cpuinfo->thread_count / topoParms.nLDiesPerPackage;
+		topoParms.nLThreadsPerDie = cpuinfo->thread_count;
 	}
 
 	initTopoShifts(cpuinfo);
@@ -1137,6 +1142,8 @@ x86_validate_topology(void)
 	uint32_t            nDies;
 	uint32_t            nCores;
 	uint32_t            nCPUs;
+	uint32_t            limit;
+	boolean_t           partial;
 
 	if (topo_dbg) {
 		debug_topology_print();
@@ -1149,7 +1156,9 @@ x86_validate_topology(void)
 	 *  - max_ncpus:  max number of processors that will be started
 	 */
 	nCPUs = topoParms.nPackages * topoParms.nLThreadsPerPackage;
-	if (nCPUs != real_ncpus) {
+	// a cpus= limit registers fewer threads than cpuid reports, so the per-die counts can't match
+	partial = real_ncpus < nCPUs && PE_parse_boot_argn("cpus", &limit, sizeof(limit));
+	if (nCPUs != real_ncpus && !partial) {
 		panic("x86_validate_topology() %d threads but %d registered from MADT",
 		    nCPUs, real_ncpus);
 	}
@@ -1195,7 +1204,7 @@ x86_validate_topology(void)
 			}
 			TOPO_DBG("\n");
 
-			if (!topoHybrid && nCores != topoParms.nLCoresPerDie) {
+			if (!partial && !topoHybrid && nCores != topoParms.nLCoresPerDie) {
 				panic("Should have %d Cores, but only found %d for Die %d",
 				    topoParms.nLCoresPerDie, nCores, die->pdie_num);
 			}
@@ -1221,7 +1230,7 @@ x86_validate_topology(void)
 			}
 			TOPO_DBG("\n");
 
-			if (nCPUs != topoParms.nLThreadsPerDie) {
+			if (!partial && nCPUs != topoParms.nLThreadsPerDie) {
 				panic("Should have %d Threads, but only found %d for Die %d",
 				    topoParms.nLThreadsPerDie, nCPUs, die->pdie_num);
 			}
@@ -1273,7 +1282,7 @@ x86_validate_topology(void)
 			}
 			TOPO_DBG("\n");
 
-			if (!topoHybrid && nCPUs != topoParms.nLThreadsPerCore) {
+			if (!partial && !topoHybrid && nCPUs != topoParms.nLThreadsPerCore) {
 				panic("Should have %d Threads, but only found %d for Core %d",
 				    topoParms.nLThreadsPerCore, nCPUs, core->pcore_num);
 			}
@@ -1281,7 +1290,7 @@ x86_validate_topology(void)
 			core = core->next_in_pkg;
 		}
 
-		if (!topoHybrid && nCores != topoParms.nLCoresPerPackage) {
+		if (!partial && !topoHybrid && nCores != topoParms.nLCoresPerPackage) {
 			panic("Should have %d Cores, but only found %d for package %d",
 			    topoParms.nLCoresPerPackage, nCores, pkg->lpkg_num);
 		}

@@ -343,6 +343,14 @@ tsc_init(void)
 			M = 1;
 		}
 		tscFreq = refFreq * N / M;
+		// named QEMU cpu models have no leaf 0x15 either, ART alone runs the clock ~150x fast
+		if (tsc_leafp->numerator == 0 || tsc_leafp->denominator == 0) {
+			uint64_t measured = EFI_get_frequency("TSCFrequency");
+
+			if (measured != 0) {
+				tscFreq = measured;
+			}
+		}
 		busFreq = tscFreq;              /* bus is APIC frequency */
 
 		kprintf(" ART: Frequency = %6d.%06dMHz, N/M = %lld/%llu\n",

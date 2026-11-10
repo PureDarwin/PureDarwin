@@ -203,6 +203,23 @@ L_ipui_loop:
 	ARM64_WRITE_CORE_SYSREG  $0, $1, EHID4, HID4
 	isb		sy
 .endmacro
+
+// the pmap's callable forms of the macros above
+	.text
+	.align 2
+	.globl EXT(enable_dc_mva_ops)
+LEXT(enable_dc_mva_ops)
+	ARM64_PROLOG
+	ENABLE_DC_MVA_OPS x15, x14
+	ret
+
+	.text
+	.align 2
+	.globl EXT(disable_dc_mva_ops)
+LEXT(disable_dc_mva_ops)
+	ARM64_PROLOG
+	DISABLE_DC_MVA_OPS x15, x14
+	ret
 #endif
 
 /*
@@ -330,6 +347,35 @@ LEXT(CleanPoC_DcacheRegion)
 	b EXT(CleanPoC_DcacheRegion_internal)
 #endif /* defined(APPLE_ARM64_ARCH_FAMILY) */
 
+
+// clean to PoC with VA ops enabled around it; _nohid leaves HID4 to the caller
+	.text
+	.align 2
+	.globl EXT(CleanPoC_DcacheRegion_Force_nopreempt)
+LEXT(CleanPoC_DcacheRegion_Force_nopreempt)
+#if defined(APPLE_ARM64_ARCH_FAMILY) && !APPLEVIRTUALPLATFORM
+	ARM64_STACK_PROLOG
+	PUSH_FRAME
+	stp		x0, x1, [sp, #-16]!
+	bl		EXT(enable_dc_mva_ops)
+	ldp		x0, x1, [sp], #16
+	bl		EXT(CleanPoC_DcacheRegion_internal)
+	bl		EXT(disable_dc_mva_ops)
+	POP_FRAME
+	ARM64_STACK_EPILOG EXT(CleanPoC_DcacheRegion_Force_nopreempt)
+#else
+	ARM64_PROLOG
+	b		EXT(CleanPoC_DcacheRegion_internal)
+#endif
+
+#if defined(APPLE_ARM64_ARCH_FAMILY)
+	.text
+	.align 2
+	.globl EXT(CleanPoC_DcacheRegion_Force_nopreempt_nohid)
+LEXT(CleanPoC_DcacheRegion_Force_nopreempt_nohid)
+	ARM64_PROLOG
+	b		EXT(CleanPoC_DcacheRegion_internal)
+#endif
 
 /*
  *	void CleanPoC_DcacheRegion_Force(vm_offset_t va, size_t length)

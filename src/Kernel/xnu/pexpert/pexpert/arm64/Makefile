@@ -28,6 +28,7 @@ PRIVATE_KERNELFILES = \
 	vhe_disable.h \
 	board_config.h \
 	boot.h \
+	H8.h \
 	H13.h \
 	H14.h \
 	H15.h \

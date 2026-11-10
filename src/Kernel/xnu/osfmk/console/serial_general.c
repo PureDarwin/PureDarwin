@@ -76,6 +76,14 @@ pd_serial_line_filter(int chr)
 	return 1;
 }
 
+// the usb acm console feeds its input through the same filter, so serial hid lines work there too
+int pd_serial_line_feed(int chr);
+int
+pd_serial_line_feed(int chr)
+{
+	return pd_serial_line_filter(chr);
+}
+
 SECURITY_READ_ONLY_LATE(unsigned int) serialmode;                               /* Serial mode keyboard and console control */
 
 /*

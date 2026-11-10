@@ -547,6 +547,7 @@ act_machine_switch_pcb(thread_t old, thread_t new)
 	set_ds(NULL_SEG);
 	set_es(NULL_SEG);
 	set_fs(NULL_SEG);
+	wrmsr64(MSR_IA32_FS_BASE, pcb->linux_fs_base);
 
 	if (get_gs() != NULL_SEG) {
 		swapgs();               /* switch to user's GS context */
@@ -814,6 +815,7 @@ machine_thread_create(
 	simple_lock_init(&pcb->lock, 0);
 
 	pcb->cthread_self = 0;
+	pcb->linux_fs_base = 0;
 	pcb->uldt_selector = 0;
 	pcb->thread_gpu_ns = 0;
 	/* Ensure that the "cthread" descriptor describes a valid

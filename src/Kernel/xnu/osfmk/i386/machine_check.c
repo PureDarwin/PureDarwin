@@ -90,7 +90,8 @@ mca_get_availability(void)
 	uint32_t        model =    cpuid_info()->cpuid_model;
 	uint32_t        stepping = cpuid_info()->cpuid_stepping;
 
-	if (family == 6 &&
+	// QEMU's Haswell models report stepping 1, a guest has none of that silicon's errata
+	if (family == 6 && !cpuid_vmm_present() &&
 	    ((model == CPUID_MODEL_HASWELL && stepping < 3) ||
 	    (model == CPUID_MODEL_HASWELL_ULT && stepping < 1) ||
 	    (model == CPUID_MODEL_CRYSTALWELL && stepping < 1))) {

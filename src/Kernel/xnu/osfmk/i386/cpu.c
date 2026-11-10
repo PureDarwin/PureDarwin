@@ -139,8 +139,9 @@ cpu_start(
 		ret = intel_startCPU(cpu);
 	}
 
+	// a cpu that never came up stays offline, the rest boot without it
 	if (ret != KERN_SUCCESS) {
-		panic("cpu_start(%d) failed: %d\n", cpu, ret);
+		processor_start_failed[cpu] = true;
 	}
 }
 

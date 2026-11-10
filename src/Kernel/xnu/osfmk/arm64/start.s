@@ -230,6 +230,20 @@ LEXT(ResetHandlerData)
 	.globl EXT(_start)
 LEXT(_start)
 	ARM64_PROLOG
+#if defined(ARM64_BOARD_CONFIG_T8103)
+	// entered at EL2 (darwin-vm, like iBoot): run there as a VHE host, so the _EL1
+	// registers this kernel uses (TTBR1, SCTLR, VBAR, the CNTV timer) are the EL2 ones
+	// and user space is the host's EL0; keeps x0 (boot_args)
+	mrs	x9, CurrentEL
+	cmp	x9, #(2 << 2)
+	b.ne	1f
+	mov	x9, #(1 << 31)			// RW
+	orr	x9, x9, #(1 << 27)		// TGE
+	orr	x9, x9, #(1 << 34)		// E2H
+	msr	HCR_EL2, x9
+	isb
+1:
+#endif
 	b	EXT(start_first_cpu)
 
 

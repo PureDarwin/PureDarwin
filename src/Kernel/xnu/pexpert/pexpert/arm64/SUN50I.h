@@ -26,6 +26,9 @@
 // pe_serial.c's DesignWare APB UART, picked by "snps,dw-apb-uart" on /arm-io/uart0,
 // 16550-compatible with reg-shift 2 and a 24MHz clock
 #define DW_APB_UART
+// pe_serial.c's console in DRAM (xnu-loader's ram log), picked by "pd,ramlog" on /arm-io/uart0,
+// for boards whose UART nobody can reach (msm8916 sticks)
+#define PD_RAMLOG_UART
 
 #define SUN50I_UART0_BASE_PHYS    0x05000000ULL
 #define SUN50I_UART0_SIZE         0x400ULL

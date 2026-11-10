@@ -1285,7 +1285,9 @@ IODTResolveAddressCell( IORegistryEntry * startEntry,
 				IOLockUnlock(gIODTResolvers->lock);
 			}
 
-			if (!compare && (addressCells == childAddressCells)) {
+			// the comparisons below are between childAddressCells-wide child addresses, the parent's start
+			// is copied at its own width, so ranges with two widths (a 1-cell soc under a 2-cell root) work
+			if (!compare && childAddressCells <= 2) {
 				compare = DefaultCompare;
 			}
 			if (!compare) {

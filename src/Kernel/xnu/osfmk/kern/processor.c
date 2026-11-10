@@ -1047,9 +1047,14 @@ static const char *
 	[PROCESSOR_POWERED_CORES_CHANGE]        = "come online during dynamic cluster power state change",
 };
 
+bool processor_start_failed[MAX_CPUS];
+
 void
 processor_wait_for_start(processor_t processor, processor_start_kind_t start_kind)
 {
+	if (processor_start_failed[processor->cpu_id]) {
+		return;
+	}
 	if (!processor->processor_booted) {
 		panic("processor_boot() missing for cpu %d", processor->cpu_id);
 	}
@@ -1067,10 +1072,19 @@ processor_wait_for_start(processor_t processor, processor_start_kind_t start_kin
 
 		wait_result_t wait_result = thread_block(THREAD_CONTINUE_NULL);
 		if (wait_result == THREAD_TIMED_OUT) {
+#if defined(__x86_64__)
+			// boot on without it so the screen shows where it stopped
+			printf("cpu %d failed to %s within %d seconds, continuing without it\n",
+			    processor->cpu_id, processor_start_panic_strings[start_kind],
+			    boot_timeout_extended);
+			processor_start_failed[processor->cpu_id] = true;
+			return;
+#else
 			panic("cpu %d failed to %s, waited %d seconds\n",
 			    processor->cpu_id,
 			    processor_start_panic_strings[start_kind],
 			    boot_timeout_extended);
+#endif
 		}
 
 		s = splsched();
@@ -1155,6 +1169,23 @@ processor_dostartup(
 	ml_broadcast_cpu_event(CPU_BOOT_REQUESTED, processor->cpu_id);
 
 	cpu_start(processor->cpu_id);
+
+	if (processor_start_failed[processor->cpu_id]) {
+		// undo the start so nothing waits on or schedules onto this cpu
+		s = splsched();
+		simple_lock(&sched_available_cores_lock, LCK_GRP_NULL);
+		pset_lock(pset);
+		pset_update_processor_state(pset, processor, PROCESSOR_OFF_LINE);
+		pset_unlock(pset);
+		processor->processor_offline_state = PROCESSOR_OFFLINE_FULLY_OFFLINE;
+		simple_unlock(&sched_available_cores_lock);
+		simple_lock(&processor_start_state_lock, LCK_GRP_NULL);
+		processor->processor_instartup = false;
+		simple_unlock(&processor_start_state_lock);
+		splx(s);
+		ml_cpu_end_state_transition(processor->cpu_id);
+		return;
+	}
 
 	s = splsched();
 	simple_lock(&sched_available_cores_lock, LCK_GRP_NULL);
@@ -2039,3 +2070,62 @@ sched_perfcontrol_inherit_recommendation_from_tg(__unused perfcontrol_class_t pe
 }
 
 #endif /* defined(__arm64__) */
+
+#if defined(__arm64__)
+
+// every thread's state, wait event and kernel frame chain on the console, for a board without a debugger
+void
+pd_dump_threads(void)
+{
+	boolean_t locked = lck_mtx_try_lock(&tasks_threads_lock);
+	thread_t thread;
+
+	kprintf("pd threads: %d threads%s\n", threads_count, locked ? "" : ", list lock busy");
+	queue_iterate(&threads, thread, thread_t, threads) {
+		task_t task = get_threadtask(thread);
+		void *p = task != TASK_NULL ? get_bsdtask_info(task) : NULL;
+		vm_offset_t lo = thread->kernel_stack, hi = lo + kernel_stack_size;
+
+		kprintf("pd thread %p %s state 0x%x wait 0x%llx hint %d pri %d", thread, p ? proc_best_name((struct proc *)p) : "kernel",
+		    thread->state, (unsigned long long)thread->wait_event, thread->block_hint, thread->sched_pri);
+		if (lo != 0 && thread->machine.kstackptr != NULL && (thread->state & TH_RUN) == 0) {
+			struct arm_kernel_saved_state *ss = &thread_get_kernel_state(thread)->machine.ss;
+			uint64_t fp = ss->fp;
+
+			kprintf(" lr 0x%llx", ss->lr);
+			for (int i = 0; i < 12 && fp >= lo && fp + 16 <= hi && (fp & 7) == 0; i++) {
+				kprintf(" 0x%llx", ((uint64_t *)fp)[1]);
+				fp = ((uint64_t *)fp)[0];
+			}
+		}
+		kprintf("\n");
+	}
+	if (locked)
+		lck_mtx_unlock(&tasks_threads_lock);
+}
+#endif
+
+#if defined(__arm64__)
+// a running thread's saved state is stale, so its stack is scanned for words that look like code addresses
+void
+pd_describe_thread(thread_t thread)
+{
+	task_t task = thread != THREAD_NULL ? get_threadtask(thread) : TASK_NULL;
+	void *p = task != TASK_NULL ? get_bsdtask_info(task) : NULL;
+	vm_offset_t lo = thread != THREAD_NULL ? thread->kernel_stack : 0;
+	int found = 0;
+
+	if (thread == THREAD_NULL)
+		return;
+	kprintf("pd owner %p %s state 0x%x wait 0x%llx stack 0x%lx\n", thread, p ? proc_best_name((struct proc *)p) : "kernel",
+	    thread->state, (unsigned long long)thread->wait_event, (unsigned long)lo);
+	for (vm_offset_t a = lo + kernel_stack_size - 8; lo != 0 && a >= lo && found < 48; a -= 8) {
+		uint64_t v = *(uint64_t *)a;
+
+		if (v >= 0xfffffff004000000ULL && v < vm_kernel_etext) {
+			kprintf("pd owner stack +0x%lx 0x%llx\n", (unsigned long)(a - lo), (unsigned long long)v);
+			found++;
+		}
+	}
+}
+#endif

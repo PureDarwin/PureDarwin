@@ -371,6 +371,10 @@ hw_lck_ticket_timeout_panic(void *_lock, hw_spin_timeout_t to, hw_spin_state_t s
 	    HW_SPIN_TIMEOUT_DETAILS_ARG(to, st));
 }
 
+#if defined(__arm64__)
+extern void pd_describe_thread(thread_t thread);
+#endif
+
 __abortlike
 static hw_spin_timeout_status_t
 lck_ticket_timeout_panic(void *_lock, hw_spin_timeout_t to, hw_spin_state_t st)
@@ -381,6 +385,16 @@ lck_ticket_timeout_panic(void *_lock, hw_spin_timeout_t to, hw_spin_state_t st)
 
 	lsti = lck_spinlock_timeout_hit(&lck->tu, lck->lck_ticket_owner);
 	tmp.tcurnext = os_atomic_load(&lck->tu.tcurnext, relaxed);
+#if defined(__arm64__)
+	// who holds it, for a board whose panic log never reaches the console
+	pd_describe_thread((thread_t)lsti->owner_thread_cur);
+#endif
+#if defined(__x86_64__)
+	// the owner prints its own backtrace too, the waiter's alone never says why the lock was held
+	if (lsti->owner_cpu >= 0 && lsti->owner_cpu != cpu_number()) {
+		NMIPI_panic(cpu_to_cpumask((cpu_t)lsti->owner_cpu), SPINLOCK_TIMEOUT);
+	}
+#endif
 
 	panic("Ticket spinlock[%p] " HW_SPIN_TIMEOUT_FMT "; "
 	    "cticket: 0x%x, nticket: 0x%x, waiting for 0x%x, "

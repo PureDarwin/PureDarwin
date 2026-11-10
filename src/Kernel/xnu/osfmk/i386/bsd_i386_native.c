@@ -100,6 +100,7 @@ machine_thread_dup(
 	 * Copy the parent's cthread id and USER_CTHREAD descriptor, if 32-bit.
 	 */
 	child_pcb->cthread_self = parent_pcb->cthread_self;
+	child_pcb->linux_fs_base = parent_pcb->linux_fs_base;
 	if (!thread_is_64bit_addr(parent)) {
 		child_pcb->cthread_desc = parent_pcb->cthread_desc;
 	}
@@ -148,6 +149,21 @@ thread_fast_set_cthread_self64(uint64_t self)
 {
 	machine_thread_set_tsd_base(current_thread(), self);
 	return USER_CTHREAD; /* N.B.: not a kern_return_t! */
+}
+
+kern_return_t
+thread_fast_set_fs_base64(uint64_t base)
+{
+	if (!IS_USERADDR64_CANONICAL(base)) {
+		return KERN_INVALID_ARGUMENT;
+	}
+
+	pcb_t pcb = THREAD_TO_PCB(current_thread());
+	pcb->linux_fs_base = base;
+	mp_disable_preemption();
+	wrmsr64(MSR_IA32_FS_BASE, base);
+	mp_enable_preemption();
+	return KERN_SUCCESS;
 }
 
 /*

@@ -948,6 +948,12 @@ SavePanicInfo(
 	 * and see your PC here, look down a few frames to see your
 	 * early-boot panic there.
 	 */
+#if defined(SUN50I)
+	// these boards have no firmware panic region, the console has the panic, so go on to the reset
+	if (!panic_info || panic_info->eph_panic_log_offset == 0) {
+		return;
+	}
+#endif
 	while (!panic_info || panic_info->eph_panic_log_offset == 0) {
 		// rdar://87170225 (PanicHardening: audit panic code for naked spinloops)
 		// rdar://88094367 (Add test hooks for panic at different stages in XNU)

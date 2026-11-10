@@ -935,7 +935,9 @@ consdebug_putc(char c)
 	 * enabled. Do not send the same character through PE_kputc as well.
 	 */
 	if (!console_is_serial() && !(serialmode & SERIALMODE_OUTPUT) &&
-	    !disable_serial_output && (PE_kputc != NULL)) {
+	    !disable_serial_output && (PE_kputc != NULL) &&
+	    (PE_kputc != console_write_unbuffered)) {
+		// without a UART PE_kputc is the video console that was just written
 		PE_kputc(c);
 	} else if (!console_is_serial() && (PE_kputc == NULL)) {
 		/* Use SPTM's serial interface for early serial output. */
@@ -953,7 +955,9 @@ consdebug_putc_unbuffered(char c)
 	/* Ignore `disable_serial_output` for early panic serial output from `sptm_serial_putc()`. */
 	/* The video console already mirrors this character to the UART. */
 	if (!console_is_serial() && !(serialmode & SERIALMODE_OUTPUT) &&
-	    !disable_serial_output && (PE_kputc != NULL)) {
+	    !disable_serial_output && (PE_kputc != NULL) &&
+	    (PE_kputc != console_write_unbuffered)) {
+		// without a UART PE_kputc is the video console that was just written
 		PE_kputc(c);
 	} else if (!console_is_serial() && (PE_kputc == NULL)) {
 		/* Use SPTM's serial interface for early serial output. */

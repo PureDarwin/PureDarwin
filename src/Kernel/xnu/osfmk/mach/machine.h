@@ -459,6 +459,11 @@ __END_DECLS
 #define CPUFAMILY_INTEL_METEORLAKE      0x2d9c6c3a
 #define CPUFAMILY_INTEL_SAPPHIRERAPIDS  0xadbf08de
 #define CPUFAMILY_INTEL_EMERALDRAPIDS   0xb1812dab
+#define CPUFAMILY_AMD_K8                0x9f45f3e9
+#define CPUFAMILY_AMD_K10               0xc72d8a44
+#define CPUFAMILY_AMD_GRIFFIN           0x0a834d16
+#define CPUFAMILY_AMD_LLANO             0xec6ed025
+#define CPUFAMILY_AMD_BOBCAT            0x38c6ddc8
 #define CPUFAMILY_AMD_BULLDOZER         0xa67cf51c
 #define CPUFAMILY_AMD_PILEDRIVER        0x26df7c2b
 #define CPUFAMILY_AMD_STEAMROLLER       0x94deb6cf

@@ -3282,6 +3282,42 @@ handle_kernel_guard_object_fault(vm_offset_t fault_addr, thread_t thread)
 	}
 }
 
+#if defined(SUN50I)
+// on msm8916, stores to __DATA_CONST before machine_lockdown() sometimes fault though the tables grant
+// EL1 write, so a write the leaf entry grants drops the address from every TLB and retries, logged
+static uint32_t pd_static_fault_retries;
+
+static bool
+pd_static_fault_retry(vm_offset_t va, uint64_t esr)
+{
+	uint64_t tcr = __builtin_arm_rsr64("TCR_EL1");
+	unsigned t1sz = (unsigned)((tcr >> 16) & 0x3f);
+	unsigned top = t1sz <= 24 ? 0 : (t1sz <= 33 ? 1 : 2);
+	uint64_t table = __builtin_arm_rsr64("TTBR1_EL1") & 0x0000fffffffff000ULL;
+	uint64_t desc = 0;
+	unsigned level;
+
+	for (level = top; level <= 3; level++) {
+		unsigned shift = 39 - 9 * level;
+		uint64_t mask = level == top ? ((1ULL << (64 - t1sz - shift)) - 1) : 0x1ff;
+		desc = ((volatile uint64_t *)phystokv(table))[((uint64_t)va >> shift) & mask];
+		if ((desc & 3) != 3 || level == 3) {
+			break;
+		}
+		table = desc & 0x0000fffffffff000ULL;
+	}
+	bool writable = (desc & 1) && ((desc >> 7) & 1) == 0;   // valid, AP[2] clear: EL1 read/write
+	printf("PD-SFAULT %u va 0x%lx esr 0x%llx leaf L%u 0x%016llx %s\n", pd_static_fault_retries,
+	    (unsigned long)va, esr, level, desc, writable ? "writable: retrying" : "read-only");
+	if (!writable || pd_static_fault_retries >= 16) {
+		return false;
+	}
+	pd_static_fault_retries++;
+	__asm__ volatile ("dsb ishst; tlbi vaae1is, %0; dsb ish; isb" :: "r"(((uint64_t)va >> 12) & 0xfffffffffffULL) : "memory");
+	return true;
+}
+#endif
+
 static void
 handle_kernel_abort(arm_saved_state_t *state, uint64_t esr, vm_offset_t fault_addr,
     fault_status_t fault_code, vm_prot_t fault_type, expected_fault_handler_t expected_fault_handler)
@@ -3389,6 +3425,11 @@ handle_kernel_abort(arm_saved_state_t *state, uint64_t esr, vm_offset_t fault_ad
 			panic_with_thread_kernel_state("Unexpected fault in kernel physical aperture", state);
 		}
 		if (__improbable(fault_addr >= gVirtBase && fault_addr < static_memory_end)) {
+#if defined(SUN50I)
+			if (pd_static_fault_retry(fault_addr, esr)) {
+				return;
+			}
+#endif
 			panic_with_thread_kernel_state("Unexpected fault in kernel static region", state);
 		}
 
@@ -3757,12 +3798,44 @@ handle_simd_trap(arm_saved_state_t *state, uint64_t esr)
 #define SUN50I_GICD_ICPENDR0    0x280
 #define SUN50I_GICD_ICACTIVER0  0x380
 #define SUN50I_GICD_IPRIORITYR  0x400
+#define SUN50I_GICD_ITARGETSR   0x800
 #define SUN50I_GICC_CTLR        0x000
 #define SUN50I_GICC_PMR         0x004
 #define SUN50I_GICC_IAR         0x00C
 #define SUN50I_GICC_EOIR        0x010
 #include <pexpert/device_tree.h>
 static vm_offset_t pd_sun50i_gicd, pd_sun50i_gicc;
+// the virtual timer's INTID: 27 unless the loader read another from the board's /timer node
+static uint32_t pd_sun50i_timer_intid = SUN50I_TIMER_PPI_VIRT;
+
+// the loader's /arm-io/wdt qualcomm apss watchdog, petted from the timer interrupt and the idle loop
+// it barks (a panic, then a PSCI reset) after PD_WDT_BARK_SECS and bites (a warm reset) after PD_WDT_BITE_SECS
+#define PD_WDT_RST          0x04
+#define PD_WDT_EN           0x08
+#define PD_WDT_BARK_TIME    0x10
+#define PD_WDT_BITE_TIME    0x14
+#define PD_WDT_EN_ENABLE    0x1
+#define PD_WDT_EN_BARK_IRQ  0x2
+#define PD_WDT_TICKS_PER_SEC 32768u  // the 32.768 kHz sleep clock
+#define PD_WDT_BARK_SECS    8u
+#define PD_WDT_BITE_SECS    16u
+static vm_offset_t pd_sun50i_wdt;
+static uint32_t pd_sun50i_wdt_bark_intid = GIC_SPURIOUS_IRQ;
+
+// bring-up on a board whose only console is read after a reset: pd_panic_after=<s> panics
+// that long after boot, so a healthy kernel's log comes back too
+static TUNABLE(uint32_t, pd_panic_after, "pd_panic_after", 0);
+static uint64_t pd_panic_after_deadline;
+static bool pd_panic_after_fired;
+
+void pd_sun50i_wdt_pet(void);
+void
+pd_sun50i_wdt_pet(void)
+{
+	if (pd_sun50i_wdt) {
+		*(volatile uint32_t *)(pd_sun50i_wdt + PD_WDT_RST) = 1;
+	}
+}
 
 // the loader describes the gic-400 as /arm-io/gic, reg = distributor then cpu interface
 // relative to the arm-io window, boards without the node get the h616 addresses
@@ -3781,6 +3854,51 @@ pd_sun50i_gic_locate(uint64_t *gicd, uint64_t *gicc)
 		*gicd = pe_arm_get_soc_base_phys() + reg[0];
 		*gicc = pe_arm_get_soc_base_phys() + reg[2];
 	}
+	uint32_t const *ppi;
+	if (SecureDTLookupEntry(NULL, "/arm-io/gic", &entry) == kSuccess &&
+	    SecureDTGetProperty(entry, "timer-ppi", (void const **)&ppi, &size) == kSuccess &&
+	    size == sizeof(uint32_t) && *ppi >= 16 && *ppi < 32) {
+		pd_sun50i_timer_intid = *ppi;
+	}
+}
+
+// /arm-io/wdt: reg (offset in the arm-io window, size) and the bark's INTID in "pd,bark-intid"
+// (not "interrupts", which IOKit would try to map through a tree with no controller for it)
+static void
+pd_sun50i_wdt_startup(volatile uint32_t *d)
+{
+	DTEntry entry;
+	uint64_t const *reg;
+	uint32_t const *irq;
+	unsigned int size;
+
+	if (SecureDTLookupEntry(NULL, "/arm-io/wdt", &entry) != kSuccess ||
+	    SecureDTGetProperty(entry, "reg", (void const **)&reg, &size) != kSuccess ||
+	    size < 2 * sizeof(uint64_t)) {
+		return;
+	}
+	if (SecureDTGetProperty(entry, "pd,bark-intid", (void const **)&irq, &size) == kSuccess &&
+	    size == sizeof(uint32_t) && *irq >= 32 && *irq < GIC_SPURIOUS_IRQ) {
+		pd_sun50i_wdt_bark_intid = *irq;
+	}
+	pd_sun50i_wdt = ml_io_map(pe_arm_get_soc_base_phys() + reg[0], reg[1]);
+
+	volatile uint32_t *w = (volatile uint32_t *)pd_sun50i_wdt;
+	w[PD_WDT_EN / 4] = 0;
+	w[PD_WDT_RST / 4] = 1;
+	w[PD_WDT_BARK_TIME / 4] = PD_WDT_BARK_SECS * PD_WDT_TICKS_PER_SEC;
+	w[PD_WDT_BITE_TIME / 4] = PD_WDT_BITE_SECS * PD_WDT_TICKS_PER_SEC;
+	if (pd_sun50i_wdt_bark_intid != GIC_SPURIOUS_IRQ) {
+		uint32_t n = pd_sun50i_wdt_bark_intid;
+		((volatile uint8_t *)d)[SUN50I_GICD_IPRIORITYR + n] = 0x80;
+		((volatile uint8_t *)d)[SUN50I_GICD_ITARGETSR + n] = 0x01;   // cpu0
+		d[SUN50I_GICD_ICPENDR0 / 4 + n / 32] = 1u << (n % 32);
+		d[SUN50I_GICD_ISENABLER0 / 4 + n / 32] = 1u << (n % 32);
+		w[PD_WDT_EN / 4] = PD_WDT_EN_ENABLE | PD_WDT_EN_BARK_IRQ;
+	} else {
+		w[PD_WDT_EN / 4] = PD_WDT_EN_ENABLE;
+	}
+	__builtin_arm_dsb(DSB_SY);
 }
 
 static void
@@ -3802,11 +3920,15 @@ pd_sun50i_gic_startup(void)
 		d[SUN50I_GICD_ICPENDR0 / 4 + i] = 0xffffffffu;
 		d[SUN50I_GICD_ICACTIVER0 / 4 + i] = 0xffffffffu;
 	}
-	((volatile uint8_t *)pd_sun50i_gicd)[SUN50I_GICD_IPRIORITYR + SUN50I_TIMER_PPI_VIRT] = 0x80;
-	d[SUN50I_GICD_ISENABLER0 / 4] = 1u << SUN50I_TIMER_PPI_VIRT;
+	((volatile uint8_t *)pd_sun50i_gicd)[SUN50I_GICD_IPRIORITYR + pd_sun50i_timer_intid] = 0x80;
+	d[SUN50I_GICD_ISENABLER0 / 4] = 1u << pd_sun50i_timer_intid;
+	pd_sun50i_wdt_startup(d);
 	d[0] = 1;       // GICD_CTLR, non-secure view: EnableGrp1
 	c[SUN50I_GICC_PMR / 4] = 0xf0;
 	c[SUN50I_GICC_CTLR / 4] = 1;
+	printf("PD-GIC: gicd 0x%llx gicc 0x%llx, timer INTID %u, watchdog %s (bark INTID %u)\n",
+	    gicd_phys, gicc_phys, pd_sun50i_timer_intid, pd_sun50i_wdt ? "armed" : "absent",
+	    pd_sun50i_wdt_bark_intid);
 }
 STARTUP(KMEM, STARTUP_RANK_LAST, pd_sun50i_gic_startup);
 
@@ -3908,7 +4030,27 @@ sleh_irq(arm_saved_state_t *state)
 		sleh_interrupt_handler_epilogue();
 		return;
 	}
-	if (intid == SUN50I_TIMER_PPI_VIRT) {
+	if (intid == pd_sun50i_timer_intid) {
+		pd_sun50i_wdt_pet();
+		// bring-up heartbeat: one line a second for the first minute, so a log read after
+		// a reset shows whether timer interrupts were still arriving when it stopped
+		static uint64_t pd_beat_next;
+		static uint32_t pd_beats;
+		if (__improbable(pd_beats < 60 && mach_absolute_time() >= pd_beat_next)) {
+			uint64_t second;
+			nanoseconds_to_absolutetime(NSEC_PER_SEC, &second);
+			pd_beat_next = mach_absolute_time() + second;
+			printf("PD-TICK %u cpu %d\n", pd_beats++, cpu_number());
+		}
+		if (__improbable(pd_panic_after != 0 && !pd_panic_after_fired)) {
+			if (pd_panic_after_deadline == 0) {
+				nanoseconds_to_absolutetime((uint64_t)pd_panic_after * NSEC_PER_SEC, &pd_panic_after_deadline);
+			} else if (mach_absolute_time() > pd_panic_after_deadline) {
+				pd_panic_after_fired = true;
+				*(volatile uint32_t *)(pd_sun50i_gicc + SUN50I_GICC_EOIR) = iar;
+				panic("pd_panic_after: %u s since boot, resetting to read the log", pd_panic_after);
+			}
+		}
 		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_TIMER);
 		cdp->cpu_decrementer = -1;
 		ml_interrupt_masked_debug_start(rtclock_intr, DBG_INTR_TYPE_TIMER);
@@ -3918,6 +4060,10 @@ sleh_irq(arm_saved_state_t *state)
 		sleh_interrupt_handler_epilogue();
 		return;
 	}
+	if (intid == pd_sun50i_wdt_bark_intid && pd_sun50i_wdt) {
+		*(volatile uint32_t *)(pd_sun50i_gicc + SUN50I_GICC_EOIR) = iar;
+		panic("watchdog bark: no timer interrupt or idle loop on any cpu for %u s", PD_WDT_BARK_SECS);
+	}
 #endif /* SUN50I */
 
 	sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_OTHER);
@@ -3926,10 +4072,13 @@ sleh_irq(arm_saved_state_t *state)
 	PE_handle_ext_interrupt();
 #elif defined(SUN50I)
 	if (intid < GIC_SPURIOUS_IRQ && cdp->interrupt_handler != NULL) {
+		// the iokit gic controller reads the spi being serviced from here
+		pd_gic_spi[cdp->cpu_number] = intid >= 32 ? intid : 0;
 		cdp->interrupt_handler(cdp->interrupt_target,
 		    cdp->interrupt_refCon,
 		    cdp->interrupt_nub,
 		    cdp->interrupt_source);
+		pd_gic_spi[cdp->cpu_number] = 0;
 	} else if (intid < GIC_SPURIOUS_IRQ) {
 		// nobody to service a level interrupt: mask it rather than take it forever
 		*(volatile uint32_t *)(pd_sun50i_gicd + SUN50I_GICD_ICENABLER0 + (intid / 32) * 4) = 1u << (intid % 32);

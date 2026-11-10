@@ -713,6 +713,9 @@ __enum_closed_decl(processor_start_kind_t, uint8_t, {
 	PROCESSOR_POWERED_CORES_CHANGE = 5,
 });
 
+// set by the machine layer when cpu_start could not bring a cpu up
+extern bool             processor_start_failed[MAX_CPUS];
+
 extern void             processor_wait_for_start(
 	processor_t             processor,
 	processor_start_kind_t  start_kind);

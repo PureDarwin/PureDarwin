@@ -59,7 +59,9 @@
 #define APPLE_ARM64_ARCH_FAMILY              1
 #define ARM_ARCH_TIMER
 
-#if defined(HAS_CTRR3)
+// PUREDARWIN_NO_KERNEL_INTEGRITY: a board run without iBoot's CTRR/KTRR setup (an emulator)
+#if defined(PUREDARWIN_NO_KERNEL_INTEGRITY)
+#elif defined(HAS_CTRR3)
 #define KERNEL_INTEGRITY_CTRR                1
 #define KERNEL_CTRR_VERSION                  3
 #elif defined(HAS_CTRR)
@@ -109,6 +111,11 @@
  * Conservatively assume that BTI will be enforced.
  * Individual SoCs and kernel configurations may have different behavior.
  */
+// only with landing pads compiled in: a core that has BTI would trap code built without them
+#if defined(HAS_BTI) && defined(__ARM_FEATURE_BTI_DEFAULT)
 #define BTI_ENFORCED 1
+#else
+#define BTI_ENFORCED 0
+#endif
 
 #endif /* !_PEXPERT_ARM64_APPLE_ARM64_COMMON_H */
