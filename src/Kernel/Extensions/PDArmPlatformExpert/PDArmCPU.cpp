@@ -81,6 +81,12 @@ __asm__(
 	"	mrs	x0, CurrentEL\n"
 	"	cmp	x0, #(2 << 2)\n"
 	"	b.ne	1f\n"
+	"	ldr	x0, Lpd_tramp_vhe\n"
+	"	cbz	x0, 2f\n"
+	"	msr	hcr_el2, x0\n"
+	"	isb\n"
+	"	b	1f\n"
+	"2:\n"
 	"	mov	x0, #(1 << 31)\n"
 	"	msr	hcr_el2, x0\n"
 	"	msr	cntvoff_el2, xzr\n"
@@ -112,6 +118,7 @@ __asm__(
 	"Lpd_tramp_cpudata:	.quad 0\n"
 	"Lpd_tramp_entry:	.quad 0\n"
 	"Lpd_tramp_marker:	.quad 0\n"
+	"Lpd_tramp_vhe:	.quad 0\n"
 	"	.globl _pd_smp_tramp_end\n"
 	"_pd_smp_tramp_end:\n"
 	"	.text\n");
@@ -162,6 +169,123 @@ pd_psci_dt_method(void)
 	return smc;
 }
 
+// an Apple SoC's device tree root lists AppleARM among its compatible strings
+static bool
+pd_is_apple_soc(void)
+{
+	IORegistryEntry *root = IORegistryEntry::fromPath("/", gIODTPlane);
+	OSData *compat = root != NULL ? OSDynamicCast(OSData, root->getProperty("compatible")) : NULL;
+	bool apple = false;
+
+	if (compat != NULL) {
+		const char *p = (const char *)compat->getBytesNoCopy();
+		unsigned int len = compat->getLength();
+		for (unsigned int o = 0; o < len; o += strnlen(p + o, len - o) + 1) {
+			if (strncmp(p + o, "AppleARM", len - o) == 0) {
+				apple = true;
+				break;
+			}
+		}
+	}
+	OSSafeReleaseNULL(root);
+	return apple;
+}
+
+// PMGR's CPU start block offset per SoC, after AsahiLinux/docs hw/cpu/smp.md (CC-BY 3.0)
+static uint64_t
+pd_apple_cpu_start_offset(void)
+{
+	IORegistryEntry *armio = IORegistryEntry::fromPath("/arm-io", gIODTPlane);
+	OSData *compat = armio != NULL ? OSDynamicCast(OSData, armio->getProperty("compatible")) : NULL;
+	uint64_t off = 0;
+
+	if (compat != NULL) {
+		const char *c = (const char *)compat->getBytesNoCopy();
+		size_t n = compat->getLength();
+		// M1 series
+		if (strnstr(c, "t8103", n) || strnstr(c, "t6000", n) || strnstr(c, "t6001", n) || strnstr(c, "t6002", n)) {
+			off = 0x54000;
+		}
+	}
+	OSSafeReleaseNULL(armio);
+	return off;
+}
+
+static bool
+pd_write_phys(uint64_t pa, uint64_t value, bool wide, bool set_bits)
+{
+	IOMemoryDescriptor *md = IOMemoryDescriptor::withPhysicalAddress(pa & ~0xfffULL, 0x1000, kIODirectionInOut);
+	IOMemoryMap *map = md != NULL ? md->map(kIOMapInhibitCache) : NULL;
+
+	OSSafeReleaseNULL(md);
+	if (map == NULL) {
+		return false;
+	}
+	volatile uint8_t *va = (volatile uint8_t *)map->getVirtualAddress() + (pa & 0xfff);
+	if (wide) {
+		*(volatile uint64_t *)va = value;
+	} else if (set_bits) {
+		*(volatile uint32_t *)va |= (uint32_t)value;
+	} else {
+		*(volatile uint32_t *)va = (uint32_t)value;
+	}
+	__builtin_arm_dsb(0xf);
+	map->release();
+	return true;
+}
+
+// Apple Silicon has no EL3 monitor (AsahiLinux/docs hw/cpu/smp.md): RVBAR at cpu-impl-reg + 0, (1 << cpu) to
+// pmgr[start + 0x4] for AIC's alive mask, and (1 << core) to pmgr[start + 0x8 + 4 * cluster]
+static bool
+pd_apple_cpu_start(unsigned int cpu, uint32_t mpidr, uint64_t entry_pa)
+{
+	IORegistryEntry *cpus = IORegistryEntry::fromPath("/cpus", gIODTPlane);
+	IORegistryEntry *armio = IORegistryEntry::fromPath("/arm-io", gIODTPlane);
+	IORegistryEntry *pmgr = IORegistryEntry::fromPath("/arm-io/pmgr", gIODTPlane);
+	uint64_t start_off = pd_apple_cpu_start_offset();
+	uint64_t impl_pa = 0, pmgr_pa = 0;
+	unsigned int core = mpidr & 0xff, cluster = (mpidr >> 8) & 0xff;
+	bool ok = false;
+
+	if (cpus != NULL) {
+		OSIterator *it = cpus->getChildIterator(gIODTPlane);
+		while (it != NULL) {
+			IORegistryEntry *c = OSDynamicCast(IORegistryEntry, it->getNextObject());
+			if (c == NULL) {
+				break;
+			}
+			OSData *reg = OSDynamicCast(OSData, c->getProperty("reg"));
+			OSData *impl = OSDynamicCast(OSData, c->getProperty("cpu-impl-reg"));
+			if (reg != NULL && reg->getLength() >= 4 && impl != NULL && impl->getLength() >= 8) {
+				uint32_t r = *(const uint32_t *)reg->getBytesNoCopy();
+				if ((r & 0xff) == core && ((r >> 8) & 0x7) == cluster) {
+					impl_pa = *(const uint64_t *)impl->getBytesNoCopy();
+				}
+			}
+		}
+		OSSafeReleaseNULL(it);
+	}
+	if (armio != NULL && pmgr != NULL) {
+		OSData *ranges = OSDynamicCast(OSData, armio->getProperty("ranges"));
+		OSData *reg = OSDynamicCast(OSData, pmgr->getProperty("reg"));
+		if (ranges != NULL && ranges->getLength() >= 16 && reg != NULL && reg->getLength() >= 8) {
+			pmgr_pa = ((const uint64_t *)ranges->getBytesNoCopy())[1] + *(const uint64_t *)reg->getBytesNoCopy();
+		}
+	}
+	if (impl_pa != 0 && pmgr_pa != 0 && start_off != 0) {
+		ok = pd_write_phys(impl_pa, entry_pa, true, false) &&
+		    pd_write_phys(pmgr_pa + start_off + 0x4, 1u << cpu, false, true) &&
+		    pd_write_phys(pmgr_pa + start_off + 0x8 + 4 * cluster, 1u << core, false, true);
+	}
+	PD_LOG("PD-CPU: Apple start cpu %u (cluster %u core %u) rvbar@0x%llx pmgr 0x%llx+0x%llx -> %s\n",
+	    cpu, cluster, core, (unsigned long long)impl_pa, (unsigned long long)pmgr_pa,
+	    (unsigned long long)start_off, ok ? "ok" : "FAILED");
+	OSSafeReleaseNULL(cpus);
+	OSSafeReleaseNULL(armio);
+	OSSafeReleaseNULL(pmgr);
+	return ok;
+}
+
 static bool
 pd_psci_available(void)
 {
@@ -174,6 +298,11 @@ pd_psci_available(void)
 			pd_psci_use_smc = dt == 1;
 			v = pd_psci_call(PSCI_FN_VERSION, 0, 0, 0, pd_psci_use_smc);
 			from = "/psci";
+		} else if (pd_is_apple_soc()) {
+			// no EL2 handler under an Apple-style EL3 monitor: hvc is undefined, PSCI is an smc
+			pd_psci_use_smc = true;
+			v = pd_psci_call(PSCI_FN_VERSION, 0, 0, 0, true);
+			from = "AppleARM";
 		} else if (PDSun50i_isPlatform()) {
 			// tf-a owns psci on sun50i, an hvc would land in u-boot's stale el2 vectors
 			pd_psci_use_smc = true;
@@ -299,7 +428,9 @@ PDArmCPU::startCPU(vm_offset_t start_paddr, vm_offset_t arg_paddr)
 		PD_LOG("PD-CPU: cpu %u start without entry/args\n", pdCpuNumber);
 		return KERN_FAILURE;
 	}
-	if (!pd_psci_available()) {
+	// at EL2 on an Apple SoC there is no EL3 monitor: start cores the way iBoot leaves them to be
+	bool apple_direct = pd_is_apple_soc() && (__builtin_arm_rsr64("CurrentEL") >> 2) == 2;
+	if (!apple_direct && !pd_psci_available()) {
 		PD_LOG("PD-CPU: cpu %u not started, PSCI_VERSION failed\n", pdCpuNumber);
 		return KERN_FAILURE;
 	}
@@ -324,6 +455,8 @@ PDArmCPU::startCPU(vm_offset_t start_paddr, vm_offset_t arg_paddr)
 	lit[1] = (uint64_t)arg_paddr;
 	lit[2] = (uint64_t)start_paddr;
 	lit[3] = tramp_pa + PD_TRAMP_MARKER_OFF;
+	// a VHE host kernel (EL2) keeps its secondaries at EL2 too: HCR_EL2 E2H | TGE | RW
+	lit[4] = (__builtin_arm_rsr64("CurrentEL") >> 2) == 2 ? ((1ULL << 34) | (1ULL << 27) | (1ULL << 31)) : 0;
 	*(volatile uint32_t *)(page + PD_TRAMP_MARKER_OFF) = 0;
 
 	// by VA: a phys-mode flush panics for any PA outside the kernel's single physical window
@@ -336,8 +469,12 @@ PDArmCPU::startCPU(vm_offset_t start_paddr, vm_offset_t arg_paddr)
 	flush_dcache64((addr64_t)ml_static_vtop((vm_offset_t)&pd_smp_diag[0]),
 	    sizeof(pd_smp_diag), 1);
 
-	ret = pd_psci_call(PSCI_FN64_CPU_ON, pdPhysId, tramp_pa, pdCpuNumber,
-	    pd_psci_use_smc);
+	if (apple_direct) {
+		ret = pd_apple_cpu_start(pdCpuNumber, pdPhysId, tramp_pa) ? 0 : -1;
+	} else {
+		ret = pd_psci_call(PSCI_FN64_CPU_ON, pdPhysId, tramp_pa, pdCpuNumber,
+		    pd_psci_use_smc);
+	}
 	PD_LOG("PD-CPU: PSCI CPU_ON cpu %u mpidr 0x%x tramp 0x%llx entry 0x%llx args 0x%llx data 0x%llx -> %lld\n",
 	    pdCpuNumber, pdPhysId, (unsigned long long)tramp_pa,
 	    (unsigned long long)start_paddr, (unsigned long long)lit[0],
@@ -414,7 +551,7 @@ PDArmCPU::startForCPU(unsigned int cpu, uint32_t phys_id, bool boot)
 
 	// Map this CPU's redistributor frame here, on the boot CPU:
 	// the secondary reaches initCPU() with interrupts masked, where mapping is not safe
-	if (!PDArmGIC_map_cpu(cpu, phys_id)) {
+	if (PDArmGIC_present() && !PDArmGIC_map_cpu(cpu, phys_id)) {
 		PD_LOG("PD-CPU: no redistributor frame for cpu %u\n", cpu);
 		return false;
 	}

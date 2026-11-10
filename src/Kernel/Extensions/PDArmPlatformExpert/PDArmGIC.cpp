@@ -14,7 +14,9 @@
 #define GIC_GICR_TYPER       0x0008
 #define GIC_GICR_TYPER_VLPIS (1ULL << 1)  /* gicv4: two more frames per PE */
 #define GIC_GICR_TYPER_LAST  (1ULL << 4)
-#define GIC_TIMER_PPI        27           /* CNTV virtual-timer INTID */
+// the CNTV timer INTID, 27 on most boards or the loader's /arm-io/gic "timer-ppi" (20 on msm8916)
+#define GIC_TIMER_PPI        gGicTimerPpi
+static uint32_t gGicTimerPpi = 27;
 
 /* GICD (distributor) */
 #define GICD_CTLR            0x0000
@@ -147,7 +149,7 @@ gic2_cpu_setup(void)
 }
 
 // banked gic-400 state for the calling cpu, the same setup the kernel gives the boot cpu
-// sgi 0 carries ipis, ppi 27 the virtual timer, both as non-secure irq
+// sgi 0 carries ipis, the timer ppi (27 unless the loader says) the virtual timer, both as non-secure irq
 static bool
 sun50i_cpu_setup(void)
 {
@@ -173,6 +175,11 @@ kernel_owned_gic(uint64_t *gicd, uint64_t *gicc)
 		OSData *compat = OSDynamicCast(OSData, gic->getProperty("compatible"));
 		OSData *reg = OSDynamicCast(OSData, gic->getProperty("reg"));
 		OSData *ranges = OSDynamicCast(OSData, armio->getProperty("ranges"));
+		OSData *ppi = OSDynamicCast(OSData, gic->getProperty("timer-ppi"));
+		if (ppi != NULL && ppi->getLength() == sizeof(uint32_t) &&
+		    *(const uint32_t *)ppi->getBytesNoCopy() >= 16 && *(const uint32_t *)ppi->getBytesNoCopy() < 32) {
+			gGicTimerPpi = *(const uint32_t *)ppi->getBytesNoCopy();
+		}
 		if (compat != NULL && compat->getLength() >= 11 &&
 		    strncmp((const char *)compat->getBytesNoCopy(), "arm,gic-400", 11) == 0 &&
 		    reg != NULL && reg->getLength() >= 4 * sizeof(uint64_t) &&
@@ -403,7 +410,8 @@ PDArmGIC_v3_distributor(void)
 volatile uint8_t *
 PDArmGIC_v2_distributor(void)
 {
-	return gGicV2 ? gGicd : NULL;
+	// a gic-400 the kernel drives is a gicv2 too, its spis can still be routed from here
+	return (gGicV2 || gSun50iSgi) ? gGicd : NULL;
 }
 
 bool
@@ -446,6 +454,16 @@ rc_write(unsigned int cpu, uint32_t off, uint32_t val)
 
 // Map one CPU's redistributor frame, from the boot CPU. Idempotent
 bool
+PDArmGIC_present(void)
+{
+#if defined(__arm__) && !defined(__arm64__)
+	return true;
+#else
+	return gGicd != NULL || gGicV2 || gSun50iSgi;
+#endif
+}
+
+bool
 PDArmGIC_map_cpu(unsigned int cpu, uint64_t mpidr)
 {
 #if defined(__arm__) && !defined(__arm64__)
@@ -456,7 +474,8 @@ PDArmGIC_map_cpu(unsigned int cpu, uint64_t mpidr)
 	if (cpu >= GIC_MAX_CPUS) {
 		return false;
 	}
-	if (gGicV2) {
+	// gic-400 (kext or kernel driven) has banked cpu interfaces, no redistributor frames
+	if (gGicV2 || gSun50iSgi) {
 		return true;
 	}
 	if (gGicrCpu[cpu] == NULL) {
@@ -539,6 +558,9 @@ void
 PDArmGIC_send_ipi(uint64_t target_mpidr)
 {
 #if !defined(__arm__) || defined(__arm64__)
+	if (!PDArmGIC_present()) {
+		return;
+	}
 	if (gGicV2 || gSun50iSgi) {
 		// Target list is CPU interface numbers, which QEMU virt and the H618 number by Aff0
 		d_write(GIC2_D_SGIR, (1u << (16 + (target_mpidr & 0x7))) | GIC_IPI_SGI);

@@ -7,6 +7,9 @@
 #include <IOKit/IOPlatformExpert.h>
 #include <IOKit/IOService.h>
 #include <kern/thread.h>
+#include <kern/thread_call.h>
+#include <pexpert/pexpert.h>
+#include <kern/clock.h>
 
 #if defined(__arm64__)
 
@@ -28,6 +31,7 @@ class PDArmGICController : public IOInterruptController
 public:
 	bool initGIC(volatile uint8_t *gicd, bool v2);
 	static void attachThread(void *arg, wait_result_t wr);
+	static const OSSymbol *rootInterruptParentName(void);
 	IOReturn handleInterrupt(void *refCon, IOService *nub, int source) APPLE_KEXT_OVERRIDE;
 	bool vectorCanBeShared(IOInterruptVectorNumber vectorNumber, IOInterruptVector *vector) APPLE_KEXT_OVERRIDE;
 	int getVectorType(IOInterruptVectorNumber vectorNumber, IOInterruptVector *vector) APPLE_KEXT_OVERRIDE;
@@ -45,11 +49,65 @@ private:
 
 	void dwrite(uint32_t off, uint32_t val) { *(volatile uint32_t *)(fGicd + off) = val; }
 	uint32_t dread(uint32_t off) { return *(volatile uint32_t *)(fGicd + off); }
+
+public:
+	void watchLine(uint32_t v);
 };
 
 OSDefineMetaClassAndStructors(PDArmGICController, IOInterruptController);
 
 static PDArmGICController *gGICController;
+static thread_call_t gGICWatchCall;
+static uint32_t gGICWatchLine, gGICWatchCount;
+
+// distributor state of one line, read only: enable, pending, active, group, config, target and priority
+void
+PDArmGICController::watchLine(uint32_t v)
+{
+	uint32_t w = (v / 32) * 4, b = 1u << (v % 32);
+
+	IOLog("PDArmGIC: watch %u ctlr 0x%x en %d pend %d act %d grp %d cfg 0x%x target 0x%x prio 0x%x handled %d\n", v,
+	    dread(0), (dread(GICD_ISENABLER + w) & b) != 0, (dread(0x200 + w) & b) != 0, (dread(0x300 + w) & b) != 0,
+	    (dread(GICD_IGROUPR + w) & b) != 0, (dread(0xc00 + (v / 16) * 4) >> ((v % 16) * 2)) & 3,
+	    fV2 ? fGicd[GICD_ITARGETSR + v] : 0, fGicd[GICD_IPRIORITYR + v], vectors[v].interruptRegistered);
+}
+
+static void
+gicWatch(thread_call_param_t, thread_call_param_t)
+{
+	uint64_t next;
+
+	if (gGICController == NULL || gGICWatchCount++ >= 60)
+		return;
+	gGICController->watchLine(gGICWatchLine);
+	clock_interval_to_deadline(5, kSecondScale, &next);
+	thread_call_enter_delayed(gGICWatchCall, next);
+}
+
+// the controller name of the node the root's interrupt-parent phandle points at
+const OSSymbol *
+PDArmGICController::rootInterruptParentName(void)
+{
+	IORegistryEntry *root = IORegistryEntry::fromPath("/", gIODTPlane);
+	OSData *ip = root != NULL ? OSDynamicCast(OSData, root->getProperty("interrupt-parent")) : NULL;
+	const OSSymbol *name = NULL;
+
+	if (ip != NULL && ip->getLength() == 4) {
+		uint32_t ph = *(const uint32_t *)ip->getBytesNoCopy();
+		IORegistryIterator *it = IORegistryIterator::iterateOver(root, gIODTPlane, kIORegistryIterateRecursively);
+		IORegistryEntry *e;
+
+		while (it != NULL && name == NULL && (e = it->getNextObject()) != NULL) {
+			OSData *d = OSDynamicCast(OSData, e->getProperty("AAPL,phandle"));
+			if (d != NULL && d->getLength() == 4 && *(const uint32_t *)d->getBytesNoCopy() == ph &&
+			    e->getProperty("interrupt-controller") != NULL)
+				name = IODTInterruptControllerName(e);
+		}
+		OSSafeReleaseNULL(it);
+	}
+	OSSafeReleaseNULL(root);
+	return name;
+}
 
 bool
 PDArmGICController::initGIC(volatile uint8_t *gicd, bool v2)
@@ -92,6 +150,9 @@ PDArmGICController::initGIC(volatile uint8_t *gicd, bool v2)
 			getPlatform()->registerInterruptController((OSSymbol *)fDTName, this);
 		gic->release();
 	}
+	// an l4t style tree names the gic through the root's interrupt-parent instead
+	if (fDTName == NULL && (fDTName = rootInterruptParentName()) != NULL)
+		getPlatform()->registerInterruptController((OSSymbol *)fDTName, this);
 
 	// registering with the cpu controller blocks until every cpu takes interrupts, which only
 	// happens after the platform expert's start returns
@@ -127,6 +188,10 @@ PDArmGICController::attachThread(void *arg, wait_result_t)
 		if (self->fDTName != NULL)
 			self->publishResource(self->fDTName, self);
 		IOLog("PDArmGIC: spi controller up, %u lines, routed to 0x%llx\n", self->fLines, self->fRoute);
+		// pdgicwatch=N prints line N's distributor state every 5 s for 5 minutes
+		if (PE_parse_boot_argn("pdgicwatch", &gGICWatchLine, sizeof(gGICWatchLine)) && gGICWatchLine >= 32 &&
+		    gGICWatchLine < self->fLines && (gGICWatchCall = thread_call_allocate(gicWatch, NULL)) != NULL)
+			thread_call_enter(gGICWatchCall);
 	}
 	self->release();
 	thread_terminate(current_thread());

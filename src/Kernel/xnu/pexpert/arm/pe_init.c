@@ -307,6 +307,7 @@ PE_init_iokit(void)
 		}
 	}
 
+	printf("PD-IOK 0 pe_prepare_images\n");
 	pe_prepare_images();
 
 	scale = PE_state.video.v_scale;
@@ -402,8 +403,11 @@ PE_init_iokit(void)
 #endif
 	}
 
+	printf("PD-IOK 1 InitIOKit\n");
 	InitIOKit(PE_state.deviceTreeHead);
+	printf("PD-IOK 2 ConfigureIOKit\n");
 	ConfigureIOKit();
+	printf("PD-IOK 3 PE_init_iokit done\n");
 }
 
 void

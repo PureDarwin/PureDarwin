@@ -49,6 +49,19 @@
  * across all clusters.
  */
 
+#ifdef ARM64_BOARD_CONFIG_S8000
+#include <pexpert/arm64/H8.h>
+#define MAX_CPUS                       2
+#define MAX_CPU_CLUSTERS               1
+/*
+ * The L2 size for twister is in fact 3MB, not 4MB; we round up due
+ * to the code being architected for power of 2 cache sizes, and rely
+ * on the expected behavior that out of bounds operations will be
+ * ignored.
+ */
+#define MAX_L2_CLINE                   6
+#endif  /* ARM64_BOARD_CONFIG_S8000 */
+
 #ifdef ARM64_BOARD_CONFIG_T6000
 #include <pexpert/arm64/H13.h>
 
@@ -142,14 +155,17 @@
 #define MAX_CPUS                       8
 #define MAX_CPU_CLUSTERS               2
 
-#ifndef CONFIG_SPTM
+#if !defined(CONFIG_SPTM) && !defined(PUREDARWIN_NO_KERNEL_INTEGRITY)
 #define PMAP_CS                        1
 #define PMAP_CS_ENABLE                 1
 #define XNU_MONITOR                    1 /* Secure pmap runtime */
 #endif /* !CONFIG_SPTM */
 
 
+// PureDarwin has no AppleARMSMP, its platform expert's IOCPUs start the cores
+#if !defined(PUREDARWIN_NO_KERNEL_INTEGRITY)
 #define USE_APPLEARMSMP                1
+#endif
 
 
 #define SPTM_TRACING_DISABLED          1

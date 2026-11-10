@@ -22,6 +22,51 @@
 
 
 
+// HID4/EHID4 for the dc-by-VA ops toggle in caches_asm.s, same encoding on every Apple core
+// (xnu-4903 pexpert/arm64/arm64_common.h, APSL)
+#ifndef ARM64_REG_HID4
+#define ARM64_REG_HID4                     S3_0_c15_c4_0
+#define ARM64_REG_EHID4                    S3_0_c15_c4_1
+#endif
+#ifndef ARM64_REG_HID4_DisDcMVAOps
+#define ARM64_REG_HID4_DisDcMVAOps         (1 << 11)
+#endif
+#ifndef HID4
+#define HID4                               ARM64_REG_HID4
+#define EHID4                              ARM64_REG_EHID4
+#endif
+
+#if defined(APPLETYPHOON) || defined(APPLETWISTER)
+// encodings from xnu-4903 pexpert/arm64/arm64_common.h (APSL) and bits from xnu-7195,
+// newer sources rely on the assembler knowing these names
+#define ARM64_REG_HID7                     S3_0_c15_c7_0
+#define ARM64_REG_HID7_disNexFastFmul      (1 << 10)
+#define ARM64_REG_HID8                     S3_0_c15_c8_0
+#define ARM64_REG_HID8_DataSetID0_VALUE    (0xF << 4)
+#define ARM64_REG_HID8_DataSetID1_VALUE    (0xF << 8)
+#define ARM64_REG_HID8_DataSetID2_VALUE    (0xFULL << 56)
+#define ARM64_REG_HID8_DataSetID3_VALUE    (0xFULL << 60)
+#define ARM64_REG_HID11                    S3_0_c15_c13_0
+#define ARM64_REG_HID11_DisFillC1BubOpt    (1 << 7)
+#define ARM64_REG_LSU_ERR_STS              S3_3_c15_c0_0
+#define ARM64_REG_CYC_CFG                  S3_5_c15_c4_0
+#define ARM64_REG_CYC_OVRD                 S3_5_c15_c5_0
+#define CPU_CFG                            ARM64_REG_CYC_CFG
+#define CPU_OVRD                           ARM64_REG_CYC_OVRD
+#endif
+
+// power and clock override registers, xnu-4903 pexpert/arm64/arm64_common.h (APSL):
+// CYC_OVRD on every core, ACC_CFG/CYC_CFG share an encoding, ACC_OVRD on cores after Twister
+#ifndef CPU_OVRD
+#define CPU_OVRD                           S3_5_c15_c5_0
+#endif
+#ifndef CPU_CFG
+#define CPU_CFG                            S3_5_c15_c4_0
+#endif
+#if !defined(ACC_OVRD) && !defined(APPLETYPHOON) && !defined(APPLETWISTER)
+#define ACC_OVRD                           S3_5_c15_c6_0
+#endif
+
 #if defined(APPLETYPHOON) || defined(APPLETWISTER)
 #define ARM64_REG_CYC_CFG_skipInit     (1ULL<<30)
 #define ARM64_REG_CYC_CFG_deepSleep    (1ULL<<24)

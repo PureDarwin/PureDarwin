@@ -765,6 +765,9 @@ static vm_offset_t dw_apb_uart_base = 0;
 static uint32_t dw_apb_uart_reg_shift = 2;
 static uint32_t dw_apb_uart_clock_hz = DW_APB_UART_DEFAULT_CLOCK_HZ;
 static uint32_t dw_apb_uart_baud = DW_APB_UART_DEFAULT_BAUD;
+// tegra210: the block is only 0x40 wide, so USR at 0x7c is the next uart, and the divisor is kept stable
+static bool dw_apb_uart_tegra = false;
+static bool dw_apb_uart_have_clock = false;
 
 static inline uint32_t
 dw_apb_uart_read(unsigned int reg)
@@ -804,14 +807,44 @@ dw_apb_uart_receive_data(void)
 }
 
 static void
+dw_apb_uart_drain(void)
+{
+	for (uint32_t spins = 0; spins < DW_APB_UART_DRAIN_TIMEOUT; spins++) {
+		if (dw_apb_uart_read(DW_APB_UART_LSR) & DW_APB_UART_LSR_THRE) {
+			break;
+		}
+	}
+}
+
+static void
 dw_apb_uart_init(void)
 {
 	// Round to nearest, truncation is only right by luck at 24 MHz / 115200
-	const uint32_t divisor = (dw_apb_uart_clock_hz + (8 * dw_apb_uart_baud)) /
+	uint32_t divisor = (dw_apb_uart_clock_hz + (8 * dw_apb_uart_baud)) /
 	    (16 * dw_apb_uart_baud);
 
 	// This driver is polled, the device must raise nothing
 	dw_apb_uart_write(DW_APB_UART_IER_DLH, 0);
+
+	if (dw_apb_uart_tegra) {
+		// let the loader's last bytes out, then keep its divisor unless the clock says otherwise
+		dw_apb_uart_drain();
+		dw_apb_uart_write(DW_APB_UART_FCR, DW_APB_UART_FCR_ENABLE |
+		    DW_APB_UART_FCR_CLEAR_RX | DW_APB_UART_FCR_CLEAR_TX);
+		const uint32_t lcr = dw_apb_uart_read(DW_APB_UART_LCR) & ~DW_APB_UART_LCR_DLAB;
+		dw_apb_uart_write(DW_APB_UART_LCR, lcr | DW_APB_UART_LCR_DLAB);
+		const uint32_t current = (dw_apb_uart_read(DW_APB_UART_RBR_THR_DLL) & 0xff) |
+		    ((dw_apb_uart_read(DW_APB_UART_IER_DLH) & 0xff) << 8);
+		if (!dw_apb_uart_have_clock && current != 0) {
+			divisor = current;
+		}
+		if (divisor != current) {
+			dw_apb_uart_write(DW_APB_UART_RBR_THR_DLL, divisor & 0xff);
+			dw_apb_uart_write(DW_APB_UART_IER_DLH, (divisor >> 8) & 0xff);
+		}
+		dw_apb_uart_write(DW_APB_UART_LCR, DW_APB_UART_LCR_8N1);
+		return;
+	}
 
 	// Enable both FIFOs and discard anything the bootloader left behind
 	dw_apb_uart_write(DW_APB_UART_FCR, DW_APB_UART_FCR_ENABLE |
@@ -872,6 +905,7 @@ dw_apb_uart_setup(const DeviceTreeNode *const devicetree_node)
 	if (SecureDTGetProperty(devicetree_node, "clock-frequency", (const void **)&prop, &prop_size) == kSuccess) {
 		assert(prop_size == sizeof(*prop));
 		dw_apb_uart_clock_hz = *prop;
+		dw_apb_uart_have_clock = true;
 	}
 
 	if (SecureDTGetProperty(devicetree_node, "current-speed", (const void **)&prop, &prop_size) == kSuccess) {
@@ -887,7 +921,126 @@ dw_apb_uart_setup(const DeviceTreeNode *const devicetree_node)
 	register_serial_functions(&dw_apb_uart_serial_functions);
 }
 
+// tegra210 uart: the 16550 core without the designware status register
+static void
+tegra_uart_setup(const DeviceTreeNode *const devicetree_node)
+{
+	dw_apb_uart_tegra = true;
+	dw_apb_uart_setup(devicetree_node);
+}
+
 #endif // DW_APB_UART
+
+/*****************************************************************************/
+
+#ifdef PD_RAMLOG_UART
+
+// a console for boards with no reachable UART: xnu-loader's DRAM log (ramlog.h), kept across a warm reset
+// in PD_RAMLOG_COPIES copies of magic, head, data size, boot count and the ring, read by bitwise majority
+#define PD_RAMLOG_MAGIC     0x4c524450U // "PDRL"
+#define PD_RAMLOG_COPIES    8
+#define PD_RAMLOG_COPY_SIZE 0x10000
+#define PD_RAMLOG_HEADER    16
+
+static vm_offset_t pd_ramlog_base = 0;
+// cpus print at once: one writer at a time, but never wait forever, a panicking cpu must get through
+static uint32_t pd_ramlog_lock = 0;
+#define PD_RAMLOG_LOCK_SPINS 1000000u
+
+static volatile uint32_t *
+pd_ramlog_copy(uint32_t i)
+{
+	return (volatile uint32_t *)(pd_ramlog_base + (vm_offset_t)i * PD_RAMLOG_COPY_SIZE);
+}
+
+static unsigned int
+pd_ramlog_transmit_ready(void)
+{
+	return 1;
+}
+
+static void
+pd_ramlog_transmit_data(uint8_t c)
+{
+	bool locked = false;
+	for (uint32_t spins = 0; spins < PD_RAMLOG_LOCK_SPINS; spins++) {
+		if (os_atomic_cmpxchg(&pd_ramlog_lock, 0, 1, acquire)) {
+			locked = true;
+			break;
+		}
+	}
+	for (uint32_t i = 0; i < PD_RAMLOG_COPIES; i++) {
+		volatile uint32_t *h = pd_ramlog_copy(i);
+		uint32_t head = h[1];
+		volatile uint8_t *data = (volatile uint8_t *)h + PD_RAMLOG_HEADER;
+		data[head % (PD_RAMLOG_COPY_SIZE - PD_RAMLOG_HEADER)] = c;
+		h[1] = head + 1;
+	}
+	__builtin_arm_dsb(DSB_SY);
+	if (locked) {
+		os_atomic_store(&pd_ramlog_lock, 0, release);
+	}
+}
+
+static unsigned int
+pd_ramlog_receive_ready(void)
+{
+	return 0;
+}
+
+static uint8_t
+pd_ramlog_receive_data(void)
+{
+	return 0;
+}
+
+static void
+pd_ramlog_init(void)
+{
+	// the loader started the log, a ring it did not leave gets a fresh header
+	for (uint32_t i = 0; i < PD_RAMLOG_COPIES; i++) {
+		volatile uint32_t *h = pd_ramlog_copy(i);
+		if (h[0] != PD_RAMLOG_MAGIC || h[2] != PD_RAMLOG_COPY_SIZE - PD_RAMLOG_HEADER) {
+			h[0] = PD_RAMLOG_MAGIC;
+			h[1] = 0;
+			h[2] = PD_RAMLOG_COPY_SIZE - PD_RAMLOG_HEADER;
+			h[3] = 1;
+		}
+	}
+	__builtin_arm_dsb(DSB_SY);
+}
+
+SECURITY_READ_ONLY_LATE(static struct pe_serial_functions) pd_ramlog_serial_functions =
+{
+	.init = pd_ramlog_init,
+	.transmit_ready = pd_ramlog_transmit_ready,
+	.transmit_data = pd_ramlog_transmit_data,
+	.receive_ready = pd_ramlog_receive_ready,
+	.receive_data = pd_ramlog_receive_data,
+	.device = SERIAL_PD_RAMLOG
+};
+
+static void
+pd_ramlog_setup(const DeviceTreeNode *const devicetree_node)
+{
+	// reg is relative to the arm-io window like every other uart the loader describes
+	const struct {
+		uint64_t block_offset;
+		uint64_t block_size;
+	} *reg;
+	unsigned int reg_size;
+	if (SecureDTGetProperty(devicetree_node, "reg", (const void **)&reg, &reg_size) != kSuccess) {
+		panic("Unable to find the 'reg' property on the RAM log devicetree node");
+	}
+	assert(reg_size == sizeof(*reg));
+	assert(reg->block_size >= PD_RAMLOG_COPIES * PD_RAMLOG_COPY_SIZE);
+
+	const vm_offset_t soc_base_phys = pe_arm_get_soc_base_phys();
+	pd_ramlog_base = ml_io_map(soc_base_phys + reg->block_offset, PD_RAMLOG_COPIES * PD_RAMLOG_COPY_SIZE);
+	register_serial_functions(&pd_ramlog_serial_functions);
+}
+
+#endif // PD_RAMLOG_UART
 
 /*****************************************************************************/
 
@@ -969,7 +1122,11 @@ static const struct {
 #endif // PL011_UART
 #ifdef DW_APB_UART
 	{ .compatible = "snps,dw-apb-uart", .setup = dw_apb_uart_setup },
+	{ .compatible = "nvidia,tegra210-uart", .setup = tegra_uart_setup },
 #endif // DW_APB_UART
+#ifdef PD_RAMLOG_UART
+	{ .compatible = "pd,ramlog", .setup = pd_ramlog_setup },
+#endif // PD_RAMLOG_UART
 };
 
 /**
@@ -1099,6 +1256,23 @@ serial_init(void)
 	}
 	if (!found_matching_driver) {
 		panic("Unable to find serial device driver for '%s'", compatible);
+	}
+
+	// a ram log console can name a real uart that gets the same output, pdmirror=0 leaves it off
+	const uint32_t *mirror;
+	unsigned int mirror_size;
+	uint32_t mirror_on = 1;
+	PE_parse_boot_argn("pdmirror", &mirror_on, sizeof(mirror_on));
+	const DeviceTreeNode *mirror_node;
+	if (mirror_on && SecureDTGetProperty(serial_device_node, "pd,mirror", (const void **)&mirror, &mirror_size) == kSuccess &&
+	    mirror_size == sizeof(*mirror) && SecureDTFindNodeWithPhandle(*mirror, &mirror_node) == kSuccess &&
+	    SecureDTGetProperty(mirror_node, "compatible", (const void **)&compatible, &compatible_size) == kSuccess) {
+		for (int i = 0; i < n_drivers; i++) {
+			if (strcmp(compatible, driver_setup_functions[i].compatible) == 0) {
+				driver_setup_functions[i].setup(mirror_node);
+				break;
+			}
+		}
 	}
 
 	fns = gPESF;
@@ -1239,11 +1413,18 @@ uart_putc_device(char c, bool poll, bool force, struct pe_serial_functions *fns)
  * @param poll Whether the driver should poll to send the character or if it can
  *             wait for an interrupt
  */
+// a second console sink a driver can attach, such as the USB gadget serial port, it must not block
+void (*PE_console_mirror_putc)(char c) = NULL;
+
 MARK_AS_HIBERNATE_TEXT void
 uart_putc_options(char c, bool poll)
 {
 	struct pe_serial_functions *fns = gPESF;
+	void (*mirror)(char) = PE_console_mirror_putc;
 
+	if (mirror != NULL) {
+		mirror(c);
+	}
 	while (fns != NULL) {
 		uart_putc_device(c, poll, false, fns);
 		fns = fns->next;

@@ -10,6 +10,7 @@ target_sources(PDArmPlatformExpert PRIVATE
     PDBcm2835IC.cpp
     PDSun50iUSB.cpp
     PDSun50iWatchdog.cpp
+    PDTegraWatchdog.cpp
     PDSg2002.cpp
     PDPerfControl.cpp
     PDSun60iDVFS.cpp

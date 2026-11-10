@@ -6,6 +6,8 @@
 bool PDArmGIC_init(void);
 bool PDArmGIC_enable(void);
 bool PDArmGIC_map_cpu(unsigned int cpu, uint64_t mpidr);
+// false on Apple SoCs, whose AIC the kernel drives itself
+bool PDArmGIC_present(void);
 bool PDArmGIC_init_cpu(unsigned int cpu);
 bool PDArmGIC_enable_cpu(unsigned int cpu);
 void PDArmGIC_send_ipi(uint64_t target_mpidr);

@@ -12,6 +12,7 @@
 #include "PDArmGICController.h"
 #include "PDSun50iUSB.h"
 #include "PDSun50iWatchdog.h"
+#include "PDTegraWatchdog.h"
 #include "PDSg2002.h"
 #include "PDPerfControl.h"
 #include "PDSun60iDVFS.h"
@@ -39,6 +40,7 @@ public:
 	bool getMachineName(char *name, int maxLength) APPLE_KEXT_OVERRIDE;
 	bool getModelName(char *name, int maxLength) APPLE_KEXT_OVERRIDE;
 	bool getTargetName(char *name, int maxLength) APPLE_KEXT_OVERRIDE;
+	bool getProductName(char *name, int maxLength) APPLE_KEXT_OVERRIDE;
 	long getGMTTimeOfDay(void) APPLE_KEXT_OVERRIDE;
 	void setGMTTimeOfDay(long secs) APPLE_KEXT_OVERRIDE;
 
@@ -138,6 +140,7 @@ PDArmPlatformExpert::start(IOService *provider)
 	} else {
 		publishSocNubs();
 		PDSun50iWatchdog_startFromDeviceTree();
+		PDTegraWatchdog_startFromDeviceTree();
 	}
 #endif
 
@@ -207,6 +210,21 @@ PDArmPlatformExpert::publishSocNubs(void)
 	}
 	OSSafeReleaseNULL(iter);
 	OSSafeReleaseNULL(root);
+
+	// apple socs: arm-io is no simple-bus, so publish the devices a driver here handles
+	static const char *const apple_devices[] = { "/arm-io/ans" };
+	for (unsigned int i = 0; i < sizeof(apple_devices) / sizeof(apple_devices[0]); i++) {
+		IORegistryEntry *dev = IORegistryEntry::fromPath(apple_devices[i], gIODTPlane);
+		OSArray *one = dev != NULL ? OSArray::withObjects((const OSObject **)&dev, 1) : NULL;
+		OSCollectionIterator *it = one != NULL ? OSCollectionIterator::withCollection(one) : NULL;
+		// createNubs() releases the iterator it is given
+		if (it != NULL) {
+			IOLog("PDArmPlatformExpert: publishing %s\n", apple_devices[i]);
+			createNubs(this, it);
+		}
+		OSSafeReleaseNULL(one);
+		OSSafeReleaseNULL(dev);
+	}
 }
 #endif
 
@@ -225,9 +243,17 @@ PDArmPlatformExpert::startQemuRTC(void)
 
 	if (type == NULL || strncmp((const char *)type->getBytesNoCopy(), "qemuvirt-io", type->getLength()) != 0) {
 		OSSafeReleaseNULL(armio);
-		if (!PE_parse_boot_argn("pdtime", &fBootSecs, sizeof(fBootSecs)) || fBootSecs <= 0)
+		bool have_time = PE_parse_boot_argn("pdtime", &fBootSecs, sizeof(fBootSecs)) && fBootSecs > 0;
+		if (have_time)
+			IOLog("PDArmPlatformExpert: calendar from pdtime %ld\n", fBootSecs);
+		// Apple SoCs have no RTC driver here, so IORTC is published at once and IOKitInitializeTime does
+		// not wait 30 s for it. The calendar comes from pdtime or starts at 1970
+		if (strcmp(platformModelName(), "Apple ARM") == 0) {
+			publishResource("IORTC", this);
 			return;
-		IOLog("PDArmPlatformExpert: calendar from pdtime %ld\n", fBootSecs);
+		}
+		if (!have_time)
+			return;
 	} else {
 		OSSafeReleaseNULL(armio);
 		md = IOMemoryDescriptor::withPhysicalAddress(PD_QEMU_PL031_PHYS, 0x1000, kIODirectionInOut);
@@ -416,32 +442,81 @@ pd_set_identity(IORegistryEntry *e, const PDIdentityProp *props, size_t n)
 	}
 }
 
-// QEMU virt's root as the loader builds it: compatible and model both "ACPI"
+// QEMU virt: the loader's "ACPI" placeholder root, or a carried-over linux,dummy-virt
 static bool
-pd_root_is_placeholder(IORegistryEntry *root)
+pd_root_is_qemu(IORegistryEntry *root)
 {
 	OSData *c = OSDynamicCast(OSData, root->getProperty("compatible"));
 
-	return c != NULL && c->getLength() >= 5 && memcmp(c->getBytesNoCopy(), "ACPI", 5) == 0;
+	if (c == NULL || c->getLength() == 0) return false;
+	if (c->getLength() >= 5 && memcmp(c->getBytesNoCopy(), "ACPI", 5) == 0) return true;
+	return pd_compat_has(c, "linux,dummy-virt");
+}
+
+static size_t
+pd_min(size_t a, size_t b)
+{
+	return a < b ? a : b;
+}
+
+// a board's name from its own tree: the model, else the first compatible entry
+static bool
+pd_board_name(IORegistryEntry *root, char *out, size_t len)
+{
+	OSData *m = OSDynamicCast(OSData, root->getProperty("model"));
+	OSData *c = OSDynamicCast(OSData, root->getProperty("compatible"));
+
+	out[0] = '\0';
+	if (m != NULL && m->getLength() > 1)
+		strlcpy(out, (const char *)m->getBytesNoCopy(), pd_min(len, (size_t)m->getLength() + 1));
+	else if (c != NULL && c->getLength() > 1)
+		strlcpy(out, (const char *)c->getBytesNoCopy(), pd_min(len, (size_t)c->getLength() + 1));
+	return out[0] != '\0';
+}
+
+static void
+pd_set_string(IORegistryEntry *e, const char *key, const char *val)
+{
+	OSData *d = OSData::withBytes(val, (unsigned)strlen(val) + 1);
+
+	if (d == NULL) return;
+	e->setProperty(key, d);
+	d->release();
 }
 
 void
 PDArmPlatformExpert::processTopLevel(IORegistryEntry *root)
 {
 	super::processTopLevel(root);
+	if (root == NULL || pd_platform_is_bcm283x()) return;
+
+	// a real board keeps its tree's identity, target-type and /product name come from it too
+	if (!pd_root_is_qemu(root)) {
+		char name[64], first[64] = "";
+		OSData *c = OSDynamicCast(OSData, root->getProperty("compatible"));
+
+		// an apple soc's tree already carries its own target-type and product node
+		if (c != NULL && pd_compat_has(c, "AppleARM")) return;
+		if (c != NULL && c->getLength() > 1)
+			strlcpy(first, (const char *)c->getBytesNoCopy(), pd_min(sizeof(first), (size_t)c->getLength() + 1));
+		if (first[0] != '\0' && root->getProperty("target-type") == NULL) pd_set_string(root, "target-type", first);
+		if (!pd_board_name(root, name, sizeof(name))) return;
+
+		IORegistryEntry *product = IORegistryEntry::fromPath("/product", gIODTPlane);
+		if (product != NULL) {
+			pd_set_string(product, "product-name", name);
+			product->release();
+		}
+		return;
+	}
+
 	// QEMU virt stands in for Apple's virtual platform: MobileGestalt's hardware model (and
 	// mobileactivationd's hactivation) comes from the root target-type, as on a VMA2MACOS guest
-	if (root != NULL && !pd_platform_is_bcm283x() && root->getProperty("target-type") == NULL) {
-		OSData *tt = OSData::withBytes("VMA2MACOS", sizeof("VMA2MACOS"));
+	if (root->getProperty("target-type") == NULL) pd_set_string(root, "target-type", "VMA2MACOS");
 
-		if (tt != NULL) {
-			root->setProperty("target-type", tt);
-			tt->release();
-		}
-	}
-	// the loader's placeholder root ("ACPI") gets the rest of a VirtualMac2,1's identity:
-	// MobileGestalt's ProductType is nil without it and apsd throws on the nil
-	if (root != NULL && pd_root_is_placeholder(root)) {
+	// MobileGestalt's ProductType is nil without the rest of a VirtualMac2,1's identity
+	// and apsd throws on the nil
+	{
 		static const char compat[] = "VMA2MACOSAP\0VirtualMac2,1\0AppleVirtualPlatformARM";
 		OSData *c = OSData::withBytes(compat, sizeof(compat));
 		OSData *m = OSData::withBytes("VirtualMac2,1", sizeof("VirtualMac2,1"));
@@ -487,6 +562,13 @@ PDArmPlatformExpert::getTargetName(char *name, int maxLength)
 	if (!sPDVirtualMac) return getModelName(name, maxLength);
 	strlcpy(name, "VMA2MACOSAP", (size_t)maxLength);
 	return true;
+}
+
+// hw.model on arm64 macos reads the product name, which IODTPlatformExpert takes from getMachineName
+bool
+PDArmPlatformExpert::getProductName(char *name, int maxLength)
+{
+	return getModelName(name, maxLength);
 }
 
 bool
@@ -573,7 +655,19 @@ PDArmPlatformExpert::initPlatformInterruptsLate(void)
 const char *
 PDArmPlatformExpert::platformModelName(void)
 {
-	return sPDVirtualMac ? "VirtualMac2,1" : "QEMU Virtual ARM64";
+	static char sModel[64];
+	IORegistryEntry *root;
+
+	if (sPDVirtualMac) return "VirtualMac2,1";
+	if (sModel[0] != '\0') return sModel;
+
+	// a board's own device tree names it in the root's model or first compatible entry
+	root = IORegistryEntry::fromPath("/", gIODTPlane);
+	if (root != NULL) {
+		if (!pd_root_is_qemu(root)) pd_board_name(root, sModel, sizeof(sModel));
+		root->release();
+	}
+	return sModel[0] != '\0' ? sModel : "QEMU Virtual ARM64";
 }
 
 /*
