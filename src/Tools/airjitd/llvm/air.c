@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "../airjitd.h"
+#include "../ir.h"
 #include "../ops.h"
 #include "../runtime.h"
 #include "../texture.h"
@@ -22,6 +23,8 @@ struct air_fn {
   const char *name;
   // the name after "air." and "fast_"
   const char *op;
+  // the operation ir.h names it
+  struct ir_call call;
 };
 
 typedef int (*air_lowering)(struct air_fn *a);
@@ -218,7 +221,7 @@ int air_runtime(unsigned i, char *name, size_t len, void **impl) {
   if (!(m = air_math_at(i - (unsigned)PD_ARRAY_LEN(runtime_fns))))
     return 0;
 
-  snprintf(name, len, "pd_rt_math_%s_%u", m->op, m->arity);
+  snprintf(name, len, "pd_rt_math_%s_%u", ir_op_name(m->id), m->arity);
   *impl = (void *)m->impl.f1;
   return 1;
 }
@@ -478,23 +481,9 @@ static LLVMValueRef air_math_native(struct air_fn *a, const struct air_math_op *
   }
 }
 
-// air.[fast_]<op>.<type> on half or float scalars and vectors, from the table in ops.c
+// air.[fast_]<op>.<type> on half or float scalars and vectors, ir.h's math ops as ops.c implements them
 static int air_math(struct air_fn *a) {
-  const char *end = strchr(a->op, '.');
-  const struct air_math_op *m;
-  LLVMTypeKind ek = LLVMGetTypeKind(elem_type(a->retty));
-  char op[24];
-  size_t ol;
-
-  if (!end || (ol = (size_t)(end - a->op)) >= sizeof(op))
-    return AIR_SKIP;
-
-  if (ek != LLVMHalfTypeKind && ek != LLVMFloatTypeKind)
-    return AIR_SKIP;
-
-  memcpy(op, a->op, ol);
-  op[ol] = 0;
-  m = air_math_find(op, a->np);
+  const struct air_math_op *m = air_math_of(a->call.op);
 
   if (!m)
     return AIR_SKIP;
@@ -780,10 +769,14 @@ static int air_imageblock_write(struct air_fn *a) {
 // air.get_<width|height|depth|num_mip_levels|array_size>_texture_<type>(tex[, lod])
 static int air_texture_size(struct air_fn *a) {
   LLVMTypeRef i32 = air_i32(a), pts[3] = { air_ptr(a), i32, i32 };
-  unsigned what = a->op[4] == 'w' ? 0 : a->op[4] == 'h' ? 1 : a->op[4] == 'd' ? 2 : a->op[4] == 'n' ? 3 : 4;
+  static const char *const queries[] = { "get_width_", "get_height_", "get_depth_", "get_num_mip_levels_",
+                                         "get_array_size_" };
+  unsigned what;
   LLVMValueRef args[3], r;
 
-  if (a->np < 1)
+  for (what = 0; what < PD_ARRAY_LEN(queries) && strncmp(a->op, queries[what], strlen(queries[what])); what++) {
+  }
+  if (a->np < 1 || what == PD_ARRAY_LEN(queries))
     return AIR_SKIP;
 
   air_begin(a);
@@ -1257,65 +1250,41 @@ static int air_simd(struct air_fn *a) {
 }
 
 // matched in order against the name after "air." and "fast_", the first that does not skip wins
-static const struct {
-  const char *prefix;
-  int exact;
-  air_lowering lower;
-} lowerings[] = {
-  { "convert.", 0, air_convert },
-  { "unpack.", 0, air_unpack },
-  { "", 0, air_math },
-  { "dot.", 0, air_dot },
-  { "any.v", 0, air_any },
-  { "all.v", 0, air_any },
-  { "min.", 0, air_int_minmax },
-  { "max.", 0, air_int_minmax },
-  { "clamp.", 0, air_int_minmax },
-  { "abs.s.", 0, air_int_abs },
-  { "abs.u.", 0, air_int_abs },
-  { "dfdx.", 0, air_deriv },
-  { "dfdy.", 0, air_deriv },
-  { "fwidth.", 0, air_deriv },
-  { "discard_fragment", 1, air_discard },
-  { "fmax3.", 0, air_minmax3 },
-  { "fmin3.", 0, air_minmax3 },
-  { "fmed3.", 0, air_minmax3 },
-  { "sample_texture_", 0, air_sample },
-  { "wg.barrier", 0, air_barrier },
-  { "mem_barrier", 0, air_barrier },
-  { "simdgroup.barrier", 0, air_barrier },
-  { "imageblock_data", 1, air_imageblock_data },
-  { "write_imageblock_slice_to_texture_2d.", 0, air_imageblock_write },
-  { "get_width_texture_", 0, air_texture_size },
-  { "get_height_texture_", 0, air_texture_size },
-  { "get_depth_texture_", 0, air_texture_size },
-  { "get_num_mip_levels_texture_", 0, air_texture_size },
-  { "get_array_size_texture_", 0, air_texture_size },
-  { "read_texture_", 0, air_texture_rw },
-  { "write_texture_", 0, air_texture_rw },
-  { "load.implicit_imageblock.", 0, air_ib_load },
-  { "store.implicit_imageblock.", 0, air_ib_store },
-  { "quad_shuffle", 0, air_quad },
-  { "quad_broadcast.", 0, air_quad },
-  { "mul_hi.", 0, air_int_bits },
-  { "clz.", 0, air_int_bits },
-  { "ctz.", 0, air_int_bits },
-  { "popcount.", 0, air_int_bits },
-  { "reverse_bits.", 0, air_int_bits },
-  { "rotate.", 0, air_int_bits },
-  { "abs_diff.", 0, air_int_bits },
-  { "add_sat.", 0, air_int_bits },
-  { "sub_sat.", 0, air_int_bits },
-  { "extract_bits.", 0, air_int_bits },
-  { "insert_bits.", 0, air_int_bits },
-  { "pack.", 0, air_pack },
-  { "atomic.", 0, air_atomic },
-  { "simd_", 0, air_simd },
+// each ir.h operation's lowering
+static const air_lowering lowerings[IR_END] = {
+  [IR_CONVERT] = air_convert,
+  [IR_UNPACK] = air_unpack,
+  [IR_PACK] = air_pack,
+  [IR_DOT] = air_dot,
+  [IR_ANY] = air_any,
+  [IR_ALL] = air_any,
+  [IR_INT_MINMAX] = air_int_minmax,
+  [IR_INT_ABS] = air_int_abs,
+  [IR_INT_BITS] = air_int_bits,
+  [IR_MINMAX3] = air_minmax3,
+  [IR_DERIV] = air_deriv,
+  [IR_DISCARD] = air_discard,
+  [IR_SAMPLE] = air_sample,
+  [IR_TEX_READ] = air_texture_rw,
+  [IR_TEX_WRITE] = air_texture_rw,
+  [IR_TEX_QUERY] = air_texture_size,
+  [IR_BARRIER_WG] = air_barrier,
+  [IR_BARRIER_SIMD] = air_barrier,
+  [IR_MEM_BARRIER] = air_barrier,
+  [IR_QUAD] = air_quad,
+  [IR_SIMD] = air_simd,
+  [IR_ATOMIC] = air_atomic,
+  [IR_IB_DATA] = air_imageblock_data,
+  [IR_IB_WRITE] = air_imageblock_write,
+  [IR_IB_LOAD] = air_ib_load,
+  [IR_IB_STORE] = air_ib_store,
 };
 
 int air_lower(LLVMModuleRef mod, LLVMValueRef fn, const char *name, unsigned *flags) {
   struct air_fn a = { 0 };
-  unsigned i;
+  LLVMTypeKind ek;
+  air_lowering lower;
+  int rc;
 
   a.ctx = LLVMGetModuleContext(mod);
   a.mod = mod;
@@ -1323,24 +1292,18 @@ int air_lower(LLVMModuleRef mod, LLVMValueRef fn, const char *name, unsigned *fl
   a.retty = LLVMGetReturnType(LLVMGlobalGetValueType(fn));
   a.np = LLVMCountParams(fn);
   a.name = name;
-  a.op = name + 4;
+  ek = LLVMGetTypeKind(elem_type(a.retty));
+  if (ir_parse(name, a.np, ek == LLVMHalfTypeKind || ek == LLVMFloatTypeKind, &a.call))
+    return -2;
+  a.op = a.call.name;
 
-  if (!strncmp(a.op, "fast_", 5))
-    a.op += 5;
-
-  for (i = 0; i < PD_ARRAY_LEN(lowerings); i++) {
-    size_t n = strlen(lowerings[i].prefix);
-    int rc;
-
-    if (lowerings[i].exact ? strcmp(a.op, lowerings[i].prefix) : strncmp(a.op, lowerings[i].prefix, n))
-      continue;
-
-    rc = lowerings[i].lower(&a);
-    if (rc != AIR_SKIP) {
-      *flags |= a.flags;
-      return rc;
-    }
-  }
-
-  return -2;
+  lower = ir_is_math(a.call.op) ? air_math : lowerings[a.call.op];
+  // the caller logs the name as having no runtime
+  if (!lower)
+    return -2;
+  rc = lower(&a);
+  if (rc == AIR_SKIP)
+    return -2;
+  *flags |= a.flags;
+  return rc;
 }

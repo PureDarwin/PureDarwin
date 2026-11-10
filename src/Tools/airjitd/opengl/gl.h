@@ -5,7 +5,10 @@
 
 #define PD_GL_FALLBACK 1
 
+// nonzero when OpenGL is the chosen backend (see select.h)
 int pd_gl_enabled(void);
+// brings the context up: nonzero when it is ready
+int pd_gl_available(void);
 int pd_gl_compute(struct PDComputeRequest *r, uint8_t *base, uint32_t size);
 int pd_gl_clear(const struct PDDrawTex *t, const float color[4], uint8_t *base, uint32_t size);
 int pd_gl_draw(struct PDDrawRequest *r, uint8_t *base, uint32_t size);
@@ -22,5 +25,7 @@ int pd_gl_present_copy(uint32_t off, void *destination, uint32_t pitch);
 int pd_gl_present_copy_async(uint32_t off, void *destination, uint32_t pitch,
                              void **ready, uint32_t *ready_w, uint32_t *ready_h);
 void pd_gl_dirty(uint32_t off, uint32_t len);
+// a command buffer ended: the CPU may write shared memory before the next
+void pd_gl_finish(void);
 
 #endif

@@ -24,7 +24,7 @@
 // AIRJITD_CACHE in the environment moves it, an empty value turns it off
 #define PD_CACHE_DIR "/private/var/db/airjitd"
 #define PD_CACHE_MAGIC 0x4353414au
-#define PD_CACHE_VERSION 2
+#define PD_CACHE_VERSION 3
 #define PD_CACHE_MAX_OBJ (64u << 20)
 
 struct cache_header {

@@ -76,6 +76,18 @@ void logv(const char *fmt, ...) {
   va_end(ap);
 }
 
+// per-draw detail, at verbose level 2 (AIRJITD_VERBOSE=2)
+void logv2(const char *fmt, ...) {
+  va_list ap;
+
+  if (pd_log_verbose < 2)
+    return;
+
+  va_start(ap, fmt);
+  vlog(fmt, ap);
+  va_end(ap);
+}
+
 void pd_note(const char *fmt, ...) {
   size_t used = strlen(note);
   va_list ap;

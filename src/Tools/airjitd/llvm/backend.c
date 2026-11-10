@@ -104,6 +104,18 @@ static int parse_module(const struct pd_metallib *lib, LLVMContextRef *ctx, LLVM
     return PD_ERR_PARSE;
   }
 
+  // AIR's own sections (air.fc_initializer, air.static_init) mean nothing to a Mach-O target, which
+  // wants segment,section names
+  for (LLVMValueRef g = LLVMGetFirstGlobal(*mod); g; g = LLVMGetNextGlobal(g)) {
+    const char *sec = LLVMGetSection(g);
+    if (sec && !strncmp(sec, "air.", 4))
+      LLVMSetSection(g, "");
+  }
+  for (LLVMValueRef f = LLVMGetFirstFunction(*mod); f; f = LLVMGetNextFunction(f)) {
+    const char *sec = LLVMGetSection(f);
+    if (sec && !strncmp(sec, "air.", 4))
+      LLVMSetSection(f, "");
+  }
   return 0;
 }
 

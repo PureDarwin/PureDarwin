@@ -1,5 +1,7 @@
 #include "glsl.h"
 
+unsigned pd_glsl_draw_version = 150;
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -72,7 +74,7 @@ int pd_glsl_source(const uint32_t *words, size_t nwords, const struct a2s_reflec
   CROSS(spvc_context_parse_spirv(context, words, nwords, &ir));
   CROSS(spvc_context_create_compiler(context, SPVC_BACKEND_GLSL, ir, SPVC_CAPTURE_MODE_TAKE_OWNERSHIP, &compiler));
   CROSS(spvc_compiler_create_compiler_options(compiler, &options));
-  CROSS(spvc_compiler_options_set_uint(options, SPVC_COMPILER_OPTION_GLSL_VERSION, kernel ? 430 : 150));
+  CROSS(spvc_compiler_options_set_uint(options, SPVC_COMPILER_OPTION_GLSL_VERSION, kernel ? 430 : pd_glsl_draw_version));
   CROSS(spvc_compiler_options_set_bool(options, SPVC_COMPILER_OPTION_GLSL_ES, SPVC_FALSE));
   CROSS(spvc_compiler_options_set_bool(options, SPVC_COMPILER_OPTION_GLSL_VULKAN_SEMANTICS, SPVC_FALSE));
   CROSS(spvc_compiler_options_set_bool(options, SPVC_COMPILER_OPTION_GLSL_ENABLE_420PACK_EXTENSION, SPVC_FALSE));

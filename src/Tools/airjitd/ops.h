@@ -1,8 +1,10 @@
 #ifndef AIRJITD_OPS_H
 #define AIRJITD_OPS_H
 
-// the elementwise AIR math operations, air.[fast_]<op>.<type>, each with the C function
-// that implements it on one float. A backend may lower the native hint to its own code instead
+#include "ir.h"
+
+// the cpu's implementation of ir.h's math ops: the C function on one float, or the native hint
+// the LLVM lowering turns into its own code
 enum air_native {
   AIR_CALL,
   AIR_FLOOR,
@@ -28,7 +30,7 @@ typedef float (*air_fn2)(float, float);
 typedef float (*air_fn3)(float, float, float);
 
 struct air_math_op {
-  const char *op;
+  enum ir_op id;
   unsigned arity;
   enum air_native native;
   union {
@@ -38,10 +40,10 @@ struct air_math_op {
   } impl;
 };
 
-// op is the name between "air.[fast_]" and the type suffix
-const struct air_math_op *air_math_find(const char *op, unsigned arity);
+// the op's implementation, 0 when the cpu has none
+const struct air_math_op *air_math_of(enum ir_op op);
 
-// the table's entry i, 0 past the end
+// entry i in ir.h's order, 0 past the end or where the cpu has none
 const struct air_math_op *air_math_at(unsigned i);
 
 #endif

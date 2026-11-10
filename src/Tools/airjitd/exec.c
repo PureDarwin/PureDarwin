@@ -1,5 +1,8 @@
 #include "exec.h"
 
+#include <stdio.h>
+#include <string.h>
+
 #include "airjitd.h"
 #include "compute.h"
 #include "raster.h"
@@ -13,6 +16,23 @@
 
 int pd_exec_on_vulkan;
 int pd_exec_on_opengl;
+
+// a job the GPU executor declined runs on the CPU: each new reason is logged by name, repeats are counted
+static void fell_back(const char *backend, const char *job, const char *why) {
+  static char last[256];
+  static unsigned repeats;
+
+  if (!why || !*why)
+    why = "no reason given";
+  if (!strncmp(last, why, sizeof(last) - 1)) {
+    if (!(++repeats & (repeats - 1)))
+      logmsg("AIRJITD: %s %s on the cpu x%u: %s", backend, job, repeats + 1, why);
+    return;
+  }
+  snprintf(last, sizeof(last), "%s", why);
+  repeats = 0;
+  logmsg("AIRJITD: %s declined a %s, run on the cpu: %s", backend, job, why);
+}
 
 #ifdef AIRJITD_VULKAN
 // the bytes a texture spans with its levels and slices
@@ -35,11 +55,66 @@ static void dirty_tex(const struct PDDrawTex *t, const struct PDTexLayout *l) {
     pd_vk_dirty(t->off, tex_span(t, l));
 }
 
-// a job the Vulkan executor declined runs on the CPU against the bridge: resident copies the GPU wrote come
-// back first, and what the CPU may have written is uploaded again before the GPU next reads it
-static void before_cpu(void) {
-  if (pd_vk_resident())
-    pd_vk_sync_all();
+// a job the Vulkan executor declined runs on the CPU against the bridge: GPU-written copies of what it binds
+// come back first, what the CPU may have written is uploaded again before the GPU next reads it
+static void sync_buffers(const struct PDDrawBuffer *buf, unsigned n) {
+  for (unsigned i = 0; i < n; i++) {
+    if (buf[i].size)
+      pd_vk_sync(buf[i].off, buf[i].size);
+  }
+}
+
+static void sync_textures(const struct PDDrawTex *tex, const struct PDTexLayout *layout, unsigned n) {
+  for (unsigned i = 0; i < n; i++) {
+    uint32_t span;
+
+    if (!tex[i].w)
+      continue;
+    if ((span = tex_span(&tex[i], layout ? &layout[i] : 0)))
+      pd_vk_sync(tex[i].off, span);
+  }
+}
+
+static void before_cpu_draw(const struct PDDrawRequest *r) {
+  const struct PDDrawExt *x = pd_draw_ext(r);
+  struct PDDrawTex target = { 0, r->targetOff, r->tw, r->th, r->tbpr, r->tfmt };
+
+  if (!pd_vk_resident())
+    return;
+  sync_buffers(r->vbuf, PD_DRAW_BUFS);
+  sync_buffers(r->fbuf, PD_DRAW_BUFS);
+  if (r->indexed) {
+    uint64_t bytes = (uint64_t)r->count * (x && r->indexBytes == 4 ? 4 : 2);
+
+    if (bytes <= UINT32_MAX)
+      pd_vk_sync(r->indexOff, (uint32_t)bytes);
+  }
+  pd_vk_sync(target.off, tex_span(&target, 0));
+  sync_textures(r->ftex, x ? x->ftexLayout : 0, PD_DRAW_TEXS);
+  for (unsigned i = 1; i < 4; i++)
+    sync_textures(&r->rt[i], 0, 1);
+  if (x) {
+    sync_textures(x->vtex, x->vtexLayout, PD_DRAW_TEXS);
+    sync_textures(&x->depth, 0, 1);
+  }
+}
+
+static void before_cpu_compute(const struct PDDrawBuffer *buf, const struct PDDrawTex *tex,
+                               const struct PDComputeExt *x, const struct PDDrawTex *rt) {
+  if (!pd_vk_resident())
+    return;
+  sync_buffers(buf, PD_CS_BUFS);
+  sync_textures(tex, x ? x->texLayout : 0, PD_DRAW_TEXS);
+  if (rt)
+    sync_textures(rt, 0, 4);
+}
+
+// the CPU may have written any buffer it bound: managed and private ones are never hashed, so they hear it here
+static void modified_buffers(const struct PDDrawBuffer *buf, unsigned n) {
+  for (unsigned i = 0; i < n; i++) {
+    if (buf[i].size)
+      pd_vk_modified(buf[i].off, buf[i].size);
+  }
 }
 
 static void after_cpu_draw(const struct PDDrawRequest *r) {
@@ -48,6 +123,7 @@ static void after_cpu_draw(const struct PDDrawRequest *r) {
 
   if (!pd_vk_resident())
     return;
+  modified_buffers(r->vbuf, PD_DRAW_BUFS), modified_buffers(r->fbuf, PD_DRAW_BUFS);
   dirty_tex(&t, 0);
   for (unsigned k = 1; k < 4; k++) {
     dirty_tex(&r->rt[k], 0);
@@ -56,9 +132,11 @@ static void after_cpu_draw(const struct PDDrawRequest *r) {
     dirty_tex(&x->depth, 0);
 }
 
-static void after_cpu_compute(const struct PDDrawTex *tex, const struct PDComputeExt *x, const struct PDDrawTex *rt) {
+static void after_cpu_compute(const struct PDDrawBuffer *buf, const struct PDDrawTex *tex, const struct PDComputeExt *x,
+                              const struct PDDrawTex *rt) {
   if (!pd_vk_resident())
     return;
+  modified_buffers(buf, PD_CS_BUFS);
   for (unsigned k = 0; k < PD_DRAW_TEXS; k++) {
     dirty_tex(&tex[k], x ? &x->texLayout[k] : 0);
   }
@@ -76,7 +154,7 @@ int pd_exec_draw(struct PDDrawRequest *r, uint8_t *base, uint32_t size, uint32_t
 #ifdef AIRJITD_OPENGL
   if (pd_gl_enabled()) {
 #ifdef AIRJITD_VULKAN
-    before_cpu();
+    before_cpu_draw(r);
 #endif
     rc = pd_gl_draw(r, base, size);
     if (rc != PD_GL_FALLBACK) {
@@ -86,13 +164,16 @@ int pd_exec_draw(struct PDDrawRequest *r, uint8_t *base, uint32_t size, uint32_t
 #endif
       return rc;
     }
+    fell_back("opengl", "draw", pd_gl_reason());
   }
 #endif
 #ifdef AIRJITD_OPENGL
   if (pd_gl_sync(0, UINT32_MAX)) return PD_ERR_BUFFER;
 #endif
 #ifdef AIRJITD_VULKAN
-  if (pd_vk_enabled() && (rc = pd_vk_draw(r, base, size)) != PD_VK_FALLBACK) {
+  if (pd_vk_enabled() && (rc = pd_vk_draw(r, base, size)) == PD_VK_FALLBACK)
+    fell_back("vulkan", "draw", pd_vk_reason());
+  else if (pd_vk_enabled()) {
     pd_exec_on_vulkan = 1;
 #ifdef AIRJITD_OPENGL
     if (!rc) pd_gl_dirty(0, UINT32_MAX);
@@ -105,7 +186,7 @@ int pd_exec_draw(struct PDDrawRequest *r, uint8_t *base, uint32_t size, uint32_t
       (rc = ready(r->ffn, base + r->fmOff, r->fmSize, "fragment stage")))
     return rc;
 #ifdef AIRJITD_VULKAN
-  before_cpu();
+  before_cpu_draw(r);
   rc = pd_run_draw(r, base, size, serial);
   after_cpu_draw(r);
 #ifdef AIRJITD_OPENGL
@@ -129,16 +210,17 @@ int pd_exec_compute(struct PDComputeRequest *r, uint8_t *base, uint32_t size, pd
 #ifdef AIRJITD_OPENGL
   if (pd_gl_enabled()) {
 #ifdef AIRJITD_VULKAN
-    before_cpu();
+    before_cpu_compute(r->buf, r->tex, pd_compute_ext(&r->ext), 0);
 #endif
     rc=pd_gl_compute(r,base,size);
     if (rc!=PD_GL_FALLBACK) {
       pd_exec_on_opengl=rc==0;
 #ifdef AIRJITD_VULKAN
-      if (!rc) after_cpu_compute(r->tex,pd_compute_ext(&r->ext),0);
+      if (!rc) after_cpu_compute(r->buf, r->tex, pd_compute_ext(&r->ext), 0);
 #endif
       return rc;
     }
+    fell_back("opengl", "compute", pd_gl_reason());
   }
 #endif
 
@@ -146,7 +228,9 @@ int pd_exec_compute(struct PDComputeRequest *r, uint8_t *base, uint32_t size, pd
   if (pd_gl_sync(0, UINT32_MAX)) return PD_ERR_BUFFER;
 #endif
 #ifdef AIRJITD_VULKAN
-  if (pd_vk_enabled() && (rc = pd_vk_compute(r, base, size)) != PD_VK_FALLBACK) {
+  if (pd_vk_enabled() && (rc = pd_vk_compute(r, base, size)) == PD_VK_FALLBACK)
+    fell_back("vulkan", "compute", pd_vk_reason());
+  else if (pd_vk_enabled()) {
     pd_exec_on_vulkan = 1;
 #ifdef AIRJITD_OPENGL
     if (!rc) pd_gl_dirty(0, UINT32_MAX);
@@ -158,9 +242,9 @@ int pd_exec_compute(struct PDComputeRequest *r, uint8_t *base, uint32_t size, pd
   if ((rc = ready(r->fn, base + r->mOff, r->mSize, "kernel")))
     return rc;
 #ifdef AIRJITD_VULKAN
-  before_cpu();
+  before_cpu_compute(r->buf, r->tex, pd_compute_ext(&r->ext), 0);
   rc = pd_run_compute(r, base, size);
-  after_cpu_compute(r->tex, pd_compute_ext(&r->ext), 0);
+  after_cpu_compute(r->buf, r->tex, pd_compute_ext(&r->ext), 0);
 #ifdef AIRJITD_OPENGL
   if (!rc) pd_gl_dirty(0, UINT32_MAX);
 #endif
@@ -180,10 +264,16 @@ int pd_exec_tile(struct PDTileRequest *r, uint8_t *base, uint32_t size, pd_stage
   pd_exec_on_vulkan = 0;
   pd_exec_on_opengl = 0;
 #ifdef AIRJITD_OPENGL
+  if (pd_gl_enabled())
+    fell_back("opengl", "tile dispatch", "no tile function executor in the opengl backend");
+#endif
+#ifdef AIRJITD_OPENGL
   if (pd_gl_sync(0, UINT32_MAX)) return PD_ERR_BUFFER;
 #endif
 #ifdef AIRJITD_VULKAN
-  if (pd_vk_enabled() && (rc = pd_vk_tile(r, base, size)) != PD_VK_FALLBACK) {
+  if (pd_vk_enabled() && (rc = pd_vk_tile(r, base, size)) == PD_VK_FALLBACK)
+    fell_back("vulkan", "tile", pd_vk_reason());
+  else if (pd_vk_enabled()) {
     pd_exec_on_vulkan = 1;
 #ifdef AIRJITD_OPENGL
     if (!rc) pd_gl_dirty(0, UINT32_MAX);
@@ -195,9 +285,9 @@ int pd_exec_tile(struct PDTileRequest *r, uint8_t *base, uint32_t size, pd_stage
   if ((rc = ready(r->fn, base + r->mOff, r->mSize, "tile kernel")))
     return rc;
 #ifdef AIRJITD_VULKAN
-  before_cpu();
+  before_cpu_compute(r->buf, r->tex, pd_compute_ext(&r->ext), r->rt);
   rc = pd_run_tile(r, base, size);
-  after_cpu_compute(r->tex, pd_compute_ext(&r->ext), r->rt);
+  after_cpu_compute(r->buf, r->tex, pd_compute_ext(&r->ext), r->rt);
 #ifdef AIRJITD_OPENGL
   if (!rc) pd_gl_dirty(0, UINT32_MAX);
 #endif

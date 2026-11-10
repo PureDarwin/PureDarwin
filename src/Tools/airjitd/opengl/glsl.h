@@ -7,6 +7,9 @@
 struct pd_gl_pair { unsigned texture; int sampler; uint32_t flags; char name[64]; };
 struct pd_gl_bindings { struct pd_gl_pair pair[64]; unsigned count; };
 
+// the GLSL version draws are written for, from the context (150 on GL 3.2, 330 once it has 3.3)
+extern unsigned pd_glsl_draw_version;
+
 // Caller owns source. Buffer blocks and push members have stable names for
 // binding after linking; no Vulkan descriptors or shader-storage extensions.
 int pd_glsl_source(const uint32_t *words, size_t nwords, const struct a2s_reflect *r,

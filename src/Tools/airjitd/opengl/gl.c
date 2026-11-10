@@ -9,12 +9,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "gl.h"
 #include "glsl.h"
+#include "../pagemod.h"
 #include "../texture.h"
 #include "../blend.h"
 #include "../airjitd.h"
+#include "../select.h"
 
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 static EGLDisplay display = EGL_NO_DISPLAY;
@@ -22,6 +25,10 @@ static EGLContext context = EGL_NO_CONTEXT;
 static EGLSurface surface = EGL_NO_SURFACE;
 static int state, hardware, compute_supported;
 static GLint max_block, max_bindings, max_texture, max_units;
+// GL 4.3: Metal buffers are shader storage blocks at a byte offset (push word), in buffers kept across draws
+static int storage_mode;
+static GLint64 max_storage_size;
+static GLint max_storage_bindings;
 static char reason[512], renderer[256];
 
 static GLuint last_fbo, last_texture;
@@ -168,10 +175,19 @@ int pd_gl_hardware(void) {
   return hardware;
 }
 
-int pd_gl_enabled(void) {
-  const char *e = getenv("AIRJITD_OPENGL");
+static int start(void);
 
-  return e && *e && strcmp(e, "0");
+int pd_gl_enabled(void) {
+  return pd_backend_choose() == PD_BACKEND_OPENGL;
+}
+
+int pd_gl_available(void) {
+  int rc;
+
+  pthread_mutex_lock(&mutex);
+  rc = start();
+  pthread_mutex_unlock(&mutex);
+  return !rc;
 }
 
 static int decline(const char *why) {
@@ -234,7 +250,21 @@ static int start(void) {
   glGetIntegerv(GL_MAJOR_VERSION, &major);
   glGetIntegerv(GL_MINOR_VERSION, &minor);
   compute_supported = major > 4 || (major == 4 && minor >= 3);
+  pd_glsl_draw_version = major > 3 || (major == 3 && minor >= 3) ? 330 : 150;
+  if (compute_supported && !getenv("AIRJITD_GL_UNIFORM_BUFFERS")) {
+    GLint vs = 0, fs = 0;
+
+    glGetInteger64v(GL_MAX_SHADER_STORAGE_BLOCK_SIZE, &max_storage_size);
+    glGetIntegerv(GL_MAX_VERTEX_SHADER_STORAGE_BLOCKS, &vs);
+    glGetIntegerv(GL_MAX_FRAGMENT_SHADER_STORAGE_BLOCKS, &fs);
+    max_storage_bindings = vs < fs ? vs : fs;
+    storage_mode = max_storage_bindings >= 4 && max_storage_size >= (1 << 24);
+    if (storage_mode)
+      pd_glsl_draw_version = 430;
+  }
   state = 1;
+  // jobs bind the context on whichever thread runs them, so it is left current on none
+  eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
   return 0;
 }
 
@@ -288,6 +318,199 @@ static int span(uint32_t off, uint64_t bytes, uint32_t size) {
   return off <= size && bytes <= (uint64_t)size - off;
 }
 
+
+// a GL buffer per bridge range a job bound, kept across jobs: a range inside one binds it at an offset, only
+// 256 KB chunks whose pages the CPU wrote go up again (pagemod), all of them where the kernel cannot tell
+#define GLRES 256
+#define GLRES_CHUNK (256u << 10)
+#define GLRES_BUDGET ((uint64_t)1536 << 20)
+static struct glres {
+  uint32_t off, size;
+  GLuint obj;
+  // the page generation each chunk was uploaded at, 0 for one never uploaded or reported written
+  uint64_t *gens, used, scanned;
+} glres[GLRES];
+static uint64_t glres_clock, glres_bytes, gl_epoch = 1;
+static uint8_t *glres_base;
+static uint32_t glres_bsize;
+static struct { uint64_t uploads, upload_bytes, created, evicted, upload_us; } glres_stats;
+// where a GL draw's time goes, reported once a second
+static struct { uint64_t draws, total, context, program, buffers, textures, target, attrs, draw, finish; } glprof;
+
+static uint64_t gl_now_us(void) {
+  struct timespec ts;
+
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * 1000000 + (uint64_t)ts.tv_nsec / 1000;
+}
+
+static void gltex_written(uint32_t off, uint32_t len);
+
+static void glres_drop(struct glres *g) {
+  if (!g->obj)
+    return;
+  glDeleteBuffers(1, &g->obj);
+  free(g->gens);
+  glres_bytes -= g->size;
+  memset(g, 0, sizeof(*g));
+}
+
+static void glres_arena(uint8_t *base, uint32_t size) {
+  if (glres_base == base && glres_bsize == size)
+    return;
+  for (unsigned i = 0; i < GLRES; i++)
+    glres_drop(&glres[i]);
+  glres_base = base, glres_bsize = size;
+}
+
+// uploads the chunks the CPU changed since they last went up
+// the whole buffer is checked, once per epoch: a later binding of another part of it is then current too
+static void glres_refresh(struct glres *g) {
+  uint32_t first = 0, last = (g->size - 1) / GLRES_CHUNK, run = UINT32_MAX;
+  int pages;
+
+  if (g->scanned == gl_epoch)
+    return;
+  pages = pagemod_fresh(glres_base, glres_bsize, g->off, g->size) == 0;
+  glBindBuffer(GL_COPY_WRITE_BUFFER, g->obj);
+  for (uint32_t c = first; c <= last + 1; c++) {
+    int stale = 0;
+
+    if (c <= last) {
+      uint32_t at = c * GLRES_CHUNK, n = g->size - at < GLRES_CHUNK ? g->size - at : GLRES_CHUNK;
+
+      stale = !g->gens[c] || !pages || pagemod_newest(g->off + at, n) > g->gens[c];
+      if (stale) {
+        g->gens[c] = pages ? pagemod_now() : 0;
+        if (run == UINT32_MAX)
+          run = c;
+      }
+    }
+    // one call for each run of changed chunks, at most 4 MB: zink maps a staging copy of each upload whole
+    if (run != UINT32_MAX && (!stale || c + 1 - run >= (4u << 20) / GLRES_CHUNK)) {
+      uint32_t stop = stale ? c + 1 : c;
+      uint32_t at = run * GLRES_CHUNK, end = stop * GLRES_CHUNK < g->size ? stop * GLRES_CHUNK : g->size;
+
+      uint64_t t0 = gl_now_us();
+
+      glBufferSubData(GL_COPY_WRITE_BUFFER, at, end - at, glres_base + g->off + at);
+      glres_stats.upload_us += gl_now_us() - t0;
+      glres_stats.uploads++, glres_stats.upload_bytes += end - at;
+      run = UINT32_MAX;
+    }
+  }
+  glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+  g->scanned = pages ? gl_epoch : 0;
+}
+
+// the resident buffer holding [off, off + len), current, and where the range starts in it
+static struct glres *glres_use(uint32_t off, uint32_t len, uint32_t *inner) {
+  struct glres *g = 0, *free_slot = 0, *lru = 0;
+  uint32_t n = len ? len : 4;
+
+  for (unsigned i = 0; i < GLRES; i++) {
+    struct glres *e = &glres[i];
+
+    if (!e->obj) {
+      if (!free_slot)
+        free_slot = e;
+      continue;
+    }
+    if (off >= e->off && (uint64_t)off + n <= (uint64_t)e->off + e->size && (!g || e->size < g->size))
+      g = e;
+    if (!lru || e->used < lru->used)
+      lru = e;
+  }
+  if (!g) {
+    if ((storage_mode && n > (uint64_t)max_storage_size) || n > GLRES_BUDGET)
+      return 0;
+    while (glres_bytes + n > GLRES_BUDGET || !free_slot) {
+      struct glres *v = 0;
+
+      for (unsigned i = 0; i < GLRES; i++) {
+        if (glres[i].obj && (!v || glres[i].used < v->used))
+          v = &glres[i];
+      }
+      if (!v)
+        return 0;
+      if (!free_slot)
+        free_slot = v;
+      glres_drop(v);
+      glres_stats.evicted++;
+    }
+    (void)lru;
+    g = free_slot;
+    g->off = off, g->size = n;
+    g->gens = calloc((n + GLRES_CHUNK - 1) / GLRES_CHUNK, sizeof(*g->gens));
+    if (!g->gens)
+      return 0;
+    glGenBuffers(1, &g->obj);
+    glBindBuffer(GL_COPY_WRITE_BUFFER, g->obj);
+    glBufferData(GL_COPY_WRITE_BUFFER, n, NULL, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+    glres_bytes += n, glres_stats.created++;
+  }
+  g->used = ++glres_clock;
+  glres_refresh(g);
+  *inner = off - g->off;
+  return g;
+}
+
+// the CPU wrote [off, off + len): the chunks over it go up again
+static void glres_written(uint32_t off, uint32_t len) {
+  for (unsigned i = 0; i < GLRES; i++) {
+    struct glres *g = &glres[i];
+    uint32_t lo, hi;
+
+    if (!g->obj || !len || (uint64_t)off >= (uint64_t)g->off + g->size || (uint64_t)off + len <= g->off)
+      continue;
+    lo = off > g->off ? off - g->off : 0;
+    hi = (uint64_t)off + len - g->off < g->size ? off + len - g->off : g->size;
+    for (uint32_t c = lo / GLRES_CHUNK; c <= (hi - 1) / GLRES_CHUNK; c++)
+      g->gens[c] = 0;
+    g->scanned = 0;
+  }
+}
+
+// the GPU wrote [off, off + len) of g: it comes back to the bridge, and its chunks stay current
+static void glres_read_back(struct glres *g, uint32_t off, uint32_t len) {
+  uint32_t at = off - g->off;
+  int pages = pagemod_fresh(glres_base, glres_bsize, off, len) == 0;
+
+  gltex_written(off, len);
+  glBindBuffer(GL_COPY_READ_BUFFER, g->obj);
+  glGetBufferSubData(GL_COPY_READ_BUFFER, at, len, glres_base + off);
+  glBindBuffer(GL_COPY_READ_BUFFER, 0);
+  // the copy dirtied those pages: settled, chunks the copy covers whole are what the GPU holds
+  if (pages && !pagemod_settle(off, len)) {
+    for (uint32_t c = (at + GLRES_CHUNK - 1) / GLRES_CHUNK; (uint64_t)(c + 1) * GLRES_CHUNK <= at + (uint64_t)len; c++)
+      g->gens[c] = pagemod_now();
+  }
+  // a partly covered chunk, and other residents over the same bytes, go up again
+  {
+    uint32_t keep_lo = at, keep_hi = at + len;
+    for (unsigned i = 0; i < GLRES; i++) {
+      struct glres *o = &glres[i];
+
+      if (o == g || !o->obj)
+        continue;
+      if ((uint64_t)off < (uint64_t)o->off + o->size && (uint64_t)off + len > o->off) {
+        uint32_t lo = off > o->off ? off - o->off : 0;
+        uint32_t hi = (uint64_t)off + len - o->off < o->size ? off + len - o->off : o->size;
+
+        for (uint32_t c = lo / GLRES_CHUNK; c <= (hi - 1) / GLRES_CHUNK; c++)
+          o->gens[c] = 0;
+        o->scanned = 0;
+      }
+    }
+    if (keep_lo % GLRES_CHUNK)
+      g->gens[keep_lo / GLRES_CHUNK] = 0;
+    if (keep_hi % GLRES_CHUNK && keep_hi < g->size)
+      g->gens[keep_hi / GLRES_CHUNK] = 0;
+    g->scanned = 0;
+  }
+}
+
 struct stage {
   struct a2s_reflect reflect;
   uint32_t *words;
@@ -325,7 +548,7 @@ static struct cached_program *find_program(const struct PDDrawRequest *r, const 
     if (!c->program || c->vertex_size != r->vmSize || c->fragment_size != r->fmSize)
       continue;
 
-    for (unsigned k = 0; k < PD_DRAW_BUFS; k++) {
+    for (unsigned k = 0; !storage_mode && k < PD_DRAW_BUFS; k++) {
       if (c->lengths[0][k] != r->vbuf[k].size / 4 + (r->vbuf[k].size % 4 != 0) ||
           c->lengths[1][k] != r->fbuf[k].size / 4 + (r->fbuf[k].size % 4 != 0))
         match = 0;
@@ -403,7 +626,7 @@ static int keep_program(GLuint program, const struct stage *s, const struct PDDr
 static int translate(struct stage *s, const uint8_t *mtl, uint32_t bytes, const struct PDDrawBuffer *buffers,
                      uint32_t size, unsigned index) {
   struct a2s_options options = { .quantize_half = 1, .narrow_loads = 1, .kill_discard = 1,
-                                 .set = index, .uniform_words = s->lengths };
+                                 .set = index, .uniform_words = storage_mode ? 0 : s->lengths };
 
   for (unsigned i = 0; i < PD_DRAW_BUFS; i++) {
     if (!span(buffers[i].off, buffers[i].size, size))
@@ -433,7 +656,7 @@ static int translate(struct stage *s, const uint8_t *mtl, uint32_t bytes, const 
     if (r->metal >= PD_DRAW_BUFS)
       return decline("unsupported buffer binding");
 
-    if ((uint64_t)s->lengths[r->metal] * 16 > (uint32_t)max_block)
+    if (!storage_mode && (uint64_t)s->lengths[r->metal] * 16 > (uint32_t)max_block)
       return decline("Metal buffer exceeds the device's uniform block limit");
   }
 
@@ -479,6 +702,40 @@ static int compile(struct stage *s, const struct a2s_reflect *fragment, unsigned
 static int bind_buffers(GLuint program, struct stage *s, unsigned stage, const struct PDDrawBuffer *buffers,
                         const uint8_t *base, GLuint *objects, unsigned *nobjects) {
   char name[96];
+  uint32_t offsets[PD_DRAW_BUFS] = { 0 };
+
+  if (storage_mode) {
+    for (unsigned i = 0; i < s->reflect.nres; i++) {
+      const struct a2s_resource *r = &s->reflect.res[i];
+      const struct PDDrawBuffer *b;
+      struct glres *g;
+      GLuint index, binding;
+
+      if (r->kind != A2S_RES_BUFFER)
+        continue;
+      b = &buffers[r->metal];
+      snprintf(name, sizeof(name), "PDStage%uBuffer%u", stage, r->binding);
+      index = glGetProgramResourceIndex(program, GL_SHADER_STORAGE_BLOCK, name);
+      if (index == GL_INVALID_INDEX)
+        continue;
+      if (*nobjects >= (unsigned)max_storage_bindings || *nobjects >= 2 * PD_DRAW_BUFS)
+        return decline("shader storage binding limit exceeded");
+      if (!(g = glres_use(b->off, b->size, &offsets[r->metal])))
+        return decline("no room for a resident buffer");
+      binding = *nobjects;
+      objects[binding] = 0, ++*nobjects;
+      glShaderStorageBlockBinding(program, index, binding);
+      glBindBufferBase(GL_SHADER_STORAGE_BUFFER, binding, g->obj);
+    }
+    for (unsigned i = 0; i < s->reflect.npc; i++) {
+      if (s->reflect.pc[i].kind != A2S_PC_BUFFER_OFFSET)
+        return decline("unexpected draw push constant");
+      snprintf(name, sizeof(name), "pd_stage%u_push.word%u", stage, i);
+      glUniform1ui(glGetUniformLocation(program, name),
+                   s->reflect.pc[i].metal < PD_DRAW_BUFS ? offsets[s->reflect.pc[i].metal] : 0);
+    }
+    return 0;
+  }
 
   for (unsigned i = 0; i < s->reflect.nres; i++) {
     const struct a2s_resource *r = &s->reflect.res[i];
@@ -542,6 +799,58 @@ static GLenum address_mode(unsigned mode) {
 
 // metal texture rows are addressed from row zero, so sampled textures upload in that order
 // only framebuffer attachments take the render-coordinate flip
+// sampled textures kept across draws: texture bytes change only through calls that report them (pd_gl_dirty), draws
+// into them and compute writes, each of which marks the copies over those bytes stale
+#define GLTEX 512
+static struct gltex {
+  struct PDDrawTex t;
+  struct PDTexLayout l;
+  int layout, stale;
+  uint32_t off, len;
+  GLenum target;
+  GLuint obj;
+  uint64_t used;
+} gltex[GLTEX];
+static uint64_t gltex_clock;
+static struct { uint64_t hits, misses, upload_us; } gltex_stats;
+
+static struct gltex *gltex_find(const struct PDDrawTex *t, const struct PDTexLayout *l, int layout) {
+  for (unsigned i = 0; i < GLTEX; i++) {
+    struct gltex *e = &gltex[i];
+
+    if (e->obj && !e->stale && e->t.off == t->off && e->t.w == t->w && e->t.h == t->h && e->t.fmt == t->fmt &&
+        e->t.bpr == t->bpr && e->layout == layout && (!layout || !memcmp(&e->l, l, sizeof(*l))))
+      return e;
+  }
+  return 0;
+}
+
+// a slot for a new copy: a stale one over the same texture, a free one, else the least recently used
+static struct gltex *gltex_slot(const struct PDDrawTex *t) {
+  struct gltex *best = 0;
+
+  for (unsigned i = 0; i < GLTEX; i++) {
+    struct gltex *e = &gltex[i];
+
+    if (e->obj && e->stale && e->t.off == t->off)
+      return e;
+    if (!e->obj && (!best || best->obj))
+      best = e;
+    else if (e->obj && (!best || (best->obj && e->used < best->used)))
+      best = e;
+  }
+  return best;
+}
+
+static void gltex_written(uint32_t off, uint32_t len) {
+  for (unsigned i = 0; i < GLTEX; i++) {
+    struct gltex *e = &gltex[i];
+
+    if (e->obj && len && off < e->off + e->len && e->off < off + len)
+      e->stale = 1;
+  }
+}
+
 static int bind_textures(GLuint program, const struct stage *stage, const struct PDDrawTex *textures,
                          const struct PDTexLayout *layouts, uint8_t *base, uint32_t size, GLuint *objects,
                          GLuint *samplers, unsigned *count) {
@@ -618,8 +927,23 @@ static int bind_textures(GLuint program, const struct stage *stage, const struct
       return decline("unsupported compressed texture format");
 
     unit = (*count)++;
-    glGenTextures(1, &objects[unit]);
     glActiveTexture(GL_TEXTURE0 + unit);
+    {
+      struct gltex *hit = gltex_find(t, l, layout);
+
+      // the render target is the GPU's: its bytes in the bridge may be behind
+      if (hit && !(gpu_newer && overlaps_target(hit->off, hit->len))) {
+        hit->used = ++gltex_clock, gltex_stats.hits++;
+        objects[unit] = 0;
+        glBindTexture(target, hit->obj);
+        goto sampler;
+      }
+    }
+    uint64_t tex_t0 = gl_now_us();
+    uint32_t tex_end = t->off;
+
+    gltex_stats.misses++;
+    glGenTextures(1, &objects[unit]);
     glBindTexture(target, objects[unit]);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexParameteri(target, GL_TEXTURE_BASE_LEVEL, 0);
@@ -665,6 +989,8 @@ static int bind_textures(GLuint program, const struct stage *stage, const struct
 
         if (gpu_newer && overlaps_target((uint32_t)off, (uint32_t)length) && sync_target())
           return PD_ERR_BUFFER;
+        if (off + length > tex_end)
+          tex_end = (uint32_t)(off + length);
       }
 
       bytes = (size_t)w * h * depth * out_bpp;
@@ -703,6 +1029,24 @@ static int bind_textures(GLuint program, const struct stage *stage, const struct
       free(pixels);
     }
 
+    // kept for later draws, the slot's old copy goes
+    {
+      struct gltex *e = gltex_slot(t);
+
+      if (e) {
+        if (e->obj)
+          glDeleteTextures(1, &e->obj);
+        e->t = *t, e->layout = layout, e->stale = 0;
+        if (layout)
+          e->l = *l;
+        e->off = t->off, e->len = tex_end - t->off, e->target = target;
+        e->obj = objects[unit], e->used = ++gltex_clock;
+        objects[unit] = 0;
+      }
+      gltex_stats.upload_us += gl_now_us() - tex_t0;
+    }
+
+  sampler:
     flags = pair->flags ? pair->flags : 0xc0000000u;
     mip = PD_SAMP_MIP(flags);
     glGenSamplers(1, &samplers[unit]);
@@ -895,6 +1239,7 @@ static int bind_attributes(const struct PDDrawRequest *r, const struct PDDrawExt
     char kind;
     uint64_t index, offset;
     GLuint object;
+    uint32_t buffer_start;
     GLenum type;
 
     if (loc >= PD_VERTEX_ATTRS || loc >= (unsigned)max)
@@ -915,10 +1260,16 @@ static int bind_attributes(const struct PDDrawRequest *r, const struct PDDrawExt
     if ((uint64_t)at->offset + index * layout->stride + width > b->size || layout->stride > INT32_MAX)
       return decline("vertex attribute reads outside its buffer");
 
-    glGenBuffers(1, &object);
-    objects[(*count)++] = object;
-    glBindBuffer(GL_ARRAY_BUFFER, object);
-    glBufferData(GL_ARRAY_BUFFER, b->size, base + b->off, GL_STREAM_DRAW);
+    {
+      uint32_t inner;
+      struct glres *g = glres_use(b->off, b->size, &inner);
+
+      if (!g)
+        return decline("no room for a resident vertex buffer");
+      object = g->obj;
+      glBindBuffer(GL_ARRAY_BUFFER, object);
+      buffer_start = inner;
+    }
 
     type = kind == 'h' ? GL_HALF_FLOAT :
            kind == 'f' ? GL_FLOAT :
@@ -926,7 +1277,7 @@ static int bind_attributes(const struct PDDrawRequest *r, const struct PDDrawExt
            kind == 'B' ? GL_UNSIGNED_INT_2_10_10_10_REV :
            kind == 's' || kind == 'S' ? (bytes == 1 ? GL_BYTE : bytes == 2 ? GL_SHORT : GL_INT) :
            bytes == 1 ? GL_UNSIGNED_BYTE : bytes == 2 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT;
-    offset = at->offset + (layout->step == 2 ? (uint64_t)ext->baseInstance * layout->stride : 0);
+    offset = buffer_start + at->offset + (layout->step == 2 ? (uint64_t)ext->baseInstance * layout->stride : 0);
 
     if (reflect->vin[i].elem != 'f') {
       glVertexAttribIPointer(loc, n, type, layout->stride, (void *)(uintptr_t)offset);
@@ -963,6 +1314,9 @@ int pd_gl_draw(struct PDDrawRequest *r, uint8_t *base, uint32_t size) {
   double vx, vy, vw, vh;
   unsigned mask;
   GLsizei instances;
+  uint32_t index_start = 0;
+
+  uint64_t tp = gl_now_us(), t_start = tp;
 
   pthread_mutex_lock(&mutex);
   if (start())
@@ -1027,6 +1381,8 @@ int pd_gl_draw(struct PDDrawRequest *r, uint8_t *base, uint32_t size) {
     goto done;
   }
 
+  glprof.context += gl_now_us() - tp, tp = gl_now_us();
+  glres_arena(base, size);
   hit = find_program(r, base);
   if (hit) {
     program = hit->program;
@@ -1079,6 +1435,7 @@ int pd_gl_draw(struct PDDrawRequest *r, uint8_t *base, uint32_t size) {
     cached = keep_program(program, stages, r, base);
   }
 
+  glprof.program += gl_now_us() - tp, tp = gl_now_us();
   glUseProgram(program);
   glUniform1i(glGetUniformLocation(program, "SPIRV_Cross_BaseInstance"), ext ? ext->baseInstance : 0);
   glUniform1i(glGetUniformLocation(program, "SPIRV_Cross_BaseVertex"), ext ? ext->baseVertex : 0);
@@ -1086,6 +1443,7 @@ int pd_gl_draw(struct PDDrawRequest *r, uint8_t *base, uint32_t size) {
       bind_buffers(program, &stages[1], 1, r->fbuf, base, buffers, &nbuf))
     goto done;
 
+  glprof.buffers += gl_now_us() - tp, tp = gl_now_us();
   rc = bind_textures(program, &stages[0], ext ? ext->vtex : 0, ext ? ext->vtexLayout : 0, base, size, tex_objects,
                      sampler_objects, &ntex);
   if (!rc)
@@ -1094,6 +1452,7 @@ int pd_gl_draw(struct PDDrawRequest *r, uint8_t *base, uint32_t size) {
   if (rc)
     goto done;
 
+  glprof.textures += gl_now_us() - tp, tp = gl_now_us();
   rc = PD_GL_FALLBACK;
   glActiveTexture(GL_TEXTURE0 + ntex);
   target_format = color_format(r->tfmt);
@@ -1152,17 +1511,23 @@ int pd_gl_draw(struct PDDrawRequest *r, uint8_t *base, uint32_t size) {
     goto done;
   }
 
+  glprof.target += gl_now_us() - tp, tp = gl_now_us();
   glGenVertexArrays(1, &vao);
   glBindVertexArray(vao);
   if (bind_attributes(r, ext, &stages[0].reflect, base, attribute_objects, &nattrs))
     goto done;
 
   if (r->indexed) {
-    glGenBuffers(1, &indices);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, (size_t)r->count * r->indexBytes, base + r->indexOff, GL_STREAM_DRAW);
+    struct glres *g = glres_use(r->indexOff, r->count * r->indexBytes, &index_start);
+
+    if (!g) {
+      decline("no room for a resident index buffer");
+      goto done;
+    }
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g->obj);
   }
 
+  glprof.attrs += gl_now_us() - tp, tp = gl_now_us();
   vx = r->viewport[0], vy = r->viewport[1];
   vw = r->viewport[2], vh = r->viewport[3];
   if (vw <= 0 || vh <= 0) {
@@ -1195,7 +1560,7 @@ int pd_gl_draw(struct PDDrawRequest *r, uint8_t *base, uint32_t size) {
   instances = r->instances ? r->instances : 1;
   if (r->indexed)
     glDrawElementsInstancedBaseVertex(primitive[r->prim], r->count, r->indexBytes == 4 ? GL_UNSIGNED_INT : GL_UNSIGNED_SHORT,
-                                      0, instances, ext ? ext->baseVertex : 0);
+                                      (void *)(uintptr_t)index_start, instances, ext ? ext->baseVertex : 0);
   else
     glDrawArraysInstanced(primitive[r->prim], ext ? ext->firstVertex : 0, r->count, instances);
 
@@ -1207,13 +1572,16 @@ int pd_gl_draw(struct PDDrawRequest *r, uint8_t *base, uint32_t size) {
     goto done;
   }
 
+  glprof.draw += gl_now_us() - tp, tp = gl_now_us();
   if (depth_object)
     glReadPixels(0, 0, r->tw, r->th, GL_DEPTH_STENCIL, GL_FLOAT_32_UNSIGNED_INT_24_8_REV, depth_pixels);
 
   if (!resident_mode)
     glReadPixels(0, 0, r->tw, r->th, format, pixel_type, pixels);
 
-  glFinish();
+  // only a readback needs the GPU done: glReadPixels into client memory waits for it already
+  if (depth_object || !resident_mode)
+    glFinish();
   error = glGetError();
   if (error != GL_NO_ERROR) {
     snprintf(reason, sizeof(reason), "OpenGL readback failed: 0x%04x", error);
@@ -1257,6 +1625,12 @@ int pd_gl_draw(struct PDDrawRequest *r, uint8_t *base, uint32_t size) {
   gpu_newer = resident_mode, cpu_newer = 0;
   fbo = texture = 0;
   rc = 0;
+  // copies of textures over the target's bytes are old now
+  gltex_written(r->targetOff, (uint32_t)((uint64_t)r->tbpr * r->th));
+  if (ext && ext->depth.w)
+    gltex_written(ext->depth.off, ext->depth.bpr * ext->depth.h);
+  glprof.finish += gl_now_us() - tp;
+  glprof.draws++, glprof.total += gl_now_us() - t_start;
 
 done:
   if (state > 0) {
@@ -1621,11 +1995,41 @@ int pd_gl_sync(uint32_t off, uint32_t len) {
 
 void pd_gl_dirty(uint32_t off, uint32_t len) {
   pthread_mutex_lock(&mutex);
+  glres_written(off, len);
+  gltex_written(off, len);
   if (overlaps_target(off, len)) {
     cpu_newer = 1;
     gpu_newer = 0;
   }
 
+  pthread_mutex_unlock(&mutex);
+}
+
+// a command buffer ended: the CPU may write shared memory before the next one, pages are asked about again
+void pd_gl_finish(void) {
+  static uint64_t last;
+  uint64_t now = gl_now_us();
+
+  pthread_mutex_lock(&mutex);
+  gl_epoch++;
+  pagemod_epoch();
+  if (now - last >= 1000000) {
+    fprintf(stderr, "AIRJITD: gl %llu draws %llu ms: context %llu program %llu buffers %llu textures %llu target %llu "
+            "attributes %llu draw %llu readback/finish %llu; residents %llu new %llu evicted, %llu uploads %llu MB %llu ms; "
+            "textures %llu hits %llu new %llu ms\n",
+            (unsigned long long)glprof.draws, (unsigned long long)glprof.total / 1000,
+            (unsigned long long)glprof.context / 1000, (unsigned long long)glprof.program / 1000,
+            (unsigned long long)glprof.buffers / 1000, (unsigned long long)glprof.textures / 1000,
+            (unsigned long long)glprof.target / 1000, (unsigned long long)glprof.attrs / 1000,
+            (unsigned long long)glprof.draw / 1000, (unsigned long long)glprof.finish / 1000,
+            (unsigned long long)glres_stats.created, (unsigned long long)glres_stats.evicted,
+            (unsigned long long)glres_stats.uploads, (unsigned long long)(glres_stats.upload_bytes >> 20),
+            (unsigned long long)glres_stats.upload_us / 1000, (unsigned long long)gltex_stats.hits,
+            (unsigned long long)gltex_stats.misses, (unsigned long long)gltex_stats.upload_us / 1000);
+    memset(&glprof, 0, sizeof(glprof)), memset(&glres_stats, 0, sizeof(glres_stats));
+    memset(&gltex_stats, 0, sizeof(gltex_stats));
+    last = now;
+  }
   pthread_mutex_unlock(&mutex);
 }
 
@@ -1646,7 +2050,9 @@ int pd_gl_compute(struct PDComputeRequest *r, uint8_t *base, uint32_t size) {
   char *source = 0;
   GLuint shader = 0, program = 0, buffer = 0;
   uint8_t *packed = 0;
-  uint32_t lo = UINT32_MAX, hi = 0, length;
+  uint32_t lo = UINT32_MAX, hi = 0, length, inner[PD_CS_BUFS + 1] = { 0 };
+  struct glres *res_of[PD_CS_BUFS] = { 0 }, *span_res = 0;
+  int shared = 0;
   int rc = PD_GL_FALLBACK;
   uint64_t threads = 1;
   GLuint groups[3];
@@ -1664,8 +2070,10 @@ int pd_gl_compute(struct PDComputeRequest *r, uint8_t *base, uint32_t size) {
     goto done;
   }
 
-  if (!eglMakeCurrent(display, surface, surface, context))
+  if (!eglMakeCurrent(display, surface, surface, context)) {
+    decline("cannot bind OpenGL executor context");
     goto done;
+  }
 
   while (glGetError() != GL_NO_ERROR) {
   }
@@ -1734,10 +2142,18 @@ int pd_gl_compute(struct PDComputeRequest *r, uint8_t *base, uint32_t size) {
   if (lo == UINT32_MAX)
     lo = hi = 0;
 
-  // one shared upload keeps aliasing between metal buffer ranges
+  // buffers over shared bytes share one resident buffer, so a write through one is seen through the other
   length = hi - lo;
   glGetInteger64v(GL_MAX_SHADER_STORAGE_BLOCK_SIZE, &max_storage);
-  if (length > 64 * 1024 * 1024 || length > (uint64_t)max_storage) {
+  for (unsigned i = 0; i < reflect.nres && !shared; i++) {
+    for (unsigned j = i + 1; j < reflect.nres; j++) {
+      const struct PDDrawBuffer *a = &r->buf[reflect.res[i].metal], *b = &r->buf[reflect.res[j].metal];
+
+      if (a->off < b->off + b->size && b->off < a->off + a->size)
+        shared = 1;
+    }
+  }
+  if (shared && (length > (uint64_t)max_storage)) {
     decline("compute buffer span exceeds device limit");
     goto done;
   }
@@ -1782,10 +2198,22 @@ int pd_gl_compute(struct PDComputeRequest *r, uint8_t *base, uint32_t size) {
   }
 
   glUseProgram(program);
-  glGenBuffers(1, &buffer);
-  glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffer);
-  glBufferData(GL_SHADER_STORAGE_BUFFER, length ? length : 4, base + lo, GL_STREAM_DRAW);
+  glres_arena(base, size);
   glGetIntegerv(GL_MAX_SHADER_STORAGE_BUFFER_BINDINGS, &max_ssbo);
+  if (shared && !(span_res = glres_use(lo, length, &inner[PD_CS_BUFS]))) {
+    decline("no room for a resident compute buffer");
+    goto done;
+  }
+  for (unsigned i = 0; i < reflect.nres; i++) {
+    unsigned m = reflect.res[i].metal;
+
+    if (shared) {
+      res_of[m] = span_res, inner[m] = inner[PD_CS_BUFS] + r->buf[m].off - lo;
+    } else if (!(res_of[m] = glres_use(r->buf[m].off, r->buf[m].size, &inner[m]))) {
+      decline("no room for a resident compute buffer");
+      goto done;
+    }
+  }
 
   for (unsigned i = 0; i < reflect.nres; i++) {
     char name[96];
@@ -1802,7 +2230,7 @@ int pd_gl_compute(struct PDComputeRequest *r, uint8_t *base, uint32_t size) {
     }
 
     glShaderStorageBlockBinding(program, index, i);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, i, buffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, i, res_of[reflect.res[i].metal]->obj);
   }
 
   for (unsigned i = 0; i < reflect.npc; i++) {
@@ -1811,7 +2239,7 @@ int pd_gl_compute(struct PDComputeRequest *r, uint8_t *base, uint32_t size) {
     char name[96];
 
     if (p->kind == A2S_PC_BUFFER_OFFSET) {
-      value = r->buf[p->metal].off - lo;
+      value = p->metal < PD_CS_BUFS ? inner[p->metal] : 0;
     } else {
       unsigned axis = p->kind - A2S_PC_GRID_X;
       uint64_t v = r->threads ? r->grid[axis] : r->grid[axis] * r->tpg[axis];
@@ -1835,25 +2263,17 @@ int pd_gl_compute(struct PDComputeRequest *r, uint8_t *base, uint32_t size) {
 
   glDispatchCompute(groups[0], groups[1], groups[2]);
   glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
-  glFinish();
 
-  packed = malloc(length ? length : 4);
-  if (!packed) {
-    rc = PD_ERR_BUFFER;
-    goto done;
-  }
-
-  glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, length, packed);
-  if (glGetError() != GL_NO_ERROR) {
-    decline("compute execution/readback failed");
-    goto done;
-  }
-
+  // what it wrote comes back (glGetBufferSubData waits for the dispatch), nothing else does
   for (unsigned i = 0; i < reflect.nres; i++) {
     if (reflect.res[i].access & A2S_WRITE) {
       const struct PDDrawBuffer *b = &r->buf[reflect.res[i].metal];
 
-      memcpy(base + b->off, packed + b->off - lo, b->size);
+      glres_read_back(res_of[reflect.res[i].metal], b->off, b->size);
+      if (glGetError() != GL_NO_ERROR) {
+        decline("compute execution/readback failed");
+        goto done;
+      }
       if (overlaps_target(b->off, b->size)) {
         cpu_newer = 1;
         gpu_newer = 0;

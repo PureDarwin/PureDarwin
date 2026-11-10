@@ -45,6 +45,7 @@ void pd_log_attach(mach_port_t conn);
 int pd_log_bootarg_verbose(void);
 void pd_job_blame(uint32_t id);
 void logv(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+void logv2(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 // monotonic microseconds, for timing jobs
 uint64_t pd_now_us(void);
