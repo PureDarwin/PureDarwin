@@ -1421,6 +1421,12 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
 
 @implementation InstallerController
 
+// the app quits with its last window, which macOS asks the delegate for
+- (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)app
+{
+    return YES;
+}
+
 - (void)buildMenu
 {
     NSMenu *mainMenu = [[NSMenu alloc] initWithTitle:@"MainMenu"];
