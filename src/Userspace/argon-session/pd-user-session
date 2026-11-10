@@ -1,0 +1,17 @@
+#!/bin/sh
+# pd-user-session - the desktop for the person who just logged in, run by loginwindow as that person
+# Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
+# its own process group, so Log Out ends everything started from here
+
+# the Dock draws the desktop picture, the menu bar serves every app's menus, both before the first app
+/System/Library/CoreServices/Dock.app/Contents/MacOS/Dock &
+/System/Library/CoreServices/pddecor.app/Contents/MacOS/pddecor 2>/dev/null &
+/System/Library/CoreServices/MenuBar.app/Contents/MacOS/MenuBar &
+menubar=$!
+/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal &
+
+# the session lasts as long as the menu bar, and whatever it leaves behind goes with it
+wait $menubar
+trap '' TERM
+kill -TERM 0
