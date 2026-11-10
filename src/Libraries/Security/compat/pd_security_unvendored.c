@@ -1,6 +1,8 @@
 #include <Security/Security.h>
 #include <Security/SecTask.h>
 #include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -48,6 +50,32 @@ AuthorizationCopyRights(AuthorizationRef authorization,
     (void) flags;
     if ( authorizedRights )  *authorizedRights = NULL;
     return ( geteuid() == 0 ) ? errAuthorizationSuccess : errAuthorizationDenied;
+}
+
+// no rights database is kept, so no right is defined and none can be added
+OSStatus AuthorizationRightGet(const char *rightName, CFDictionaryRef *rightDefinition);
+OSStatus AuthorizationRightSet(AuthorizationRef authRef, const char *rightName, CFTypeRef rightDefinition,
+                               CFStringRef descriptionKey, CFBundleRef bundle, CFStringRef localeTableName);
+
+OSStatus
+AuthorizationRightGet(const char *rightName, CFDictionaryRef *rightDefinition)
+{
+    (void) rightName;
+    if ( rightDefinition )  *rightDefinition = NULL;
+    return errAuthorizationDenied;
+}
+
+OSStatus
+AuthorizationRightSet(AuthorizationRef authRef, const char *rightName, CFTypeRef rightDefinition,
+                      CFStringRef descriptionKey, CFBundleRef bundle, CFStringRef localeTableName)
+{
+    (void) authRef;
+    (void) rightName;
+    (void) rightDefinition;
+    (void) descriptionKey;
+    (void) bundle;
+    (void) localeTableName;
+    return errAuthorizationDenied;
 }
 
 OSStatus
@@ -180,13 +208,65 @@ SecKeychainSearchCreateFromAttributes(CFTypeRef keychainOrArray,
     return errSecItemNotFound;
 }
 
+// the system domain is the root store trustd anchors on, user and admin domains hold nothing
 OSStatus
 SecTrustSettingsCopyCertificates(SecTrustSettingsDomain domain,
                                  CFArrayRef *certArray)
 {
-    (void) domain;
+    static const char table_path[] = "/System/Library/Security/Certificates.bundle/Contents/Resources/certsTable.data";
+    CFMutableArrayRef certs;
+    uint8_t *table;
+    size_t size, pos;
+    FILE *file;
+
     if ( certArray )  *certArray = NULL;
-    return errSecNoTrustSettings;
+    if (domain != kSecTrustSettingsDomainSystem)
+        return errSecNoTrustSettings;
+    if ((file = fopen(table_path, "rb")) == NULL)
+        return errSecNoTrustSettings;
+    fseek(file, 0, SEEK_END);
+    size = (size_t)ftell(file);
+    rewind(file);
+    table = malloc(size);
+    if (table == NULL || fread(table, 1, size, file) != size) {
+        free(table);
+        fclose(file);
+        return errSecIO;
+    }
+    fclose(file);
+
+    // each record is a uint32 record length, a uint32 DER length and the DER
+    certs = CFArrayCreateMutable(NULL, 0, &kCFTypeArrayCallBacks);
+    for (pos = 0; pos + 8 <= size;) {
+        uint32_t record, der;
+        SecCertificateRef cert;
+        CFDataRef data;
+
+        memcpy(&record, table + pos, 4);
+        memcpy(&der, table + pos + 4, 4);
+        if (record < 8 || der > record - 8 || pos + record > size)
+            break;
+        data = CFDataCreate(NULL, table + pos + 8, der);
+        cert = data ? SecCertificateCreateWithData(NULL, data) : NULL;
+        if (data)
+            CFRelease(data);
+        if (cert) {
+            CFArrayAppendValue(certs, cert);
+            CFRelease(cert);
+        }
+        pos += record;
+    }
+    free(table);
+
+    if (CFArrayGetCount(certs) == 0) {
+        CFRelease(certs);
+        return errSecNoTrustSettings;
+    }
+    if (certArray)
+        *certArray = certs;
+    else
+        CFRelease(certs);
+    return errSecSuccess;
 }
 
 OSStatus

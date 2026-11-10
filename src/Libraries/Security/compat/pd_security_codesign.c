@@ -11,6 +11,8 @@
  * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
  */
 #include <CoreFoundation/CoreFoundation.h>
+#include <CoreFoundation/CFRuntime.h>
+#include <dispatch/dispatch.h>
 #include <Security/Security.h>
 #include "../apple/OSX/libsecurity_codesigning/lib/CSCommon.h"
 #include <CommonCrypto/CommonDigest.h>
@@ -460,8 +462,91 @@ SecIdentityRef SecIdentityCopyPreferred(CFStringRef name, CFArrayRef keyUsage, C
 }
 
 // no trust settings are stored in any domain yet
+// system roots carry no settings, which means trusted for every use, the other domains are empty
 OSStatus SecTrustSettingsCopyTrustSettings(SecCertificateRef certRef, SecTrustSettingsDomain domain, CFArrayRef *trustSettings)
 {
     if (trustSettings) *trustSettings = NULL;
-    return errSecItemNotFound;
+    if (certRef == NULL || trustSettings == NULL) return errSecParam;
+    if (domain != kSecTrustSettingsDomainSystem) return errSecItemNotFound;
+
+    *trustSettings = CFArrayCreate(NULL, NULL, 0, &kCFTypeArrayCallBacks);
+    return errSecSuccess;
+}
+
+// a requirement keeps its text, requirements are not evaluated
+OSStatus SecRequirementCreateWithString(CFStringRef text, SecCSFlags flags, SecRequirementRef *requirement)
+{
+    if (text == NULL || requirement == NULL) return errSecParam;
+    *requirement = (SecRequirementRef)CFStringCreateCopy(NULL, text);
+    return errSecSuccess;
+}
+
+OSStatus SecRequirementCopyString(SecRequirementRef requirement, SecCSFlags flags, CFStringRef *text)
+{
+    if (requirement == NULL || text == NULL) return errSecParam;
+    *text = CFStringCreateCopy(NULL, (CFStringRef)requirement);
+    return errSecSuccess;
+}
+
+// a requirement that cannot be evaluated is not met, so a sandbox entitlement check reads as not sandboxed
+OSStatus SecStaticCodeCheckValidityWithErrors(SecStaticCodeRef staticCode, SecCSFlags flags, SecRequirementRef requirement,
+    CFErrorRef *errors)
+{
+    OSStatus status = SecStaticCodeCheckValidity(staticCode, flags, NULL);
+
+    if (status == errSecSuccess && requirement != NULL) status = errSecCSReqFailed;
+    if (status != errSecSuccess && errors) *errors = CFErrorCreate(NULL, kCFErrorDomainOSStatus, status, NULL);
+    return status;
+}
+
+// the implicit designated requirement of an ad hoc or self-signed binary names its identifier
+OSStatus SecCodeCopyDesignatedRequirement(SecStaticCodeRef code, SecCSFlags flags, SecRequirementRef *requirement)
+{
+    CFDictionaryRef info = NULL;
+    CFStringRef identifier, text;
+    OSStatus status;
+
+    if (requirement == NULL) return errSecParam;
+    status = SecCodeCopySigningInformation(code, flags, &info);
+    if (status != errSecSuccess) return status;
+    identifier = CFDictionaryGetValue(info, kSecCodeInfoIdentifier);
+    if (identifier == NULL) {
+        CFRelease(info);
+        return errSecCSUnsigned;
+    }
+    text = CFStringCreateWithFormat(NULL, NULL, CFSTR("identifier \"%@\""), identifier);
+    CFRelease(info);
+    *requirement = (SecRequirementRef)text;
+    return errSecSuccess;
+}
+
+// trusted applications are macOS keychain ACL entries and the keychain library is not built,
+// so the type exists for callers to compare against and no instance is made
+static CFTypeID trustedApplicationTypeID;
+static const CFRuntimeClass trustedApplicationClass = { 0, "SecTrustedApplication", NULL, NULL, NULL, NULL, NULL, NULL, NULL };
+
+static void registerTrustedApplication(void)
+{
+    trustedApplicationTypeID = _CFRuntimeRegisterClass(&trustedApplicationClass);
+}
+
+CFTypeID SecTrustedApplicationGetTypeID(void)
+{
+    static dispatch_once_t once;
+
+    dispatch_once(&once, ^{ registerTrustedApplication(); });
+    return trustedApplicationTypeID;
+}
+
+OSStatus SecTrustedApplicationCopyRequirement(CFTypeRef appRef, SecRequirementRef *requirement)
+{
+    if (requirement) *requirement = NULL;
+    return errSecUnimplemented;
+}
+
+// requirement sets come from the keychain's application lists, which do not exist here
+OSStatus SecRequirementsCopyString(CFTypeRef input, uint32_t flags, CFStringRef *text)
+{
+    if (text) *text = NULL;
+    return errSecUnimplemented;
 }
