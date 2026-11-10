@@ -63,6 +63,11 @@ public:
                          IOMemoryDescriptor *buffer, UInt64 bufOff,
                          bool allowShort = false);
 
+    // the largest data phase botTransfer moves through its reusable buffer
+    static const UInt32 kBOTMaxTransferBytes = 1024 * 1024;
+    // one dmesg line on how bot completions arrive, by interrupt or by the polling timers
+    void logBOTState(const char *why);
+
 private:
     // one tracked USB device slot that turned out to be mass storage
     struct MSCDevice {
@@ -115,8 +120,20 @@ private:
         UInt8                      cc;
         UInt32                     residual;
     };
+    // an isochronous transfer: one isoch TD per frame, done once every frame has reported
+    enum { kIsocMaxTDs = 32, kIsocMaxFrames = 64 };
+    struct IsocTD {
+        IOUSBCompletion            completion;
+        IOMemoryDescriptor       * client;
+        IOBufferMemoryDescriptor * bounce;
+        IOUSBIsocFrame           * frames;
+        UInt32                     numFrames, framesDone, len;
+        UInt64                     trbPhys[kIsocMaxFrames];
+        bool                       done, aborted;
+    };
     struct BulkEndpoint {
-        bool                       valid, in;
+        bool                       valid, in, isoch;
+        IsocTD                   * itd;
         UInt32                     slotId, dci;
         UInt16                     maxPkt;
         IOBufferMemoryDescriptor * ringMem;
@@ -214,6 +231,8 @@ private:
     // serviceEventRing() is the sole event ring consumer (under fEventLock) and files each completion
     // here for its waiter, so concurrent waiters never discard each other's events
     IOLock              * fEventLock;
+    // one bulk-only command at a time, cbw, data and csw must not interleave
+    IOLock              * fBOTLock;
     struct XferCompletion {
         volatile bool pending;
         UInt8         cc;
@@ -268,15 +287,27 @@ private:
     RavynXHCIMassStorageDisk * fDiskNubs[16];
     // one bulk-only command at a time, and unplug takes it to retire an fMSC entry
     IOLock                   * fMSCLock;
+    // dma buffers every bot command reuses under fMSCLock, three contiguous allocations per command
+    // cost about a third of each 4 KiB read
+    IOBufferMemoryDescriptor * fBOTCBWMem;
+    IOBufferMemoryDescriptor * fBOTCSWMem;
+    IOBufferMemoryDescriptor * fBOTDataMem;
+    UInt64                     fBOTCommands;
+    UInt64                     fBOTBytes;
+    uint64_t                   fBOTTime;
 
     InterruptInEndpoint fIntrIn[64][16]; // [slotId][endpoint number]
 
     BulkEndpoint * fBulk[64][32]; // [slotId][dci], guarded by fEventLock
     volatile bool  fBulkThreadStarted;
+    // isochronous rings open, the bulk thread polls fast while there are any
+    volatile SInt32 fIsochOpen;
     volatile bool  fBulkStop;
     static void bulkThread(void *arg, wait_result_t);
     void deliverBulkCompletions();
     bool recordBulkEvent(UInt32 slot, UInt32 dci, UInt64 param, UInt32 status);
+    void deliverIsochCompletions(UInt32 slot, UInt32 dci);
+    void releaseEndpoint(BulkEndpoint *be);
 
     // context addressing is byte offsets scaled by fContextSize (HCCPARAMS1.CSZ, 32 or 64 bytes).
     // input context = control, slot, then endpoints by DCI 1..31, a device context lacks the control
@@ -401,6 +432,8 @@ private:
     void botResetRecovery(UInt32 mscIndex);
     bool botPortReset(UInt32 mscIndex);
     void abortCommandRing(unsigned type);
+    IOBufferMemoryDescriptor *botBuffer(IOBufferMemoryDescriptor **cache, UInt32 cacheLen, UInt32 len);
+    void botBufferDone(IOBufferMemoryDescriptor **cache, IOBufferMemoryDescriptor *mem);
     IOReturn botTransferLocked(UInt32 slotId, const void *cbwCB, UInt8 cbwLen,
                                UInt32 dataLen, bool dataIn,
                                IOMemoryDescriptor *buffer, UInt64 bufOff, bool allowShort);
@@ -413,6 +446,12 @@ public:
     IOReturn bulkSync(UInt32 slotId, UInt8 epNum, bool in, IOMemoryDescriptor *buffer,
                       UInt32 len, UInt32 timeoutMs, UInt32 *done);
     IOReturn abortBulk(UInt32 slotId, UInt8 epNum, bool in, bool reset);
+    // isochronous endpoints share the bulk rings and thread, each frame of a transfer is its own TD
+    bool openIsochEndpoint(UInt32 slotId, UInt8 epNum, bool in, UInt16 maxPkt, UInt8 bInterval, UInt8 usbSpeed);
+    IOReturn submitIsoch(UInt32 slotId, UInt8 epNum, bool in, IOMemoryDescriptor *buffer, UInt32 numFrames,
+                         IOUSBIsocFrame *frames, IOUSBCompletion *completion);
+    // the controller's microframe index, a 14-bit counter of 125 us steps
+    UInt32 microframeIndex();
 private:
 
     // set the slot context Hub/NumberOfPorts/TTT via Configure Endpoint (only the A0 flag) so the xHC

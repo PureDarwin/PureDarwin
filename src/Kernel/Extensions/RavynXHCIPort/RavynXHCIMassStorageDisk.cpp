@@ -24,6 +24,7 @@
  */
 
 #include <IOKit/IOLib.h>
+#include <IOKit/IOKitKeys.h>
 #include <IOKit/storage/IOStorage.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include "RavynXHCIMassStorageDisk.h"
@@ -73,8 +74,14 @@ RavynXHCIMassStorageDisk::initWithPort(RavynXHCIPort *parent, UInt32 mscIndex)
             XHCI_Log("usbdisk%u: READ CAPACITY(10) failed", mscIndex);
     }
 
-    XHCI_Log("usbdisk%u init slot=%u vendor=%s product=%s blocks=%llu blksz=%u",
-            mscIndex, fSlotId, fVendorStr, fProductStr, fCapacityBlocks, fBlockSize);
+    // IOBlockStorageDriver splits larger requests, so each fits the port's reusable bot buffer
+    UInt64 maxBlocks = maxTransferBlocks();
+    setProperty(kIOMaximumBlockCountReadKey, maxBlocks, 64);
+    setProperty(kIOMaximumBlockCountWriteKey, maxBlocks, 64);
+
+    XHCI_Log("usbdisk%u init slot=%u vendor=%s product=%s blocks=%llu blksz=%u maxblocks=%llu",
+            mscIndex, fSlotId, fVendorStr, fProductStr, fCapacityBlocks, fBlockSize, maxBlocks);
+    parent->logBOTState("usbdisk init");
     return true;
 }
 
@@ -248,12 +255,28 @@ RavynXHCIMassStorageDisk::doAsyncReadWrite(IOMemoryDescriptor  * buffer,
     const bool isWrite = ((buffer->getDirection() & kIODirectionOut) != 0);
     UInt64 totBytes = nblks * (UInt64)fBlockSize;
 
-    bool ok = scsiReadWrite10(block, (UInt32)nblks, buffer, 0, isWrite);
+    // READ(10) and WRITE(10) carry a 16-bit block count (sbc-3 5.11)
+    const UInt64 maxBlocks = maxTransferBlocks();
+    bool ok = true;
+    for (UInt64 done = 0; ok && done < nblks; ) {
+        UInt64 n = nblks - done;
+        if (n > maxBlocks) n = maxBlocks;
+        ok = scsiReadWrite10(block + done, (UInt32)n, buffer, done * fBlockSize, isWrite);
+        done += n;
+    }
     buffer->complete();
 
     IOReturn ret = ok ? kIOReturnSuccess : kIOReturnIOError;
     IOStorage::complete(completion, ret, ok ? totBytes : 0);
     return kIOReturnSuccess;
+}
+
+UInt64
+RavynXHCIMassStorageDisk::maxTransferBlocks() const
+{
+    UInt64 n = RavynXHCIPort::kBOTMaxTransferBytes / (fBlockSize ? fBlockSize : 512);
+    if (n > 0xffff) n = 0xffff;
+    return n ? n : 1;
 }
 
 IOReturn

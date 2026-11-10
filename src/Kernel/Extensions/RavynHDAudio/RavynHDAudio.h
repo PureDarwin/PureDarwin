@@ -39,6 +39,8 @@ public:
     bool initHardware(IOService *provider) override;
     void stop(IOService *provider) override;
 
+    // how far ahead of LPIB the controller reads a stream, clients write beyond that
+    uint32_t sampleOffset(uint32_t streamIndex);
     // the engine asks for these before it is registered, so coreaudiod finds them with it
     void addControls(IOAudioEngine *engine);
 
@@ -61,10 +63,22 @@ private:
     uint64_t             fPcmPhys;
     uint32_t             fOutStreamIndex;  // which SDn register block is our output stream
     RavynHDAudioEngine   *fEngine;
+    // the capture side: its own stream descriptor, ring and engine, set up when the codec has an adc
+    RavynHDAudioEngine   *fInEngine;
+    IOBufferMemoryDescriptor *fInPcmBuf;
+    IOBufferMemoryDescriptor *fInBdlBuf;
+    uint8_t             *fInPcmVirt;
+    uint32_t             fInStreamIndex;
+    uint16_t             fAdcNid;
+    uint32_t             fCodecVendor;
 
     bool  resetController();
     bool  setupCorbRirb();
     bool  setupOutputStream();
+    bool  setupInputStream();
+    bool  setupStream(uint32_t index, uint32_t tag, IOBufferMemoryDescriptor **pcm, IOBufferMemoryDescriptor **bdl,
+                      uint8_t **virt);
+    void  programInput(uint8_t codecAddr, uint16_t afgNid, uint16_t startNid, uint16_t numNodes, uint16_t outPin);
     uint32_t sendVerb(uint8_t codecAddr, uint16_t nid, uint32_t verb, uint32_t payload);
     bool  enumerateCodec(uint8_t codecAddr);
     bool  programWidgets(uint8_t codecAddr, uint16_t afgNid);

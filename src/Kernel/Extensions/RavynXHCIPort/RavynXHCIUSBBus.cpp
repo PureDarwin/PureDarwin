@@ -36,6 +36,11 @@ IOReturn RavynXHCIUSBBus::UIMOpenPipe(USBDeviceAddress address, UInt8 speed, End
                 return kIOReturnError;
             return kIOReturnSuccess;
 
+        case kUSBIsoc:
+            return fPort->openIsochEndpoint(slotId, endpoint->number, endpoint->direction == kUSBIn,
+                                            endpoint->maxPacketSize, endpoint->interval, speed)
+                       ? kIOReturnSuccess : kIOReturnNoBandwidth;
+
         default:
             return kIOReturnUnsupported; // isoc: no UIM support
     }
@@ -43,12 +48,41 @@ IOReturn RavynXHCIUSBBus::UIMOpenPipe(USBDeviceAddress address, UInt8 speed, End
 
 IOReturn RavynXHCIUSBBus::UIMClosePipe(USBDeviceAddress address, Endpoint *endpoint)
 {
-    // no per-endpoint teardown short of tearing down the slot, so this is a no-op that leaves sibling endpoints alone
+    // an isochronous ring holds bandwidth, a zero-size open gives it back
+    if (endpoint && endpoint->transferType == kUSBIsoc)
+        return fPort->openIsochEndpoint(address, endpoint->number, endpoint->direction == kUSBIn, 0, 0, 0)
+                   ? kIOReturnSuccess : kIOReturnError;
+    // the other types have no per-endpoint teardown short of the slot, so siblings are left alone
     return kIOReturnSuccess;
+}
+
+// frameStart is not honoured, each frame starts as soon as the one before it on the endpoint is done
+IOReturn RavynXHCIUSBBus::IsocIO(IOMemoryDescriptor *buffer, UInt64 frameStart, UInt32 numFrames, void *frameList,
+                                 USBDeviceAddress address, Endpoint *endpoint, IOUSBCompletion *completion)
+{
+    if (!endpoint || endpoint->transferType != kUSBIsoc || !completion || !completion->action)
+        return kIOReturnBadArgument;
+    return fPort->submitIsoch(address, endpoint->number, (endpoint->direction & 0x7f) == kUSBIn, buffer, numFrames,
+                              (IOUSBIsocFrame *)frameList, completion);
+}
+
+IOReturn RavynXHCIUSBBus::IsocIO(IOMemoryDescriptor *buffer, UInt64 frameStart, UInt32 numFrames, void *frameList,
+                                 USBDeviceAddress address, Endpoint *endpoint, IOUSBCompletion *completion,
+                                 UInt32 updateFrequency)
+{
+    return IsocIO(buffer, frameStart, numFrames, frameList, address, endpoint, completion);
+}
+
+// full-speed frames are eight microframes
+UInt64 RavynXHCIUSBBus::GetFrameNumber()
+{
+    return fPort->microframeIndex() >> 3;
 }
 
 IOReturn RavynXHCIUSBBus::UIMAbortPipe(USBDeviceAddress address, Endpoint *endpoint)
 {
+    if (endpoint && endpoint->transferType == kUSBIsoc)
+        return fPort->abortBulk(address, endpoint->number, endpoint->direction == kUSBIn, false);
     if (endpoint && endpoint->transferType == kUSBInterrupt && endpoint->direction == kUSBIn)
         return fPort->abortInterruptEndpoint(address, endpoint->number);
     if (endpoint && endpoint->transferType == kUSBBulk)

@@ -32,7 +32,8 @@ public:
                              volatile uint8_t *regs,
                              uint32_t streamIndex,
                              void *pcmBuffer,
-                             uint32_t pcmBytes);
+                             uint32_t pcmBytes,
+                             bool input = false);
 
     bool initHardware(IOService *provider) override;
     void free() override;
@@ -46,6 +47,10 @@ public:
                                UInt32 firstSampleFrame, UInt32 numSampleFrames,
                                const IOAudioStreamFormat *streamFormat,
                                IOAudioStream *audioStream) override;
+    IOReturn convertInputSamples(const void *sampleBuf, void *destBuf,
+                                 UInt32 firstSampleFrame, UInt32 numSampleFrames,
+                                 const IOAudioStreamFormat *streamFormat,
+                                 IOAudioStream *audioStream) override;
 
     /* ARM-only, and deliberately pure virtual in IOAudioEngine.h - Apple's own
      * comment there notes it "only exists on ARM platforms and which therefore
@@ -63,6 +68,8 @@ private:
     void               *fPcmBuffer;
     uint32_t            fPcmBytes;
     IOAudioStream      *fOutputStream;
+    // a capture engine on an input stream descriptor, with no controls
+    bool                fInput;
     // the controller has no interrupt here, so a poll of LPIB catches each wrap of the ring
     IOTimerEventSource *fWrapTimer;
     UInt32              fLastFrame;

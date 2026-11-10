@@ -1,3 +1,4 @@
+// bulk, interrupt IN and isochronous endpoints get a ring each (no interrupt OUT), USBDeviceAddress is the slot ID
 // RavynXHCIUSBBus: IOUSBController over RavynXHCIPort's slot primitives for devices it doesn't special-case.
 // bulk and interrupt IN endpoints get a ring each (no isoc or interrupt OUT), USBDeviceAddress is the slot ID
 
@@ -35,6 +36,15 @@ public:
                            Endpoint *endpoint, IOUSBCompletion *completion,
                            UInt32 noDataTimeout, UInt32 completionTimeout,
                            IOByteCount reqCount) APPLE_KEXT_OVERRIDE;
+
+    virtual IOReturn IsocIO(IOMemoryDescriptor *buffer, UInt64 frameStart, UInt32 numFrames,
+                            void *frameList, USBDeviceAddress address, Endpoint *endpoint,
+                            IOUSBCompletion *completion = 0) APPLE_KEXT_OVERRIDE;
+    virtual IOReturn IsocIO(IOMemoryDescriptor *buffer, UInt64 frameStart, UInt32 numFrames,
+                            void *frameList, USBDeviceAddress address, Endpoint *endpoint,
+                            IOUSBCompletion *completion, UInt32 updateFrequency) APPLE_KEXT_OVERRIDE;
+    // the bus frame, for class drivers that pace themselves against it
+    virtual UInt64 GetFrameNumber();
 
     virtual IOReturn UIMReadWrite(IOMemoryDescriptor *buffer, USBDeviceAddress address,
                                    Endpoint *endpoint, bool isWrite) APPLE_KEXT_OVERRIDE;

@@ -41,7 +41,7 @@ RavynHDAudioEngine::sdBase() const
 bool
 RavynHDAudioEngine::initWithHDA(RavynHDAudio *device, volatile uint8_t *regs,
                                 uint32_t streamIndex, void *pcmBuffer,
-                                uint32_t pcmBytes)
+                                uint32_t pcmBytes, bool input)
 {
     if (!super::init(NULL)) {
         return false;
@@ -57,6 +57,7 @@ RavynHDAudioEngine::initWithHDA(RavynHDAudio *device, volatile uint8_t *regs,
     fPcmBuffer   = pcmBuffer;
     fPcmBytes    = pcmBytes;
     fOutputStream = NULL;
+    fInput       = input;
 
     return true;
 }
@@ -71,7 +72,7 @@ RavynHDAudioEngine::initHardware(IOService *provider)
         return false;
     }
 
-    setDescription("Intel HD Audio");
+    setDescription(fInput ? "Intel HD Audio Input" : "Intel HD Audio");
 
     /* The DMA ring is the family's sample buffer: clipOutputSamples() writes
      * converted frames straight into it and the hardware reads from it. */
@@ -81,7 +82,7 @@ RavynHDAudioEngine::initHardware(IOService *provider)
     if (fOutputStream == NULL) {
         return false;
     }
-    if (!fOutputStream->initWithAudioEngine(this, kIOAudioStreamDirectionOutput,
+    if (!fOutputStream->initWithAudioEngine(this, fInput ? kIOAudioStreamDirectionInput : kIOAudioStreamDirectionOutput,
                                             1 /* first channel */)) {
         fOutputStream->release();
         fOutputStream = NULL;
@@ -114,7 +115,10 @@ RavynHDAudioEngine::initHardware(IOService *provider)
 
     setSampleRate(&rate);
     setNumSampleFramesPerBuffer(numSampleFrames);
-    fDevice->addControls(this);
+    // how far ahead of the position register the controller fetches, so the HAL writes past it
+    setSampleOffset(fDevice->sampleOffset(fStreamIndex));
+    if (!fInput)
+        fDevice->addControls(this);
 
     fWrapTimer = IOTimerEventSource::timerEventSource(this, wrapTimerFired);
     if (fWrapTimer == NULL || getWorkLoop()->addEventSource(fWrapTimer) != kIOReturnSuccess) {
@@ -158,6 +162,8 @@ RavynHDAudioEngine::performAudioEngineStart()
      * sample counter starts from; the family uses it to derive playback
      * position for clients. It has to happen as close to starting the DMA as
      * possible. */
+    // a run starts from silence, the DMA would otherwise replay what the last run left until new periods land
+    bzero(fPcmBuffer, fPcmBytes);
     takeTimeStamp(false);
 
     volatile uint32_t *ctl = (volatile uint32_t *)(fRegs + sdBase() + SD_CTL_STS);
@@ -258,6 +264,22 @@ RavynHDAudioEngine::clipOutputSamples(const void *mixBuf, void *sampleBuf,
         out[firstSample + i] = (SInt16)(sample * 32767.0f);
     }
 
+    return kIOReturnSuccess;
+}
+
+// the ring's 16-bit samples to the floats a client reads, the destination starts at its first frame
+IOReturn
+RavynHDAudioEngine::convertInputSamples(const void *sampleBuf, void *destBuf,
+                                        UInt32 firstSampleFrame, UInt32 numSampleFrames,
+                                        const IOAudioStreamFormat *streamFormat,
+                                        IOAudioStream *audioStream)
+{
+    UInt32 numChannels = streamFormat->fNumChannels;
+    const SInt16 *in = (const SInt16 *)sampleBuf + firstSampleFrame * numChannels;
+    float *out = (float *)destBuf;
+
+    for (UInt32 i = 0; i < numSampleFrames * numChannels; i++)
+        out[i] = in[i] / 32768.0f;
     return kIOReturnSuccess;
 }
 

@@ -38,6 +38,7 @@ OSDefineMetaClassAndStructors(RavynXHCIPort, IOService);
 
 #define kAssignedAddrKey "assigned-addresses"
 #define kBulkAborted 0xff   // bulk td cc for a transfer cut short by abort
+#define kIsochMissedService 23 // the frame's service interval passed before the td ran
 #define kRingTRBs   256   // TRBs per ring segment, last one reserved for LINK
 
 #define XHCI_DMA_LOG(name, mem) \
@@ -157,6 +158,12 @@ mapBARFromAssignedAddresses(IOPCIDevice         * provider,
 static bool
 sizeAndAssignBAR0(IOPCIDevice *provider, uint64_t *outBase, uint64_t *outSize)
 {
+    // ppnum_t is 32 bits, so nothing past 1<<44 maps. OVMF on a 48-bit host puts BAR0 at 56 TiB,
+    // treat that like an unassigned BAR and move it below 4G
+    if (*outBase >= (1ULL << 44)) {
+        XHCI_Log("BAR0 at 0x%llx is past what the kernel can map, reassigning", (unsigned long long)*outBase);
+        *outBase = 0;
+    }
     const bool haveBase = (*outBase != 0);
     const uint16_t cmd = provider->configRead16(kIOPCIConfigCommand);
     provider->configWrite16(kIOPCIConfigCommand, cmd & ~(uint16_t)0x2 /* memory space */);
@@ -720,22 +727,35 @@ bool RavynXHCIPort::start(IOService *provider)
     XHCI_Log("checkpoint after ring/DCBAA setup: USBCMD=%08x USBSTS=%08x",
             opRead32(XHCI_USBCMD), opRead32(XHCI_USBSTS));
 
-    // try MSI, registered by IOPCIFamily at index 0. waiters poll serviceEventRing() anyway, so a
-    // failure just leaves fInterruptsEnabled false
+    // an msi vector when the pci nub offers one (sources after intx at 0, as in IOVirtIOGPU), else intx.
+    // waiters poll serviceEventRing() anyway, so a failure just leaves fInterruptsEnabled false
     fEventWaitLock = IOLockAlloc();
     fMSCLock = IOLockAlloc();
+    fBOTCBWMem = fBOTCSWMem = fBOTDataMem = NULL;
+    fBOTCommands = fBOTBytes = 0;
+    fBOTTime = 0;
+    int irqSource = 0, irqType = 0;
+    if (fPCI) {
+        int type = 0;
+        for (int i = 1; i < 8 && fPCI->getInterruptType(i, &type) == kIOReturnSuccess; i++) {
+            if (type & kIOInterruptTypePCIMessaged) { irqSource = i; break; }
+        }
+        fPCI->getInterruptType(irqSource, &irqType);
+    }
     fWorkLoop = (fEventWaitLock && (fPCI || fPlatformInterrupt)) ? IOWorkLoop::workLoop() : NULL;
     if (fWorkLoop) {
         fInterruptSource = IOInterruptEventSource::interruptEventSource(
-            this, &RavynXHCIPort::interruptOccurredStatic, fProvider, 0);
+            this, &RavynXHCIPort::interruptOccurredStatic, fProvider, irqSource);
         if (fInterruptSource && fWorkLoop->addEventSource(fInterruptSource) == kIOReturnSuccess) {
             fInterruptSource->enable();
             opWrite32(XHCI_USBCMD, opRead32(XHCI_USBCMD) | XHCI_USBCMD_INTE);
             fInterruptsEnabled = true;
-            XHCI_Log("using %s interrupt (source 0)", fPCI ? "MSI" : "device tree");
+            XHCI_Log("using %s interrupt (source %d type %x)",
+                     !fPCI ? "device tree" : (irqType & kIOInterruptTypePCIMessaged) ? "MSI" : "INTx",
+                     irqSource, irqType);
         } else {
             if (fInterruptSource) { fInterruptSource->release(); fInterruptSource = NULL; }
-            XHCI_Log("MSI registration failed, event ring stays polling-only");
+            XHCI_Log("interrupt source %d registration failed, event ring stays polling-only", irqSource);
         }
     }
 
@@ -865,6 +885,9 @@ void RavynXHCIPort::free()
     if (fWorkLoop) { fWorkLoop->release(); fWorkLoop = NULL; }
     if (fEventWaitLock) { IOLockFree(fEventWaitLock); fEventWaitLock = NULL; }
     if (fMSCLock) { IOLockFree(fMSCLock); fMSCLock = NULL; }
+    OSSafeReleaseNULL(fBOTCBWMem);
+    OSSafeReleaseNULL(fBOTCSWMem);
+    OSSafeReleaseNULL(fBOTDataMem);
     if (fUSBBus) { fUSBBus->release(); fUSBBus = NULL; }
 
     if (fCmdLock) { IOLockFree(fCmdLock); fCmdLock = NULL; }
@@ -1764,6 +1787,11 @@ void RavynXHCIPort::freeSlotResources(UInt32 slotId)
         if (be) {
             be->valid = false;
             for (UInt32 i = 0; i < be->count; i++) {
+                if (be->isoch) {
+                    IsocTD &itd = be->itd[(be->head + i) % kIsocMaxTDs];
+                    if (!itd.done) itd.aborted = itd.done = true;
+                    continue;
+                }
                 BulkTD &td = be->td[(be->head + i) % kBulkMaxTDs];
                 if (!td.done) { td.cc = kBulkAborted; td.done = true; }
             }
@@ -1774,8 +1802,7 @@ void RavynXHCIPort::freeSlotResources(UInt32 slotId)
         IOLockLock(fEventLock);
         fBulk[slotId][dci] = NULL;
         IOLockUnlock(fEventLock);
-        be->ringMem->release();
-        IODelete(be, BulkEndpoint, 1);
+        releaseEndpoint(be);
     }
 
     for (UInt32 ep = 1; ep < 16; ++ep) {
@@ -2927,13 +2954,54 @@ IOReturn RavynXHCIPort::botTransfer(UInt32 slotId,
 {
     if (!fMSCLock) return kIOReturnNoMemory;
     IOLockLock(fMSCLock);
+    uint64_t start = mach_absolute_time();
     IOReturn ret = botTransferLocked(slotId, cbwCB, cbwLen, dataLen, dataIn, buffer, bufOff, allowShort);
+    fBOTTime += mach_absolute_time() - start;
+    fBOTBytes += dataLen;
+    bool report = (++fBOTCommands == 4096);
     IOLockUnlock(fMSCLock);
+    if (report) logBOTState("after 4096 commands");
     return ret;
+}
+
+void RavynXHCIPort::logBOTState(const char *why)
+{
+    IOLockLock(fMSCLock);
+    UInt64 cmds = fBOTCommands, bytes = fBOTBytes;
+    uint64_t ns = 0;
+    absolutetime_to_nanoseconds(fBOTTime, &ns);
+    IOLockUnlock(fMSCLock);
+    XHCI_Log("bot %s: %llu commands %llu KiB, %llu us per command", why, cmds, bytes / 1024,
+             cmds ? ns / 1000 / cmds : 0ULL);
+    logInterruptState(why);
 }
 
 // flash sticks can take seconds to commit a write before they send the csw
 #define kBOTDataTimeoutMs 20000
+
+// the cached buffer when len fits, allocated on first use, else a one-off one
+IOBufferMemoryDescriptor *RavynXHCIPort::botBuffer(IOBufferMemoryDescriptor **cache, UInt32 cacheLen, UInt32 len)
+{
+    if (cache && len <= cacheLen) {
+        if (!*cache)
+            *cache = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+                kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, cacheLen, fDMAMask);
+        if (*cache) return *cache;
+    }
+    return IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+        kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, len, fDMAMask);
+}
+
+// bulkTransfer retains a buffer the controller may still write, so the cache lets go of it
+void RavynXHCIPort::botBufferDone(IOBufferMemoryDescriptor **cache, IOBufferMemoryDescriptor *mem)
+{
+    if (!mem) return;
+    if (cache && mem == *cache) {
+        if (mem->getRetainCount() <= 1) return;
+        *cache = NULL;
+    }
+    mem->release();
+}
 
 IOReturn RavynXHCIPort::botTransferLocked(UInt32 slotId,
                                           const void *cbwCB, UInt8 cbwLen,
@@ -2948,10 +3016,9 @@ IOReturn RavynXHCIPort::botTransferLocked(UInt32 slotId,
 
     static volatile SInt32 gTag = 0;
     UInt32 tag = (UInt32)OSIncrementAtomic(&gTag) + 1;
-    UInt64 mask = fDMAMask;
 
-    IOBufferMemoryDescriptor *cbwMem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-        kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, sizeof(USBBOTCommandBlockWrapper), mask);
+    IOBufferMemoryDescriptor *cbwMem = botBuffer(&fBOTCBWMem, sizeof(USBBOTCommandBlockWrapper),
+                                                 sizeof(USBBOTCommandBlockWrapper));
     if (!cbwMem) return kIOReturnNoMemory;
     USBBOTCommandBlockWrapper *cbw = (USBBOTCommandBlockWrapper *)cbwMem->getBytesNoCopy();
     bzero(cbw, sizeof(*cbw));
@@ -2965,7 +3032,7 @@ IOReturn RavynXHCIPort::botTransferLocked(UInt32 slotId,
 
     UInt8 cc = 0;
     bool ok = bulkTransfer(slotId, m.bulkOutEp, false, cbwMem, sizeof(*cbw), 2000, NULL, &cc);
-    cbwMem->release();
+    botBufferDone(&fBOTCBWMem, cbwMem);
     if (!ok) {
         XHCI_Log("BOT tag=%u cbw failed cc=%u", tag, cc);
         botResetRecovery(idx);
@@ -2975,8 +3042,7 @@ IOReturn RavynXHCIPort::botTransferLocked(UInt32 slotId,
     IOBufferMemoryDescriptor *xferMem = NULL;
     UInt32 moved = 0;
     if (dataLen > 0) {
-        xferMem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-            kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, dataLen, mask);
+        xferMem = botBuffer(&fBOTDataMem, kBOTMaxTransferBytes, dataLen);
         if (!xferMem) {
             // the device is waiting for a data phase that will never come
             botResetRecovery(idx);
@@ -2988,7 +3054,7 @@ IOReturn RavynXHCIPort::botTransferLocked(UInt32 slotId,
         ok = bulkTransfer(slotId, dataIn ? m.bulkInEp : m.bulkOutEp, dataIn, xferMem, dataLen, kBOTDataTimeoutMs, &moved, &cc);
         if (!ok && cc != TRB_CC_STALL) {
             XHCI_Log("BOT tag=%u data %s failed cc=%u", tag, dataIn ? "in" : "out", cc);
-            xferMem->release();
+            botBufferDone(&fBOTDataMem, xferMem);
             botResetRecovery(idx);
             return kIOReturnIOError;
         }
@@ -2999,8 +3065,8 @@ IOReturn RavynXHCIPort::botTransferLocked(UInt32 slotId,
     // the csw, read again once if the first attempt stalls (bot 6.7.2)
     IOReturn ret = kIOReturnIOError;
     bool needReset = true;
-    IOBufferMemoryDescriptor *cswMem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-        kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, sizeof(USBBOTCommandStatusWrapper), mask);
+    IOBufferMemoryDescriptor *cswMem = botBuffer(&fBOTCSWMem, sizeof(USBBOTCommandStatusWrapper),
+                                                 sizeof(USBBOTCommandStatusWrapper));
     if (cswMem) {
         USBBOTCommandStatusWrapper *csw = (USBBOTCommandStatusWrapper *)cswMem->getBytesNoCopy();
         UInt32 cswLen = 0;
@@ -3033,7 +3099,7 @@ IOReturn RavynXHCIPort::botTransferLocked(UInt32 slotId,
         } else {
             XHCI_Log("BOT tag=%u phase error status=%u", tag, csw->bCSWStatus);
         }
-        cswMem->release();
+        botBufferDone(&fBOTCSWMem, cswMem);
     }
     if (needReset) botResetRecovery(idx);
 
@@ -3042,7 +3108,7 @@ IOReturn RavynXHCIPort::botTransferLocked(UInt32 slotId,
         if (moved < dataLen) bzero((UInt8 *)xferMem->getBytesNoCopy() + moved, dataLen - moved);
         buffer->writeBytes(bufOff, xferMem->getBytesNoCopy(), dataLen);
     }
-    if (xferMem) xferMem->release();
+    botBufferDone(&fBOTDataMem, xferMem);
     return ret;
 }
 
@@ -3297,6 +3363,27 @@ bool RavynXHCIPort::recordBulkEvent(UInt32 slot, UInt32 dci, UInt64 param, UInt3
 {
     BulkEndpoint *be = fBulk[slot][dci];
     if (!be) return false;
+    if (be->isoch) {
+        for (UInt32 i = 0; i < be->count; i++) {
+            IsocTD &td = be->itd[(be->head + i) % kIsocMaxTDs];
+            if (td.done) continue;
+            for (UInt32 f = 0; f < td.numFrames; f++) {
+                if (td.trbPhys[f] != param) continue;
+                UInt32 cc = TRB_CC(status), residual = status & 0xffffff;
+                UInt16 req = td.frames[f].frReqCount;
+
+                td.frames[f].frActCount = residual > req ? 0 : (UInt16)(req - residual);
+                // short and missed-service frames still count, the stream goes on
+                td.frames[f].frStatus = cc == TRB_CC_SUCCESS || cc == TRB_CC_SHORT_PACKET ? kIOReturnSuccess :
+                                        cc == kIsochMissedService ? kIOReturnUnderrun : kIOReturnIOError;
+                td.trbPhys[f] = 0;
+                if (++td.framesDone == td.numFrames)
+                    td.done = true;
+                return true;
+            }
+        }
+        return true;
+    }
     for (UInt32 i = 0; i < be->count; i++) {
         BulkTD &td = be->td[(be->head + i) % kBulkMaxTDs];
         if (td.done || td.trbPhys != param) continue;
@@ -3312,6 +3399,13 @@ void RavynXHCIPort::deliverBulkCompletions()
 {
     for (UInt32 slot = 1; slot < 64; slot++) {
         for (UInt32 dci = 2; dci < 32; dci++) {
+            IOLockLock(fEventLock);
+            bool isoch = fBulk[slot][dci] && fBulk[slot][dci]->isoch;
+            IOLockUnlock(fEventLock);
+            if (isoch) {
+                deliverIsochCompletions(slot, dci);
+                continue;
+            }
             for (;;) {
                 IOLockLock(fEventLock);
                 BulkEndpoint *be = fBulk[slot][dci];
@@ -3376,6 +3470,11 @@ IOReturn RavynXHCIPort::abortBulk(UInt32 slotId, UInt8 epNum, bool in, bool rese
     UInt64 next = be->ringMem->getPhysicalAddress() + (UInt64)be->enqueue * sizeof(XHCITRB);
     UInt8 cycle = be->cycle;
     for (UInt32 i = 0; i < be->count; i++) {
+        if (be->isoch) {
+            IsocTD &itd = be->itd[(be->head + i) % kIsocMaxTDs];
+            if (!itd.done) itd.aborted = itd.done = true;
+            continue;
+        }
         BulkTD &td = be->td[(be->head + i) % kBulkMaxTDs];
         if (td.done) continue;
         td.cc = kBulkAborted;
@@ -3416,6 +3515,212 @@ IOReturn RavynXHCIPort::bulkSync(UInt32 slotId, UInt8 epNum, bool in, IOMemoryDe
     return (IOReturn)result[0] == kIOReturnAborted && timeoutMs ? kIOUSBTransactionTimeout : (IOReturn)result[0];
 }
 
+void RavynXHCIPort::releaseEndpoint(BulkEndpoint *be)
+{
+    if (be->isoch && be->valid)
+        OSDecrementAtomic(&fIsochOpen);
+    be->ringMem->release();
+    if (be->itd)
+        IODelete(be->itd, IsocTD, kIsocMaxTDs);
+    IODelete(be, BulkEndpoint, 1);
+}
+
+UInt32 RavynXHCIPort::microframeIndex()
+{
+    return rtRead32(XHCI_RT_MFINDEX) & 0x3fff;
+}
+
+// endpoint context for isochronous (xhci 1.2 6.2.3): no error count, the interval is a power of two
+// in 125 us steps, a full-speed bInterval counts frames of eight of those
+bool RavynXHCIPort::openIsochEndpoint(UInt32 slotId, UInt8 epNum, bool in, UInt16 maxPkt, UInt8 bInterval, UInt8 usbSpeed)
+{
+    if (!slotId || slotId >= 64 || !epNum || epNum >= 16)
+        return false;
+    SlotResources &sr = fSlots[slotId];
+    if (!sr.inputCtxMem || !sr.deviceCtxMem)
+        return false;
+    UInt32 dci = epNum * 2 + (in ? 1 : 0);
+    UInt32 size = maxPkt & 0x7ff, mult = (maxPkt >> 11) & 3;
+
+    // a new alternate setting reopens the pipe, the old ring and its transfers go first
+    IOLockLock(fEventLock);
+    BulkEndpoint *old = fBulk[slotId][dci];
+    IOLockUnlock(fEventLock);
+    if (old) {
+        abortBulk(slotId, epNum, in, false);
+        deliverBulkCompletions();
+        IOLockLock(fEventLock);
+        fBulk[slotId][dci] = NULL;
+        IOLockUnlock(fEventLock);
+        releaseEndpoint(old);
+    }
+    if (!size)
+        return true;
+
+    BulkEndpoint *be = IONew(BulkEndpoint, 1);
+    if (!be) return false;
+    bzero(be, sizeof(*be));
+    be->itd = IONew(IsocTD, kIsocMaxTDs);
+    if (!be->itd || !allocRing(&be->ringMem, &be->ring, kRingTRBs)) {
+        if (be->itd) IODelete(be->itd, IsocTD, kIsocMaxTDs);
+        IODelete(be, BulkEndpoint, 1);
+        return false;
+    }
+    bzero(be->itd, sizeof(IsocTD) * kIsocMaxTDs);
+    be->isoch = true;
+    be->in = in;
+    be->slotId = slotId;
+    be->dci = dci;
+    be->maxPkt = size;
+    be->cycle = 1;
+    be->ring[kRingTRBs - 1].param = be->ringMem->getPhysicalAddress();
+    be->ring[kRingTRBs - 1].control = TRB_SET_TYPE(TRB_TYPE_LINK) | TRB_TC | TRB_CYCLE;
+    dmaFlush(&be->ring[kRingTRBs - 1], sizeof(XHCITRB));
+
+    UInt32 interval = bInterval ? bInterval - 1 : 0;
+    if (usbSpeed == kUSBDeviceSpeedFull || usbSpeed == kUSBDeviceSpeedLow)
+        interval += 3;
+    if (interval > 15) interval = 15;
+    UInt32 esit = size * (mult + 1);
+
+    void *ic = sr.inputCtxMem->getBytesNoCopy();
+    bzero(ic, inputCtxBytes());
+    inputCtl(ic)->addFlags = (1U << 0) | (1U << dci);
+    *inputSlot(ic) = *deviceSlot(sr.deviceCtxMem->getBytesNoCopy());
+    UInt32 entries = (inputSlot(ic)->dword0 >> SLOT_CTX_ENTRIES_SHIFT) & 0x1f;
+    if (dci > entries) entries = dci;
+    inputSlot(ic)->dword0 = (inputSlot(ic)->dword0 & ~(0x1fU << SLOT_CTX_ENTRIES_SHIFT)) |
+                           (entries << SLOT_CTX_ENTRIES_SHIFT);
+    inputEp(ic, dci)->dword0 = (interval << 16) | (mult << 8);
+    inputEp(ic, dci)->dword1 = ((in ? EP_TYPE_ISOCH_IN : EP_TYPE_ISOCH_OUT) << EP_CTX_TYPE_SHIFT) |
+        (size << EP_CTX_MAXPKT_SHIFT);
+    inputEp(ic, dci)->trDequeuePtr = be->ringMem->getPhysicalAddress() | 1;
+    inputEp(ic, dci)->avgTrbLen_maxEsitLo = (esit << 16) | esit;
+
+    UInt8 cc = 0;
+    UInt32 slotOut = 0;
+    bool ok = doCommand(sr.inputCtxMem->getPhysicalAddress(), 0,
+        TRB_SET_TYPE(TRB_TYPE_CONFIGURE_EP) | TRB_SET_SLOT(slotId), &cc, &slotOut, 1000);
+    if (!ok || cc != TRB_CC_SUCCESS) {
+        XHCI_Log("isoch: configure slot=%u ep=%u in=%d failed cc=%u", slotId, epNum, in, cc);
+        releaseEndpoint(be);
+        return false;
+    }
+    be->valid = true;
+    IOLockLock(fEventLock);
+    fBulk[slotId][dci] = be;
+    OSIncrementAtomic(&fIsochOpen);
+    IOLockUnlock(fEventLock);
+    XHCI_Log("isoch: slot=%u ep=%u in=%d maxPkt=%u mult=%u interval=%u ready", slotId, epNum, in, size, mult, interval);
+
+    if (!fBulkThreadStarted) {
+        thread_t t;
+        fBulkThreadStarted = true;
+        if (kernel_thread_start((thread_continue_t)&RavynXHCIPort::bulkThread, this, &t) == KERN_SUCCESS)
+            thread_deallocate(t);
+        else
+            fBulkThreadStarted = false;
+    }
+    return true;
+}
+
+// one isoch TD per frame, laid out back to back in a bounce buffer, each started as soon as the
+// endpoint's previous one is done (SIA) so a queue of transfers plays without gaps
+IOReturn RavynXHCIPort::submitIsoch(UInt32 slotId, UInt8 epNum, bool in, IOMemoryDescriptor *buffer, UInt32 numFrames,
+                                    IOUSBIsocFrame *frames, IOUSBCompletion *completion)
+{
+    if (!slotId || slotId >= 64 || !epNum || epNum >= 16 || !buffer || !frames || !completion)
+        return kIOReturnBadArgument;
+    if (!numFrames || numFrames > kIsocMaxFrames)
+        return kIOReturnBadArgument;
+    UInt32 dci = epNum * 2 + (in ? 1 : 0), len = 0;
+    for (UInt32 f = 0; f < numFrames; f++)
+        len += frames[f].frReqCount;
+    if (!len || len > kBulkMaxTRB || len > buffer->getLength())
+        return kIOReturnBadArgument;
+
+    IOBufferMemoryDescriptor *bounce = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+        kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, len, fDMAMask & ~0xFFFFULL);
+    if (!bounce) return kIOReturnNoMemory;
+    if (!in && buffer->readBytes(0, bounce->getBytesNoCopy(), len) != len) {
+        bounce->release();
+        return kIOReturnIOError;
+    }
+    dmaFlush(bounce->getBytesNoCopy(), len);
+
+    IOLockLock(fEventLock);
+    BulkEndpoint *be = fBulk[slotId][dci];
+    // the ring holds kRingTRBs - 1 TRBs, keep the in-flight frames below that
+    UInt32 queued = 0;
+    for (UInt32 i = 0; be && i < be->count; i++)
+        queued += be->itd[(be->head + i) % kIsocMaxTDs].numFrames;
+    if (!be || !be->valid || !be->isoch || be->count == kIsocMaxTDs || queued + numFrames >= kRingTRBs - 1) {
+        IOLockUnlock(fEventLock);
+        bounce->release();
+        return be && be->valid ? kIOReturnNoResources : kIOReturnNotOpen;
+    }
+    IsocTD &td = be->itd[(be->head + be->count) % kIsocMaxTDs];
+    td.completion = *completion;
+    td.client = buffer;
+    buffer->retain();
+    td.bounce = bounce;
+    td.frames = frames;
+    td.numFrames = numFrames;
+    td.framesDone = 0;
+    td.len = len;
+    td.done = td.aborted = false;
+    UInt64 phys = bounce->getPhysicalAddress();
+    for (UInt32 f = 0; f < numFrames; f++) {
+        UInt32 n = frames[f].frReqCount;
+        frames[f].frActCount = 0;
+        frames[f].frStatus = kIOReturnNotReady;
+        td.trbPhys[f] = be->ringMem->getPhysicalAddress() + (UInt64)be->enqueue * sizeof(XHCITRB);
+        pushTRB(be->ring, be->enqueue, be->cycle, kRingTRBs, phys, n,
+                TRB_SET_TYPE(TRB_TYPE_ISOCH) | TRB_IOC | TRB_SIA | (in ? TRB_ISP : 0));
+        phys += n;
+    }
+    be->count++;
+    IOLockUnlock(fEventLock);
+    ringDoorbell(slotId, dci);
+    return kIOReturnSuccess;
+}
+
+void RavynXHCIPort::deliverIsochCompletions(UInt32 slot, UInt32 dci)
+{
+    for (;;) {
+        IOLockLock(fEventLock);
+        BulkEndpoint *be = fBulk[slot][dci];
+        if (!be || !be->count || !be->itd[be->head].done) {
+            IOLockUnlock(fEventLock);
+            return;
+        }
+        IsocTD td = be->itd[be->head];
+        be->head = (be->head + 1) % kIsocMaxTDs;
+        be->count--;
+        bool in = be->in;
+        IOLockUnlock(fEventLock);
+
+        UInt32 moved = 0, offset = 0;
+        IOReturn ret = td.aborted ? kIOReturnAborted : kIOReturnSuccess;
+        for (UInt32 f = 0; f < td.numFrames; f++) {
+            if (td.aborted && td.frames[f].frStatus == kIOReturnNotReady)
+                td.frames[f].frStatus = kIOReturnAborted;
+            if (in && td.frames[f].frActCount) {
+                dmaFlush((UInt8 *)td.bounce->getBytesNoCopy() + offset, td.frames[f].frActCount);
+                td.client->writeBytes(offset, (UInt8 *)td.bounce->getBytesNoCopy() + offset, td.frames[f].frActCount);
+            }
+            if (!td.aborted && td.frames[f].frStatus != kIOReturnSuccess && td.frames[f].frStatus != kIOReturnUnderrun)
+                ret = kIOReturnIOError;
+            moved += td.frames[f].frActCount;
+            offset += td.frames[f].frReqCount;
+        }
+        td.bounce->release();
+        td.client->release();
+        if (td.completion.action)
+            (*td.completion.action)(td.completion.target, td.completion.parameter, ret, td.len - moved);
+    }
+}
+
 void RavynXHCIPort::bulkThread(void *arg, wait_result_t)
 {
     RavynXHCIPort *self = (RavynXHCIPort *)arg;
@@ -3424,8 +3729,9 @@ void RavynXHCIPort::bulkThread(void *arg, wait_result_t)
         UInt32 generation = self->eventGeneration();
         self->serviceEventRing();
         self->deliverBulkCompletions();
+        // an open isochronous ring also polls every 2 ms, a lost interrupt then costs one packet of slack
         AbsoluteTime deadline;
-        clock_interval_to_deadline(self->fInterruptsEnabled ? 20 : 2, kMillisecondScale, &deadline);
+        clock_interval_to_deadline(self->fInterruptsEnabled && !self->fIsochOpen ? 20 : 2, kMillisecondScale, &deadline);
         IOLockLock(self->fEventWaitLock);
         if (self->fEventGeneration == generation)
             IOLockSleepDeadline(self->fEventWaitLock, &self->fEventWaitChannel, deadline, THREAD_UNINT);

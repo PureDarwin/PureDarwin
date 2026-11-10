@@ -111,6 +111,7 @@
 #define XHCI_SP_PORT_OFFSET(dw2)   ((dw2) & 0xFF)          // 1-based
 #define XHCI_SP_PORT_COUNT(dw2)    (((dw2) >> 8) & 0xFF)
 
+#define XHCI_RT_MFINDEX    0x00   // microframe index, 14 bits
 // runtime registers (BAR0 + RTSOFF)
 #define XHCI_RT_IR0        0x20   // interrupter register set 0
 #define XHCI_IR_IMAN       0x00
@@ -135,6 +136,7 @@ typedef struct {
 } __attribute__((packed)) XHCITRB;
 
 #define TRB_CYCLE          (1U << 0)
+#define TRB_SIA            (1U << 31) // isoch: start as soon as possible, the frame id is ignored
 #define TRB_TC             (1U << 1)  // toggle cycle (link TRB) / evaluate next TRB
 #define TRB_ENT             (1U << 1) // evaluate next TRB (transfer TRBs)
 #define TRB_ISP            (1U << 2)  // interrupt on short packet
@@ -158,6 +160,7 @@ enum {
     TRB_TYPE_SETUP_STAGE      = 2,
     TRB_TYPE_DATA_STAGE       = 3,
     TRB_TYPE_STATUS_STAGE     = 4,
+    TRB_TYPE_ISOCH            = 5,
     TRB_TYPE_LINK             = 6,
     TRB_TYPE_ENABLE_SLOT      = 9,
     TRB_TYPE_DISABLE_SLOT     = 10,
@@ -230,6 +233,8 @@ typedef struct {
 #define EP_TYPE_CONTROL       4
 #define EP_TYPE_BULK_OUT      2
 #define EP_TYPE_BULK_IN       6
+#define EP_TYPE_ISOCH_OUT     1
+#define EP_TYPE_ISOCH_IN      5
 #define EP_CTX_CERR_SHIFT     1
 #define EP_CTX_CERR(c)        ((UInt32)(c) << EP_CTX_CERR_SHIFT)
 #define EP_CTX_TYPE_SHIFT     3

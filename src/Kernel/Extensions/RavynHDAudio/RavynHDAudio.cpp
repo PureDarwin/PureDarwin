@@ -48,6 +48,7 @@ OSDefineMetaClassAndStructors(RavynHDAudio, IOAudioDevice);
 #define SD_LPIB         0x04
 #define SD_CBL          0x08
 #define SD_LVI          0x0C   // 16-bit
+#define SD_FIFOS        0x10   // 16-bit
 #define SD_FORMAT       0x12   // 16-bit
 #define SD_BDPL         0x18
 #define SD_BDPU         0x1C
@@ -72,9 +73,11 @@ OSDefineMetaClassAndStructors(RavynHDAudio, IOAudioDevice);
 #define PARAM_FUNCTION_GROUP   0x05
 #define PARAM_AUDIO_WIDGET_CAP 0x09
 #define PARAM_PIN_CAP          0x0C
+#define PARAM_IN_AMP_CAP       0x0D
 #define PARAM_OUT_AMP_CAP      0x12
 
 #define AW_TYPE_OUTPUT   0x0   // DAC
+#define AW_TYPE_INPUT    0x1   // ADC
 #define AW_TYPE_PIN      0x4   // Pin Complex
 
 // 48000 Hz / 16-bit / stereo. Format field encoding (16-bit):
@@ -434,12 +437,56 @@ bool RavynHDAudio::programWidgets(uint8_t codecAddr, uint16_t afgNid)
     sendVerb(codecAddr, dacNid, VERB_SET_CHANNEL_STREAMID, 0x10);   // stream=1, channel=0
     sendVerb(codecAddr, dacNid, VERB_SET_STREAM_FORMAT_ID4, HDA_FORMAT_48K_16BIT_STEREO);
 
+    programInput(codecAddr, afgNid, startNid, numNodes, pinNid);
     return true;
+}
+
+// an adc and an input-capable pin (hda 7.3.4.6 and 7.3.4.9): the pin set to input, the adc reading it on
+// stream tag 2 and its input amp at 0 dB
+void RavynHDAudio::programInput(uint8_t codecAddr, uint16_t afgNid, uint16_t startNid, uint16_t numNodes, uint16_t outPin)
+{
+    uint16_t adcNid = 0, pinNid = 0;
+    uint32_t adcCaps = 0;
+
+    for (uint16_t nid = startNid; nid < startNid + numNodes; nid++) {
+        uint32_t caps = sendVerb(codecAddr, nid, VERB_GET_PARAM, PARAM_AUDIO_WIDGET_CAP);
+        uint32_t type = (caps >> 20) & 0xF;
+        if (type == AW_TYPE_INPUT && !adcNid) {
+            adcNid = nid;
+            adcCaps = caps;
+        } else if (type == AW_TYPE_PIN && !pinNid && nid != outPin) {
+            uint32_t pincap = sendVerb(codecAddr, nid, VERB_GET_PARAM, PARAM_PIN_CAP);
+            if (pincap & (1u << 5))   // input capable
+                pinNid = nid;
+        }
+    }
+    if (!adcNid || !pinNid) {
+        IOLog("RavynHDAudio: no input (adc=0x%x pin=0x%x)\n", adcNid, pinNid);
+        return;
+    }
+    sendVerb(codecAddr, adcNid, VERB_SET_POWER_STATE, 0);
+    sendVerb(codecAddr, pinNid, VERB_SET_POWER_STATE, 0);
+    sendVerb(codecAddr, pinNid, VERB_SET_PIN_WIDGET_CTL, 0x20);
+    sendVerb(codecAddr, adcNid, VERB_SET_CONNECT_SELECT, 0);
+    // bit 1 of the widget caps is an input amp, its caps are the widget's own with amp override (bit 3)
+    if (adcCaps & (1u << 1)) {
+        uint32_t amp = sendVerb(codecAddr, (adcCaps & (1u << 3)) ? adcNid : afgNid, VERB_GET_PARAM, PARAM_IN_AMP_CAP);
+        uint32_t offset = amp & 0x7F, steps = (amp >> 8) & 0x7F;
+        if (offset > steps)
+            offset = steps;
+        // bit 14 input amp, 13 and 12 left and right, index 0
+        sendVerb(codecAddr, adcNid, VERB_SET_AMP_GAIN_MUTE_ID4, 0x7000 | offset);
+    }
+    sendVerb(codecAddr, adcNid, VERB_SET_CHANNEL_STREAMID, 0x20);   // stream=2, channel=0
+    sendVerb(codecAddr, adcNid, VERB_SET_STREAM_FORMAT_ID4, HDA_FORMAT_48K_16BIT_STEREO);
+    fAdcNid = adcNid;
+    IOLog("RavynHDAudio: using pin nid=0x%x -> ADC nid=0x%x for input\n", pinNid, adcNid);
 }
 
 bool RavynHDAudio::enumerateCodec(uint8_t codecAddr)
 {
     uint32_t vendorId = sendVerb(codecAddr, 0, VERB_GET_PARAM, 0x00);
+    fCodecVendor = vendorId;
     uint32_t nc = sendVerb(codecAddr, 0, VERB_GET_PARAM, PARAM_NODE_COUNT);
     uint16_t startNid = (nc >> 16) & 0xFF;
     uint16_t numNodes = nc & 0xFF;
@@ -458,18 +505,22 @@ bool RavynHDAudio::enumerateCodec(uint8_t codecAddr)
     return false;
 }
 
-bool RavynHDAudio::setupOutputStream()
+// SDnFIFOS is the bytes the controller fetches ahead (hda 3.3.40), QEMU's controller (codec vendor 0x1af4)
+// reads up to 60 ms ahead of LPIB when a stream starts
+uint32_t RavynHDAudio::sampleOffset(uint32_t streamIndex)
 {
-    uint16_t gcap = reg16(HDA_GCAP);
-    uint32_t iss = (gcap >> 8) & 0xF;
-    uint32_t oss = (gcap >> 12) & 0xF;
-    if (oss == 0) {
-        IOLog("RavynHDAudio: controller reports zero output streams\n");
-        return false;
-    }
-    fOutStreamIndex = iss;   // first output stream follows all input streams
+    uint32_t fifo = reg16(HDA_SD_BASE + streamIndex * HDA_SD_SIZE + SD_FIFOS) / 4;
 
-    uint32_t sdBase = HDA_SD_BASE + fOutStreamIndex * HDA_SD_SIZE;
+    if ((fCodecVendor >> 16) == 0x1af4)
+        return fifo + 3072;
+    return fifo + 32;
+}
+
+// one stream descriptor with its ring and buffer descriptor list, tagged for the converter it feeds or drains
+bool RavynHDAudio::setupStream(uint32_t index, uint32_t tag, IOBufferMemoryDescriptor **pcmOut,
+                               IOBufferMemoryDescriptor **bdlOut, uint8_t **virtOut)
+{
+    uint32_t sdBase = HDA_SD_BASE + index * HDA_SD_SIZE;
 
     // Reset the stream descriptor: set SRST, wait for it to latch, clear
     // it, wait for it to clear.
@@ -487,36 +538,38 @@ bool RavynHDAudio::setupOutputStream()
     // controller raises a buffer-completion interrupt (which we don't
     // currently service - the engine polls LPIB instead) each time
     // it finishes one chunk.
-    fPcmBuf = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-        kernel_task, kIODirectionOut | kIOMemoryPhysicallyContiguous,
+    IOBufferMemoryDescriptor *pcm = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+        kernel_task, kIODirectionInOut | kIOMemoryPhysicallyContiguous,
         kHDARingBufBytes, 0xFFFFFFFFull);
-    if (!fPcmBuf)
+    if (!pcm)
         return false;
-    fPcmBuf->prepare();
-    fPcmVirt = (uint8_t *)fPcmBuf->getBytesNoCopy();
-    fPcmPhys = fPcmBuf->getPhysicalAddress();
-    bzero(fPcmVirt, kHDARingBufBytes);
+    *pcmOut = pcm;
+    pcm->prepare();
+    uint8_t *virt = (uint8_t *)pcm->getBytesNoCopy();
+    uint64_t phys = pcm->getPhysicalAddress();
+    bzero(virt, kHDARingBufBytes);
+    *virtOut = virt;
 
-    fBdlBuf = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+    IOBufferMemoryDescriptor *bdlBuf = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
         kernel_task, kIODirectionInOut | kIOMemoryPhysicallyContiguous,
         kHDABDLEntries * 16, 0xFFFFFFFFull);
-    if (!fBdlBuf)
+    if (!bdlBuf)
         return false;
-    fBdlBuf->prepare();
-    uint8_t *bdl = (uint8_t *)fBdlBuf->getBytesNoCopy();
+    *bdlOut = bdlBuf;
+    bdlBuf->prepare();
+    uint8_t *bdl = (uint8_t *)bdlBuf->getBytesNoCopy();
     bzero(bdl, kHDABDLEntries * 16);
 
     uint32_t chunk = kHDARingBufBytes / kHDABDLEntries;
     for (uint32_t i = 0; i < kHDABDLEntries; i++) {
-        uint64_t addr = fPcmPhys + i * chunk;
+        uint64_t addr = phys + i * chunk;
         uint8_t *e = bdl + i * 16;
         *(volatile uint64_t *)(e + 0)  = addr;
         *(volatile uint32_t *)(e + 8)  = chunk;
         *(volatile uint32_t *)(e + 12) = 1;   // IOC: interrupt on completion
     }
 
-    uint64_t bdlPhys = fBdlBuf->getPhysicalAddress();
-    wreg32(fRegs ? sdBase + SD_BDPL : 0, (uint32_t)(bdlPhys & 0xFFFFFFFFu));
+    uint64_t bdlPhys = bdlBuf->getPhysicalAddress();
     *(volatile uint32_t *)(fRegs + sdBase + SD_BDPL) = (uint32_t)(bdlPhys & 0xFFFFFFFFu);
     *(volatile uint32_t *)(fRegs + sdBase + SD_BDPU) = (uint32_t)(bdlPhys >> 32);
     *(volatile uint32_t *)(fRegs + sdBase + SD_CBL)  = kHDARingBufBytes;
@@ -527,10 +580,37 @@ bool RavynHDAudio::setupOutputStream()
     // playback starts when IOAudioFamily starts the engine.
     ctl = *(volatile uint32_t *)(fRegs + sdBase + SD_CTL_STS);
     ctl &= ~(0xFu << SD_CTL_STRM_SHIFT);
-    ctl |= (1u << SD_CTL_STRM_SHIFT);
+    ctl |= (tag << SD_CTL_STRM_SHIFT);
     *(volatile uint32_t *)(fRegs + sdBase + SD_CTL_STS) = ctl;
 
     return true;
+}
+
+bool RavynHDAudio::setupOutputStream()
+{
+    uint16_t gcap = reg16(HDA_GCAP);
+    uint32_t iss = (gcap >> 8) & 0xF;
+    uint32_t oss = (gcap >> 12) & 0xF;
+    if (oss == 0) {
+        IOLog("RavynHDAudio: controller reports zero output streams\n");
+        return false;
+    }
+    fOutStreamIndex = iss;   // first output stream follows all input streams
+    if (!setupStream(fOutStreamIndex, 1, &fPcmBuf, &fBdlBuf, &fPcmVirt))
+        return false;
+    fPcmPhys = fPcmBuf->getPhysicalAddress();
+    return true;
+}
+
+// the first input stream descriptor, tag 2, the one the adc is routed to
+bool RavynHDAudio::setupInputStream()
+{
+    uint32_t iss = (reg16(HDA_GCAP) >> 8) & 0xF;
+
+    if (iss == 0 || !fAdcNid)
+        return false;
+    fInStreamIndex = 0;
+    return setupStream(fInStreamIndex, 2, &fInPcmBuf, &fInBdlBuf, &fInPcmVirt);
 }
 
 // Read a 32/64-bit memory BAR's base and size directly from config space
@@ -684,15 +764,20 @@ bool RavynHDAudio::initHardware(IOService *provider)
 void RavynHDAudio::stop(IOService *provider)
 {
     if (fEngine) { fEngine->release(); fEngine = 0; }
+    if (fInEngine) { fInEngine->release(); fInEngine = 0; }
     if (fRegs) {
         uint32_t sdBase = HDA_SD_BASE + fOutStreamIndex * HDA_SD_SIZE;
         *(volatile uint32_t *)(fRegs + sdBase + SD_CTL_STS) &= ~SD_CTL_RUN;
+        if (fInPcmBuf)
+            *(volatile uint32_t *)(fRegs + HDA_SD_BASE + fInStreamIndex * HDA_SD_SIZE + SD_CTL_STS) &= ~SD_CTL_RUN;
         wreg8(HDA_CORBCTL, 0);
         wreg8(HDA_RIRBCTL, 0);
         wreg32(HDA_GCTL, reg32(HDA_GCTL) & ~1u);
     }
     if (fPcmBuf) { fPcmBuf->complete(); fPcmBuf->release(); fPcmBuf = 0; }
     if (fBdlBuf) { fBdlBuf->complete(); fBdlBuf->release(); fBdlBuf = 0; }
+    if (fInPcmBuf) { fInPcmBuf->complete(); fInPcmBuf->release(); fInPcmBuf = 0; }
+    if (fInBdlBuf) { fInBdlBuf->complete(); fInBdlBuf->release(); fInBdlBuf = 0; }
     if (fCorbBuf) { fCorbBuf->complete(); fCorbBuf->release(); fCorbBuf = 0; }
     if (fRirbBuf) { fRirbBuf->complete(); fRirbBuf->release(); fRirbBuf = 0; }
     if (fRegMap) { fRegMap->release(); fRegMap = 0; }
