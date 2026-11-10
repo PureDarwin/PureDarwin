@@ -1,0 +1,165 @@
+/* No comment provided by engineer. */
+"% CPU" = "% CPU";
+
+/* No comment provided by engineer. */
+"%@ can’t be quit" = "%@ kann nicht beendet werden";
+
+/* No comment provided by engineer. */
+"About %@" = "Über %@";
+
+/* No comment provided by engineer. */
+"Activity" = "Aktivität";
+
+/* No comment provided by engineer. */
+"All Processes" = "Alle Prozesse";
+
+/* No comment provided by engineer. */
+"App Memory" = "App-Speicher";
+
+/* No comment provided by engineer. */
+"Busy threads, Core %ld" = "Ausgelastete Threads, Kern %ld";
+
+/* No comment provided by engineer. */
+"CPU" = "CPU";
+
+/* No comment provided by engineer. */
+"CPU History" = "CPU-Verlauf";
+
+/* No comment provided by engineer. */
+"CPU Time" = "CPU-Zeit";
+
+/* No comment provided by engineer. */
+"Cached Files" = "Zwischengespeicherte Dateien";
+
+/* No comment provided by engineer. */
+"Cancel" = "Abbrechen";
+
+/* No comment provided by engineer. */
+"Compressed" = "Komprimiert";
+
+/* No comment provided by engineer. */
+"Core %u" = "Kern %u";
+
+/* No comment provided by engineer. */
+"Done" = "Fertig";
+
+/* No comment provided by engineer. */
+"Force Quit" = "Sofort beenden";
+
+/* No comment provided by engineer. */
+"Force Quit Process…" = "Prozess sofort beenden …";
+
+/* No comment provided by engineer. */
+"Free" = "Frei";
+
+/* No comment provided by engineer. */
+"Hide %@" = "%@ ausblenden";
+
+/* No comment provided by engineer. */
+"Idle" = "Inaktiv";
+
+/* No comment provided by engineer. */
+"Inspect" = "Details anzeigen";
+
+/* No comment provided by engineer. */
+"It is part of the system. Restart instead from the PureDarwin menu." = "Er gehört zum System. Starte stattdessen über das PureDarwin-Menü neu.";
+
+/* No comment provided by engineer. */
+"Load Average" = "Durchschnittslast";
+
+/* No comment provided by engineer. */
+"Logical CPUs" = "Logische CPUs";
+
+/* No comment provided by engineer. */
+"Memory" = "Speicher";
+
+/* No comment provided by engineer. */
+"Memory Used" = "Belegter Speicher";
+
+/* No comment provided by engineer. */
+"Minimize" = "Im Dock ablegen";
+
+/* No comment provided by engineer. */
+"My Processes" = "Meine Prozesse";
+
+/* No comment provided by engineer. */
+"My Processes Only" = "Nur meine Prozesse";
+
+/* No comment provided by engineer. */
+"OK" = "OK";
+
+/* No comment provided by engineer. */
+"Owned by %@, %d threads, %@ resident." = "Gehört %@, %d Threads, %@ belegt.";
+
+/* No comment provided by engineer. */
+"PID" = "PID";
+
+/* No comment provided by engineer. */
+"Page Size" = "Seitengröße";
+
+/* No comment provided by engineer. */
+"Pageins" = "Eingelagert";
+
+/* No comment provided by engineer. */
+"Pageouts" = "Ausgelagert";
+
+/* No comment provided by engineer. */
+"Physical Memory" = "Physischer Speicher";
+
+/* No comment provided by engineer. */
+"Process" = "Prozess";
+
+/* No comment provided by engineer. */
+"Process Name" = "Prozessname";
+
+/* No comment provided by engineer. */
+"Processes" = "Prozesse";
+
+/* No comment provided by engineer. */
+"Processor" = "Prozessor";
+
+/* No comment provided by engineer. */
+"Quit" = "Beenden";
+
+/* No comment provided by engineer. */
+"Quit %@" = "%@ beenden";
+
+/* No comment provided by engineer. */
+"Quit Process…" = "Prozess beenden …";
+
+/* No comment provided by engineer. */
+"Quit “%@”?" = "„%@“ beenden?";
+
+/* No comment provided by engineer. */
+"Search" = "Suchen";
+
+/* No comment provided by engineer. */
+"Swap Used" = "Belegter Auslagerungsspeicher";
+
+/* No comment provided by engineer. */
+"System" = "System";
+
+/* No comment provided by engineer. */
+"Threads" = "Threads";
+
+/* No comment provided by engineer. */
+"Unsaved changes in this app may be lost." = "Nicht gesicherte Änderungen in dieser App können verloren gehen.";
+
+/* No comment provided by engineer. */
+"User" = "Benutzer";
+
+/* No comment provided by engineer. */
+"View" = "Darstellung";
+
+/* No comment provided by engineer. */
+"Window" = "Fenster";
+
+/* No comment provided by engineer. */
+"Wired" = "Reserviert";
+
+/* No comment provided by engineer. */
+"Zoom" = "Zoomen";
+
+/* No comment provided by engineer. */
+"launchd will start %@ again if its job keeps it alive." = "launchd startet %@ neu, wenn sein Job ihn am Leben hält.";
+
