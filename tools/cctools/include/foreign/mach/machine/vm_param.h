@@ -33,7 +33,7 @@
 #include "mach/ppc/vm_param.h"
 #elif defined (__i386__) || defined(__x86_64__)
 #include "mach/i386/vm_param.h"
-#elif defined (__arm__) || defined(__arm64__)
+#elif defined (__arm__) || defined(__arm64__) || defined(__aarch64__)
 #include "mach/arm/vm_param.h"
 #elif defined (__riscv)
 #include "mach/riscv/vm_param.h"

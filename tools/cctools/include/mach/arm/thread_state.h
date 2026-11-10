@@ -14,7 +14,7 @@
 #define THREAD_STATE_MAX	ARM_THREAD_STATE_MAX
 #endif
 
-#if defined(__arm64__) && !defined(THREAD_STATE_MAX)
+#if defined(__arm64__) || defined(__aarch64__) && !defined(THREAD_STATE_MAX)
 #define THREAD_STATE_MAX	ARM_THREAD_STATE_MAX
 #endif
 

@@ -55,7 +55,7 @@ _STRUCT_ARM_VFP_STATE
 #define _STRUCT_ARM_NEON_STATE64		struct __darwin_arm_neon_state64
 #define _STRUCT_ARM_NEON_STATE		struct __darwin_arm_neon_state
 
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(__aarch64__)
 _STRUCT_ARM_NEON_STATE64
 {
 	__uint128_t       __v[32];
@@ -102,7 +102,7 @@ _STRUCT_ARM_DEBUG_STATE
 	__uint32_t        __wcr[16];
 };
 
-#elif defined(__arm64__)
+#elif defined(__arm64__) || defined(__aarch64__)
 #define _STRUCT_ARM_LEGACY_DEBUG_STATE	struct arm_legacy_debug_state
 _STRUCT_ARM_LEGACY_DEBUG_STATE
 {

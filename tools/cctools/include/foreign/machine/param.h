@@ -35,7 +35,7 @@
 #include "ppc/param.h"
 #elif defined (__i386__) || defined(__x86_64__)
 #include "i386/param.h"
-#elif defined (__arm__) || defined(__arm64__)
+#elif defined (__arm__) || defined(__arm64__) || defined(__aarch64__)
 #include "arm/param.h"
 #elif defined (__riscv)
 #include "riscv/param.h"

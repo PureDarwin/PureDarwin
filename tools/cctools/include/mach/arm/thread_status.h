@@ -68,7 +68,7 @@ typedef _STRUCT_ARM_NEON_STATE64		arm_neon_state64_t;
 typedef _STRUCT_ARM_EXCEPTION_STATE		arm_exception_state_t;
 typedef _STRUCT_ARM_EXCEPTION_STATE64	arm_exception_state64_t;
 
-#if defined(XNU_KERNEL_PRIVATE) && defined(__arm64__)
+#if defined(XNU_KERNEL_PRIVATE) && defined(__arm64__) || defined(__aarch64__)
 /* See below for ARM64 kernel structure definition for arm_debug_state. */
 #else
 /*
@@ -77,7 +77,7 @@ typedef _STRUCT_ARM_EXCEPTION_STATE64	arm_exception_state64_t;
  */
 #if defined(__arm__)
 typedef _STRUCT_ARM_DEBUG_STATE			arm_debug_state_t;
-#elif defined(__arm64__)
+#elif defined(__arm64__) || defined(__aarch64__)
 typedef _STRUCT_ARM_LEGACY_DEBUG_STATE		arm_debug_state_t;
 #else
 /* #error Undefined architecture */
@@ -157,7 +157,7 @@ typedef struct arm_saved_state_tagged arm_saved_state_tagged_t;
 #define ARM_SAVED_STATE32_COUNT ((mach_msg_type_number_t) \
 		(sizeof (arm_saved_state_t)/sizeof(unsigned int)))
 
-#elif defined(__arm64__)
+#elif defined(__arm64__) || defined(__aarch64__)
 
 #include <kern/assert.h>
 #include <arm64/proc_reg.h>

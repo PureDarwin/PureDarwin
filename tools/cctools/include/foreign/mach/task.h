@@ -33,7 +33,7 @@
 #include <mach/ppc/task.h>
 #elif defined(__ppc64__)
 #include <mach/ppc64/task.h>
-#elif defined(__arm__) || defined(__arm64__)
+#elif defined(__arm__) || defined(__arm64__) || defined(__aarch64__)
 /*#include <mach/arm/task.h>*/
 #elif defined(__riscv)
 #else

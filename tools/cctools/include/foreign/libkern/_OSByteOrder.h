@@ -66,7 +66,7 @@
 #include <libkern/i386/_OSByteOrder.h>
 #endif
 
-#if defined(__arm__) || defined(__arm64__)
+#if defined(__arm__) || defined(__arm64__) || defined(__aarch64__)
 #include <libkern/arm/OSByteOrder.h>
 #endif
 
