@@ -2026,6 +2026,17 @@ let
               qemu_args+=(-object "filter-dump,id=netdump,netdev=net0,file=$PUREDARWIN_VM_NETDUMP")
             fi
 
+            # GL and Vulkan drivers from this flake's mesa, the host's /run/opengl-driver may need a newer glibc
+            # than this qemu has. PUREDARWIN_VM_SYSTEMGL=1 keeps the host's drivers
+            if [ -z "''${PUREDARWIN_VM_SYSTEMGL:-}" ]; then
+              export __EGL_VENDOR_LIBRARY_DIRS="${pkgs.mesa}/share/glvnd/egl_vendor.d"
+              export LIBGL_DRIVERS_PATH="${pkgs.mesa}/lib/dri"
+              export GBM_BACKENDS_PATH="${pkgs.mesa}/lib/gbm"
+              export __GLX_VENDOR_LIBRARY_NAME=mesa
+              export VK_DRIVER_FILES="${pkgs.mesa}/share/vulkan/icd.d/radeon_icd.x86_64.json:${pkgs.mesa}/share/vulkan/icd.d/intel_icd.x86_64.json:${pkgs.mesa}/share/vulkan/icd.d/nouveau_icd.x86_64.json"
+              export LD_LIBRARY_PATH="${pkgs.mesa}/lib:${pkgs.libglvnd}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            fi
+
             exec qemu-system-x86_64 "''${qemu_args[@]}" "$@"
           '';
         };
