@@ -74,6 +74,10 @@ struct pointer {
 
 	wl_fixed_t x, y;
 	pixman_region32_t region;
+
+	// where an absolute device last pointed, its deltas stay real while the cursor is locked
+	wl_fixed_t device_x, device_y;
+	bool device_valid;
 };
 
 bool
@@ -109,5 +113,7 @@ pointer_handle_absolute_motion(struct pointer *pointer, uint32_t time,
                                wl_fixed_t x, wl_fixed_t y);
 void
 pointer_handle_frame(struct pointer *pointer);
+void
+pointer_warp(struct pointer *pointer, wl_fixed_t x, wl_fixed_t y);
 
 #endif

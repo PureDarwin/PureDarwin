@@ -33,6 +33,7 @@
 #include "xdg-shell-server-protocol.h"
 #include <assert.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <wayland-server.h>
 
 struct xdg_surface {
@@ -57,6 +58,8 @@ struct xdg_toplevel {
 	struct wl_resource *resource;
 	struct wl_array states;
 	struct xdg_surface *xdg_surface;
+	// the last configure left the size to the client, a focus change must not take it back
+	bool client_sized;
 };
 
 struct xdg_popup {
@@ -282,6 +285,11 @@ send_configure(struct xdg_toplevel *toplevel, int32_t width, int32_t height)
 		height = toplevel->window.configure.height;
 	}
 
+	// SWC_INPUT_TRACE=1: every configure and who asked for it
+	if (getenv("SWC_INPUT_TRACE"))
+		fprintf(stderr, "neuswc: configure %p %dx%d mode %u from %p %p base %p\n", (void *)toplevel, width, height,
+		        toplevel->window.mode, __builtin_return_address(0), __builtin_return_address(1), (void *)&send_configure);
+	toplevel->client_sized = width == 0 && height == 0;
 	xdg_toplevel_send_configure(toplevel->resource, width, height,
 	                            &toplevel->states);
 	xdg_surface_send_configure(toplevel->xdg_surface->resource, serial);
@@ -307,6 +315,9 @@ focus(struct window *window)
 	uint32_t height = window->view->base.geometry.height;
 
 	add_state(toplevel, XDG_TOPLEVEL_STATE_ACTIVATED);
+	// the view still has the old size until the client commits, sending it would undo the client's choice
+	if (toplevel->client_sized && window->mode == WINDOW_MODE_STACKED)
+		width = height = 0;
 	/* dont send  0x0 on focus change */
 	send_configure(toplevel, width ? (int32_t)width : -1,
 	               height ? (int32_t)height : -1);
@@ -320,6 +331,9 @@ unfocus(struct window *window)
 	uint32_t height = window->view->base.geometry.height;
 
 	remove_state(toplevel, XDG_TOPLEVEL_STATE_ACTIVATED);
+	// the view still has the old size until the client commits, sending it would undo the client's choice
+	if (toplevel->client_sized && window->mode == WINDOW_MODE_STACKED)
+		width = height = 0;
 	send_configure(toplevel, width ? (int32_t)width : -1,
 	               height ? (int32_t)height : -1);
 }
@@ -482,13 +496,8 @@ static void
 unset_fullscreen(struct wl_client *client, struct wl_resource *resource)
 {
 	struct xdg_toplevel *toplevel = wl_resource_get_user_data(resource);
-	struct screen *screen;
 
-	if (wl_list_empty(&swc.screens)) {
-		return;
-	}
-	screen = wl_container_of(swc.screens.next, screen, link);
-	swc_window_set_fullscreen(&toplevel->window.base, &screen->base);
+	swc_window_unset_fullscreen(&toplevel->window.base);
 }
 
 static void

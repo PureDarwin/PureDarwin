@@ -1157,17 +1157,3 @@ EXPORT const char *wld_gl_renderer_name(struct wld_renderer *base)
 	return name;
 }
 
-EXPORT bool wld_gl_present(struct wld_renderer *base,struct wld_buffer *buffer,
-                           struct wld_buffer *cursor,int32_t cursor_x,int32_t cursor_y)
-{
-	struct gl_renderer *r=gl_renderer(base);
-	if(present_to_scanout(base,buffer,cursor,cursor_x,cursor_y,NULL,NULL,0,false,0)==WLD_GL_PRESENT_FAILED)
-		return false;
-	if(!make_current(r)) return false;
-	glBindFramebuffer(GL_READ_FRAMEBUFFER,r->present_fbo);
-	glReadBuffer(GL_COLOR_ATTACHMENT0);
-	int (*present)(void)=dlsym(RTLD_DEFAULT,"pd_radeon_present");
-	bool ok=present && present()==0;
-	eglMakeCurrent(r->display,EGL_NO_SURFACE,EGL_NO_SURFACE,EGL_NO_CONTEXT);
-	return ok;
-}

@@ -17,6 +17,9 @@
 #include <wayland-server.h>
 #include <wld/pixman.h>
 #include <wld/wld.h>
+#ifdef PD_VIRTIO_CURSOR
+#include <pd_virgl_shim.h>
+#endif
 
 struct swc_fb swc_fb;
 
@@ -30,6 +33,131 @@ static struct {
 	struct wld_buffer *last_buffer;
 	uint32_t last_width, last_height;
 } fb_damage;
+
+#ifdef PD_VIRTIO_CURSOR
+static pd_virgl_conn *fb_cursor_connection;
+static bool fb_cursor_image_active;
+static bool fb_cursor_has_image;
+static uint8_t fb_cursor_image[64 * 64 * 4];
+static uint32_t fb_cursor_width, fb_cursor_height;
+static uint32_t fb_cursor_hotspot_x, fb_cursor_hotspot_y;
+
+bool
+fb_hardware_cursor_active(void)
+{
+	return fb_cursor_connection && fb_cursor_image_active;
+}
+
+bool
+fb_set_hardware_cursor(struct wld_buffer *buffer, int32_t hotspot_x,
+                       int32_t hotspot_y)
+{
+	struct wld_buffer *cursor;
+	int result;
+
+	if (!fb_cursor_connection)
+		return false;
+	if (!buffer) {
+		result = pd_virgl_set_cursor(fb_cursor_connection, NULL, 0, 0, 0, 0);
+		if (result != 0)
+			goto failure;
+		fb_cursor_image_active = false;
+		fb_cursor_has_image = false;
+		fb_cursor_width = fb_cursor_height = 0;
+		return true;
+	}
+
+	cursor = buffer;
+	if (hotspot_x < 0 || hotspot_y < 0 || hotspot_x >= 64 || hotspot_y >= 64 ||
+	    cursor->width == 0 || cursor->height == 0 ||
+	    cursor->width > 64 || cursor->height > 64 ||
+	    cursor->pitch < cursor->width * 4 ||
+	    !wld_map(cursor)) {
+		(void)pd_virgl_set_cursor(fb_cursor_connection, NULL, 0, 0, 0, 0);
+		fb_cursor_image_active = false;
+		fb_cursor_has_image = false;
+		fb_cursor_width = fb_cursor_height = 0;
+		return false;
+	}
+	if (!cursor->map) {
+		wld_unmap(cursor);
+		(void)pd_virgl_set_cursor(fb_cursor_connection, NULL, 0, 0, 0, 0);
+		fb_cursor_image_active = false;
+		fb_cursor_has_image = false;
+		fb_cursor_width = fb_cursor_height = 0;
+		return false;
+	}
+	memset(fb_cursor_image, 0, sizeof(fb_cursor_image));
+	for (unsigned y = 0; y < cursor->height; y++) {
+		memcpy(fb_cursor_image + (size_t)y * 64 * 4,
+		       (uint8_t *)cursor->map + (size_t)y * cursor->pitch,
+		       (size_t)cursor->width * 4);
+	}
+	wld_unmap(cursor);
+
+	result = pd_virgl_set_cursor(fb_cursor_connection, fb_cursor_image,
+	                             cursor->width, cursor->height,
+	                             (uint32_t)hotspot_x, (uint32_t)hotspot_y);
+	if (result == 0) {
+		fb_cursor_hotspot_x = (uint32_t)hotspot_x;
+		fb_cursor_hotspot_y = (uint32_t)hotspot_y;
+		fb_cursor_has_image = true;
+		fb_cursor_image_active = true;
+		fb_cursor_width = cursor->width;
+		fb_cursor_height = cursor->height;
+		return true;
+	}
+
+failure:
+	fprintf(stderr, "neuswc: VirtIOGPU hardware cursor failed; using software cursor\n");
+	(void)pd_virgl_set_cursor(fb_cursor_connection, NULL, 0, 0, 0, 0);
+	pd_virgl_close(fb_cursor_connection);
+	fb_cursor_connection = NULL;
+	fb_cursor_image_active = false;
+	fb_cursor_has_image = false;
+	fb_cursor_width = fb_cursor_height = 0;
+	return false;
+}
+
+void
+fb_move_hardware_cursor(int32_t x, int32_t y, int32_t hotspot_x,
+                        int32_t hotspot_y)
+{
+	int64_t px, py;
+
+	if (!fb_cursor_connection || !fb_cursor_has_image)
+		return;
+	px = (int64_t)x + hotspot_x;
+	py = (int64_t)y + hotspot_y;
+	if (px < 0 || py < 0 || px >= swc_fb.width || py >= swc_fb.height) {
+		if (fb_cursor_image_active &&
+		    pd_virgl_set_cursor(fb_cursor_connection, NULL, 0, 0, 0, 0) != 0)
+			goto failure;
+		fb_cursor_image_active = false;
+		return;
+	}
+	if (!fb_cursor_image_active) {
+		if (pd_virgl_set_cursor(fb_cursor_connection, fb_cursor_image,
+		                        fb_cursor_width, fb_cursor_height,
+		                        fb_cursor_hotspot_x, fb_cursor_hotspot_y) != 0)
+			goto failure;
+		fb_cursor_image_active = true;
+	}
+	if (pd_virgl_move_cursor(fb_cursor_connection, (uint32_t)px,
+	                         (uint32_t)py) != 0)
+		goto failure;
+	return;
+
+failure:
+	fprintf(stderr, "neuswc: VirtIOGPU cursor command failed; using software cursor\n");
+	(void)pd_virgl_set_cursor(fb_cursor_connection, NULL, 0, 0, 0, 0);
+	pd_virgl_close(fb_cursor_connection);
+	fb_cursor_connection = NULL;
+	fb_cursor_image_active = false;
+	fb_cursor_has_image = false;
+	fb_cursor_width = fb_cursor_height = 0;
+}
+#endif
 
 void
 fb_set_damage(const pixman_region32_t *damage)
@@ -177,6 +305,11 @@ fb_initialize(void)
 	if (!framebuffer_initialize(&swc_fb)) {
 		return false;
 	}
+#ifdef PD_VIRTIO_CURSOR
+	fb_cursor_connection = pd_virgl_open_cursor();
+	if (fb_cursor_connection)
+		fprintf(stderr, "neuswc: VirtIOGPU hardware cursor available\n");
+#endif
 	swc_fb.pitch = (size_t)swc_fb.width * sizeof(*swc_fb.pixels);
 	swc_fb.pixels = calloc(swc_fb.height, swc_fb.pitch);
 	if (!swc_fb.pixels) {
@@ -225,6 +358,15 @@ error0:
 void
 fb_finalize(void)
 {
+#ifdef PD_VIRTIO_CURSOR
+	if (fb_cursor_connection) {
+		(void)pd_virgl_set_cursor(fb_cursor_connection, NULL, 0, 0, 0, 0);
+		pd_virgl_close(fb_cursor_connection);
+		fb_cursor_connection = NULL;
+		fb_cursor_image_active = false;
+		fb_cursor_has_image = false;
+	}
+#endif
 	wld_destroy_renderer(swc_fb.backend.renderer);
 	wld_destroy_context(swc_fb.backend.context);
 	free(swc_fb.pixels);
@@ -686,6 +828,10 @@ fb_present(struct wld_buffer *buffer, int32_t origin_x, int32_t origin_y)
 			cursor = pointer->cursor.buffer;
 			cursor_x = pointer->cursor.view.geometry.x - origin_x;
 			cursor_y = pointer->cursor.view.geometry.y - origin_y;
+		#ifdef PD_VIRTIO_CURSOR
+			if (fb_hardware_cursor_active())
+				cursor = NULL;
+		#endif
 		}
 		return gpu_present(buffer, cursor, cursor_x, cursor_y, &present_start);
 	}
@@ -698,7 +844,12 @@ fb_present(struct wld_buffer *buffer, int32_t origin_x, int32_t origin_y)
 		cursor = pointer->cursor.buffer;
 		cursor_x = pointer->cursor.view.geometry.x - origin_x;
 		cursor_y = pointer->cursor.view.geometry.y - origin_y;
-		cursor_mapped = wld_map(cursor);
+	#ifdef PD_VIRTIO_CURSOR
+		if (fb_hardware_cursor_active())
+			cursor = NULL;
+	#endif
+		if (cursor)
+			cursor_mapped = wld_map(cursor);
 	}
 
 	width = buffer->width < swc_fb.width ? buffer->width : swc_fb.width;

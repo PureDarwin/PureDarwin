@@ -80,6 +80,9 @@ leave(struct input_focus_handler *handler,
 	struct wl_resource *resource;
 	uint32_t serial;
 
+	// a view whose surface is gone has no client left to tell
+	if (!view || !view->surface)
+		return;
 	serial = wl_display_next_serial(swc.display);
 	wl_resource_for_each(resource, resources)
 	    wl_keyboard_send_leave(resource, serial, view->surface->resource);

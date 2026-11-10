@@ -33,6 +33,9 @@ focus(struct input_focus *input_focus, struct compositor_view *view)
 	struct wl_client *client = NULL;
 	struct wl_resource *resource, *tmp;
 
+	// focusing a view whose surface is gone focuses nothing
+	if (view && !view->surface)
+		view = NULL;
 	if (view) {
 		client = wl_resource_get_client(view->surface->resource);
 		wl_resource_for_each_safe(resource, tmp, &input_focus->inactive)

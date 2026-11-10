@@ -333,6 +333,10 @@ swc_window_focus(struct swc_window *window);
 void
 swc_window_set_stacked(struct swc_window *window);
 
+// puts the window above the others in its stacking layer
+void
+swc_window_raise(struct swc_window *window);
+
 /**
  * Sets the window to tiled mode.
  *
@@ -350,6 +354,12 @@ swc_window_set_tiled(struct swc_window *window);
  */
 void
 swc_window_set_fullscreen(struct swc_window *window, struct swc_screen *screen);
+
+/**
+ * Returns a fullscreen window to the mode and geometry it had before.
+ */
+void
+swc_window_unset_fullscreen(struct swc_window *window);
 
 /**
  * Set the window's position.

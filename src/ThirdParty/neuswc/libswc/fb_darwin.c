@@ -784,14 +784,13 @@ framebuffer_gpu_scanout_available(void)
 	gpu_scanout.opened = true;
 	if (darwin_fb.service == IO_OBJECT_NULL)
 		return false;
-	// a presenter's flip pair is scanned out by the GPU that renders into it
-	if (darwin_fb.presenter) {
-		gpu_scanout.available = true;
-		return true;
-	}
 	IOObjectGetClass(darwin_fb.service, name);
-	if (strcmp(name, "IOVirtIOGPU") != 0)
-		return false;
+	// a presenter's flip pair is scanned out by the GPU that renders into it, virtio-gpu scans out
+	// GL resources through its 3D client even with a presenter open
+	if (strcmp(name, "IOVirtIOGPU") != 0) {
+		gpu_scanout.available = darwin_fb.presenter != 0;
+		return gpu_scanout.available;
+	}
 	gpu_scanout.available = IOServiceOpen(darwin_fb.service, mach_task_self(), VIRTIO_GPU_3D_CONNECT_TYPE,
 	                                      &gpu_scanout.connection) == KERN_SUCCESS;
 	return gpu_scanout.available;

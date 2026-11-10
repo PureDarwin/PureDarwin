@@ -18,6 +18,8 @@ foreach proto : [
   wl.find_protocol('linux-dmabuf', state: 'unstable', version: 1),
   wl.find_protocol('xdg-decoration', state: 'unstable', version: 1),
   wl.find_protocol('xdg-output', state: 'unstable', version: 1),
+  wl.find_protocol('pointer-constraints', state: 'unstable', version: 1),
+  wl.find_protocol('relative-pointer', state: 'unstable', version: 1),
 ]
   protocols = wl.scan_xml(proto,
     public: true,

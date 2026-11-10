@@ -5,6 +5,8 @@
 #include "compositor.h"
 #include "window.h"
 #include "swc.h"
+#include "internal.h"
+#include "screen.h"
 
 #include "pd-window-position-v1-server-protocol.h"
 #include <stdlib.h>
@@ -77,9 +79,36 @@ set_position(struct wl_client *client, struct wl_resource *resource, int32_t x, 
 		swc_window_set_position(&view->window->base, x, y);
 }
 
+// a modal or floating panel is raised over its app at once and kept there by raise_window
+static void
+set_level(struct wl_client *client, struct wl_resource *resource, int32_t level)
+{
+	struct window_position *position = wl_resource_get_user_data(resource);
+	struct compositor_view *view = position->view ? compositor_view(position->view) : NULL;
+
+	if (!view)
+		return;
+	view->pd_level = level;
+	if (view->window && view->visible)
+		raise_window(view);
+}
+
+// handled as a click on the window, so the window manager raises and focuses it
+static void
+activate(struct wl_client *client, struct wl_resource *resource)
+{
+	struct window_position *position = wl_resource_get_user_data(resource);
+	struct compositor_view *view = position->view ? compositor_view(position->view) : NULL;
+
+	if (view && view->window)
+		window_clicked(view->window);
+}
+
 static const struct pd_window_position_v1_interface position_impl = {
 	.destroy = destroy_resource,
 	.set_position = set_position,
+	.set_level = set_level,
+	.activate = activate,
 };
 
 static void
@@ -126,6 +155,28 @@ static const struct pd_window_position_manager_v1_interface manager_impl = {
 	.get_window_position = get_window_position,
 };
 
+// managers bound at version 2 or later, told about the usable area
+static struct wl_list managers = { &managers, &managers };
+
+static void
+send_usable_area(struct wl_resource *resource)
+{
+	struct screen *screen;
+	struct swc_rectangle *area;
+
+	if (wl_list_empty(&swc.screens))
+		return;
+	screen = wl_container_of(swc.screens.next, screen, link);
+	area = &screen->base.usable_geometry;
+	pd_window_position_manager_v1_send_usable_area(resource, area->x, area->y, area->width, area->height);
+}
+
+static void
+unlink_manager(struct wl_resource *resource)
+{
+	wl_list_remove(wl_resource_get_link(resource));
+}
+
 static void
 bind_manager(struct wl_client *client, void *data, uint32_t version, uint32_t id)
 {
@@ -135,11 +186,26 @@ bind_manager(struct wl_client *client, void *data, uint32_t version, uint32_t id
 		wl_client_post_no_memory(client);
 		return;
 	}
-	wl_resource_set_implementation(resource, &manager_impl, NULL, NULL);
+	if (version < 2) {
+		wl_resource_set_implementation(resource, &manager_impl, NULL, NULL);
+		return;
+	}
+	wl_resource_set_implementation(resource, &manager_impl, NULL, unlink_manager);
+	wl_list_insert(&managers, wl_resource_get_link(resource));
+	send_usable_area(resource);
+}
+
+void
+window_position_usable_area_changed(void)
+{
+	struct wl_resource *resource;
+
+	wl_resource_for_each(resource, &managers)
+	    send_usable_area(resource);
 }
 
 struct wl_global *
 window_position_create(struct wl_display *display)
 {
-	return wl_global_create(display, &pd_window_position_manager_v1_interface, 1, NULL, bind_manager);
+	return wl_global_create(display, &pd_window_position_manager_v1_interface, 2, NULL, bind_manager);
 }

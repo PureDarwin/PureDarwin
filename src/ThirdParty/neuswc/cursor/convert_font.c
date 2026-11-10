@@ -1,3 +1,5 @@
+// strdup is POSIX, strict C11 on glibc hides it without this
+#define _POSIX_C_SOURCE 200809L
 /*
  * Copyright © 2012 Philipp Brüschweiler
  *

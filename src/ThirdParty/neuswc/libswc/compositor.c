@@ -1406,6 +1406,56 @@ window_view(struct compositor_view *view)
 	return (view && view->window) ? view : NULL;
 }
 
+static struct wl_client *
+view_client(struct compositor_view *view)
+{
+	return view && view->surface && view->surface->resource ? wl_resource_get_client(view->surface->resource) : NULL;
+}
+
+// the modal panel and floating panel levels, as CGWindowLevelForKey gives them
+static bool
+is_app_panel_level(int32_t level)
+{
+	return level == 8 || level == 3;
+}
+
+// the modal panel a click on this view goes to instead, AppKit keeps it key while it runs
+static struct compositor_view *
+modal_for_view(struct compositor_view *view)
+{
+	struct compositor_view *other;
+	struct wl_client *client = view_client(view);
+
+	if (!client || view->pd_level == 8)
+		return NULL;
+	wl_list_for_each(other, &compositor.views, link) {
+		if (other != view && other->window && other->visible && other->pd_level == 8 && view_client(other) == client)
+			return other;
+	}
+	return NULL;
+}
+
+// transient children and the app's panels go straight above a window raised under them
+static void
+raise_children(struct compositor_view *view)
+{
+	struct compositor_view *other, *tmp;
+	struct wl_client *client = view_client(view);
+	bool panel = is_app_panel_level(view->pd_level);
+
+	wl_list_for_each_safe(other, tmp, &compositor.views, link) {
+		if (other == view || !other->window || !other->visible)
+			continue;
+		if (other->parent != view &&
+		    !(!panel && client && is_app_panel_level(other->pd_level) && view_client(other) == client))
+			continue;
+		wl_list_remove(&other->link);
+		wl_list_insert(view->link.prev, &other->link);
+		subsurface_restack(other->surface);
+		damage_view(other);
+	}
+}
+
 void
 raise_window(struct compositor_view *view)
 {
@@ -1448,6 +1498,7 @@ raise_window(struct compositor_view *view)
 	}
 
 	if (view == top_window) {
+		raise_children(view);
 		return;
 	}
 
@@ -1457,6 +1508,7 @@ raise_window(struct compositor_view *view)
 	wl_list_insert(insert_after, &view->link);
 	// the window's subsurfaces come along, left behind they would be drawn under it
 	subsurface_restack(view->surface);
+	raise_children(view);
 
 	view->border.damaged_border1 = true;
 	pixman_region32_union_rect(&compositor.damage, &compositor.damage,
@@ -1603,6 +1655,21 @@ swc_window_stack(struct swc_window *window, int32_t direction)
 	damage_views(view, other);
 }
 
+// the view stays with its role, but without the surface it has nothing to show
+static void
+handle_view_surface_destroy(struct wl_listener *listener, void *data)
+{
+	struct compositor_view *view = wl_container_of(listener, view, surface_destroy_listener);
+
+	(void)data;
+	wl_list_remove(&view->surface_destroy_listener.link);
+	wl_list_init(&view->surface_destroy_listener.link);
+	compositor_view_hide(view);
+	view_attach(&view->base, NULL);
+	surface_set_view(view->surface, NULL);
+	view->surface = NULL;
+}
+
 struct compositor_view *
 compositor_create_view(struct surface *surface)
 {
@@ -1648,6 +1715,8 @@ compositor_create_view(struct surface *surface)
 	view->decor.damaged = false;
 	pixman_region32_init(&view->clip);
 	wl_signal_init(&view->destroy_signal);
+	view->surface_destroy_listener.notify = &handle_view_surface_destroy;
+	wl_resource_add_destroy_listener(surface->resource, &view->surface_destroy_listener);
 	surface_set_view(surface, &view->base);
 	wl_list_insert(&compositor.views, &view->link);
 
@@ -1665,8 +1734,14 @@ compositor_view_destroy(struct compositor_view *view)
 	wl_list_for_each(other, &compositor.views, link) {
 		if (other->parent == view)
 			other->parent = NULL;
+		// a transient window outlives its parent window as a plain toplevel
+		if (other->window && view->window && other->window->base.parent == &view->window->base)
+			other->window->base.parent = NULL;
 	}
-	surface_set_view(view->surface, NULL);
+	if (view->surface) {
+		wl_list_remove(&view->surface_destroy_listener.link);
+		surface_set_view(view->surface, NULL);
+	}
 	view_finalize(&view->base);
 	decor_view_finalize(view);
 	pixman_region32_fini(&view->clip);
@@ -1729,11 +1804,11 @@ compositor_view_show(struct compositor_view *view)
 	struct compositor_view *other;
 	struct subsurface *subsurface;
 
-	if (view->visible) {
+	if (view->visible || !view->surface) {
 		return;
 	}
 
-	subsurface = view->surface ? view->surface->subsurface : NULL;
+	subsurface = view->surface->subsurface;
 	if (subsurface) {
 		if (!subsurface->added || !view->surface->state.buffer) {
 			return;
@@ -2147,12 +2222,32 @@ handle_button(struct pointer_handler *handler, uint32_t time,
 
 	struct compositor_view *view = view_at(x, y);
 
+	// SWC_INPUT_TRACE=1: which surface and client a press goes to
+	if (getenv("SWC_INPUT_TRACE")) {
+		pid_t pid = 0;
+
+		if (view && view->surface && view->surface->resource)
+			wl_client_get_credentials(wl_resource_get_client(view->surface->resource), &pid, NULL, NULL);
+		fprintf(stderr, "neuswc: press at %d,%d view %p window %p surface %p pid %d geom %d,%d %ux%u parent %p\n", x, y, (void *)view,
+		        view ? (void *)view->window : NULL, view ? (void *)view->surface : NULL, (int)pid,
+		        view ? view->base.geometry.x : 0, view ? view->base.geometry.y : 0,
+		        view ? view->base.geometry.width : 0, view ? view->base.geometry.height : 0, view ? (void *)view->parent : NULL);
+	}
 	pointer_set_focus(swc.seat->pointer, view);
 	if (view && view->focus_on_click)
 		keyboard_set_focus(swc.seat->keyboard, view);
 	if (view && view->window)
 		window_clicked(view->window);
 	raise_window(view);
+
+	// while the app runs a modal panel, a click on its other windows gives the panel front and focus back
+	struct compositor_view *clicked = window_view(view);
+	struct compositor_view *modal = clicked ? modal_for_view(clicked) : NULL;
+
+	if (modal) {
+		window_clicked(modal->window);
+		raise_window(modal);
+	}
 
 	return false;
 }

@@ -298,8 +298,6 @@ void wld_flush(struct wld_renderer *renderer);
 struct wld_renderer *wld_gl_create_renderer(void);
 // gpu is ARGON_GPU's syntax: NULL or "auto", "soft", a render node, a pci id or a gallium driver
 struct wld_renderer *wld_gl_create_renderer_on(const char *gpu);
-bool wld_gl_present(struct wld_renderer *renderer, struct wld_buffer *buffer,
-                    struct wld_buffer *cursor, int32_t cursor_x, int32_t cursor_y);
 
 enum wld_gl_present_result {
 	WLD_GL_PRESENT_FAILED,

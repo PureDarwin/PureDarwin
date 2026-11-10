@@ -75,6 +75,8 @@ void compositor_apply_window_style(struct compositor_view *view);
 struct compositor_view {
 	struct view base;
 	struct surface *surface;
+	// a killed client's wl_surface goes before the role that owns this view, so it clears surface
+	struct wl_listener surface_destroy_listener;
 	struct wld_buffer *buffer;
 	bool buffer_opaque_valid;
 	bool buffer_opaque;
@@ -96,6 +98,8 @@ struct compositor_view {
 
 	/* Global stacking layer for this view */
 	uint32_t stack_layer;
+	// the AppKit window level a client reported, panels at modal or floating levels stay above their app
+	int32_t pd_level;
 
 	/* The box that the surface covers (including it's border). */
 	pixman_box32_t extents;

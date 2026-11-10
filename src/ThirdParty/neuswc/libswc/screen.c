@@ -22,6 +22,7 @@
  */
 
 #include "screen.h"
+#include "window_position.h"
 #ifdef ENABLE_DRM
 #include "drm.h"
 #else
@@ -245,6 +246,7 @@ screen_update_usable_geometry(struct screen *screen)
 		screen->base.usable_geometry.width = extents->x2 - extents->x1;
 		screen->base.usable_geometry.height = extents->y2 - extents->y1;
 
+		window_position_usable_area_changed();
 		if (screen->handler->usable_geometry_changed) {
 			screen->handler->usable_geometry_changed(screen->handler_data);
 		}

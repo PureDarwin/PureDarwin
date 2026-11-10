@@ -27,6 +27,7 @@
 #include "event.h"
 #include "internal.h"
 #include "keyboard.h"
+#include "screen.h"
 #include "seat.h"
 #include "surface.h"
 #include "swc.h"
@@ -249,6 +250,14 @@ swc_window_focus(struct swc_window *base)
 }
 
 EXPORT void
+swc_window_raise(struct swc_window *base)
+{
+	struct compositor_view *view = INTERNAL(base)->view;
+
+	compositor_view_set_stack_layer(view, view->stack_layer, true);
+}
+
+EXPORT void
 swc_window_set_stacked(struct swc_window *base)
 {
 	struct window *window = INTERNAL(base);
@@ -276,29 +285,42 @@ swc_window_set_tiled(struct swc_window *base)
 	window->mode = WINDOW_MODE_TILED;
 }
 
+// set_mode's configure quotes configure.width and height, so the size goes in first and both
+// configures carry the same fullscreen size, a repeated request changes nothing
 EXPORT void
 swc_window_set_fullscreen(struct swc_window *base, struct swc_screen *screen)
 {
 	struct window *window = INTERNAL(base);
-
 	struct swc_rectangle geom;
+
+	if (window->mode == WINDOW_MODE_FULLSCREEN)
+		return;
 	swc_window_get_geometry(base, &geom);
-
-	if (window->mode != WINDOW_MODE_FULLSCREEN) {
-		window->prev.geom = geom;
-		window->prev.mode = window->mode;
-		swc_window_set_geometry(base, &screen->usable_geometry);
-
-		if (window->impl->set_mode) {
-			window->impl->set_mode(window, WINDOW_MODE_FULLSCREEN);
-		}
-		window->mode = WINDOW_MODE_FULLSCREEN;
+	window->prev.geom = geom;
+	window->prev.mode = window->mode;
+	window->configure.width = screen->geometry.width;
+	window->configure.height = screen->geometry.height;
+	if (window->impl->set_mode) {
+		window->impl->set_mode(window, WINDOW_MODE_FULLSCREEN);
 	}
+	window->mode = WINDOW_MODE_FULLSCREEN;
+	swc_window_set_geometry(base, &screen->geometry);
+}
 
-	else {
-		swc_window_set_geometry(base, &window->prev.geom);
-		window->mode = window->prev.mode;
+EXPORT void
+swc_window_unset_fullscreen(struct swc_window *base)
+{
+	struct window *window = INTERNAL(base);
+
+	if (window->mode != WINDOW_MODE_FULLSCREEN)
+		return;
+	window->configure.width = window->prev.geom.width;
+	window->configure.height = window->prev.geom.height;
+	if (window->impl->set_mode) {
+		window->impl->set_mode(window, window->prev.mode);
 	}
+	window->mode = window->prev.mode;
+	swc_window_set_geometry(base, &window->prev.geom);
 }
 
 EXPORT void
@@ -339,7 +361,7 @@ swc_window_set_size(struct swc_window *base, uint32_t width, uint32_t height)
 
 	window->impl->configure(window, width, height);
 
-	if (window->mode == WINDOW_MODE_TILED) {
+	if (window->mode == WINDOW_MODE_TILED || window->mode == WINDOW_MODE_FULLSCREEN) {
 		window->configure.width = width;
 		window->configure.height = height;
 		window->configure.pending = true;
@@ -427,7 +449,16 @@ move_motion(struct pointer_handler *handler, uint32_t time, wl_fixed_t fx,
 
 	int32_t x = wl_fixed_to_int(fx) + window->move.offset.x,
 	        y = wl_fixed_to_int(fy) + window->move.offset.y;
+	struct screen *screen;
 
+	// the title bar stays below the menu bar, where it can still be grabbed
+	wl_list_for_each(screen, &swc.screens, link) {
+		if (rectangle_contains_point(&screen->base.geometry, wl_fixed_to_int(fx), wl_fixed_to_int(fy))) {
+			if (y < screen->base.usable_geometry.y)
+				y = screen->base.usable_geometry.y;
+			break;
+		}
+	}
 	view_move(&window->view->base, x, y);
 	return true;
 }
@@ -658,12 +689,15 @@ window_set_app_id(struct window *window, const char *app_id)
 void
 window_set_parent(struct window *window, struct window *parent)
 {
-	if (window->base.parent == &parent->base) {
+	struct swc_window *base = parent ? &parent->base : NULL;
+
+	if (window->base.parent == base) {
 		return;
 	}
 
-	compositor_view_set_parent(window->view, parent->view);
-	window->base.parent = &parent->base;
+	// a null parent clears the transient link
+	compositor_view_set_parent(window->view, parent ? parent->view : NULL);
+	window->base.parent = base;
 
 	if (window->handler->parent_changed) {
 		window->handler->parent_changed(window->handler_data);

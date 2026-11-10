@@ -28,6 +28,13 @@ void fb_finalize(void);
 bool fb_create_screens(struct wl_list *screens);
 bool fb_present(struct wld_buffer *buffer, int32_t x, int32_t y);
 bool fb_set_mode(uint32_t mode_id);
+#ifdef PD_VIRTIO_CURSOR
+bool fb_hardware_cursor_active(void);
+bool fb_set_hardware_cursor(struct wld_buffer *buffer, int32_t hotspot_x,
+                            int32_t hotspot_y);
+void fb_move_hardware_cursor(int32_t x, int32_t y, int32_t hotspot_x,
+                             int32_t hotspot_y);
+#endif
 // what changed on screen in the frame about to be presented, NULL for everything
 void fb_set_damage(const struct pixman_region32 *damage);
 // marks where a frame's work starts, for ARGON_GFX_STATS

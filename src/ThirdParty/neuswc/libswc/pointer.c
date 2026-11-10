@@ -22,10 +22,14 @@
  */
 
 #include "pointer.h"
+#include "pointer_constraints.h"
 #include "backend.h"
 #include "compositor.h"
 #include "cursor/cursor_data.h"
 #include "event.h"
+#ifdef PD_VIRTIO_CURSOR
+#include "fb.h"
+#endif
 #include "internal.h"
 #ifdef ENABLE_DRM
 #include "plane.h"
@@ -151,6 +155,9 @@ leave(struct input_focus_handler *handler, struct wl_list *resources,
 	struct wl_resource *resource;
 	uint32_t serial;
 
+	// a view whose surface is gone has no client left to tell
+	if (!view || !view->surface)
+		return;
 	serial = wl_display_next_serial(swc.display);
 	wl_resource_for_each(resource, resources)
 	    wl_pointer_send_leave(resource, serial, view->surface->resource);
@@ -198,6 +205,18 @@ attach(struct view *view, struct wld_buffer *buffer)
 
 	wld_flush(swc.shm->renderer);
 
+#ifdef PD_VIRTIO_CURSOR
+	if (buffer)
+		(void)fb_set_hardware_cursor(pointer->cursor.buffer,
+		                            pointer->cursor.hotspot.x,
+		                            pointer->cursor.hotspot.y);
+	else
+		(void)fb_set_hardware_cursor(NULL, 0, 0);
+	fb_move_hardware_cursor(view->geometry.x, view->geometry.y,
+	                        pointer->cursor.hotspot.x,
+	                        pointer->cursor.hotspot.y);
+#endif
+
 	if (surface) {
 		pixman_region32_clear(&surface->state.damage);
 	}
@@ -215,6 +234,9 @@ attach(struct view *view, struct wld_buffer *buffer)
 		view_update(&screen->planes.cursor->view);
 	}
 #else
+	#ifdef PD_VIRTIO_CURSOR
+	if (!fb_hardware_cursor_active())
+	#endif
 	compositor_damage_all();
 #endif
 
@@ -227,10 +249,20 @@ move(struct view *view, int32_t x, int32_t y)
 #ifdef ENABLE_DRM
 	struct screen *screen;
 #endif
+#ifdef PD_VIRTIO_CURSOR
+	struct pointer *pointer = wl_container_of(view, pointer, cursor.view);
+	bool hw_cursor_was_active = fb_hardware_cursor_active();
+#endif
 
 	if (view_set_position(view, x, y)) {
 		view_update_screens(view);
 	}
+
+#ifdef PD_VIRTIO_CURSOR
+	fb_move_hardware_cursor(view->geometry.x, view->geometry.y,
+	                        pointer->cursor.hotspot.x,
+	                        pointer->cursor.hotspot.y);
+#endif
 
 #ifdef ENABLE_DRM
 	wl_list_for_each(screen, &swc.screens, link) {
@@ -239,6 +271,9 @@ move(struct view *view, int32_t x, int32_t y)
 		view_update(&screen->planes.cursor->view);
 	}
 #else
+	#ifdef PD_VIRTIO_CURSOR
+	if (!hw_cursor_was_active || !fb_hardware_cursor_active())
+	#endif
 	compositor_damage_all();
 #endif
 
@@ -572,10 +607,12 @@ clip_position(struct pointer *pointer, wl_fixed_t fx, wl_fixed_t fy)
 	if (!pixman_region32_contains_point(&pointer->region, x, y, NULL)) {
 		if (!pixman_region32_contains_point(&pointer->region, last_x, last_y,
 		                                    &box)) {
-			WARNING("cursor is not in the visible screen area\n");
-			pointer->x = 0;
-			pointer->y = 0;
-			return;
+			// a mode change can leave the old position off screen, so clamp to what is left
+			if (!pixman_region32_not_empty(&pointer->region)) {
+				WARNING("cursor is not in the visible screen area\n");
+				return;
+			}
+			box = *pixman_region32_extents(&pointer->region);
 		}
 
 		/* Do some clipping. */
@@ -630,6 +667,8 @@ set_cursor(struct wl_client *client, struct wl_resource *resource,
 		wl_resource_add_destroy_listener(surface->resource,
 		                                 &pointer->cursor.destroy_listener);
 		update_cursor(pointer);
+	} else {
+		view_attach(&pointer->cursor.view, NULL);
 	}
 }
 
@@ -744,17 +783,8 @@ pointer_handle_axis(struct pointer *pointer, uint32_t time,
 	}
 }
 
-void
-pointer_handle_relative_motion(struct pointer *pointer, uint32_t time,
-                               wl_fixed_t dx, wl_fixed_t dy)
-{
-	pointer_handle_absolute_motion(pointer, time, pointer->x + dx,
-	                               pointer->y + dy);
-}
-
-void
-pointer_handle_absolute_motion(struct pointer *pointer, uint32_t time,
-                               wl_fixed_t x, wl_fixed_t y)
+static void
+move_to(struct pointer *pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y)
 {
 	struct pointer_handler *handler;
 
@@ -769,6 +799,40 @@ pointer_handle_absolute_motion(struct pointer *pointer, uint32_t time,
 		}
 	}
 
+	update_cursor(pointer);
+	pointer_constraints_update(pointer);
+}
+
+// the deltas go out before clipping, so relative motion keeps coming at the screen edge
+void
+pointer_handle_relative_motion(struct pointer *pointer, uint32_t time,
+                               wl_fixed_t dx, wl_fixed_t dy)
+{
+	wl_fixed_t x = pointer->x + dx, y = pointer->y + dy;
+
+	if (pointer_constraints_motion(pointer, time, dx, dy, &x, &y))
+		move_to(pointer, time, x, y);
+}
+
+void
+pointer_handle_absolute_motion(struct pointer *pointer, uint32_t time,
+                               wl_fixed_t x, wl_fixed_t y)
+{
+	wl_fixed_t dx = pointer->device_valid ? x - pointer->device_x : x - pointer->x;
+	wl_fixed_t dy = pointer->device_valid ? y - pointer->device_y : y - pointer->y;
+
+	pointer->device_x = x;
+	pointer->device_y = y;
+	pointer->device_valid = true;
+	if (pointer_constraints_motion(pointer, time, dx, dy, &x, &y))
+		move_to(pointer, time, x, y);
+}
+
+// moves the cursor without motion events, for the cursor hint on unlock
+void
+pointer_warp(struct pointer *pointer, wl_fixed_t x, wl_fixed_t y)
+{
+	clip_position(pointer, x, y);
 	update_cursor(pointer);
 }
 
