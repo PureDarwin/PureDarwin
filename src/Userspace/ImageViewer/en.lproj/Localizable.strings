@@ -1,0 +1,72 @@
+/* No comment provided by engineer. */
+"%.0f × %.0f   %@ image   %@" = "%.0f × %.0f   %@ image   %@";
+
+/* No comment provided by engineer. */
+"%lu of %lu in %@" = "%lu of %lu in %@";
+
+/* No comment provided by engineer. */
+"About %@" = "About %@";
+
+/* No comment provided by engineer. */
+"Actual Size" = "Actual Size";
+
+/* No comment provided by engineer. */
+"Close" = "Close";
+
+/* No comment provided by engineer. */
+"File" = "File";
+
+/* No comment provided by engineer. */
+"Go" = "Go";
+
+/* No comment provided by engineer. */
+"Hide %@" = "Hide %@";
+
+/* No comment provided by engineer. */
+"Image" = "Image";
+
+/* No comment provided by engineer. */
+"Image Viewer" = "Image Viewer";
+
+/* No comment provided by engineer. */
+"Minimize" = "Minimize";
+
+/* No comment provided by engineer. */
+"Next Image" = "Next Image";
+
+/* No comment provided by engineer. */
+"Previous Image" = "Previous Image";
+
+/* No comment provided by engineer. */
+"Quit %@" = "Quit %@";
+
+/* No comment provided by engineer. */
+"Rotate Left" = "Rotate Left";
+
+/* No comment provided by engineer. */
+"Rotate Right" = "Rotate Right";
+
+/* No comment provided by engineer. */
+"Set as Wallpaper" = "Set as Wallpaper";
+
+/* No comment provided by engineer. */
+"Show in Files" = "Show in Files";
+
+/* No comment provided by engineer. */
+"View" = "View";
+
+/* No comment provided by engineer. */
+"Window" = "Window";
+
+/* No comment provided by engineer. */
+"Zoom" = "Zoom";
+
+/* No comment provided by engineer. */
+"Zoom In" = "Zoom In";
+
+/* No comment provided by engineer. */
+"Zoom Out" = "Zoom Out";
+
+/* No comment provided by engineer. */
+"Zoom to Fit" = "Zoom to Fit";
+

@@ -1,0 +1,72 @@
+/* No comment provided by engineer. */
+"%.0f × %.0f   %@ image   %@" = "%.0f × %.0f   %@-Bild   %@";
+
+/* No comment provided by engineer. */
+"%lu of %lu in %@" = "%lu von %lu in %@";
+
+/* No comment provided by engineer. */
+"About %@" = "Über %@";
+
+/* No comment provided by engineer. */
+"Actual Size" = "Originalgröße";
+
+/* No comment provided by engineer. */
+"Close" = "Schließen";
+
+/* No comment provided by engineer. */
+"File" = "Ablage";
+
+/* No comment provided by engineer. */
+"Go" = "Gehe zu";
+
+/* No comment provided by engineer. */
+"Hide %@" = "%@ ausblenden";
+
+/* No comment provided by engineer. */
+"Image" = "Bild";
+
+/* No comment provided by engineer. */
+"Image Viewer" = "Bildbetrachter";
+
+/* No comment provided by engineer. */
+"Minimize" = "Im Dock ablegen";
+
+/* No comment provided by engineer. */
+"Next Image" = "Nächstes Bild";
+
+/* No comment provided by engineer. */
+"Previous Image" = "Vorheriges Bild";
+
+/* No comment provided by engineer. */
+"Quit %@" = "%@ beenden";
+
+/* No comment provided by engineer. */
+"Rotate Left" = "Nach links drehen";
+
+/* No comment provided by engineer. */
+"Rotate Right" = "Nach rechts drehen";
+
+/* No comment provided by engineer. */
+"Set as Wallpaper" = "Als Hintergrundbild verwenden";
+
+/* No comment provided by engineer. */
+"Show in Files" = "In Dateien zeigen";
+
+/* No comment provided by engineer. */
+"View" = "Darstellung";
+
+/* No comment provided by engineer. */
+"Window" = "Fenster";
+
+/* No comment provided by engineer. */
+"Zoom" = "Zoomen";
+
+/* No comment provided by engineer. */
+"Zoom In" = "Vergrößern";
+
+/* No comment provided by engineer. */
+"Zoom Out" = "Verkleinern";
+
+/* No comment provided by engineer. */
+"Zoom to Fit" = "In Fenster einpassen";
+
