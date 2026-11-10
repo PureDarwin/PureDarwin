@@ -105,6 +105,33 @@ stdenv.mkDerivation {
     open(p, 'w').write(s)
     PY
 
+    # null semaphore handles are reported and dropped before Venus dereferences them in WSI submits
+    python3 - <<'PY'
+    p = 'src/virtio/vulkan/vn_queue.c'
+    s = open(p).read()
+    s = s.replace('#include "vn_queue.h"', '#include "vn_queue.h"\n\n#include <stdio.h>')
+    old = (
+        "      struct vn_semaphore *sem = vn_semaphore_from_handle(\n"
+        "         vn_get_signal_semaphore(submit, batch_index, i));\n"
+        "      if (sem->feedback.slot && queue->can_feedback) {"
+    )
+    new = (
+        "      VkSemaphore sem_handle =\n"
+        "         vn_get_signal_semaphore(submit, batch_index, i);\n"
+        "      if (sem_handle == VK_NULL_HANDLE) {\n"
+        "         fprintf(stderr, \"Venus: null signal semaphore in submit type %u batch %u/%u signal %u/%u\\\\n\",\n"
+        "                 submit->batch_type, batch_index, submit->batch_count,\n"
+        "                 i, signal_count);\n"
+        "         return VK_ERROR_INITIALIZATION_FAILED;\n"
+        "      }\n"
+        "      struct vn_semaphore *sem = vn_semaphore_from_handle(sem_handle);\n"
+        "      if (sem->feedback.slot && queue->can_feedback) {"
+    )
+    assert s.count(old) == 1
+    s = s.replace(old, new)
+    open(p, 'w').write(s)
+    PY
+
     # the generated entrypoint tables take weak references to every entrypoint, which mach-o can
     # only leave unresolved through dynamic lookup, installPhase checks nothing else is left
     substituteInPlace src/vulkan/meson.build \

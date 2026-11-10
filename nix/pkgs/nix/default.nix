@@ -172,14 +172,25 @@ rec {
     configureFlags = [ "--disable-examples" ];
   };
 
-  # Only what Nix unpacks: gzip, bzip2 and xz tarballs.
+  # cache.nixos.org serves its NARs zstd-compressed
+  nix-zstd = mkCMakeStatic {
+    pname = "zstd";
+    inherit (pkgs.zstd) version src;
+    cmakeDir = "build/cmake";
+    cmakeFlags = [
+      "-DZSTD_BUILD_PROGRAMS=OFF" "-DZSTD_BUILD_SHARED=OFF" "-DZSTD_BUILD_STATIC=ON"
+      "-DZSTD_BUILD_TESTS=OFF" "-DZSTD_MULTITHREAD_SUPPORT=ON"
+    ];
+  };
+
+  # what Nix unpacks: gzip, bzip2 and xz tarballs, and the binary cache's zstd NARs
   nix-libarchive = mkCMakeStatic {
     pname = "libarchive";
     inherit (pkgs.libarchive) version src;
-    deps = [ zlib nix-bzip2 xz ];
+    deps = [ zlib nix-bzip2 xz nix-zstd ];
     cmakeFlags = [
       "-DENABLE_OPENSSL=OFF" "-DENABLE_MBEDTLS=OFF" "-DENABLE_NETTLE=OFF"
-      "-DENABLE_LIBB2=OFF" "-DENABLE_LZ4=OFF" "-DENABLE_LZO=OFF" "-DENABLE_ZSTD=OFF"
+      "-DENABLE_LIBB2=OFF" "-DENABLE_LZ4=OFF" "-DENABLE_LZO=OFF" "-DENABLE_ZSTD=ON"
       "-DENABLE_LIBXML2=OFF" "-DENABLE_EXPAT=OFF"
       "-DENABLE_PCREPOSIX=OFF" "-DENABLE_PCRE2POSIX=OFF"
       "-DENABLE_TAR=OFF" "-DENABLE_CPIO=OFF" "-DENABLE_CAT=OFF"
@@ -254,7 +265,7 @@ rec {
       let
         deps = [
           nix-sqlite nix-libsodium nix-libblake3 nix-brotli nix-editline nix-libarchive
-          nix-libgit2 nix-bzip2 curl openssl zlib xz pkgs.nlohmann_json
+          nix-libgit2 nix-bzip2 nix-zstd curl openssl zlib xz pkgs.nlohmann_json
         ];
         pcPath = lib.concatStringsSep ":" (lib.concatMap (d: [ "${d}/lib/pkgconfig" "${d}/share/pkgconfig" ]) deps);
         crossFile = cross.mesonCrossFile {
@@ -271,6 +282,7 @@ rec {
             "-L${zlib}/lib" "-lz"
             "-L${nix-bzip2}/lib" "-lbz2"
             "-L${xz}/lib" "-llzma"
+            "-L${nix-zstd}/lib" "-lzstd"
             # libcurl asks SystemConfiguration for proxy settings.
             "-F${corefoundation}/System/Library/Frameworks" "-framework" "CoreFoundation"
             "-F${systemConfiguration}/System/Library/Frameworks" "-framework" "SystemConfiguration"

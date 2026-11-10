@@ -126,6 +126,28 @@ with open('meson.build', 'w') as f:
     f.write(content)
 PYEOF
 
+    # xnu rejects shm_open flags beyond O_RDONLY/O_RDWR/O_CREAT/O_EXCL/O_TRUNC with EINVAL for
+    # binaries built against the 26.4 SDK or later, so close-on-exec is set with fcntl afterwards
+    python3 - <<'PYEOF'
+from pathlib import Path
+
+path = Path('gdk/wayland/gdkdisplay-wayland.c')
+content = path.read_text()
+old = """          ret = shm_open (name, O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC, 0600);
+
+          if (ret >= 0)
+            shm_unlink (name);"""
+new = """          ret = shm_open (name, O_CREAT | O_EXCL | O_RDWR, 0600);
+
+          if (ret >= 0)
+            {
+              fcntl (ret, F_SETFD, FD_CLOEXEC);
+              shm_unlink (name);
+            }"""
+assert old in content, "gdk shm_open call not found"
+path.write_text(content.replace(old, new))
+PYEOF
+
     # PureDarwin's current dlsym/dlopen(NULL) path can report GTK2's
     # gtk_progress_get_type marker as present even though no loaded image
     # exports it.

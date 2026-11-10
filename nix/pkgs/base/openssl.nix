@@ -7,6 +7,8 @@
 , perl
 , targetTriple ? "x86_64-apple-darwin20.4"
 , appleSdk
+# libraries used from several threads, such as Security, need OpenSSL's locking
+, withThreads ? false
 }:
 
 let
@@ -18,7 +20,7 @@ let
     else "darwin64-x86_64-cc";
 in
 stdenv.mkDerivation {
-  pname = "puredarwin-openssl";
+  pname = "puredarwin-openssl${lib.optionalString withThreads "-threads"}";
   inherit (openssl) version;
   src = openssl.src;
 
@@ -39,7 +41,7 @@ stdenv.mkDerivation {
     export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,26.5,26.5 -Wl,-undefined,dynamic_lookup -lSystem"
 
     perl ./Configure ${opensslTarget} \
-      no-asm no-shared no-tests no-async no-engine no-dso no-threads \
+      no-asm no-shared no-tests no-async no-engine no-dso ${lib.optionalString (!withThreads) "no-threads"} \
       --prefix=$out \
       --openssldir=$out/etc/ssl \
       $CFLAGS

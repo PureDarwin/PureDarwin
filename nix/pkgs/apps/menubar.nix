@@ -1,7 +1,7 @@
 { stdenv, lib, fetchurl, darwinCrossToolchain, nativeLd, appleSdk, libSystem
 , corefoundation, foundation, libobjc, appkit, onyx2d, coretext, quartzcore
 , coregraphics, applicationservices, coreservices, windowserver, openglFramework, mesa
-, librsvg, iokit, iokitHeaders
+, librsvg, iokit, audiotoolbox
 , src ? ../../../src/Userspace/MenuBar
 , wifiSrc ? ../../../src/Userspace/wifiutil
 , wifiHeaders ? ../../../src/Kernel/Extensions/IO80211Family
@@ -27,29 +27,31 @@ stdenv.mkDerivation {
     cp ${../../../src/Frameworks/AppKit/PDMenuServer.h} PDMenuServer.h
     # the Wi-Fi backend and screens the menu bar, Settings and the installer share
     cp ${wifiSrc}/pdwifi.c ${wifiSrc}/pdwifi.h ${wifiSrc}/PDWiFiUI.m ${wifiSrc}/PDWiFiUI.h .
-    for f in main.m MenuBarView.m AboutPanel.m WiFiMenu.m pdwifi.c PDWiFiUI.m; do
-      $cc $common -x objective-c -fno-objc-arc -fblocks -Wall -Wno-deprecated-declarations \
+    source ${../../lib/pcc.sh}
+    for f in main.m MenuBarView.m AboutPanel.m WiFiMenu.m SoundMenu.m pdwifi.c PDWiFiUI.m; do
+      pcc $cc $common -x objective-c -fno-objc-arc -fblocks -Wall -Wno-deprecated-declarations \
         -I. -I${wifiHeaders} -I${cryptoHeaders} \
         -I${libSystem}/usr/include -I${libobjc}/usr/include -I${corefoundation}/include \
         -I${foundation}/usr/include -I${onyx2d}/usr/include -I${coretext}/usr/include \
         -I${quartzcore}/usr/include -I${applicationservices}/usr/include \
         -I${coregraphics}/usr/include -I${coreservices}/usr/include \
-        -I${windowserver}/usr/include -I${iokitHeaders}/include -I${mesa}/usr/include \
-        -F${appkit}/System/Library/Frameworks -F${openglFramework}/System/Library/Frameworks \
+        -I${windowserver}/usr/include -I${mesa}/usr/include \
+        -F${appkit}/System/Library/Frameworks -F${audiotoolbox}/System/Library/Frameworks -F${openglFramework}/System/Library/Frameworks \
         -c "$f" -o "objs/$(basename "$f" .m).o"
     done
+    pcc_wait
 
     $cc -isysroot "$SDK" -mmacosx-version-min=26.5 \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
       -L${libSystem}/usr/lib -L${libobjc}/usr/lib -L${corefoundation}/usr/lib \
       -L${foundation}/usr/lib -L${appkit}/usr/lib -L${onyx2d}/usr/lib \
       -L${coretext}/usr/lib -L${quartzcore}/usr/lib -L${coregraphics}/usr/lib \
-      -L${windowserver}/usr/lib -L${iokit}/usr/lib \
+      -L${windowserver}/usr/lib -F${iokit}/System/Library/Frameworks \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -Wl,-platform_version,macos,26.5,26.5 \
       objs/*.o \
       -lAppKit -lQuartzCore -lCoreText -lCoreGraphics -lOnyx2D -lWindowServer \
-      -lFoundation -lIOKitCF -lCoreFoundation -lobjc -lSystem \
+      -lFoundation -framework IOKit -F${audiotoolbox}/System/Library/Frameworks -framework CoreAudio -lCoreFoundation -lobjc -lSystem \
       -o MenuBar
 
     # icons render at 1x and 2x, symbolic ones stay dark on the light bar

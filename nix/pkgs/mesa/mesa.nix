@@ -32,8 +32,6 @@
 , waylandScanner
 , pdVirglShim
 , virglWinsysSrc
-, radeonWinsysSrc
-, radeonAbiHeader
 , corefoundation
 , iokit
 , virglAbiHeader
@@ -41,7 +39,7 @@
   # the closure. See the with_dri patch in postPatch for why that needs help.
 , withX11 ? true
 # radv on the amdgpu kernel driver through /dev/dri, instead of the IOKit
-# virgl and r600 paths; Darwin is treated as a drm system for this build
+# virgl path; Darwin is treated as a drm system for this build
 , withAmdgpuDrm ? false
 # crocus (gen4-7) and iris (gen8+) for i915, their CL kernels compile with the host's
 # mesa_clc (anv and hasvk need dl_iterate_phdr, which PD's libc lacks)
@@ -89,8 +87,8 @@ let
     "-L${expat}/lib"
     "-L${llvm}/usr/lib"
     "-L${corefoundation}/usr/lib"
-    "-L${iokit}/usr/lib"
-    "-lIOKitCF"
+    "-F${iokit}/System/Library/Frameworks"
+    "-Wl,-framework,IOKit"
     "-lCoreFoundation"
     "-L${wayland}/lib"
   ];
@@ -243,13 +241,6 @@ stdenv.mkDerivation rec {
                 break;
              }
           }'
-  '' + lib.optionalString (!drm) ''
-    mkdir -p src/gallium/winsys/radeon/puredarwin
-    cp ${radeonWinsysSrc}/* src/gallium/winsys/radeon/puredarwin/
-    cp ${radeonAbiHeader} src/gallium/winsys/radeon/puredarwin/PDRadeonRenderShared.h
-    cp src/gallium/winsys/radeon/drm/radeon_surface.{c,h} src/gallium/winsys/radeon/puredarwin/
-    python3 ${radeonWinsysSrc}/patch-mesa.py
-
   '' + lib.optionalString virgl ''
     mkdir -p src/gallium/winsys/virgl/puredarwin
     cp ${virglWinsysSrc}/virgl_puredarwin_winsys.c src/gallium/winsys/virgl/puredarwin/
@@ -337,8 +328,6 @@ EOF
 
     dritarget=src/gallium/targets/dri/meson.build
     substituteInPlace "$dritarget" \
-      --replace "files('../../winsys/radeon/puredarwin/radeon_present.c', 'dri_target.c')," \
-                "files('../../winsys/radeon/puredarwin/radeon_present.c', 'dri_target.c', '../../winsys/virgl/puredarwin/virgl_puredarwin_winsys.c')," \
       --replace "files('dri_target.c')," \
                 "files('dri_target.c', '../../winsys/virgl/puredarwin/virgl_puredarwin_winsys.c')," \
       --replace "include_directories('../../frontends/dri')," \
@@ -410,7 +399,7 @@ EOF
       --libdir=lib \
       --buildtype=release \
       -Ddefault_library=shared \
-      -Dgallium-drivers=${if withMsmDrm then "llvmpipe,softpipe,freedreno" else if withNouveauDrm && !withAmdgpuDrm then "llvmpipe,softpipe,nouveau" else if withAmdgpuDrm then "llvmpipe,softpipe,radeonsi,zink${lib.optionalString withIntelDrm ",crocus,iris"}${lib.optionalString withNouveauDrm ",nouveau"}${lib.optionalString withVirgl ",virgl"}" else "llvmpipe,softpipe,virgl,r600,zink"} \
+      -Dgallium-drivers=${if withMsmDrm then "llvmpipe,softpipe,freedreno" else if withNouveauDrm && !withAmdgpuDrm then "llvmpipe,softpipe,nouveau" else if withAmdgpuDrm then "llvmpipe,softpipe,radeonsi,zink${lib.optionalString withIntelDrm ",crocus,iris"}${lib.optionalString withNouveauDrm ",nouveau"}${lib.optionalString withVirgl ",virgl"}" else "llvmpipe,softpipe,virgl,zink"} \
       -Dvulkan-drivers=${if withAmdgpuDrm then "swrast,amd" else "swrast"} \
       ${lib.optionalString withMsmDrm "-Dfreedreno-kmds=msm"} \
       ${lib.optionalString withAmdgpuDrm "-Damd-use-llvm=false"} \

@@ -27,12 +27,14 @@ stdenv.mkDerivation {
 
     mkdir -p vterm objs
     tar xzf ${libvterm} -C vterm --strip-components=1
+    source ${../../lib/pcc.sh}
     for f in vterm/src/*.c; do
-      $cc $common -std=c99 -Ivterm/include -c "$f" -o "objs/vterm_$(basename "$f" .c).o"
+      pcc $cc $common -std=c99 -Ivterm/include -c "$f" -o "objs/vterm_$(basename "$f" .c).o"
     done
+    pcc_wait
 
     for f in main.m TerminalView.m TerminalTabs.m; do
-      $cc $common -x objective-c -fno-objc-arc -fblocks -Wall -Wno-deprecated-declarations \
+      pcc $cc $common -x objective-c -fno-objc-arc -fblocks -Wall -Wno-deprecated-declarations \
         -Ivterm/include \
         -I${libSystem}/usr/include -I${libobjc}/usr/include -I${corefoundation}/include \
         -I${foundation}/usr/include -I${onyx2d}/usr/include -I${coretext}/usr/include \
@@ -42,6 +44,7 @@ stdenv.mkDerivation {
         -F${appkit}/System/Library/Frameworks -F${openglFramework}/System/Library/Frameworks \
         -c "$f" -o "objs/$(basename "$f" .m).o"
     done
+    pcc_wait
 
     $cc -isysroot "$SDK" -mmacosx-version-min=26.5 \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \

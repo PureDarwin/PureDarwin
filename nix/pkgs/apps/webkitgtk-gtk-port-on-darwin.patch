@@ -470,3 +470,106 @@
      src/core/SkPathEffect.cpp
      src/core/SkPathIter.cpp
      src/core/SkPathMeasure.cpp
+--- a/Source/WebKit/Platform/IPC/unix/IPCUtilitiesUnix.cpp
++++ b/Source/WebKit/Platform/IPC/unix/IPCUtilitiesUnix.cpp
+@@ -48,8 +48,25 @@
+     }
+ #endif
+ 
++#if OS(DARWIN)
++    // xnu AF_UNIX has no SOCK_SEQPACKET, datagrams keep the message framing ConnectionGLib relies on
++    if (socketType == SOCK_SEQPACKET)
++        socketType = SOCK_DGRAM;
++#endif
++
+     RELEASE_ASSERT(socketpair(AF_UNIX, socketType, 0, sockets.data()) != -1);
+ 
++#if OS(DARWIN)
++    // the default datagram limit (net.local.dgram.maxdgram) is 2 KB, below the 4 KB inline message size
++    if (socketType == SOCK_DGRAM) {
++        int bufferSize = 512 * 1024;
++        for (int fd : sockets) {
++            RELEASE_ASSERT(!setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &bufferSize, sizeof(bufferSize)));
++            RELEASE_ASSERT(!setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &bufferSize, sizeof(bufferSize)));
++        }
++    }
++#endif
++
+     if (options & SetCloexecOnServer)
+         RELEASE_ASSERT(setCloseOnExec(sockets[1]));
+     if (options & SetCloexecOnClient)
+--- a/Source/WebCore/platform/sql/SQLiteDatabase.cpp
++++ b/Source/WebCore/platform/sql/SQLiteDatabase.cpp
+@@ -70,7 +70,7 @@
+         // aren't confident that it really is, and we still support ancient versions of SQLite. So
+         // std::call_once is used to stay on the safe side. See bug #143245.
+ 
+-#if OS(DARWIN)
++#if PLATFORM(COCOA)
+         int ret;
+         callOnMainThreadAndWait([&] {
+             // In the Network process, this function can be called on a background thread when
+--- a/Source/WebKit/Platform/IPC/glib/ConnectionGLib.cpp
++++ b/Source/WebKit/Platform/IPC/glib/ConnectionGLib.cpp
+@@ -33,6 +33,7 @@
+ #include <gio/gio.h>
+ #include <gio/gunixconnection.h>
+ #include <gio/gunixfdmessage.h>
++#include <sys/stat.h>
+ #include <sys/socket.h>
+ #include <wtf/StdLibExtras.h>
+ #include <wtf/UniStdExtras.h>
+@@ -416,6 +417,18 @@
+     GUniqueOutPtr<GError> error;
+     auto bytesWritten = g_socket_send_message(m_socket.get(), nullptr, outputVector, outputVectorLength,
+         controlMessagePtr ? &controlMessagePtr : nullptr, controlMessagePtr ? 1 : 0, 0, m_cancellable.get(), &error.outPtr());
++#if OS(DARWIN)
++    // which descriptors xnu refused, a closed or reused number shows here as badfd or an unexpected type
++    if (bytesWritten < 0 && controlMessage) {
++        int count = 0;
++        const int* passed = g_unix_fd_list_peek_fds(g_unix_fd_message_get_fd_list(G_UNIX_FD_MESSAGE(controlMessage.get())), &count);
++        for (int i = 0; i < count; i++) {
++            struct stat st;
++            bool valid = !fstat(passed[i], &st);
++            WTFLogAlways("IPC send failed with descriptor %d of %d: fd %d %s mode %o", i + 1, count, passed[i], valid ? "valid" : "badfd", valid ? (unsigned)(st.st_mode & S_IFMT) : 0);
++        }
++    }
++#endif
+     if (controlMessage) {
+         // File descriptors are owned by UnixMessage, so steal them from the control message to avoid a double close.
+         g_free(g_unix_fd_message_steal_fds(G_UNIX_FD_MESSAGE(controlMessage.get()), nullptr));
+@@ -450,13 +463,33 @@
+         return false;
+     }
+ 
++#if OS(DARWIN)
++    // xnu answers a full datagram receive buffer with ENOBUFS, which glib reports as a plain failure, so send it again shortly
++    if (g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_FAILED) && g_str_has_suffix(error->message, g_strerror(ENOBUFS))) {
++        m_hasPendingOutputMessage = true;
++        m_connectionQueue->dispatchAfter(1_ms, [this, protectedThis = Ref { *this }, message = WTF::move(outputMessage)]() mutable {
++            m_hasPendingOutputMessage = false;
++            if (m_isConnected) {
++                sendOutputMessage(WTF::move(message));
++                sendOutgoingMessages();
++            }
++        });
++        return false;
++    }
++#endif
++
+     if (g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED) || g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+         connectionDidClose();
+         return false;
+     }
+ 
+-    if (m_isConnected)
++    if (m_isConnected) {
+         RELEASE_LOG_ERROR(IPC, "Error sending IPC message on socket %d in process %d: %s", g_socket_get_fd(m_socket.get()), getpid(), error->message);
++#if OS(DARWIN)
++        // release logging has no sink in this port, a dropped message has to show somewhere
++        WTFLogAlways("Error sending IPC message on socket %d in process %d: %s", g_socket_get_fd(m_socket.get()), getpid(), error->message);
++#endif
++    }
+     return false;
+ }
+ IGNORE_CLANG_WARNINGS_END

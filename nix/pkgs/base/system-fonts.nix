@@ -31,7 +31,8 @@ stdenvNoCC.mkDerivation {
 
     # static faces, the variable font and the collection are not used by AppKit's FreeType path
     mkdir -p "$fonts/Inter"
-    for face in Regular Italic Medium MediumItalic SemiBold SemiBoldItalic Bold BoldItalic; do
+    for face in Thin ThinItalic ExtraLight ExtraLightItalic Light LightItalic Regular Italic Medium MediumItalic \
+                SemiBold SemiBoldItalic Bold BoldItalic ExtraBold ExtraBoldItalic Black BlackItalic; do
       install -m644 "${inter}/extras/otf/Inter-$face.otf" "$fonts/Inter/"
     done
     install -m644 "${inter}/LICENSE.txt" "$fonts/Inter/LICENSE.txt"

@@ -30,10 +30,10 @@ stdenv.mkDerivation {
       -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector \
       -I${libSystem}/usr/include -I${corefoundation}/include -I${vulkanHeaders}/include -I. \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
-      -L${libSystem}/usr/lib -L${vulkanLoader}/usr/lib -L${corefoundation}/usr/lib -L${iokit}/usr/lib \
+      -L${libSystem}/usr/lib -L${vulkanLoader}/usr/lib -L${corefoundation}/usr/lib -F${iokit}/System/Library/Frameworks \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -Wl,-platform_version,macos,26.5,26.5 \
-      pdvkspin.c pdfb.c -lvulkan -lIOKitCF -lCoreFoundation -lSystem -o pdvkspin
+      pdvkspin.c pdfb.c -lvulkan -framework IOKit -lCoreFoundation -lSystem -o pdvkspin
     ${darwinCrossToolchain}/bin/${targetTriple}-clang \
       -isysroot "$SDK" -mmacosx-version-min=26.5 -O2 -Wall \
       -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector \

@@ -126,12 +126,26 @@ SNDEOF
       -e 's#src/detection/physicaldisk/physicaldisk_apple\.c#src/detection/physicaldisk/physicaldisk_nosupport.c#' \
       CMakeLists.txt
 
+    # PureDarwin's desktop and compositor, as the session announces them: Argon over neuswc
     cat > src/detection/displayserver/displayserver_nosupport.c <<'DSEOF'
 #include "displayserver.h"
+#include <stdlib.h>
 
 void ffConnectDisplayServerImpl(FFDisplayServerResult* ds)
 {
-    (void) ds;
+    const char* desktop = getenv("XDG_CURRENT_DESKTOP");
+
+    if (desktop && *desktop)
+    {
+        ffStrbufSetS(&ds->dePrettyName, desktop);
+        ffStrbufSetS(&ds->deProcessName, desktop);
+    }
+    if (getenv("WAYLAND_DISPLAY"))
+    {
+        ffStrbufSetStatic(&ds->wmProtocolName, "Wayland");
+        ffStrbufSetStatic(&ds->wmPrettyName, "neuswc");
+        ffStrbufSetStatic(&ds->wmProcessName, "neuswc");
+    }
 }
 DSEOF
     sed -i 's#src/detection/displayserver/displayserver_apple\.c#src/detection/displayserver/displayserver_nosupport.c#' CMakeLists.txt
@@ -195,6 +209,7 @@ VEREOF
     sed -i \
       -e 's/ffStrbufSetStatic(&os->id, "macos");/ffStrbufSetStatic(\&os->id, "puredarwin");/' \
       -e 's/ffStrbufSetStatic(&os->name, "macOS");/ffStrbufSetStatic(\&os->name, "PureDarwin");/' \
+      -e 's/^    detectOSCodeName(os);$/    \/\/ macOS release names are Apple'"'"'s, PureDarwin has none/' \
       src/detection/os/os_apple.m
 
     # With os->id reported as "puredarwin", fastfetch's own logo autodetection
@@ -236,6 +251,11 @@ GLEOF
     # opengl_shared.c picks OpenGL/gl.h on any apple target, send it down its FF_HAVE_NO_GL path
     sed -i 's/^#elif __APPLE__$/#elif 0/' src/detection/opengl/opengl_shared.c
     ''}
+
+    # CGL's auto renderer loads every vulkan driver and may pick zink, which creates a device
+    # on the GPU. a report only needs mesa's own driver, so ask CGL for that
+    sed -i 's|^const char\* cglDetectOpenGL(FFOpenGLResult\* result) {$|&\n    setenv("PD_CGL_RENDERER", "default", 0);|' src/detection/opengl/opengl_apple.c
+    grep -q PD_CGL_RENDERER src/detection/opengl/opengl_apple.c
 
     # sysinfo.pageSize is only ever multiplied by vm_statistics64 counters,
     # which are in *kernel* pages. hw.pagesize is the task map's allocation
@@ -280,7 +300,7 @@ GPUEOF
     export DARWIN_SDK_ROOT="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
     export PATH="${darwinCrossToolchain}/bin:$PATH"
     export NIX_DARWIN_TOOLCHAIN_DIR="${darwinCrossToolchain}/bin"
-    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -F$DARWIN_SDK_ROOT/System/Library/Frameworks ${glFrameworkFlag}-fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${foundation}/usr/lib -L${libobjc}/usr/lib -L${iokit}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,26.5,26.5 -Wl,-undefined,dynamic_lookup ${glDylibFileFlag}${xDylibFileFlags}${glLinkFlag}-lIOKitCF -lCoreFoundation -lFoundation -lobjc -lSystem"
+    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -F$DARWIN_SDK_ROOT/System/Library/Frameworks ${glFrameworkFlag}-fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${foundation}/usr/lib -L${libobjc}/usr/lib -F${iokit}/System/Library/Frameworks -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,26.5,26.5 -Wl,-undefined,dynamic_lookup ${glDylibFileFlag}${xDylibFileFlags}${glLinkFlag}-framework IOKit -lCoreFoundation -lFoundation -lobjc -lSystem"
     export CFLAGS="-isysroot $DARWIN_SDK_ROOT ${glFrameworkFlag}${glIncludeFlag}-I${libSystem}/usr/include -I${corefoundation}/include -I${foundation}/usr/include -I${libobjc}/usr/include -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
   '';
 

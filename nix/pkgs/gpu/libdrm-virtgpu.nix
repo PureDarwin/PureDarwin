@@ -37,13 +37,13 @@ stdenv.mkDerivation {
         -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector \
         -I${libSystem}/usr/include -I${corefoundation}/include -Iinc -Iinc/libdrm \
         -fuse-ld=${nativeLd}/bin/ld -nostdlib \
-        -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${iokit}/usr/lib \
+        -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -F${iokit}/System/Library/Frameworks \
         -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
         -Wl,-platform_version,macos,26.5,26.5 "$@"
     }
     cc -dynamiclib -Wl,-fixup_chains -Wl,-install_name,/usr/lib/libdrm_virtgpu.dylib \
-      $shim/pd_virtgpu_drm.c -lIOKitCF -lCoreFoundation -lSystem -o libdrm_virtgpu.dylib
-    cc $shim/vnsmoke.c -lIOKitCF -lCoreFoundation -lSystem -o vnsmoke
+      $shim/pd_virtgpu_drm.c -framework IOKit -lCoreFoundation -lSystem -o libdrm_virtgpu.dylib
+    cc $shim/vnsmoke.c -framework IOKit -lCoreFoundation -lSystem -o vnsmoke
     cc -I${vulkanHeaders}/include $shim/vnprobe.c -lSystem -o vnprobe
     runHook postBuild
   '';

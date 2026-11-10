@@ -77,11 +77,12 @@ stdenv.mkDerivation {
       -DCMAKE_RANLIB=${darwinCrossToolchain}/bin/${targetTriple}-ranlib \
       -DCMAKE_INSTALL_NAME_TOOL=${nativeMesonTools}/bin/install_name_tool \
       -DCMAKE_C_FLAGS="$commonFlags" \
-      -DCMAKE_CXX_FLAGS="$commonFlags -nostdinc++ -I${libcxxDylib}/usr/include/c++/v1" \
+      -DCMAKE_CXX_FLAGS="$commonFlags -nostdinc++ -I${libcxxDylib}/usr/include/c++/v1 -I${libcxxabiDylib}/usr/include" \
       -DCMAKE_EXE_LINKER_FLAGS="$linkFlags" \
       -DCMAKE_SHARED_LINKER_FLAGS="$linkFlags" \
-      -DCMAKE_INSTALL_PREFIX=$out \
-      -DCMAKE_INSTALL_NAME_DIR=/lib \
+      -DCMAKE_INSTALL_PREFIX=/ \
+      -DCMAKE_INSTALL_NAME_DIR=/usr/lib \
+      -DCMAKE_INSTALL_RPATH=/usr/lib \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_CROSSCOMPILING=ON \
       -DCMAKE_FIND_ROOT_PATH="${lib.concatStringsSep ";" (lib.concatMap (d: [ "${d}" "${d}/usr" ]) deps)}" \
@@ -130,7 +131,7 @@ stdenv.mkDerivation {
       -DUSE_SYSPROF_CAPTURE=OFF \
       -DENABLE_API_TESTS=OFF \
       -DENABLE_LAYOUT_TESTS=OFF \
-      -DENABLE_MINIBROWSER=OFF
+      -DENABLE_MINIBROWSER=ON
 
     runHook postConfigure
   '';
@@ -139,7 +140,8 @@ stdenv.mkDerivation {
 
   buildPhase = lib.optionalString (!configureOnly) ''
     runHook preBuild
-    ninja -C build
+    # webcore unified sources take ~2.5 GB each, all cores OOM a 38 GB host
+    ninja -C build -j12
     runHook postBuild
   '';
 
@@ -151,14 +153,15 @@ stdenv.mkDerivation {
     runHook postInstall
   '' else ''
     runHook preInstall
-    ninja -C build install
+    # guest paths are baked in (PKGLIBEXECDIR finds WebKitWebProcess), so stage into $out
+    DESTDIR=$out ninja -C build install
     runHook postInstall
   '';
 
   dontFixup = true;
 
   meta = with lib; {
-    description = "WebKitGTK for PureDarwin - configure probe (stage 2 of the port)";
+    description = "WebKitGTK for PureDarwin with MiniBrowser";
     platforms = platforms.unix;
   };
 }

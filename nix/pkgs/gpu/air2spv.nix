@@ -21,6 +21,10 @@ stdenv.mkDerivation {
     fileset = lib.fileset.unions [
       ../../../src/Tools/air2spv
       ../../../src/Tools/airjitd/bridge.h
+      ../../../src/Tools/airjitd/ir.h
+      ../../../src/Tools/airjitd/ir.c
+      ../../../src/Tools/airjitd/select.h
+      ../../../src/Tools/airjitd/select.c
       ../../../src/Tools/airjitd/vulkan
     ];
   };
@@ -30,11 +34,11 @@ stdenv.mkDerivation {
   buildPhase = ''
     runHook preBuild
     cd air2spv
-    LIB="spv.c translate.c iface.c air.c cfg.c a2s.c"
+    LIB="spv.c translate.c iface.c air.c cfg.c a2s.c ../airjitd/ir.c"
     CFLAGS="-std=gnu11 -O2 -Wall -Wno-unused-parameter -I${lib.getDev llvm}/include -I${spirv-headers}/include"
     $CC $CFLAGS $LIB main.c -o air2spv -L${lib.getLib llvm}/lib -lLLVM
     # the executor opens the loader at run time: rpath it so it is found without LD_LIBRARY_PATH
-    $CC $CFLAGS -I${vulkan-headers}/include $LIB vkreplay.c ../airjitd/vulkan/vk.c -o vkreplay \
+    $CC $CFLAGS -DAIRJITD_VULKAN -I${vulkan-headers}/include $LIB vkreplay.c ../airjitd/select.c ../airjitd/vulkan/vk.c -o vkreplay \
       -L${lib.getLib llvm}/lib -lLLVM -Wl,-rpath,${vulkan-loader}/lib -ldl -lm
     runHook postBuild
   '';

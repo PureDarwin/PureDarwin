@@ -37,9 +37,11 @@ stdenv.mkDerivation {
 
     CFLAGS="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=26.5 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -DCAIRO_COMPILATION -DCAIRO_HAS_GOBJECT_FUNCTIONS=1 -I${libSystem}/usr/include ${lib.concatMapStringsSep " " (dep: "-I${dep}/include -I${dep}/include/cairo -I${dep}/include/glib-2.0 -I${dep}/lib/glib-2.0/include") deps}"
 
+    source ${../../lib/pcc.sh}
     for f in "$SRC"/cairo-gobject-enums.c "$SRC"/cairo-gobject-structs.c; do
-      "$CC" $CFLAGS -c "$f" -o "$(basename "$f").o"
+      pcc "$CC" $CFLAGS -c "$f" -o "$(basename "$f").o"
     done
+    pcc_wait
 
     "$CC" -dynamiclib \
       -isysroot "$DARWIN_SDK_ROOT" -mmacosx-version-min=26.5 \

@@ -68,6 +68,8 @@ stdenv.mkDerivation {
     LC_ALL=C grep -oE '^CONFIG_[A-Z0-9_]+=y$' .config \
       | sed -e 's/^CONFIG_//' -e 's/=y$//' \
       | tr 'A-Z' 'a-z' > $out/applets.txt
+    # toybox answers to nc as netcat, scripts call it by that name
+    grep -qx netcat $out/applets.txt && echo nc >> $out/applets.txt
     runHook postInstall
   '';
 

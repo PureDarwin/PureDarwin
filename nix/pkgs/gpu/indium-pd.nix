@@ -6,6 +6,8 @@
 , vulkan-headers
 , vulkan-loader
 , glfw
+, libGL
+, spirv-cross
 , glm
 , stb
 , xxd
@@ -41,18 +43,18 @@ stdenv.mkDerivation {
   };
 
   nativeBuildInputs = [ xxd ];
-  buildInputs = [ llvm spirv-headers vulkan-headers vulkan-loader glfw glm stb ];
+  buildInputs = [ llvm spirv-headers vulkan-headers vulkan-loader glfw libGL spirv-cross glm stb ];
 
   buildPhase = ''
     runHook preBuild
     INC="-Ipdmtl/linux -Iairjitd -Ipdmtl -I${lib.getDev llvm}/include -I${vulkan-headers}/include \
-      -I${spirv-headers}/include -I${lib.getDev glfw}/include"
+      -I${spirv-headers}/include -I${lib.getDev glfw}/include -I${lib.getDev libGL}/include -I${lib.getDev spirv-cross}/include"
     objs=""
-    for f in airjitd/*.c airjitd/llvm/*.c airjitd/vulkan/vk.c pdmtl/pdmtl.c pdmtl/pdmtl_window.c pdmtl/linux/darwin.c \
+    for f in airjitd/*.c airjitd/llvm/*.c airjitd/vulkan/vk.c airjitd/opengl/*.c pdmtl/pdmtl.c pdmtl/pdmtl_window.c pdmtl/linux/darwin.c \
              air2spv/spv.c air2spv/translate.c air2spv/iface.c air2spv/air.c air2spv/cfg.c air2spv/a2s.c; do
       case $f in airjitd/main.c|airjitd/static_llvm_shim.c|airjitd/dump.c) continue ;; esac
       o=$(echo "$f" | tr / _); o=''${o%.c}.o
-      $CC -std=gnu11 -O2 -DAIRJITD_VULKAN ${targetDefs} $INC -w -c "$f" -o "$o"
+      $CC -std=gnu11 -O2 -DAIRJITD_VULKAN -DAIRJITD_OPENGL ${targetDefs} $INC -w -c "$f" -o "$o"
       objs="$objs $o"
     done
     for f in pdmtl/indium-pd/*.cpp; do
@@ -62,7 +64,7 @@ stdenv.mkDerivation {
       objs="$objs $o"
     done
     ar rcs libindium-pd.a $objs
-    LIBS="-L${lib.getLib llvm}/lib -lLLVM -L${lib.getLib glfw}/lib -lglfw -Wl,-rpath,${vulkan-loader}/lib -lpthread -ldl -lm"
+    LIBS="-L${lib.getLib llvm}/lib -lLLVM -L${lib.getLib glfw}/lib -lglfw -L${lib.getLib libGL}/lib -lEGL -lGL -L${lib.getLib spirv-cross}/lib -lspirv-cross-c-shared -Wl,-rpath,${vulkan-loader}/lib -lpthread -ldl -lm"
 
     # each test's binary assets become headers as Indium's CMake does with xxd -i
     for t in ${lib.concatStringsSep " " tests}; do
@@ -104,9 +106,10 @@ stdenv.mkDerivation {
     export AIRJITD_VULKAN=1
     while [ \$# -gt 0 ]; do
       case "\$1" in
-        --cpu) unset AIRJITD_VULKAN ;;
+        --cpu) export AIRJITD_BACKEND=cpu ;;
+        --opengl) export AIRJITD_BACKEND=gl ;;
         --copy) export PDMTL_PRESENT=copy ;;
-        --lavapipe) export VK_ICD_FILENAMES=$out/share/indium-pd/lvp_icd.json ;;
+        --lavapipe) export AIRJITD_BACKEND=vk VK_ICD_FILENAMES=$out/share/indium-pd/lvp_icd.json ;;
         *) break ;;
       esac
       shift

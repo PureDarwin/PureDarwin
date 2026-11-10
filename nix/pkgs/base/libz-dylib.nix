@@ -31,9 +31,11 @@ stdenv.mkDerivation {
     CFLAGS="-isysroot ${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk -I${libSystem}/usr/include -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -O2 -include unistd.h"
 
     mkdir -p obj
+    source ${../../lib/pcc.sh}
     for f in ${lib.concatStringsSep " " srcs}; do
-      $CC $CFLAGS -c "$f" -o "obj/$(basename "$f" .c).o"
+      pcc $CC $CFLAGS -c "$f" -o "obj/$(basename "$f" .c).o"
     done
+    pcc_wait
 
     $CC -dynamiclib \
       -isysroot "${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk" \

@@ -20,9 +20,12 @@ stdenv.mkDerivation {
     cc=${darwinCrossToolchain}/bin/${targetTriple}-clang
     common="-isysroot $SDK -mmacosx-version-min=26.5 -D_DARWIN_C_SOURCE -fno-stack-protector -O2"
 
+    # the menu server protocol the Dock activates running apps through, as menubar.nix does
+    cp ${../../../src/Frameworks/AppKit/PDMenuServer.h} PDMenuServer.h
     mkdir -p objs png
+    source ${../../lib/pcc.sh}
     for f in main.m; do
-      $cc $common -x objective-c -fno-objc-arc -fblocks -Wall -Wno-deprecated-declarations \
+      pcc $cc $common -x objective-c -fno-objc-arc -fblocks -Wall -Wno-deprecated-declarations \
         -I. \
         -I${libSystem}/usr/include -I${libobjc}/usr/include -I${corefoundation}/include \
         -I${foundation}/usr/include -I${onyx2d}/usr/include -I${coretext}/usr/include \
@@ -32,6 +35,7 @@ stdenv.mkDerivation {
         -F${appkit}/System/Library/Frameworks -F${openglFramework}/System/Library/Frameworks \
         -c "$f" -o "objs/$(basename "$f" .m).o"
     done
+    pcc_wait
 
     $cc -isysroot "$SDK" -mmacosx-version-min=26.5 \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \

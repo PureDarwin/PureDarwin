@@ -35,11 +35,11 @@ stdenv.mkDerivation {
       -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector \
       -I${libSystem}/usr/include -I${corefoundation}/include -Iinc -Iinc/libdrm \
       -dynamiclib -fuse-ld=${nativeLd}/bin/ld -nostdlib \
-      -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${iokit}/usr/lib \
+      -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -F${iokit}/System/Library/Frameworks \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -Wl,-platform_version,macos,26.5,26.5 -Wl,-fixup_chains \
       -Wl,-install_name,/usr/lib/libdrm_pdpvr.dylib \
-      $shim/pd_pvr_drm.c $shim/pd_kms.c -lIOKitCF -lCoreFoundation -lSystem \
+      $shim/pd_pvr_drm.c $shim/pd_kms.c -framework IOKit -lCoreFoundation -lSystem \
       -o libdrm_pdpvr.dylib
     runHook postBuild
   '';

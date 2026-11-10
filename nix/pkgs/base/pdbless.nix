@@ -29,9 +29,9 @@ stdenv.mkDerivation {
     export DARWIN_SDK_ROOT="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
     CC="${darwinCrossToolchain}/bin/${targetTriple}-clang"
     CFLAGS="-isysroot $DARWIN_SDK_ROOT -F$DARWIN_SDK_ROOT/System/Library/Frameworks -I${libSystem}/usr/include -I${corefoundation}/include -IKernel/Extensions/PDACPIPlatform -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -O2"
-    LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${iokit}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,26.5,26.5"
+    LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -F${iokit}/System/Library/Frameworks -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,26.5,26.5"
     $CC $CFLAGS -c Userspace/pdbless/pdbless.c -o pdbless.o
-    $CC $LDFLAGS -o pdbless pdbless.o -lIOKitCF -lCoreFoundation -lSystem
+    $CC $LDFLAGS -o pdbless pdbless.o -framework IOKit -lCoreFoundation -lSystem
     runHook postBuild
   '';
 

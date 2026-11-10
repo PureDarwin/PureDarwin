@@ -19,10 +19,12 @@ in stdenv.mkDerivation {
       -I${libSystem}/usr/include -std=c++17 -O2 -fPIC -DSPIRV_CROSS_C_API_GLSL=1 \
       -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector"
     objs=""
+    source ${../../lib/pcc.sh}
     for f in spirv_cross spirv_parser spirv_cross_parsed_ir spirv_cfg spirv_glsl spirv_cross_c; do
-      $CXX $FLAGS -c $f.cpp -o $f.o
+      pcc $CXX $FLAGS -c $f.cpp -o $f.o
       objs="$objs $f.o"
     done
+    pcc_wait
     $CXX -fuse-ld=${nativeLd}/bin/ld -nostdlib -isysroot ${sdk} -mmacosx-version-min=26.5 \
       -Wl,-platform_version,macos,26.5,26.5 \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \

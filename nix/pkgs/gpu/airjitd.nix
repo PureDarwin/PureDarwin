@@ -26,12 +26,14 @@ stdenv.mkDerivation {
     CC="${darwinCrossToolchain}/bin/${targetTriple}-clang"
     CFLAGS="-target arm64-apple-macos14 -O1 -isysroot $SDK -I${llvm}/usr/include -Wall"
     objs=""
+    source ${../../lib/pcc.sh}
     for src in *.c llvm/*.c; do
       obj="''${src//\//_}"
       obj="''${obj%.c}.o"
-      $CC $CFLAGS -c "$src" -o "$obj"
+      pcc $CC $CFLAGS -c "$src" -o "$obj"
       objs="$objs $obj"
     done
+    pcc_wait
     ${nativeLd}/bin/ld -arch arm64 -execute -platform_version macos 10.15 10.15 -e _main \
       -adhoc_codesign -syslibroot ${libSystem} -o airjitd $objs \
       ${llvm}/usr/lib/libLLVM*.a \
