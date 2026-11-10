@@ -2,16 +2,28 @@
 // The loader is opened at run time, so a daemon built with this file still starts where no Vulkan exists
 #define VK_NO_PROTOTYPES
 #include "vk.h"
+#include "../select.h"
 
 #include <math.h>
 #include <dlfcn.h>
+#include <pthread.h>
+#ifdef __APPLE__
+#include <mach/mach_time.h>
+#endif
+#include <sched.h>
 #include <setjmp.h>
+#include <stdatomic.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <time.h>
+#include <unistd.h>
 #include <vulkan/vulkan.h>
+#if defined(__x86_64__) || defined(_M_X64)
+#include <nmmintrin.h>
+#endif
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #include <sys/sysctl.h>
@@ -35,6 +47,7 @@ static struct {
 // the daemon's loggers (airjitd.h pulls in mach headers this file does not need)
 void logmsg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void logv(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+void logv2(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 #define VK_GLOBAL(X) X(vkCreateInstance) X(vkEnumerateInstanceVersion) X(vkEnumerateInstanceExtensionProperties)
 
@@ -50,10 +63,10 @@ void logv(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
   X(vkCmdCopyBuffer) X(vkCmdClearDepthStencilImage) X(vkCmdClearColorImage)           \
   X(vkCreateBuffer) X(vkDestroyBuffer) X(vkGetBufferMemoryRequirements) X(vkAllocateMemory) X(vkFreeMemory)            \
   X(vkCreateBufferView) X(vkDestroyBufferView)                                                                         \
-  X(vkBindBufferMemory) X(vkMapMemory) X(vkCreateImage) X(vkDestroyImage) X(vkGetImageMemoryRequirements)              \
+  X(vkBindBufferMemory) X(vkMapMemory) X(vkUnmapMemory) X(vkCreateImage) X(vkDestroyImage) X(vkGetImageMemoryRequirements)              \
   X(vkBindImageMemory) X(vkCreateImageView) X(vkDestroyImageView) X(vkCmdCopyBufferToImage)                            \
   X(vkCmdCopyImageToBuffer) X(vkCreateSampler) X(vkDestroySampler) X(vkCreateShaderModule)                             \
-  X(vkDestroyShaderModule) X(vkCreateDescriptorSetLayout) X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool)         \
+  X(vkDestroyShaderModule) X(vkCreateDescriptorSetLayout) X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkResetDescriptorPool)         \
   X(vkAllocateDescriptorSets) X(vkUpdateDescriptorSets) X(vkCreatePipelineLayout) X(vkCreateComputePipelines)          \
   X(vkCreateGraphicsPipelines) X(vkCmdBindPipeline) X(vkCmdBindDescriptorSets) X(vkCmdPushConstants)                   \
   X(vkCmdDispatch) X(vkCreateRenderPass) X(vkCreateFramebuffer) X(vkDestroyFramebuffer) X(vkCmdBeginRenderPass)        \
@@ -64,6 +77,8 @@ VK_GLOBAL(VK_DECL)
 VK_INSTANCE(VK_DECL)
 VK_DEVICE(VK_DECL)
 static PFN_vkGetInstanceProcAddr gipa;
+static PFN_vkCmdSetViewport cmd_set_viewport;
+static PFN_vkCmdSetScissor cmd_set_scissor;
 
 struct pd_vk_stats pd_vk_last;
 
@@ -78,6 +93,29 @@ static VkQueue queue;
 static VkCommandPool pool;
 static VkPhysicalDeviceMemoryProperties memprops;
 
+// format support is the device's, asked once since Venus forwards each query to the host
+static struct {
+  VkFormatProperties props;
+  unsigned valid;
+} format_props_cache[256];
+static uint64_t format_props_queries, format_props_hits;
+
+static void format_props(VkFormat format, VkFormatProperties *out) {
+  unsigned f = (unsigned)format;
+
+  if (f < sizeof(format_props_cache) / sizeof(format_props_cache[0]) && format_props_cache[f].valid) {
+    *out = format_props_cache[f].props;
+    format_props_hits++;
+    return;
+  }
+  vkGetPhysicalDeviceFormatProperties(phys, format, out);
+  format_props_queries++;
+  if (f < sizeof(format_props_cache) / sizeof(format_props_cache[0])) {
+    format_props_cache[f].props = *out;
+    format_props_cache[f].valid = 1;
+  }
+}
+
 // resident mode: jobs record into one command buffer per batch (pd_vk_flush ends it), resources stay on the
 // device between jobs (see the resident table below)
 static int resident_mode;
@@ -88,6 +126,19 @@ static VkFence batch_fence;
 static VkFence submit_fence;
 static int batch_inflight;
 static VkPipelineCache pcache;
+// binding state carries across render passes in one command buffer, so draw jobs reuse it until a fresh
+// command buffer or an evicted resident buffer invalidates it
+static VkPipeline bound_graphics_pipeline;
+static VkBuffer bound_vertex[PD_DRAW_BUFS], bound_index;
+static VkDeviceSize bound_vertex_offset[PD_DRAW_BUFS], bound_index_offset;
+static VkIndexType bound_index_type;
+static VkViewport bound_viewport;
+static VkRect2D bound_scissor;
+static VkPipelineLayout bound_vpc_layout, bound_fpc_layout;
+static uint32_t bound_vpc[A2S_MAX_PC], bound_fpc[A2S_MAX_PC];
+static unsigned bound_vpc_bytes, bound_fpc_bytes;
+static int bound_viewport_valid, bound_scissor_valid, bound_vpc_valid, bound_fpc_valid;
+static int draw_binding_cache_valid;
 // a render pass is open in the batch: a job that declines must close it
 static int in_pass;
 // a readback runs on its own command buffer and waits, outside the batch
@@ -123,23 +174,69 @@ static int unknown_pixel;
 static const char *const *want_inst, *const *want_dev;
 static unsigned nwant_inst, nwant_dev;
 static uint32_t qfamily;
-static struct {
+// one per drawable in flight, keyed by its place in the arena
+#define EXTERNALS 8
+static struct external_attachment {
   uint32_t off;
   VkImage image;
   VkImageView view;
   // the CPU wrote its bytes after the last draw into it (a copy, a resolve): the presenter uploads them
   int written;
-} ext_att;
+} ext_att[EXTERNALS];
+
+static struct external_attachment *external_by_off(uint32_t off) {
+  for (unsigned i = 0; i < EXTERNALS; i++) {
+    if (ext_att[i].image && ext_att[i].off == off)
+      return &ext_att[i];
+  }
+  return 0;
+}
+
+static struct external_attachment *external_by_image(VkImage image) {
+  for (unsigned i = 0; image && i < EXTERNALS; i++) {
+    if (ext_att[i].image == image)
+      return &ext_att[i];
+  }
+  return 0;
+}
+
+// the CPU wrote [off, off + len): a drawable starting inside it has bytes the presenter must upload
+static void externals_written(uint32_t off, uint32_t len) {
+  for (unsigned i = 0; i < EXTERNALS; i++) {
+    if (ext_att[i].image && ext_att[i].off >= off && ext_att[i].off < off + len)
+      ext_att[i].written = 1;
+  }
+}
 
 const char *pd_vk_reason(void) {
   return reason;
 }
 
+// mach_absolute_time is one commpage read, CLOCK_MONOTONIC adds boot-time and wall-clock math on every call
+// TEMPORARY bisect for the flicker: each bit turns one of the newer shortcuts off
+static unsigned bisect(void) {
+  static int v = -1;
+
+  if (v < 0) {
+    const char *e = getenv("AIRJITD_BISECT");
+    v = e ? atoi(e) : 0;
+  }
+  return (unsigned)v;
+}
+
 static uint64_t now_us(void) {
+#ifdef __APPLE__
+  static mach_timebase_info_data_t tb;
+
+  if (!tb.denom)
+    mach_timebase_info(&tb);
+  return mach_absolute_time() * tb.numer / tb.denom / 1000u;
+#else
   struct timespec ts;
 
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (uint64_t)ts.tv_sec * 1000000u + (uint64_t)ts.tv_nsec / 1000u;
+#endif
 }
 
 __attribute__((format(printf, 1, 2))) _Noreturn static void decline(const char *fmt, ...) {
@@ -148,7 +245,7 @@ __attribute__((format(printf, 1, 2))) _Noreturn static void decline(const char *
   va_start(ap, fmt);
   vsnprintf(reason, sizeof(reason), fmt, ap);
   va_end(ap);
-  longjmp(job_fail, 1);
+  _longjmp(job_fail, 1);
 }
 
 #define CK(x)                                                                                                          \
@@ -158,14 +255,37 @@ __attribute__((format(printf, 1, 2))) _Noreturn static void decline(const char *
       decline("%s: VkResult %d", #x, (int)r_);                                                                         \
   } while (0)
 
-int pd_vk_enabled(void) {
-  static int on = -1;
+static int ready(void);
+static int probe(void);
+static void watch_before_submit(void);
 
-  if (on < 0) {
-    const char *e = getenv("AIRJITD_VULKAN");
-    on = e && *e && *e != '0';
-  }
-  return on;
+// serializes executor jobs with presentation
+static pthread_mutex_t vk_mu;
+static pthread_once_t vk_mu_once = PTHREAD_ONCE_INIT;
+
+static void vk_mu_init(void) {
+  pthread_mutexattr_t a;
+
+  pthread_mutexattr_init(&a);
+  pthread_mutexattr_settype(&a, PTHREAD_MUTEX_RECURSIVE);
+  pthread_mutex_init(&vk_mu, &a);
+}
+
+void pd_vk_lock(void) {
+  pthread_once(&vk_mu_once, vk_mu_init);
+  pthread_mutex_lock(&vk_mu);
+}
+
+void pd_vk_unlock(void) {
+  pthread_mutex_unlock(&vk_mu);
+}
+
+int pd_vk_enabled(void) {
+  return pd_backend_choose() == PD_BACKEND_VULKAN;
+}
+
+int pd_vk_available(void) {
+  return probe();
 }
 
 // the libdrm shim of PDPowerVR maps the buffers made while this is on cacheable, cleaned by the kext around submits
@@ -295,29 +415,241 @@ static void find_drm_hint(void) {
 #endif
 }
 
-static int vk_init(void) {
+// prefers physical GPUs and uses CPU or layered devices only when forced
+static int device_rank(VkPhysicalDevice p) {
+  VkPhysicalDeviceDriverProperties drv = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES };
+  VkPhysicalDeviceProperties2 pp = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+  int forced = pd_backend_forced() == PD_BACKEND_VULKAN;
+
+  pp.pNext = &drv;
+  vkGetPhysicalDeviceProperties2(p, &pp);
+  if (VK_API_VERSION_MINOR(pp.properties.apiVersion) < 2 && VK_API_VERSION_MAJOR(pp.properties.apiVersion) == 1)
+    drv.driverID = 0;
+  if (drv.driverID == VK_DRIVER_ID_MOLTENVK)
+    return forced ? 1 : 0;
+  switch (pp.properties.deviceType) {
+  case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
+    return 5;
+  case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
+    return 4;
+  case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
+    return 3;
+  case VK_PHYSICAL_DEVICE_TYPE_CPU:
+    return forced ? 2 : 0;
+  default:
+    return forced ? 1 : 0;
+  }
+}
+
+static int pick_device(VkPhysicalDevice *out) {
+  VkPhysicalDevice all[16];
+  uint32_t n = 16;
+  int best = 0;
+
+  if (vkEnumeratePhysicalDevices(inst, &n, all) < 0 || !n) {
+    snprintf(reason, sizeof(reason), "no Vulkan device");
+    return -1;
+  }
+  for (uint32_t i = 0; i < n; i++) {
+    int r = device_rank(all[i]);
+
+    if (r > best)
+      best = r, *out = all[i];
+  }
+  if (!best) {
+    snprintf(reason, sizeof(reason), "no Vulkan GPU (only CPU or layered devices, AIRJITD_BACKEND=vk uses them)");
+    return -1;
+  }
+  return 0;
+}
+
+// the device calls a draw makes, counted and timed for the summary: on venus each may be a trip to the host
+enum { VKC_CreateBuffer, VKC_BindBufferMemory, VKC_GetBufferMemoryRequirements, VKC_AllocateMemory, VKC_CreateImage, VKC_CreateImageView, VKC_CreateBufferView, VKC_CreateFramebuffer, VKC_CreateDescriptorPool, VKC_AllocateDescriptorSets, VKC_UpdateDescriptorSets, VKC_CreateSampler, VKC_MapMemory, VKC_DestroyBuffer, VKC_DestroyImageView, VKC_DestroyFramebuffer, VKC_DestroyDescriptorPool, VKC_FreeMemory, VKC_N };
+static const char *const vkc_names[VKC_N] = { "CreateBuffer", "BindBufferMemory", "GetBufferMemoryRequirements", "AllocateMemory", "CreateImage", "CreateImageView", "CreateBufferView", "CreateFramebuffer", "CreateDescriptorPool", "AllocateDescriptorSets", "UpdateDescriptorSets", "CreateSampler", "MapMemory", "DestroyBuffer", "DestroyImageView", "DestroyFramebuffer", "DestroyDescriptorPool", "FreeMemory" };
+static uint64_t vkc_n[VKC_N], vkc_us[VKC_N];
+static PFN_vkCreateBuffer real_vkCreateBuffer;
+static VkResult VKAPI_CALL timed_vkCreateBuffer(VkDevice a, const VkBufferCreateInfo *b, const VkAllocationCallbacks *c, VkBuffer *d) {
+  uint64_t t = now_us();
+  VkResult r = real_vkCreateBuffer(a, b, c, d);
+
+  vkc_n[VKC_CreateBuffer]++, vkc_us[VKC_CreateBuffer] += now_us() - t;
+  return r;
+}
+
+static PFN_vkBindBufferMemory real_vkBindBufferMemory;
+static VkResult VKAPI_CALL timed_vkBindBufferMemory(VkDevice a, VkBuffer b, VkDeviceMemory c, VkDeviceSize d) {
+  uint64_t t = now_us();
+  VkResult r = real_vkBindBufferMemory(a, b, c, d);
+
+  vkc_n[VKC_BindBufferMemory]++, vkc_us[VKC_BindBufferMemory] += now_us() - t;
+  return r;
+}
+
+static PFN_vkGetBufferMemoryRequirements real_vkGetBufferMemoryRequirements;
+static void VKAPI_CALL timed_vkGetBufferMemoryRequirements(VkDevice a, VkBuffer b, VkMemoryRequirements *c) {
+  uint64_t t = now_us();
+
+  real_vkGetBufferMemoryRequirements(a, b, c);
+  vkc_n[VKC_GetBufferMemoryRequirements]++, vkc_us[VKC_GetBufferMemoryRequirements] += now_us() - t;
+}
+
+static PFN_vkAllocateMemory real_vkAllocateMemory;
+static VkResult VKAPI_CALL timed_vkAllocateMemory(VkDevice a, const VkMemoryAllocateInfo *b, const VkAllocationCallbacks *c, VkDeviceMemory *d) {
+  uint64_t t = now_us();
+  VkResult r = real_vkAllocateMemory(a, b, c, d);
+
+  vkc_n[VKC_AllocateMemory]++, vkc_us[VKC_AllocateMemory] += now_us() - t;
+  return r;
+}
+
+static PFN_vkCreateImage real_vkCreateImage;
+static VkResult VKAPI_CALL timed_vkCreateImage(VkDevice a, const VkImageCreateInfo *b, const VkAllocationCallbacks *c, VkImage *d) {
+  uint64_t t = now_us();
+  VkResult r = real_vkCreateImage(a, b, c, d);
+
+  vkc_n[VKC_CreateImage]++, vkc_us[VKC_CreateImage] += now_us() - t;
+  return r;
+}
+
+static PFN_vkCreateImageView real_vkCreateImageView;
+static VkResult VKAPI_CALL timed_vkCreateImageView(VkDevice a, const VkImageViewCreateInfo *b, const VkAllocationCallbacks *c, VkImageView *d) {
+  uint64_t t = now_us();
+  VkResult r = real_vkCreateImageView(a, b, c, d);
+
+  vkc_n[VKC_CreateImageView]++, vkc_us[VKC_CreateImageView] += now_us() - t;
+  return r;
+}
+
+static PFN_vkCreateBufferView real_vkCreateBufferView;
+static VkResult VKAPI_CALL timed_vkCreateBufferView(VkDevice a, const VkBufferViewCreateInfo *b, const VkAllocationCallbacks *c, VkBufferView *d) {
+  uint64_t t = now_us();
+  VkResult r = real_vkCreateBufferView(a, b, c, d);
+
+  vkc_n[VKC_CreateBufferView]++, vkc_us[VKC_CreateBufferView] += now_us() - t;
+  return r;
+}
+
+static PFN_vkCreateFramebuffer real_vkCreateFramebuffer;
+static VkResult VKAPI_CALL timed_vkCreateFramebuffer(VkDevice a, const VkFramebufferCreateInfo *b, const VkAllocationCallbacks *c, VkFramebuffer *d) {
+  uint64_t t = now_us();
+  VkResult r = real_vkCreateFramebuffer(a, b, c, d);
+
+  vkc_n[VKC_CreateFramebuffer]++, vkc_us[VKC_CreateFramebuffer] += now_us() - t;
+  return r;
+}
+
+static PFN_vkCreateDescriptorPool real_vkCreateDescriptorPool;
+static VkResult VKAPI_CALL timed_vkCreateDescriptorPool(VkDevice a, const VkDescriptorPoolCreateInfo *b, const VkAllocationCallbacks *c, VkDescriptorPool *d) {
+  uint64_t t = now_us();
+  VkResult r = real_vkCreateDescriptorPool(a, b, c, d);
+
+  vkc_n[VKC_CreateDescriptorPool]++, vkc_us[VKC_CreateDescriptorPool] += now_us() - t;
+  return r;
+}
+
+static PFN_vkAllocateDescriptorSets real_vkAllocateDescriptorSets;
+static VkResult VKAPI_CALL timed_vkAllocateDescriptorSets(VkDevice a, const VkDescriptorSetAllocateInfo *b, VkDescriptorSet *c) {
+  uint64_t t = now_us();
+  VkResult r = real_vkAllocateDescriptorSets(a, b, c);
+
+  vkc_n[VKC_AllocateDescriptorSets]++, vkc_us[VKC_AllocateDescriptorSets] += now_us() - t;
+  return r;
+}
+
+static PFN_vkUpdateDescriptorSets real_vkUpdateDescriptorSets;
+static void VKAPI_CALL timed_vkUpdateDescriptorSets(VkDevice a, uint32_t b, const VkWriteDescriptorSet *c, uint32_t d, const VkCopyDescriptorSet *e) {
+  uint64_t t = now_us();
+
+  real_vkUpdateDescriptorSets(a, b, c, d, e);
+  vkc_n[VKC_UpdateDescriptorSets]++, vkc_us[VKC_UpdateDescriptorSets] += now_us() - t;
+}
+
+static PFN_vkCreateSampler real_vkCreateSampler;
+static VkResult VKAPI_CALL timed_vkCreateSampler(VkDevice a, const VkSamplerCreateInfo *b, const VkAllocationCallbacks *c, VkSampler *d) {
+  uint64_t t = now_us();
+  VkResult r = real_vkCreateSampler(a, b, c, d);
+
+  vkc_n[VKC_CreateSampler]++, vkc_us[VKC_CreateSampler] += now_us() - t;
+  return r;
+}
+
+static PFN_vkMapMemory real_vkMapMemory;
+static VkResult VKAPI_CALL timed_vkMapMemory(VkDevice a, VkDeviceMemory b, VkDeviceSize c, VkDeviceSize d, VkMemoryMapFlags e, void **f) {
+  uint64_t t = now_us();
+  VkResult r = real_vkMapMemory(a, b, c, d, e, f);
+
+  vkc_n[VKC_MapMemory]++, vkc_us[VKC_MapMemory] += now_us() - t;
+  return r;
+}
+
+static PFN_vkDestroyBuffer real_vkDestroyBuffer;
+static void VKAPI_CALL timed_vkDestroyBuffer(VkDevice a, VkBuffer b, const VkAllocationCallbacks *c) {
+  uint64_t t = now_us();
+
+  real_vkDestroyBuffer(a, b, c);
+  vkc_n[VKC_DestroyBuffer]++, vkc_us[VKC_DestroyBuffer] += now_us() - t;
+}
+
+static PFN_vkDestroyImageView real_vkDestroyImageView;
+static void VKAPI_CALL timed_vkDestroyImageView(VkDevice a, VkImageView b, const VkAllocationCallbacks *c) {
+  uint64_t t = now_us();
+
+  real_vkDestroyImageView(a, b, c);
+  vkc_n[VKC_DestroyImageView]++, vkc_us[VKC_DestroyImageView] += now_us() - t;
+}
+
+static PFN_vkDestroyFramebuffer real_vkDestroyFramebuffer;
+static void VKAPI_CALL timed_vkDestroyFramebuffer(VkDevice a, VkFramebuffer b, const VkAllocationCallbacks *c) {
+  uint64_t t = now_us();
+
+  real_vkDestroyFramebuffer(a, b, c);
+  vkc_n[VKC_DestroyFramebuffer]++, vkc_us[VKC_DestroyFramebuffer] += now_us() - t;
+}
+
+static PFN_vkDestroyDescriptorPool real_vkDestroyDescriptorPool;
+static void VKAPI_CALL timed_vkDestroyDescriptorPool(VkDevice a, VkDescriptorPool b, const VkAllocationCallbacks *c) {
+  uint64_t t = now_us();
+
+  real_vkDestroyDescriptorPool(a, b, c);
+  vkc_n[VKC_DestroyDescriptorPool]++, vkc_us[VKC_DestroyDescriptorPool] += now_us() - t;
+}
+
+static PFN_vkFreeMemory real_vkFreeMemory;
+static void VKAPI_CALL timed_vkFreeMemory(VkDevice a, VkDeviceMemory b, const VkAllocationCallbacks *c) {
+  uint64_t t = now_us();
+
+  real_vkFreeMemory(a, b, c);
+  vkc_n[VKC_FreeMemory]++, vkc_us[VKC_FreeMemory] += now_us() - t;
+}
+
+static void time_device_calls(void) {
+  real_vkCreateBuffer = vkCreateBuffer, vkCreateBuffer = timed_vkCreateBuffer;
+  real_vkBindBufferMemory = vkBindBufferMemory, vkBindBufferMemory = timed_vkBindBufferMemory;
+  real_vkGetBufferMemoryRequirements = vkGetBufferMemoryRequirements, vkGetBufferMemoryRequirements = timed_vkGetBufferMemoryRequirements;
+  real_vkAllocateMemory = vkAllocateMemory, vkAllocateMemory = timed_vkAllocateMemory;
+  real_vkCreateImage = vkCreateImage, vkCreateImage = timed_vkCreateImage;
+  real_vkCreateImageView = vkCreateImageView, vkCreateImageView = timed_vkCreateImageView;
+  real_vkCreateBufferView = vkCreateBufferView, vkCreateBufferView = timed_vkCreateBufferView;
+  real_vkCreateFramebuffer = vkCreateFramebuffer, vkCreateFramebuffer = timed_vkCreateFramebuffer;
+  real_vkCreateDescriptorPool = vkCreateDescriptorPool, vkCreateDescriptorPool = timed_vkCreateDescriptorPool;
+  real_vkAllocateDescriptorSets = vkAllocateDescriptorSets, vkAllocateDescriptorSets = timed_vkAllocateDescriptorSets;
+  real_vkUpdateDescriptorSets = vkUpdateDescriptorSets, vkUpdateDescriptorSets = timed_vkUpdateDescriptorSets;
+  real_vkCreateSampler = vkCreateSampler, vkCreateSampler = timed_vkCreateSampler;
+  real_vkMapMemory = vkMapMemory, vkMapMemory = timed_vkMapMemory;
+  real_vkDestroyBuffer = vkDestroyBuffer, vkDestroyBuffer = timed_vkDestroyBuffer;
+  real_vkDestroyImageView = vkDestroyImageView, vkDestroyImageView = timed_vkDestroyImageView;
+  real_vkDestroyFramebuffer = vkDestroyFramebuffer, vkDestroyFramebuffer = timed_vkDestroyFramebuffer;
+  real_vkDestroyDescriptorPool = vkDestroyDescriptorPool, vkDestroyDescriptorPool = timed_vkDestroyDescriptorPool;
+  real_vkFreeMemory = vkFreeMemory, vkFreeMemory = timed_vkFreeMemory;
+}
+
+static int load_loader(void) {
   // the system loader by path first: a bare name finds a libvulkan an app brought along (MoltenVK apps)
   static const char *const libs[] = { "libvulkan.so.1", "libvulkan.so", "/usr/lib/libvulkan.1.dylib", "libvulkan.1.dylib", "libMoltenVK.dylib" };
-  VkApplicationInfo app = { VK_STRUCTURE_TYPE_APPLICATION_INFO };
-  VkInstanceCreateInfo ici = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
-  VkDeviceCreateInfo dci = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
-  VkDeviceQueueCreateInfo qci = { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
-  VkPhysicalDeviceVulkan13Features f13 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
-  VkPhysicalDeviceVulkan12Features f12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
-  VkPhysicalDeviceVulkan11Features f11 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
-  VkPhysicalDeviceFeatures2 f2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
-  VkPhysicalDeviceSubgroupProperties sg = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES };
-  VkPhysicalDeviceLineRasterizationFeaturesKHR lr = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_LINE_RASTERIZATION_FEATURES_KHR };
-  const char *dev_ext[17], *inst_ext[16];
-  unsigned ndev_ext = 0;
-  VkPhysicalDeviceProperties2 p2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
-  VkCommandPoolCreateInfo pci = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
-  VkQueueFamilyProperties qf[16];
-  uint32_t n = 1, nq = 16, qfam;
-  const char *prof = getenv("AIRJITD_VK_PROFILE");
   void *lib = 0;
-  float prio = 1;
 
+  if (gipa)
+    return 0;
   // AIRJITD_VK_ICD names a driver to use without a loader (the stock macOS userland has none)
   if (getenv("AIRJITD_VK_ICD")) {
     typedef VkResult (*negotiate_fn)(uint32_t *);
@@ -343,7 +675,65 @@ static int vk_init(void) {
 
 #define VK_LOAD_GLOBAL(f) f = (PFN_##f)gipa(0, #f);
   VK_GLOBAL(VK_LOAD_GLOBAL)
+  return 0;
+}
+
+// whether a device pick_device accepts exists, on a throwaway instance: the executor's own comes later, with
+// the extensions a presenter asks for
+static int probe(void) {
+  static int seen = -1;
+  VkApplicationInfo app = { VK_STRUCTURE_TYPE_APPLICATION_INFO };
+  VkInstanceCreateInfo ici = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
+  PFN_vkDestroyInstance destroy;
+  VkPhysicalDevice p;
+
+  if (state)
+    return state > 0;
+  if (seen >= 0)
+    return seen;
+  seen = 0;
+  if (load_loader())
+    return 0;
   app.apiVersion = VK_API_VERSION_1_2;
+  ici.pApplicationInfo = &app;
+  if (!vkCreateInstance || vkCreateInstance(&ici, 0, &inst) != VK_SUCCESS) {
+    snprintf(reason, sizeof(reason), "no Vulkan instance");
+    return 0;
+  }
+  vkEnumeratePhysicalDevices = (PFN_vkEnumeratePhysicalDevices)gipa(inst, "vkEnumeratePhysicalDevices");
+  vkGetPhysicalDeviceProperties2 = (PFN_vkGetPhysicalDeviceProperties2)gipa(inst, "vkGetPhysicalDeviceProperties2");
+  seen = !pick_device(&p);
+  destroy = (PFN_vkDestroyInstance)gipa(inst, "vkDestroyInstance");
+  if (destroy)
+    destroy(inst, 0);
+  inst = VK_NULL_HANDLE;
+  return seen;
+}
+
+static int vk_init(void) {
+  VkApplicationInfo app = { VK_STRUCTURE_TYPE_APPLICATION_INFO };
+  VkInstanceCreateInfo ici = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
+  VkDeviceCreateInfo dci = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
+  VkDeviceQueueCreateInfo qci = { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
+  VkPhysicalDeviceVulkan13Features f13 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
+  VkPhysicalDeviceVulkan12Features f12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
+  VkPhysicalDeviceVulkan11Features f11 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
+  VkPhysicalDeviceFeatures2 f2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+  VkPhysicalDeviceSubgroupProperties sg = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES };
+  VkPhysicalDeviceLineRasterizationFeaturesKHR lr = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_LINE_RASTERIZATION_FEATURES_KHR };
+  const char *dev_ext[17], *inst_ext[16];
+  unsigned ndev_ext = 0;
+  VkPhysicalDeviceProperties2 p2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+  VkCommandPoolCreateInfo pci = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+  VkQueueFamilyProperties qf[16];
+  uint32_t nq = 16, qfam;
+  const char *prof = getenv("AIRJITD_VK_PROFILE");
+  float prio = 1;
+
+  if (load_loader())
+    return -1;
+  app.apiVersion = VK_API_VERSION_1_3;
+  // the 1.3 features the device is made with are only valid under a 1.3 instance
   ici.pApplicationInfo = &app;
   // a window system's extension the loader lacks is dropped and that window system just cannot present
   {
@@ -370,10 +760,8 @@ static int vk_init(void) {
   }
 #define VK_LOAD_INSTANCE(f) f = (PFN_##f)gipa(inst, #f);
   VK_INSTANCE(VK_LOAD_INSTANCE)
-  if (vkEnumeratePhysicalDevices(inst, &n, &phys) < 0 || !n) {
-    snprintf(reason, sizeof(reason), "no Vulkan device");
+  if (pick_device(&phys) < 0)
     return -1;
-  }
 
   vkGetPhysicalDeviceMemoryProperties(phys, &memprops);
   vkGetPhysicalDeviceQueueFamilyProperties(phys, &nq, qf);
@@ -464,6 +852,9 @@ static int vk_init(void) {
   }
 #define VK_LOAD_DEVICE(f) f = (PFN_##f)vkGetDeviceProcAddr(dev, #f);
   VK_DEVICE(VK_LOAD_DEVICE)
+  cmd_set_viewport = (PFN_vkCmdSetViewport)vkGetDeviceProcAddr(dev, "vkCmdSetViewport");
+  cmd_set_scissor = (PFN_vkCmdSetScissor)vkGetDeviceProcAddr(dev, "vkCmdSetScissor");
+  time_device_calls();
   vkGetDeviceQueue(dev, qfam, 0, &queue);
   qfamily = qfam;
   pci.queueFamilyIndex = qfam, pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -514,13 +905,28 @@ int pd_vk_start(struct pd_vk_handles *h) {
 }
 
 void pd_vk_external_attachment(uint32_t off, uint64_t image, uint64_t view) {
-  ext_att.off = off, ext_att.image = (VkImage)image, ext_att.view = (VkImageView)view, ext_att.written = 0;
+  struct external_attachment *e;
+
+  pd_vk_lock();
+  if (!(e = external_by_off(off)) && image) {
+    for (unsigned i = 0; i < EXTERNALS && !e; i++) {
+      if (!ext_att[i].image)
+        e = &ext_att[i];
+    }
+  }
+  if (e)
+    e->off = off, e->image = (VkImage)image, e->view = (VkImageView)view, e->written = 0;
+  pd_vk_unlock();
 }
 
-int pd_vk_external_written(void) {
-  int w = ext_att.written;
+int pd_vk_external_written(uint32_t off) {
+  struct external_attachment *e;
+  int w = 0;
 
-  ext_att.written = 0;
+  pd_vk_lock();
+  if ((e = external_by_off(off)))
+    w = e->written, e->written = 0;
+  pd_vk_unlock();
   return w;
 }
 
@@ -535,6 +941,8 @@ struct job_arena {
   VkImageView view[ARENA_VIEWS];
   VkBufferView bview[ARENA_VIEWS];
   VkDeviceMemory mem[ARENA_BUFS + 64];
+  // bytes mapped of each mem entry, 0 for one not mapped
+  VkDeviceSize mapped[ARENA_BUFS + 64];
   VkFramebuffer fbs[ARENA_POOLS];
   VkDescriptorPool dpools[ARENA_POOLS];
   VkFramebuffer fb;
@@ -546,6 +954,11 @@ struct job_arena {
 static struct job_arena arenas[2];
 static int cur_arena;
 #define arena arenas[cur_arena]
+
+static void unmap_mem(VkDeviceMemory m, VkDeviceSize size);
+static void hblocks_reset(int a);
+static void spools_reset(int a);
+static void sblocks_reset(int a);
 
 static void arena_free(void) {
   unsigned i;
@@ -575,9 +988,14 @@ static void arena_free(void) {
     vkDestroyBuffer(dev, arena.buf[i], 0);
   }
   for (i = 0; i < arena.nmem; i++) {
+    if (arena.mapped[i])
+      unmap_mem(arena.mem[i], arena.mapped[i]);
     vkFreeMemory(dev, arena.mem[i], 0);
   }
   memset(&arena, 0, sizeof(arena));
+  hblocks_reset(cur_arena);
+  sblocks_reset(cur_arena);
+  spools_reset(cur_arena);
 }
 
 // pixel formats as the kext numbers them (airjitd/texture.h)
@@ -653,6 +1071,8 @@ static uint32_t mem_type_pref(uint32_t bits, VkMemoryPropertyFlags want, VkMemor
 struct buf {
   VkBuffer b;
   void *map;
+  // where the bytes start in b: staging pieces share their block's buffer
+  VkDeviceSize off;
 };
 
 static uint64_t fnv(const uint8_t *p, size_t n, uint64_t h);
@@ -681,6 +1101,7 @@ static uint64_t bufpool_clock, bufpool_total;
 static int bufpool_on = -1;
 
 static struct buf alloc_host_buf(VkDeviceSize size, VkBufferUsageFlags usage, int readback, VkDeviceMemory *mem);
+static int stage_take(VkDeviceSize size, int readback, struct buf *out);
 
 static int pooled_buf(VkDeviceSize size, struct buf *out) {
   VkDeviceSize want = 65536;
@@ -720,6 +1141,7 @@ static int pooled_buf(VkDeviceSize size, struct buf *out) {
     if (lru == BUFPOOL)
       return 0;
     vkDestroyBuffer(dev, bufpool[lru].b, 0);
+    unmap_mem(bufpool[lru].m, bufpool[lru].size);
     vkFreeMemory(dev, bufpool[lru].m, 0);
     bufpool_total -= bufpool[lru].size;
     memset(&bufpool[lru], 0, sizeof(bufpool[lru]));
@@ -738,7 +1160,11 @@ static int pooled_buf(VkDeviceSize size, struct buf *out) {
 // a host-visible buffer of the job (or batch). One the CPU reads back from is host cached: uncached device
 // memory reads back at a few MB/s
 static struct buf new_buf_mem(VkDeviceSize size, VkBufferUsageFlags usage, int readback) {
-  struct buf r;
+  struct buf r = { 0 };
+
+  if (!(usage & ~(VkBufferUsageFlags)(VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)) &&
+      stage_take(size, readback, &r))
+    return r;
 
   if (pooled_buf(size, &r)) {
     host_track(r.map, size);
@@ -749,13 +1175,208 @@ static struct buf new_buf_mem(VkDeviceSize size, VkBufferUsageFlags usage, int r
   return r;
 }
 
+// host-visible memory for an arena's staging and small buffers: a few blocks mapped once and handed out in pieces,
+// since venus maps each mapping through a virtio-gpu blob and its window runs out after a few hundred
+#define HBLOCKS 16
+static struct hblock {
+  VkDeviceMemory m;
+  uint8_t *map;
+  VkDeviceSize size, used;
+  uint32_t type;
+} hblocks[2][HBLOCKS];
+static VkDeviceSize hblock_bytes, map_budget, mapped_bytes;
+
+static void map_limits(void) {
+  const char *e;
+
+  if (hblock_bytes)
+    return;
+  e = getenv("AIRJITD_VK_BLOCK_MB");
+  hblock_bytes = (VkDeviceSize)(e && atoi(e) > 0 ? atoi(e) : 16) << 20;
+  // AIRJITD_VK_MAP_MB: the most host memory mapped at once (0 or unset: 768 MB, under venus's 1 GB hostmem)
+  e = getenv("AIRJITD_VK_MAP_MB");
+  map_budget = (VkDeviceSize)(e && atoi(e) > 0 ? atoi(e) : 768) << 20;
+}
+
+static void *map_mem(VkDeviceMemory m, VkDeviceSize size) {
+  void *p;
+
+  map_limits();
+  if (mapped_bytes + size > map_budget)
+    decline("mapping %llu more bytes passes the %llu MB map budget", (unsigned long long)size,
+            (unsigned long long)(map_budget >> 20));
+  CK(vkMapMemory(dev, m, 0, size, 0, &p));
+  mapped_bytes += size;
+  return p;
+}
+
+static void unmap_mem(VkDeviceMemory m, VkDeviceSize size) {
+  vkUnmapMemory(dev, m);
+  mapped_bytes -= size < mapped_bytes ? size : mapped_bytes;
+}
+
+// the arena's blocks are reused once its batch has finished
+static void hblocks_reset(int a) {
+  for (unsigned i = 0; i < HBLOCKS; i++) {
+    hblocks[a][i].used = 0;
+  }
+}
+
+static VkDeviceMemory alloc_mem(VkDeviceSize size, uint32_t type) {
+  VkMemoryAllocateInfo ai = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+  VkDeviceMemory m;
+  VkResult ar;
+
+  ai.allocationSize = size, ai.memoryTypeIndex = type;
+  if (drm_cpu_cached)
+    drm_cpu_cached(1);
+  ar = vkAllocateMemory(dev, &ai, 0, &m);
+  if (drm_cpu_cached)
+    drm_cpu_cached(0);
+  CK(ar);
+  return m;
+}
+
+// a piece of a block of this type, 0 when it is too big for one
+static int hblock_take(VkMemoryRequirements *rq, uint32_t type, VkDeviceMemory *m, VkDeviceSize *off, uint8_t **map) {
+  struct hblock *bl = hblocks[cur_arena];
+  VkDeviceSize align = rq->alignment > 64 ? rq->alignment : 64;
+  unsigned i, empty = HBLOCKS;
+
+  map_limits();
+  if (rq->size > hblock_bytes / 2)
+    return 0;
+  for (i = 0; i < HBLOCKS; i++) {
+    VkDeviceSize at = (bl[i].used + align - 1) & ~(align - 1);
+
+    if (!bl[i].m) {
+      empty = empty == HBLOCKS ? i : empty;
+      continue;
+    }
+    if (bl[i].type == type && at + rq->size <= bl[i].size) {
+      bl[i].used = at + rq->size;
+      *m = bl[i].m, *off = at, *map = bl[i].map + at;
+      return 1;
+    }
+  }
+  if (empty == HBLOCKS)
+    return 0;
+  // a block whose mapping fails is freed, never left half made
+  map_limits();
+  if (mapped_bytes + hblock_bytes > map_budget)
+    decline("a new %llu MB staging block passes the %llu MB map budget", (unsigned long long)(hblock_bytes >> 20),
+            (unsigned long long)(map_budget >> 20));
+  {
+    VkDeviceMemory nm = alloc_mem(hblock_bytes, type);
+    void *p;
+
+    if (vkMapMemory(dev, nm, 0, hblock_bytes, 0, &p) != VK_SUCCESS) {
+      vkFreeMemory(dev, nm, 0);
+      decline("vkMapMemory of a %llu MB staging block failed", (unsigned long long)(hblock_bytes >> 20));
+    }
+    mapped_bytes += hblock_bytes;
+    bl[empty].m = nm, bl[empty].map = p;
+  }
+  bl[empty].size = hblock_bytes, bl[empty].type = type;
+  bl[empty].used = rq->size;
+  *m = bl[empty].m, *off = 0, *map = bl[empty].map;
+  return 1;
+}
+
+// staging for copies only: pieces of a few blocks, each block one VkBuffer kept mapped, so a copy costs no buffer
+// creation (on venus every create, bind and destroy is a trip to the host). Kind 0 uploads, 1 reads back (cached)
+#define SBLOCKS 8
+static struct sblock {
+  VkBuffer b;
+  VkDeviceMemory m;
+  uint8_t *map;
+  VkDeviceSize used;
+} sblocks[2][3][SBLOCKS];
+
+// an arena's staged small buffers, reused when the same bridge range binds again, each lives as long as
+// its staging block and changed bytes get a new entry, leaving the old range to commands that read it
+#define SMALL_BUFFER_CACHE 4096
+static void small_buffer_reset(int a);
+static uint64_t small_buffer_reuse_hits, small_buffer_reuse_bytes;
+
+static void sblocks_reset(int a) {
+  for (unsigned k = 0; k < 3; k++) {
+    for (unsigned i = 0; i < SBLOCKS; i++) {
+      sblocks[a][k][i].used = 0;
+    }
+  }
+  small_buffer_reset(a);
+}
+
+// kind 2: small buffers a shader reads (storage, vertex, index, texel), bound at the piece's offset
+static int stage_take(VkDeviceSize size, int readback, struct buf *out) {
+  struct sblock *bl = sblocks[cur_arena][readback];
+  unsigned i;
+
+  map_limits();
+  size = (size + 255) & ~(VkDeviceSize)255;
+  if (size > hblock_bytes / 2)
+    return 0;
+  for (i = 0; i < SBLOCKS; i++) {
+    if (!bl[i].b) {
+      VkBufferCreateInfo ci = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+      VkMemoryRequirements rq;
+      uint32_t type;
+      void *p;
+
+      if (mapped_bytes + hblock_bytes > map_budget)
+        return 0;
+      ci.size = hblock_bytes, ci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+      if (readback == 2)
+        ci.usage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+                    VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT;
+      CK(vkCreateBuffer(dev, &ci, 0, &bl[i].b));
+      vkGetBufferMemoryRequirements(dev, bl[i].b, &rq);
+      type = readback == 1 ? mem_type_pref(rq.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                      VK_MEMORY_PROPERTY_HOST_CACHED_BIT)
+                      : mem_type(rq.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+      bl[i].m = alloc_mem(rq.size, type);
+      CK(vkBindBufferMemory(dev, bl[i].b, bl[i].m, 0));
+      if (vkMapMemory(dev, bl[i].m, 0, hblock_bytes, 0, &p) != VK_SUCCESS) {
+        vkDestroyBuffer(dev, bl[i].b, 0), vkFreeMemory(dev, bl[i].m, 0);
+        bl[i].b = 0, bl[i].m = 0;
+        decline("vkMapMemory of a staging block failed");
+      }
+      mapped_bytes += hblock_bytes;
+      bl[i].map = p, bl[i].used = 0;
+    }
+    if (bl[i].used + size <= hblock_bytes) {
+      out->b = bl[i].b, out->off = bl[i].used, out->map = bl[i].map + bl[i].used;
+      bl[i].used += size;
+      host_track(out->map, size);
+      return 1;
+    }
+  }
+  return 0;
+}
+
+// copies through a staging piece: its regions move by the piece's offset in the block's buffer
+static void copy_b2i(VkCommandBuffer cb, const struct buf *st, VkImage i, VkImageLayout l, uint32_t n, VkBufferImageCopy *cp) {
+  for (uint32_t k = 0; k < n; k++) {
+    cp[k].bufferOffset += st->off;
+  }
+  vkCmdCopyBufferToImage(cb, st->b, i, l, n, cp);
+}
+
+static void copy_i2b(VkCommandBuffer cb, VkImage i, VkImageLayout l, const struct buf *st, uint32_t n, VkBufferImageCopy *cp) {
+  for (uint32_t k = 0; k < n; k++) {
+    cp[k].bufferOffset += st->off;
+  }
+  vkCmdCopyImageToBuffer(cb, i, l, st->b, n, cp);
+}
+
 // mem 0: the buffer and its memory belong to the job's arena, else to the caller
 static struct buf alloc_host_buf(VkDeviceSize size, VkBufferUsageFlags usage, int readback, VkDeviceMemory *mem) {
   VkBufferCreateInfo ci = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
   VkMemoryAllocateInfo ai = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
   VkMemoryRequirements rq;
   VkDeviceMemory m;
-  struct buf r;
+  struct buf r = { 0 };
 
   if (!mem && (arena.nbuf == ARENA_BUFS || arena.nmem == ARENA_BUFS + 64))
     decline("too many buffers");
@@ -769,25 +1390,50 @@ static struct buf alloc_host_buf(VkDeviceSize size, VkBufferUsageFlags usage, in
   ai.memoryTypeIndex = readback ? mem_type_pref(rq.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                                                  VK_MEMORY_PROPERTY_HOST_CACHED_BIT)
                                 : mem_type(rq.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-  logv("AIRJITD:   host buffer %llu bytes, usage 0x%x: memory types 0x%x, type %u", (unsigned long long)size, usage,
+  logv2("AIRJITD:   host buffer %llu bytes, usage 0x%x: memory types 0x%x, type %u", (unsigned long long)size, usage,
        rq.memoryTypeBits, ai.memoryTypeIndex);
-  if (drm_cpu_cached)
-    drm_cpu_cached(1);
-  {
-    VkResult ar = vkAllocateMemory(dev, &ai, 0, &m);
+  if (!mem) {
+    VkDeviceSize off;
+    uint8_t *map;
+
+    if (hblock_take(&rq, ai.memoryTypeIndex, &m, &off, &map)) {
+      CK(vkBindBufferMemory(dev, r.b, m, off));
+      r.map = map;
+      return r;
+    }
+  }
+  if (mem) {
+    VkResult ar;
 
     if (drm_cpu_cached)
+      drm_cpu_cached(1);
+    ar = vkAllocateMemory(dev, &ai, 0, &m);
+    if (drm_cpu_cached)
       drm_cpu_cached(0);
-    if (ar != VK_SUCCESS && mem)
+    if (ar != VK_SUCCESS)
       vkDestroyBuffer(dev, r.b, 0);
     CK(ar);
-  }
-  if (mem)
     *mem = m;
-  else
+  } else {
+    m = alloc_mem(rq.size, ai.memoryTypeIndex);
     arena.mem[arena.nmem++] = m;
+  }
   CK(vkBindBufferMemory(dev, r.b, m, 0));
-  CK(vkMapMemory(dev, m, 0, VK_WHOLE_SIZE, 0, &r.map));
+  // only the buffer's own bytes are mapped, a caller's buffer is undone when that fails
+  if (mem) {
+    map_limits();
+    if (mapped_bytes + ci.size > map_budget || vkMapMemory(dev, m, 0, ci.size, 0, &r.map) != VK_SUCCESS) {
+      vkDestroyBuffer(dev, r.b, 0);
+      vkFreeMemory(dev, m, 0);
+      *mem = VK_NULL_HANDLE;
+      decline("cannot map a %llu byte host buffer", (unsigned long long)ci.size);
+    }
+    mapped_bytes += ci.size;
+    return r;
+  }
+  r.map = map_mem(m, ci.size);
+  if (!mem)
+    arena.mapped[arena.nmem - 1] = ci.size;
   return r;
 }
 
@@ -824,6 +1470,7 @@ static VkCommandBuffer begin(void) {
   CK(vkAllocateCommandBuffers(dev, &ai, &cb));
   bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
   CK(vkBeginCommandBuffer(cb, &bi));
+  draw_binding_cache_valid = 0;
   if (resident_mode && !direct)
     batch = cb;
   if (!resident_mode && job_batch)
@@ -834,9 +1481,34 @@ static VkCommandBuffer begin(void) {
 // everything recorded so far happens before what comes next
 static void full_barrier(VkCommandBuffer cb) {
   VkMemoryBarrier mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+  uint64_t t = now_us();
 
   mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT, mb.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
   vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0, 0, 0, 0);
+  pd_vk_last.barrier_us += now_us() - t, pd_vk_last.barriers++;
+}
+
+// resident graphics jobs share one command buffer, so draws order their writes against later graphics,
+// compute and transfer users and wait on nothing unrelated
+static void draw_barrier(VkCommandBuffer cb) {
+  VkMemoryBarrier mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+  const VkPipelineStageFlags graphics = VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                        VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+  const VkPipelineStageFlags consumers = graphics | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT |
+                                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
+  uint64_t t = now_us();
+
+  mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                     VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+  mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT |
+                     VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                     VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                     VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT |
+                     VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+  vkCmdPipelineBarrier(cb, graphics, consumers, 0, 1, &mb, 0, 0, 0, 0);
+  pd_vk_last.barrier_us += now_us() - t, pd_vk_last.barriers++;
 }
 
 static void submit(VkCommandBuffer cb) {
@@ -857,17 +1529,18 @@ static void submit(VkCommandBuffer cb) {
   CK(vkEndCommandBuffer(cb));
   si.commandBufferCount = 1, si.pCommandBuffers = &cb;
   host_maintain(0);
-  logv("AIRJITD: vulkan submit: queue submit");
+  watch_before_submit();
+  logv2("AIRJITD: vulkan submit: queue submit");
   r = vkResetFences(dev, 1, &submit_fence);
   if (r == VK_SUCCESS)
     r = vkQueueSubmit(queue, 1, &si, submit_fence);
   if (r == VK_SUCCESS) {
-    logv("AIRJITD: vulkan submit: wait fence");
+    logv2("AIRJITD: vulkan submit: wait fence");
     // a fence that never signals freezes every client: say so every 5 s while waiting on
     for (unsigned s = 5; (r = vkWaitForFences(dev, 1, &submit_fence, VK_TRUE, 5000000000ull)) == VK_TIMEOUT; s += 5)
       logmsg("AIRJITD: vulkan submit: fence still pending after %u s (job %llu)", s, (unsigned long long)job_count);
   }
-  logv("AIRJITD: vulkan submit: finished (%d)", (int)r);
+  logv2("AIRJITD: vulkan submit: finished (%d)", (int)r);
   host_maintain(1);
   pd_vk_last.wait += now_us() - t0, pd_vk_last.submits++;
   vkFreeCommandBuffers(dev, pool, 1, &cb);
@@ -1011,7 +1684,7 @@ static void img_upload(struct img *r, uint8_t *base) {
   prof.img_us += now_us() - t0;
   cb = begin();
   barrier(cb, r->i, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-  vkCmdCopyBufferToImage(cb, st.b, r->i, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, ncp, cp);
+  copy_b2i(cb, &st, r->i, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, ncp, cp);
   barrier(cb, r->i, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
   submit(cb);
 }
@@ -1056,7 +1729,7 @@ static struct img new_img_l(uint8_t *base, uint32_t bsize, const struct PDDrawTe
   r.t = *t, r.f = fmts[t->fmt].vk, r.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
   if (l)
     r.l = *l;
-  vkGetPhysicalDeviceFormatProperties(phys, r.f, &fp);
+  format_props(r.f, &fp);
   // block compressed formats need the device's textureCompressionBC
   if (fmts[t->fmt].kind == 'c' && !(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT))
     decline("format %u not sampled by this device", t->fmt);
@@ -1185,7 +1858,7 @@ static void depth_upload(struct img *r, uint8_t *base) {
   }
   cb = begin();
   barrier_a(cb, r->i, r->aspect, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-  vkCmdCopyBufferToImage(cb, st.b, r->i, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, nc, cp);
+  copy_b2i(cb, &st, r->i, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, nc, cp);
   barrier_a(cb, r->i, r->aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
   submit(cb);
 }
@@ -1205,7 +1878,7 @@ static struct img new_depth(uint8_t *base, uint32_t bsize, const struct PDDrawTe
   if (t->off > bsize || (uint64_t)t->bpr * t->h > bsize - t->off || t->bpr < t->w * fmts[f].bpp)
     decline("depth attachment outside the bridge");
   r.t = *t, r.f = fmts[f].vk;
-  vkGetPhysicalDeviceFormatProperties(phys, r.f, &fp);
+  format_props(r.f, &fp);
   if (!(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT))
     decline("depth format %u is no attachment here", f);
   r.aspect = (f != 28 ? VK_IMAGE_ASPECT_DEPTH_BIT : 0) | (f >= 26 ? VK_IMAGE_ASPECT_STENCIL_BIT : 0);
@@ -1251,7 +1924,7 @@ static void read_depth(uint8_t *base, struct img *r) {
   }
   cb = begin();
   job_fence(cb);
-  vkCmdCopyImageToBuffer(cb, r->i, VK_IMAGE_LAYOUT_GENERAL, st.b, nc, cp);
+  copy_i2b(cb, r->i, VK_IMAGE_LAYOUT_GENERAL, &st, nc, cp);
   submit(cb);
   job_sync();
   depth_planes(r, base + r->t.off, st.map, (uint8_t *)st.map + dsize, 1);
@@ -1282,7 +1955,7 @@ static void read_imgs(uint8_t *base, struct img **ims, unsigned n) {
     ncp[k] = tex_regions(&r->t, r->l.flags ? &r->l : 0, r->t.fmt, cp[k], 96, &span[k]);
     rect_region(r, cp[k], ncp[k], &lo, &hi);
     st[k] = new_buf(span[k], VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    vkCmdCopyImageToBuffer(cb, r->i, VK_IMAGE_LAYOUT_GENERAL, st[k].b, ncp[k], cp[k]);
+    copy_i2b(cb, r->i, VK_IMAGE_LAYOUT_GENERAL, &st[k], ncp[k], cp[k]);
   }
   submit(cb);
   job_sync();
@@ -1313,24 +1986,292 @@ static void read_imgs(uint8_t *base, struct img **ims, unsigned n) {
 }
 
 
-// resident resources: device copies of bridge ranges kept across jobs. Textures re-upload when marked dirty (Metal
-// has no CPU pointer into them), buffers when their hash changes, GPU writes stay there until pd_vk_sync
+// resident resources: device copies of bridge ranges kept across jobs. Textures re-upload when marked dirty, managed
+// buffers follow didModifyRange, shared buffers use protected pages, GPU writes stay there until pd_vk_sync
 enum { RES_BUF, RES_IMG, RES_DEPTH };
-#define MAX_RESIDENT 512
+#define MAX_RESIDENT 2048
+#define RES_SMALL_BUFFER 65536
+
+#define RES_CHUNKED (4u << 20)
+#define RES_CHUNK (256u << 10)
+#define RES_STAGE (4u << 20)
 
 struct resident {
+  // chunks[] holds the page generation each chunk was uploaded at
+  int chunk_gens;
+  // bytes hashed and binds this second, for the once-a-second report
+  uint64_t hashed_b, binds;
+  // the command buffer whose bytes the chunk hashes already match, scanned once per command buffer
+  uint64_t scan_epoch;
   uint32_t off, size;
   uint64_t key, hash, used;
-  int kind, live, stale, gpu_newer;
+  int kind, live, stale, gpu_newer, watched;
+  unsigned newer_pos;
   VkBuffer b;
   VkDeviceMemory mem;
   struct img im;
+  // a large buffer's hash per RES_CHUNK bytes: only the changed chunks upload
+  uint64_t *chunks;
+  // the last write generation seen for each watched bridge page, kept per resident since several
+  // Vulkan buffers can alias one page
+  uint32_t *watch_seen;
+  size_t watch_first, watch_count;
+  uint64_t watch_epoch, *watch_chunk_epochs;
+  size_t watch_chunk_count;
+  int watch_epoch_valid;
+  // inside a managed buffer: dirty per chunk (or stale for a small one), set by pd_vk_modified
+  int managed;
+  uint8_t *mdirty;
+  uint32_t mdirty_count;
 };
 
 static struct resident residents[MAX_RESIDENT];
+#define SMALL_BUFFER_CACHE 4096
+struct small_buffer_entry {
+  uint32_t off, size;
+  VkBuffer b;
+  VkDeviceSize boff;
+  // stage_take returns stable mapped storage until this arena's cache resets.
+  const uint8_t *map;
+  // the staged bytes' hash: the copy is mapped GPU memory, which venus maps uncached, too slow to read back
+  uint64_t hash;
+  // or the written-pages generation it was staged at, when the kernel reports written pages
+  uint64_t gen;
+  struct resident watch;
+};
+static struct small_buffer_entry small_buffer_cache[2][SMALL_BUFFER_CACHE];
+#define RESHASH (MAX_RESIDENT * 2)
+#define RES_TOMB 0xffffffffu
+// exact resource keys, so a vertex or index bind does not rescan the resident table
+static unsigned reshash[RESHASH];
+static unsigned newer_residents[MAX_RESIDENT], newer_count;
 static uint64_t use_clock;
 static uint8_t *res_base;
 static uint32_t res_bsize;
+
+enum { WATCH_OFF, WATCH_RO_CLEAN, WATCH_RW_DIRTY, WATCH_ARMING_CLEAN, WATCH_ARMING_DIRTY, WATCH_FAULTING };
+struct watch_page {
+  _Atomic unsigned refs;
+  _Atomic unsigned state;
+  _Atomic uint32_t generation;
+};
+static struct watch_page *watch_pages;
+static _Atomic uint64_t watch_global_epoch;
+static _Atomic unsigned watch_epoch_writers;
+// coarse epochs give the chunked-buffer path a constant-time read with harmless false positives within
+// 256 KiB, watch_dirty rescans a touched block
+#define WATCH_EPOCH_BLOCK_PAGES 64
+static _Atomic uint64_t *watch_epoch_blocks;
+static size_t watch_epoch_block_count;
+static uintptr_t watch_base, watch_end;
+static uint8_t *watch_owner;
+static uint32_t watch_owner_size;
+static size_t watch_page_size, watch_page_count;
+static int watch_enabled;
+static int watch_requested; // survives bridge arena attach/detach while the fault handler remains installed
+#define WATCH_EXCLUSIONS 8
+static struct { uintptr_t lo, hi; } watch_exclusions[WATCH_EXCLUSIONS];
+static unsigned watch_exclusion_count;
+static int watch_reset(void);
+static int watch_buffer(struct resident *r, int on);
+static int watch_dirty(struct resident *r, uint32_t off, uint32_t len);
+static int watch_arm_all(void);
+static void watch_disable(const char *reason);
+static void small_buffer_watch_clear(void);
+static void small_buffer_invalidate(uint32_t off, uint32_t len);
+
+static void watch_epoch_raise(size_t page, uint64_t epoch) {
+  size_t block = page / WATCH_EPOCH_BLOCK_PAGES;
+  uint64_t old;
+
+  if (!watch_epoch_blocks || page >= watch_page_count || block >= watch_epoch_block_count)
+    return;
+  old = atomic_load_explicit(&watch_epoch_blocks[block], memory_order_relaxed);
+  while (old < epoch && !atomic_compare_exchange_weak_explicit(&watch_epoch_blocks[block], &old, epoch,
+                                                                memory_order_relaxed, memory_order_relaxed))
+    ;
+}
+
+static uint64_t watch_epoch_range(size_t first, size_t last) {
+  size_t first_block = first / WATCH_EPOCH_BLOCK_PAGES;
+  size_t last_block = last / WATCH_EPOCH_BLOCK_PAGES;
+  uint64_t result = 0;
+
+  for (size_t block = first_block; block <= last_block; block++) {
+    uint64_t value = atomic_load_explicit(&watch_epoch_blocks[block], memory_order_relaxed);
+    if (value > result)
+      result = value;
+  }
+  return result;
+}
+
+static void watch_epoch_mark_write(size_t page) {
+  uint64_t epoch;
+
+  epoch = atomic_fetch_add_explicit(&watch_global_epoch, 1, memory_order_acq_rel) + 1;
+  watch_epoch_raise(page, epoch);
+}
+
+static unsigned res_hash_slot(uint32_t off, uint32_t size, uint64_t key, int kind) {
+  uint64_t h = key ^ ((uint64_t)off << 32) ^ size ^ ((uint64_t)(unsigned)kind << 59);
+
+  h ^= h >> 33, h *= 0xff51afd7ed558ccdull;
+  h ^= h >> 33, h *= 0xc4ceb9fe1a85ec53ull;
+  h ^= h >> 33;
+  return (unsigned)h & (RESHASH - 1);
+}
+
+static struct resident *res_lookup(uint32_t off, uint32_t size, uint64_t key, int kind) {
+  unsigned slot = res_hash_slot(off, size, key, kind);
+
+  for (unsigned n = 0; n < RESHASH; n++, slot = (slot + 1) & (RESHASH - 1)) {
+    unsigned entry = reshash[slot];
+    struct resident *r;
+
+    if (!entry)
+      return 0;
+    if (entry == RES_TOMB)
+      continue;
+    r = &residents[entry - 1];
+    if (r->live && r->off == off && r->size == size && r->key == key && r->kind == kind)
+      return r;
+  }
+  return 0;
+}
+
+static void res_index_add(struct resident *r) {
+  unsigned slot = res_hash_slot(r->off, r->size, r->key, r->kind), tomb = RESHASH;
+  unsigned index = (unsigned)(r - residents) + 1;
+
+  for (unsigned n = 0; n < RESHASH; n++, slot = (slot + 1) & (RESHASH - 1)) {
+    if (reshash[slot] == RES_TOMB) {
+      if (tomb == RESHASH)
+        tomb = slot;
+    } else if (!reshash[slot]) {
+      reshash[tomb == RESHASH ? slot : tomb] = index;
+      return;
+    }
+  }
+  if (tomb != RESHASH) {
+    reshash[tomb] = index;
+    return;
+  }
+  decline("resident index full");
+}
+
+static void res_index_remove(struct resident *r) {
+  unsigned slot = res_hash_slot(r->off, r->size, r->key, r->kind);
+  unsigned index = (unsigned)(r - residents) + 1;
+
+  for (unsigned n = 0; n < RESHASH; n++, slot = (slot + 1) & (RESHASH - 1)) {
+    if (!reshash[slot])
+      return;
+    if (reshash[slot] == index) {
+      reshash[slot] = RES_TOMB;
+      return;
+    }
+  }
+}
+
+// called by pdmtl's signal handler for first writes to protected bridge pages
+int pd_vk_write_fault(void *address) {
+  uintptr_t p = (uintptr_t)address;
+  size_t i;
+
+  if (!watch_pages || p < watch_base || p >= watch_end)
+    return 0;
+  i = (p - watch_base) / watch_page_size;
+  atomic_fetch_add_explicit(&watch_epoch_writers, 1, memory_order_acq_rel);
+  for (;;) {
+    unsigned s = atomic_load_explicit(&watch_pages[i].state, memory_order_relaxed);
+    unsigned refs = atomic_load_explicit(&watch_pages[i].refs, memory_order_relaxed);
+
+    // a page left read-only with no owners, by a last release or an unwatch racing watch_arm_all's mprotect,
+    // lets the writer through and retires the stale watch state
+    if (!refs && (s == WATCH_OFF || s == WATCH_RO_CLEAN || s == WATCH_ARMING_CLEAN || s == WATCH_ARMING_DIRTY)) {
+      unsigned expected = s;
+
+      if (!atomic_compare_exchange_weak_explicit(&watch_pages[i].state, &expected, WATCH_FAULTING,
+                                                 memory_order_relaxed, memory_order_relaxed))
+        continue;
+      if (mprotect((void *)(watch_base + i * watch_page_size), watch_page_size, PROT_READ | PROT_WRITE) == 0) {
+        atomic_fetch_add_explicit(&watch_pages[i].generation, 1, memory_order_relaxed);
+        expected = WATCH_FAULTING;
+        atomic_compare_exchange_strong_explicit(&watch_pages[i].state, &expected,
+                                                atomic_load_explicit(&watch_pages[i].refs, memory_order_relaxed)
+                                                    ? WATCH_RW_DIRTY
+                                                    : WATCH_OFF,
+                                                memory_order_relaxed, memory_order_relaxed);
+        atomic_fetch_sub_explicit(&watch_epoch_writers, 1, memory_order_release);
+        return 1;
+      }
+      expected = WATCH_FAULTING;
+      atomic_compare_exchange_strong_explicit(&watch_pages[i].state, &expected, s,
+                                              memory_order_relaxed, memory_order_relaxed);
+      atomic_fetch_sub_explicit(&watch_epoch_writers, 1, memory_order_release);
+      return 0;
+    }
+    if (!refs) {
+      atomic_fetch_sub_explicit(&watch_epoch_writers, 1, memory_order_release);
+      return 0;
+    }
+
+    if (s == WATCH_FAULTING) {
+      sched_yield();
+      continue;
+    }
+    if (s == WATCH_RW_DIRTY) {
+      watch_epoch_mark_write(i);
+      int ok = mprotect((void *)(watch_base + i * watch_page_size), watch_page_size, PROT_READ | PROT_WRITE) == 0;
+      atomic_fetch_sub_explicit(&watch_epoch_writers, 1, memory_order_release);
+      return ok;
+    }
+    if (s != WATCH_RO_CLEAN && s != WATCH_ARMING_CLEAN && s != WATCH_ARMING_DIRTY) {
+      atomic_fetch_sub_explicit(&watch_epoch_writers, 1, memory_order_release);
+      return 0;
+    }
+    if (atomic_compare_exchange_weak_explicit(&watch_pages[i].state, &s, WATCH_FAULTING,
+                                              memory_order_relaxed, memory_order_relaxed)) {
+      atomic_fetch_add_explicit(&watch_pages[i].generation, 1, memory_order_relaxed);
+      watch_epoch_mark_write(i);
+      if (mprotect((void *)(watch_base + i * watch_page_size), watch_page_size, PROT_READ | PROT_WRITE) == 0) {
+        atomic_store_explicit(&watch_pages[i].state, WATCH_RW_DIRTY, memory_order_relaxed);
+        atomic_fetch_sub_explicit(&watch_epoch_writers, 1, memory_order_release);
+        return 1;
+      }
+      atomic_store_explicit(&watch_pages[i].state, s, memory_order_relaxed);
+      atomic_fetch_sub_explicit(&watch_epoch_writers, 1, memory_order_release);
+      return 0;
+    }
+  }
+}
+
+int pd_vk_watch_fault_info(void *address, uintptr_t *base, uintptr_t *end, size_t *page_size, unsigned *refs,
+                           unsigned *state) {
+  uintptr_t p = (uintptr_t)address;
+  size_t i;
+
+  if (base)
+    *base = watch_base;
+  if (end)
+    *end = watch_end;
+  if (page_size)
+    *page_size = watch_page_size;
+  if (refs)
+    *refs = 0;
+  if (state)
+    *state = WATCH_OFF;
+  if (!watch_pages || p < watch_base || p >= watch_end)
+    return 0;
+  i = (p - watch_base) / watch_page_size;
+  if (i >= watch_page_count)
+    return 0;
+  if (refs)
+    *refs = atomic_load_explicit(&watch_pages[i].refs, memory_order_relaxed);
+  if (state)
+    *state = atomic_load_explicit(&watch_pages[i].state, memory_order_relaxed);
+  return 1;
+}
 
 /*
  * xxHash - Extremely Fast Hash algorithm
