@@ -34,6 +34,9 @@ struct CGDirectDisplayModeProvider {
 
 COREGRAPHICS_EXPORT void CGDirectDisplaySetModeProvider(const struct CGDirectDisplayModeProvider *provider);
 
+// asked for the display before its size is known, the window server connects there and reports it
+COREGRAPHICS_EXPORT void CGDirectDisplaySetDiscoverer(void (*discover)(void));
+
 // the window server locks the pointer for mouse-look and takes warps while it is locked
 struct CGDirectDisplayPointerProvider {
     bool (*associate)(bool connected);

@@ -56,10 +56,21 @@ static CGRect mainDisplayBounds = { { 0, 0 }, { 0, 0 } };
 
 // set once a caller got the guessed size, so the real one is announced as a change
 static bool guessedSizeHandedOut;
+static void (*discoverer)(void);
+static bool discovering;
 
 static CGRect currentBounds(void) {
     if (mainDisplayBounds.size.width > 0 && mainDisplayBounds.size.height > 0) {
         return mainDisplayBounds;
+    }
+
+    // the window server finds it, a process that sizes its screens first (Qt) would keep a guess
+    if (discoverer != NULL && !discovering) {
+        discovering = true;
+        discoverer();
+        discovering = false;
+        if (mainDisplayBounds.size.width > 0 && mainDisplayBounds.size.height > 0)
+            return mainDisplayBounds;
     }
 
     /* Nothing has told us the real size yet. PUREDARWIN_DISPLAY_SIZE lets a
@@ -107,6 +118,10 @@ void CGDirectDisplaySetMainDisplayBounds(CGRect bounds) {
 
 void CGDirectDisplaySetModeProvider(const struct CGDirectDisplayModeProvider *provider) {
     modeProvider = provider;
+}
+
+void CGDirectDisplaySetDiscoverer(void (*discover)(void)) {
+    discoverer = discover;
 }
 
 CGError CGDisplayRegisterReconfigurationCallback(CGDisplayReconfigurationCallBack callback, void *userInfo) {

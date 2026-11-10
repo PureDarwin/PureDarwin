@@ -2143,6 +2143,23 @@ int _windowServerConnect(void) {
     return ensureConnected();
 }
 
+// only when the compositor's socket is already there, a process without a display keeps CoreGraphics' guess
+static void discoverDisplay(void) {
+    const char *dir = getenv("XDG_RUNTIME_DIR");
+    const char *name = getenv("WAYLAND_DISPLAY");
+    char path[512];
+
+    if (ws.connected || dir == NULL)
+        return;
+    snprintf(path, sizeof(path), "%s/%s", dir, name != NULL ? name : "wayland-0");
+    if (access(path, F_OK) == 0)
+        ensureConnected();
+}
+
+__attribute__((constructor)) static void registerDiscoverer(void) {
+    CGDirectDisplaySetDiscoverer(discoverDisplay);
+}
+
 int _windowServerReceiveMessage(PortMessage *msg) {
     if (msg == NULL || !ws.connected) {
         return 0;
