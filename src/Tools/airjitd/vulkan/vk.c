@@ -3526,70 +3526,434 @@ static struct resident *res_slot(uint32_t off, uint32_t size, uint64_t key, int 
   return r;
 }
 
+// a resident buffer's device-local buffer and memory
+static void res_buffer_memory(struct resident *r, uint32_t size) {
+  VkBufferCreateInfo ci = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+  VkMemoryAllocateInfo ai = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+  VkMemoryRequirements rq;
+
+  ci.size = size ? (size + 15) & ~(VkDeviceSize)15 : 16;
+  // texel buffer usage too: a texture_buffer binds these bytes through a view
+  ci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+             VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT |
+             VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT;
+  if (vkCreateBuffer(dev, &ci, 0, &r->b) != VK_SUCCESS) {
+    r->live = 0;
+    decline("resident buffer");
+  }
+  vkGetBufferMemoryRequirements(dev, r->b, &rq);
+  ai.allocationSize = rq.size, ai.memoryTypeIndex = mem_type_pref(rq.memoryTypeBits, 0, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  if (vkAllocateMemory(dev, &ai, 0, &r->mem) != VK_SUCCESS) {
+    vkDestroyBuffer(dev, r->b, 0);
+    r->live = 0;
+    decline("no device memory for a %u byte buffer", size);
+  }
+  vkBindBufferMemory(dev, r->b, r->mem, 0);
+  pd_vk_last.allocs++;
+}
+
+// buffers above RES_CHUNKED upload by RES_CHUNK pieces, only those whose pages changed, through staging no larger
+// than RES_STAGE: a big vertex or chunk buffer the app edits a little each frame is not copied whole, nor mapped whole
+static struct resident *res_slot(uint32_t off, uint32_t size, uint64_t key, int kind, int *fresh);
+
+// the pages the CPU wrote, from the kernel's dirty bits (machdep call 7): a generation per bridge page, so buffers
+// over the same pages each see a write whoever asked first
+#define PAGEMOD_PAGE 4096u
+static int pagemod_state; // 0 untried, 1 works, -1 not there
+static uint64_t *pagemod_gen, pagemod_now;
+// the command buffer (hash_epoch) each 2 MB region of the bridge was last asked about in
+#define PAGEMOD_REGION (2u << 20)
+static uint64_t *pagemod_region_epoch;
+static uintptr_t pagemod_first;
+static size_t pagemod_pages;
+static uint8_t *pagemod_bits;
+static uint64_t pagemod_queries, pagemod_us, pagemod_written;
+
+static long pagemod_call(uintptr_t addr, uint64_t len, uint8_t *bits) {
+#if defined(__APPLE__) && defined(__x86_64__)
+  long rax = (3l << 24) | 7;
+
+  __asm__ volatile("syscall" : "+a"(rax) : "D"(addr), "S"(len), "d"(bits) : "rcx", "r11", "memory");
+  return rax;
+#else
+  (void)addr, (void)len, (void)bits;
+  return -1;
+#endif
+}
+
+// asks the kernel which pages of the bridge range were written and stamps them with a new generation,
+// -1 when it cannot tell
+static int pagemod_take(uint32_t off, uint32_t len) {
+  uintptr_t lo = (uintptr_t)(res_base + off), first = lo / PAGEMOD_PAGE, n;
+  uint64_t t0;
+
+  if (pagemod_state < 0 || !res_base || !len)
+    return -1;
+  if (pagemod_first != (uintptr_t)res_base / PAGEMOD_PAGE || !pagemod_gen) {
+    free(pagemod_gen), free(pagemod_bits), free(pagemod_region_epoch);
+    pagemod_first = (uintptr_t)res_base / PAGEMOD_PAGE;
+    pagemod_pages = ((uintptr_t)res_base + res_bsize + PAGEMOD_PAGE - 1) / PAGEMOD_PAGE - pagemod_first;
+    pagemod_gen = calloc(pagemod_pages, sizeof(*pagemod_gen));
+    pagemod_bits = malloc(pagemod_pages / 8 + 1);
+    pagemod_region_epoch = calloc(res_bsize / PAGEMOD_REGION + 2, sizeof(*pagemod_region_epoch));
+    if (!pagemod_gen || !pagemod_bits || !pagemod_region_epoch)
+      return pagemod_state = -1;
+  }
+  n = (lo + len + PAGEMOD_PAGE - 1) / PAGEMOD_PAGE - first;
+  t0 = now_us();
+  if (pagemod_call(lo, len, pagemod_bits)) {
+    if (!pagemod_state)
+      logmsg("AIRJITD: no written-pages call in this kernel, buffers are hashed");
+    return pagemod_state = -1;
+  }
+  pagemod_state = 1, pagemod_now++;
+  for (uintptr_t i = 0; i < n; i++) {
+    if (pagemod_bits[i / 8] & (1u << (i % 8)))
+      pagemod_gen[first - pagemod_first + i] = pagemod_now, pagemod_written++;
+  }
+  pagemod_queries++, pagemod_us += now_us() - t0;
+  return 0;
+}
+
+// brings the page generations of [off, off + len) up to this command buffer, each 2 MB region asked about
+// at most once per command buffer, -1 when the kernel cannot tell
+static int pagemod_fresh(uint32_t off, uint32_t len) {
+  if (pagemod_state < 0 || !len)
+    return -1;
+  if (!pagemod_region_epoch && pagemod_take(off, 1))
+    return -1;
+  for (uint32_t r = off / PAGEMOD_REGION; r <= (off + len - 1) / PAGEMOD_REGION; r++) {
+    uint32_t lo = r * PAGEMOD_REGION, n = res_bsize - lo < PAGEMOD_REGION ? res_bsize - lo : PAGEMOD_REGION;
+
+    if (pagemod_region_epoch[r] == hash_epoch)
+      continue;
+    if (pagemod_take(lo, n))
+      return -1;
+    pagemod_region_epoch[r] = hash_epoch;
+  }
+  return 0;
+}
+
+// the newest generation any page of the bridge range was written in
+static uint64_t pagemod_newest(uint32_t off, uint32_t len) {
+  uintptr_t lo = (uintptr_t)(res_base + off) / PAGEMOD_PAGE, hi = ((uintptr_t)(res_base + off) + len - 1) / PAGEMOD_PAGE;
+  uint64_t g = 0;
+
+  for (uintptr_t p = lo; p <= hi; p++) {
+    if (pagemod_gen[p - pagemod_first] > g)
+      g = pagemod_gen[p - pagemod_first];
+  }
+  return g;
+}
+
+// a big buffer's chunk hashes, spread over threads: one core's memory bandwidth caps a lone scan
+#define HASH_THREADS 8
+struct hash_job {
+  const uint8_t *p;
+  uint32_t size;
+  unsigned n, next;
+  uint64_t *out;
+};
+
+static void *hash_worker(void *arg) {
+  struct hash_job *j = arg;
+  unsigned i;
+
+  while ((i = __atomic_fetch_add(&j->next, 1, __ATOMIC_RELAXED)) < j->n) {
+    uint32_t at = i * RES_CHUNK;
+
+    j->out[i] = content_hash_raw(j->p + at, j->size - at < RES_CHUNK ? j->size - at : RES_CHUNK);
+  }
+  return 0;
+}
+
+static void chunk_hashes(const uint8_t *p, uint32_t size, unsigned n, uint64_t *out) {
+  struct hash_job j = { p, size, n, 0, out };
+  pthread_t th[HASH_THREADS - 1];
+  unsigned started = 0;
+
+  for (unsigned k = 0; n >= 32 && k < HASH_THREADS - 1; k++) {
+    if (!pthread_create(&th[started], 0, hash_worker, &j))
+      started++;
+  }
+  hash_worker(&j);
+  for (unsigned k = 0; k < started; k++) {
+    pthread_join(th[k], 0);
+  }
+  range_hash_stats[RH_BUFFER].calls += n, range_hash_stats[RH_BUFFER].misses += n;
+  range_hash_stats[RH_BUFFER].bytes += size, pd_vk_last.buffer_hash_bytes += size;
+}
+
+static VkBuffer res_buffer_chunked(uint8_t *base, uint32_t off, uint32_t size, int writes, struct resident **out,
+                                   struct resident *r, int fresh) {
+  uint64_t *hashes = 0;
+  unsigned n = (size + RES_CHUNK - 1) / RES_CHUNK, i = 0;
+  int all, managed_now = in_managed(off, size);
+
+  if (fresh)
+    res_buffer_memory(r, size);
+  if (r->managed != managed_now) {
+    if (r->watched)
+      watch_buffer(r, 0), r->watched = 0;
+    r->managed = managed_now, r->stale = 1;
+    free(r->mdirty), r->mdirty = 0, r->mdirty_count = 0;
+  }
+  if (!managed_now && !r->watched)
+    r->watched = watch_buffer(r, 1);
+  if (r->managed && !r->mdirty) {
+    r->mdirty = calloc(n, 1);
+    if (!r->mdirty)
+      decline("no memory for dirty chunks");
+    fresh = 1;
+  }
+  if (!r->chunks) {
+    r->chunks = calloc(n, sizeof(*r->chunks));
+    if (!r->chunks)
+      decline("no memory for chunk hashes");
+    fresh = 1;
+  }
+  all = fresh || r->stale;
+  r->binds++;
+  if (!all && r->gpu_newer && (!r->managed || !r->mdirty_count))
+    goto done;
+  if (!all && !r->managed && !r->watched && r->scan_epoch == hash_epoch)
+    goto done;
+  {
+    int gens = !r->managed && !r->watched && pagemod_take(off, size) == 0;
+
+    if (gens != r->chunk_gens)
+      all = 1, r->chunk_gens = gens;
+  }
+  if (!r->chunk_gens && !r->managed && !r->watched && (hashes = malloc(n * sizeof(*hashes)))) {
+    uint64_t ht = now_us();
+
+    chunk_hashes(base + off, size, n, hashes);
+    pd_vk_last.buffer_hash_us += now_us() - ht;
+  }
+  while (i < n) {
+    VkBufferCopy c[RES_STAGE / RES_CHUNK];
+    unsigned nc = 0, used = 0;
+    struct buf st = { 0 };
+    VkCommandBuffer cb;
+
+    // the next staging piece: changed chunks until it is full
+    for (; i < n && used + RES_CHUNK <= RES_STAGE; i++) {
+      uint32_t at = i * RES_CHUNK, len = size - at < RES_CHUNK ? size - at : RES_CHUNK;
+      uint64_t ts = now_us();
+      // managed: what didModifyRange named, never hashed
+      uint64_t ht = now_us();
+      uint64_t h = r->managed || r->watched || r->chunk_gens ? 0 : hashes ? hashes[i] : range_hash(base + off + at, len, RH_BUFFER);
+
+      if (!r->managed && !r->watched && !r->chunk_gens)
+        r->hashed_b += len;
+      int changed;
+
+      pd_vk_last.buffer_hash_us += now_us() - ht;
+
+      if (r->watched) {
+        int dirty = watch_dirty(r, off + at, len);
+
+        if (dirty < 0) {
+          watch_disable("dirty-page scan failed"), r->watched = 0;
+          h = range_hash(base + off + at, len, RH_BUFFER);
+          changed = all || h != r->chunks[i];
+        } else {
+          changed = all || dirty;
+        }
+      } else if (r->chunk_gens) {
+        // uploaded at the newest generation: a later write to any of its pages sends it again
+        changed = all || pagemod_newest(off + at, len) > r->chunks[i];
+        h = pagemod_now;
+      } else {
+        changed = all || (r->managed ? r->mdirty[i] : h != r->chunks[i]);
+      }
+      pd_vk_last.buffer_scan_us += now_us() - ts;
+
+      if (!changed)
+        continue;
+      if (r->managed && r->mdirty[i])
+        r->mdirty[i] = 0, r->mdirty_count--;
+      if (!st.b)
+        st = new_buf(RES_STAGE, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+      ts = now_us();
+      to_map((uint8_t *)st.map + used, base + off + at, len);
+      pd_vk_last.buffer_copy_us += now_us() - ts;
+      c[nc].srcOffset = st.off + used, c[nc].dstOffset = at, c[nc].size = len, nc++;
+      used += RES_CHUNK, r->chunks[i] = h;
+      pd_vk_last.up_bytes += len;
+    }
+    if (!nc)
+      continue;
+    cb = begin();
+    vkCmdCopyBuffer(cb, st.b, r->b, nc, c);
+    submit(cb);
+  }
+  r->stale = 0, r->scan_epoch = hash_epoch;
+  free(hashes);
+done:
+  if (out)
+    *out = writes ? r : 0;
+  return r->b;
+}
+
 // a device-local buffer with the bridge's bytes, uploaded when they changed. Small ones the shader only reads (setBytes data, at a new place every frame)
 // are copied into the batch to keep the table from churning
-#define RES_SMALL_BUFFER 65536
+// where res_buffer's bytes start in the buffer it returned, and how many: a small buffer is a piece of a shared one
+static VkDeviceSize res_boff, res_brange;
+
 static VkBuffer res_buffer(uint8_t *base, uint32_t off, uint32_t size, int writes, struct resident **out) {
   int fresh;
   struct resident *r;
   uint64_t h;
 
-  logv("AIRJITD:   resident buffer 0x%x + %u%s", off, size, writes ? " written" : "");
-  if (!writes && size <= RES_SMALL_BUFFER) {
-    struct buf b;
+  res_boff = 0, res_brange = VK_WHOLE_SIZE;
+
+  logv2("AIRJITD:   resident buffer 0x%x + %u%s", off, size, writes ? " written" : "");
+  // inside a buffer the GPU wrote and the bridge has not caught up with, its bytes are bound at an offset
+  for (unsigned i = 0; !(bisect() & 1) && i < newer_count; i++) {
+    struct resident *s = &residents[newer_residents[i]];
+
+    if (s->kind == RES_BUF && s->b && off >= s->off && (uint64_t)off + size <= (uint64_t)s->off + s->size &&
+        (off != s->off || size != s->size)) {
+      slot_stats.inside++;
+      s->used = ++use_clock;
+      res_boff = off - s->off, res_brange = size ? size : VK_WHOLE_SIZE;
+      if (out)
+        *out = writes ? s : 0;
+      return s->b;
+    }
+  }
+  if (!writes && size <= RES_SMALL_BUFFER && !in_managed(off, size)) {
+    struct buf b = { 0 };
+    uint64_t ts = now_us();
+    int synced = 0, staged;
 
     // a sync flushes the batch and frees its arena: the buffer comes from the next one
-    for (unsigned i = 0; i < MAX_RESIDENT; i++) {
-      if (residents[i].gpu_newer && overlaps(&residents[i], off, size))
+    uint64_t overlap_ts = now_us();
+    for (unsigned i = 0; i < newer_count; i++) {
+      if (overlaps(&residents[newer_residents[i]], off, size)) {
+        pd_vk_last.buffer_overlap_us += now_us() - overlap_ts;
+        ts = now_us();
         sync_range(off, size);
+        pd_vk_last.buffer_sync_us += now_us() - ts;
+        synced = 1;
+        break;
+      }
     }
-    b = new_buf_mem(size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
-                    VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT, 0);
-    logv("AIRJITD:   small buffer through %p + %u", b.map, size);
+    if (!synced)
+      pd_vk_last.buffer_overlap_us += now_us() - overlap_ts;
+    // these buffers are immutable to the GPU, so the same bridge range with the same bytes in this arena
+    // binds its old staging range again
+    uint64_t key = ((uint64_t)off << 32) | size;
+    key ^= key >> 30, key *= 0xbf58476d1ce4e5b9ull;
+    key ^= key >> 27, key *= 0x94d049bb133111ebull;
+    key ^= key >> 31;
+    unsigned slot = (unsigned)key & (SMALL_BUFFER_CACHE - 1);
+    struct small_buffer_entry *cached = &small_buffer_cache[cur_arena][slot];
+    int same = size && cached->size == size && cached->off == off;
+    int dirty = -1;
+
+    // page generations decide for watched shared-memory ranges, content hashes confirm after a write
+    if (same && cached->watch.watch_seen)
+      dirty = watch_dirty(&cached->watch, off, size);
+    if (same && dirty < 0 && cached->watch.watch_seen)
+      watch_disable("small-buffer page scan failed");
+    if (same && dirty == 0) {
+      res_boff = cached->boff, res_brange = size;
+      small_buffer_reuse_hits++, small_buffer_reuse_bytes += size;
+      if (out)
+        *out = 0;
+      return cached->b;
+    }
+    // the same bytes as when they were staged: the copy is bound again. Written pages tell, else a hash
+    int by_pages = size && !(bisect() & 2) && pagemod_fresh(off, size) == 0;
+    uint64_t now_hash = !size || by_pages ? 0 : range_hash(base + off, size, RH_BUFFER);
+    if (same && cached->map &&
+        (by_pages ? cached->gen && pagemod_newest(off, size) <= cached->gen : !cached->gen && now_hash == cached->hash)) {
+      small_buffer_track(cached, off, size);
+      res_boff = cached->boff, res_brange = size;
+      small_buffer_reuse_hits++, small_buffer_reuse_bytes += size;
+      if (out)
+        *out = 0;
+      return cached->b;
+    }
+    staged = stage_take(size ? size : 16, 2, &b);
+    if (staged) {
+      res_boff = b.off, res_brange = size ? size : 16;
+    } else {
+      b = new_buf_mem(size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+                      VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT, 0);
+    }
+    logv2("AIRJITD:   small buffer through %p + %u", b.map, size);
+    ts = now_us();
     to_map(b.map, base + off, size);
+    pd_vk_last.buffer_copy_us += now_us() - ts;
     pd_vk_last.up_bytes += size;
+    if (size && staged) {
+      small_buffer_unwatch(cached);
+      cached->off = off, cached->size = size, cached->b = b.b, cached->boff = b.off, cached->map = b.map;
+      cached->hash = now_hash, cached->gen = by_pages ? pagemod_now : 0;
+      small_buffer_track(cached, off, size);
+    }
     if (out)
       *out = 0;
     return b.b;
   }
   r = res_slot(off, size, 0x627566ull, RES_BUF, &fresh);
-  h = content_hash(base + off, size);
-
+  if (size > RES_CHUNKED || in_managed(off, size))
+    return res_buffer_chunked(base, off, size, writes, out, r, fresh);
   if (fresh) {
-    VkBufferCreateInfo ci = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
-    VkMemoryAllocateInfo ai = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
-    VkMemoryRequirements rq;
-
-    ci.size = size ? (size + 15) & ~(VkDeviceSize)15 : 16;
-    // texel buffer usage too: a texture_buffer binds these bytes through a view
-    ci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
-               VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT |
-               VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT;
-    if (vkCreateBuffer(dev, &ci, 0, &r->b) != VK_SUCCESS) {
-      r->live = 0;
-      decline("resident buffer");
-    }
-    vkGetBufferMemoryRequirements(dev, r->b, &rq);
-    ai.allocationSize = rq.size, ai.memoryTypeIndex = mem_type_pref(rq.memoryTypeBits, 0, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    if (vkAllocateMemory(dev, &ai, 0, &r->mem) != VK_SUCCESS) {
-      vkDestroyBuffer(dev, r->b, 0);
-      r->live = 0;
-      decline("no device memory for a %u byte buffer", size);
-    }
-    vkBindBufferMemory(dev, r->b, r->mem, 0);
-    pd_vk_last.allocs++;
+    res_buffer_memory(r, size);
+    r->managed = in_managed(off, size);
   }
-  if (fresh || r->stale || (h != r->hash && !r->gpu_newer)) {
-    VkBufferCopy c = { 0, 0, size };
+  if (!r->managed && !r->watched)
+    r->watched = watch_buffer(r, 1);
+  uint64_t th = now_us(), ht;
+  // written pages tell whether it changed, else its hash: r->hash holds the generation it was uploaded at then
+  int gens = !r->managed && !r->watched && !(bisect() & 4) && pagemod_fresh(off, size) == 0;
+
+  h = r->hash;
+  {
+    int changed = fresh || r->stale;
+
+    if (gens != r->chunk_gens)
+      changed = 1, r->chunk_gens = gens;
+    if (gens) {
+      changed |= pagemod_newest(off, size) > r->hash;
+      h = pagemod_now;
+    } else if (r->watched && !r->gpu_newer) {
+      int dirty = watch_dirty(r, off, size);
+
+      if (dirty < 0) {
+        watch_disable("dirty-page scan failed"), r->watched = 0;
+        ht = now_us();
+        h = range_hash(base + off, size, RH_BUFFER);
+        pd_vk_last.buffer_hash_us += now_us() - ht;
+        changed |= h != r->hash;
+      } else {
+        changed |= dirty;
+      }
+    } else if (!r->watched && !r->managed) {
+      ht = now_us();
+      h = range_hash(base + off, size, RH_BUFFER);
+      pd_vk_last.buffer_hash_us += now_us() - ht;
+      changed |= h != r->hash;
+    }
+    pd_vk_last.buffer_scan_us += now_us() - th;
+    if (changed && !r->gpu_newer) {
     struct buf st = new_buf(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    VkBufferCopy c = { st.off, 0, size };
     VkCommandBuffer cb = begin();
 
-    logv("AIRJITD:   upload through staging %p + %u", st.map, size);
+    logv2("AIRJITD:   upload through staging %p + %u", st.map, size);
+    th = now_us();
     to_map(st.map, base + off, size);
+    pd_vk_last.buffer_copy_us += now_us() - th;
     vkCmdCopyBuffer(cb, st.b, r->b, 1, &c);
     submit(cb);
     pd_vk_last.up_bytes += size;
     r->hash = h, r->stale = 0;
+    }
   }
   if (out)
     *out = writes ? r : 0;
@@ -3601,11 +3965,21 @@ static VkBuffer res_buffer(uint8_t *base, uint32_t off, uint32_t size, int write
 static void presync_buffers(const struct PDDrawBuffer *bufs, unsigned n) {
   for (unsigned i = 0; i < n; i++) {
     const struct PDDrawBuffer *b = &bufs[i];
+    struct resident *exact;
 
     if (!b->size)
       continue;
-    for (unsigned k = 0; k < MAX_RESIDENT; k++) {
-      struct resident *s = &residents[k];
+    exact = res_lookup(b->off, b->size, 0x627566ull, RES_BUF);
+    if (exact && !exact->stale) {
+      if (exact->gpu_newer && b->size <= RES_SMALL_BUFFER) {
+        // small GPU-written buffers are staged through bridge memory on their next read
+        sync_range(b->off, b->size);
+        pd_vk_dirty(b->off, b->size);
+      }
+      continue;
+    }
+    for (unsigned k = 0; k < newer_count; k++) {
+      struct resident *s = &residents[newer_residents[k]];
 
       if (!s->gpu_newer || !overlaps(s, b->off, b->size))
         continue;
@@ -3690,11 +4064,22 @@ static struct img *res_depth(uint8_t *base, uint32_t bsize, const struct PDDrawT
 }
 
 // a pass's clear on the GPU: nonzero when the attachment is resident and the clear was recorded
+static int vk_clear_locked(const struct PDDrawTex *t, const float *value, uint32_t stencil, int which);
+
 int pd_vk_clear(const struct PDDrawTex *t, const float *value, uint32_t stencil, int which) {
+  int rc;
+
+  pd_vk_lock();
+  rc = vk_clear_locked(t, value, stencil, which);
+  pd_vk_unlock();
+  return rc;
+}
+
+static int vk_clear_locked(const struct PDDrawTex *t, const float *value, uint32_t stencil, int which) {
   struct resident *r = 0;
   VkCommandBuffer cb;
 
-  if (state != 1 || !resident_mode || setjmp(job_fail))
+  if (state != 1 || !resident_mode || _setjmp(job_fail))
     return 0;
   for (unsigned i = 0; i < MAX_RESIDENT; i++) {
     struct resident *s = &residents[i];
@@ -3931,11 +4316,25 @@ static uint64_t pin_key(const struct pin_plan *p, const struct a2s_pin *pins, un
   return h;
 }
 
+// a function's bytes, hashed once: the arena hands out library bytes from a bump allocator that never frees, so
+// a pointer into it holds the same function for good. Anything else is hashed every time
+static uint64_t function_hash(const uint8_t *mtl, uint32_t size) {
+  static struct { const uint8_t *p; uint32_t n; uint64_t h; } memo[4096];
+  unsigned k;
+
+  if ((bisect() & 32) || !res_base || mtl < res_base || mtl + size > res_base + res_bsize)
+    return content_hash(mtl, size);
+  k = (unsigned)(((uintptr_t)mtl >> 8) ^ size) & 4095;
+  if (memo[k].p != mtl || memo[k].n != size)
+    memo[k].p = mtl, memo[k].n = size, memo[k].h = content_hash(mtl, size);
+  return memo[k].h;
+}
+
 static struct shader *translate_pinned(const uint8_t *mtl, uint32_t size, uint32_t set, uint32_t pcb,
                                        const struct a2s_pin *pins, unsigned npins) {
   struct a2s_options o = { 1, set, pcb, 0, !lim.quad_compute, 0, !lim.dyn_image_index, !lim.demote, pins, npins };
   uint64_t t0 = now_us();
-  uint64_t key = content_hash(mtl, size) ^ ((uint64_t)set << 56 | (uint64_t)pcb << 40);
+  uint64_t key = function_hash(mtl, size) ^ ((uint64_t)set << 56 | (uint64_t)pcb << 40);
   struct pin_plan *plan = 0;
 
   if (npins && size < pin_min_bytes())
@@ -3965,6 +4364,7 @@ static struct shader *translate_pinned(const uint8_t *mtl, uint32_t size, uint32
       decline("shader over the SPIR-V size limit");
   }
   s = shader_slot();
+  sec.translated++;
   s->refl = calloc(1, sizeof(*s->refl));
   if (a2s_translate(mtl, size, &o, &s->words, &s->nwords, s->refl, err, sizeof(err))) {
     free(s->refl), s->refl = 0;
@@ -4082,7 +4482,7 @@ static struct img sampled_img(uint8_t *base, uint32_t bsize, const struct PDDraw
   tex_regions(t, 0, t->fmt, cp, 96, &span);
   if (t->off > bsize || span > bsize - t->off || span > TEXCACHE_BYTES / 4)
     return new_img_l(base, bsize, t, 0, 0, dim3, -1);
-  key = content_hash(base + t->off, span) ^ layout_key(t, 0, dim3);
+  key = range_hash(base + t->off, span, RH_TEXTURE) ^ layout_key(t, 0, dim3);
   for (i = 0; i < TEXCACHE; i++) {
     if (texcache[i].live && texcache[i].key == key) {
       texcache[i].used = ++texcache_clock, texcache[i].job = job_count;
@@ -4161,13 +4561,21 @@ static uint64_t upload_skips;
 static int uploadskip_on = -1;
 static struct {
   VkRenderPass rp;
-  VkImageView v[4];
+  VkImageView v[5];
   uint32_t n, w, h;
   uint64_t used;
   VkFramebuffer fb;
 } fbcache[FBCACHE];
 static uint64_t pool_clock;
 static int attpool_on = -1;
+
+static int attpool_enabled(void) {
+  if (attpool_on < 0) {
+    const char *e = getenv("AIRJITD_VK_ATTPOOL");
+    attpool_on = !e || *e != '0';
+  }
+  return attpool_on;
+}
 
 static void fb_drop_view(VkImageView v) {
   for (unsigned i = 0; i < FBCACHE; i++) {
@@ -4185,10 +4593,7 @@ static struct img attachment_img(uint8_t *base, uint32_t bsize, const struct PDD
   unsigned i, hit = ATTPOOL, slot = ATTPOOL;
   struct img im;
 
-  if (attpool_on < 0) {
-    const char *e = getenv("AIRJITD_VK_ATTPOOL");
-    attpool_on = !e || *e != '0';
-  }
+  (void)attpool_enabled();
   attpool_last = ATTPOOL;
   if (!attpool_on)
     return new_img(base, bsize, t, 1, 0);
@@ -4212,7 +4617,7 @@ static struct img attachment_img(uint8_t *base, uint32_t bsize, const struct PDD
       uploadskip_on = e && *e == '1';
     }
     if (uploadskip_on && attpool[hit].clean && attpool[hit].clean_off == t->off &&
-        content_hash(base + t->off, span) == attpool[hit].clean_hash) {
+        range_hash(base + t->off, span, RH_ATTACHMENT) == attpool[hit].clean_hash) {
       upload_skips++;
     } else {
       img_upload(&attpool[hit].im, base);
@@ -4307,6 +4712,8 @@ static VkFramebuffer cached_fb(VkRenderPass rp, const VkImageView *v, uint32_t n
 struct stage_res {
   const struct a2s_reflect *r;
   VkBuffer bufs[32];
+  // a buffer's offset and range in bufs (0 and the whole buffer, or a piece of a shared one)
+  VkDeviceSize boff[32], brange[32];
   struct img *imgs[16], *att[8], *scratch;
   // texture_buffer bindings: views over a buffer holding the texture's bytes
   VkBufferView bviews[16];
@@ -4366,33 +4773,54 @@ static int bgra_as_rgba(const struct a2s_resource *r, const struct PDDrawTex *t)
   if (known < 0) {
     VkFormatProperties fp;
 
-    vkGetPhysicalDeviceFormatProperties(phys, VK_FORMAT_B8G8R8A8_UNORM, &fp);
+    format_props(VK_FORMAT_B8G8R8A8_UNORM, &fp);
     known = !(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT);
   }
   return known;
 }
+
+static void bind_stage_one(struct stage_res *s, const struct a2s_resource *r, uint8_t *base, uint32_t bsize,
+                           const struct PDDrawBuffer *bufs, unsigned nb, const struct PDDrawTex *texs, const uint32_t *samp,
+                           VkBuffer *written, unsigned *nwritten, struct buf *wmaps, const struct PDDrawBuffer **wsrc,
+                           const struct PDTexLayout *layouts);
+
+// what binding spends its time on, per resource kind, reported once a second with the transfer line
+static uint64_t bind_kind_us[4], bind_kind_n[4];
 
 static void bind_stage(struct stage_res *s, uint8_t *base, uint32_t bsize, const struct PDDrawBuffer *bufs, unsigned nb,
                        const struct PDDrawTex *texs, const uint32_t *samp, VkBuffer *written, unsigned *nwritten,
                        struct buf *wmaps, const struct PDDrawBuffer **wsrc, const struct PDTexLayout *layouts) {
   for (unsigned i = 0; i < s->r->nres; i++) {
     const struct a2s_resource *r = &s->r->res[i];
+    uint64_t tk = now_us();
+    unsigned kind = r->kind == A2S_RES_BUFFER ? 0 : r->kind == A2S_RES_TEXTURE ? (r->texel ? 1 : 2) : 3;
 
+    bind_stage_one(s, r, base, bsize, bufs, nb, texs, samp, written, nwritten, wmaps, wsrc, layouts);
+    bind_kind_us[kind] += now_us() - tk, bind_kind_n[kind]++;
+  }
+}
+
+static void bind_stage_one(struct stage_res *s, const struct a2s_resource *r, uint8_t *base, uint32_t bsize,
+                           const struct PDDrawBuffer *bufs, unsigned nb, const struct PDDrawTex *texs, const uint32_t *samp,
+                           VkBuffer *written, unsigned *nwritten, struct buf *wmaps, const struct PDDrawBuffer **wsrc,
+                           const struct PDTexLayout *layouts) {
+  {
     if (r->kind == A2S_RES_BUFFER) {
       struct buf b;
       if (r->metal >= nb)
         decline("buffer %u not bound", r->metal);
       if (!bufs[r->metal].size) {
         s->bufs[r->metal] = unbound_buffer();
-        continue;
+        return;
       }
       if (bufs[r->metal].off > bsize || bufs[r->metal].size > bsize - bufs[r->metal].off)
         decline("buffer %u outside the bridge", r->metal);
       if (resident_mode) {
         struct resident *wr;
         s->bufs[r->metal] = res_buffer(base, bufs[r->metal].off, bufs[r->metal].size, (r->access & A2S_WRITE) != 0, &wr);
+        s->boff[r->metal] = res_boff, s->brange[r->metal] = res_brange;
         stage_written(s, wr);
-        continue;
+        return;
       }
       {
         uint64_t t0 = now_us();
@@ -4411,6 +4839,7 @@ static void bind_stage(struct stage_res *s, uint8_t *base, uint32_t bsize, const
       static struct PDDrawBuffer texel_src[64];
       static unsigned ntexel_src;
       const struct PDDrawTex *tt;
+      VkDeviceSize boff = 0, brange = VK_WHOLE_SIZE;
       VkBufferViewCreateInfo vi = { VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO };
       VkFormatProperties fp;
       VkFormatFeatureFlags need;
@@ -4422,7 +4851,7 @@ static void bind_stage(struct stage_res *s, uint8_t *base, uint32_t bsize, const
       tt = &texs[r->metal];
       if (tt->fmt >= NFMTS || fmts[tt->fmt].kind == 'c' || fmts[tt->fmt].kind == 'd')
         decline("texture buffer %u has format %u", r->metal, tt->fmt);
-      vkGetPhysicalDeviceFormatProperties(phys, fmts[tt->fmt].vk, &fp);
+      format_props(fmts[tt->fmt].vk, &fp);
       need = r->storage ? VK_FORMAT_FEATURE_STORAGE_TEXEL_BUFFER_BIT : VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT;
       if (!(fp.bufferFeatures & need))
         decline("format %u has no texel buffer support", tt->fmt);
@@ -4436,6 +4865,7 @@ static void bind_stage(struct stage_res *s, uint8_t *base, uint32_t bsize, const
         struct resident *wr;
 
         vi.buffer = res_buffer(base, tt->off, size, r->storage, &wr);
+        boff = res_boff, brange = res_brange;
         stage_written(s, wr);
       } else {
         b = new_buf(size, r->storage ? VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
@@ -4444,7 +4874,7 @@ static void bind_stage(struct stage_res *s, uint8_t *base, uint32_t bsize, const
         pd_vk_last.up_bytes += size;
         vi.buffer = b.b;
       }
-      vi.format = fmts[tt->fmt].vk, vi.offset = 0, vi.range = VK_WHOLE_SIZE;
+      vi.format = fmts[tt->fmt].vk, vi.offset = boff, vi.range = brange;
       CK(vkCreateBufferView(dev, &vi, 0, &s->bviews[r->metal]));
       arena.bview[arena.nbview++] = s->bviews[r->metal];
       if (!resident_mode && r->storage && *nwritten < 32) {
@@ -4463,7 +4893,7 @@ static void bind_stage(struct stage_res *s, uint8_t *base, uint32_t bsize, const
         tt.fmt = FMT_RGBA8;
       if (r->storage && tt.fmt < NFMTS) {
         VkFormatProperties fp;
-        vkGetPhysicalDeviceFormatProperties(phys, fmts[tt.fmt].vk, &fp);
+        format_props(fmts[tt.fmt].vk, &fp);
         if (!(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT))
           decline("format %u has no storage image support", tt.fmt);
       }
@@ -4508,16 +4938,84 @@ static void bind_stage(struct stage_res *s, uint8_t *base, uint32_t bsize, const
   }
 }
 
+// descriptor sets live as long as their arena, draws often bind the same contents again and each
+// allocate or update is a host round trip on Venus
+#define DSET_CACHE 2048
+static struct {
+  uint64_t hash;
+  VkDescriptorSetLayout layout;
+  VkDescriptorSet set;
+} dset_cache[2][DSET_CACHE];
+static uint64_t dset_cache_hits, dset_cache_misses;
+
+static uint64_t dset_hash_word(uint64_t h, uint64_t v) {
+  for (unsigned i = 0; i < 8; i++)
+    h = (h ^ (uint8_t)(v >> (i * 8))) * UINT64_C(1099511628211);
+  return h;
+}
+
+static uint64_t dset_hash(struct stage_res *s, VkDescriptorSetLayout layout) {
+  VkDescriptorBufferInfo bi[A2S_MAX_RES];
+  VkBufferView bv[A2S_MAX_RES];
+  uint64_t h = UINT64_C(1469598103934665603);
+
+  h = dset_hash_word(h, (uintptr_t)layout);
+  for (unsigned i = 0; i < s->r->nres; i++) {
+    const struct a2s_resource *r = &s->r->res[i];
+    VkDescriptorType type = desc_type(r);
+    unsigned count = r->levels ? r->levels : 1;
+
+    h = dset_hash_word(h, r->binding);
+    h = dset_hash_word(h, type);
+    h = dset_hash_word(h, count);
+    if (r->kind == A2S_RES_BUFFER) {
+      bi[i].buffer = s->bufs[r->metal], bi[i].offset = s->boff[r->metal];
+      bi[i].range = s->brange[r->metal] ? s->brange[r->metal] : VK_WHOLE_SIZE;
+      h = dset_hash_word(h, (uintptr_t)bi[i].buffer);
+      h = dset_hash_word(h, bi[i].offset);
+      h = dset_hash_word(h, bi[i].range);
+    } else if (r->kind == A2S_RES_TEXTURE && r->texel) {
+      bv[i] = s->bviews[r->metal];
+      h = dset_hash_word(h, (uintptr_t)bv[i]);
+    } else if (r->kind == A2S_RES_TEXTURE || r->kind == A2S_RES_INPUT_ATTACHMENT || r->kind == A2S_RES_ATTACHMENT_IMAGE) {
+      struct img *im = r->kind == A2S_RES_TEXTURE ? s->imgs[r->metal] : s->att[r->metal];
+      if (!im)
+        decline("attachment %u not bound", r->metal);
+      for (unsigned k = 0; k < count && k < 16; k++) {
+        VkImageView view = im->v;
+        if (r->levels && im->lv[k])
+          view = im->lv[k];
+        else if (r->levels && k)
+          view = s->scratch->v;
+        h = dset_hash_word(h, (uintptr_t)view);
+        h = dset_hash_word(h, VK_IMAGE_LAYOUT_GENERAL);
+      }
+    } else {
+      VkSampler sampler = r->kind == A2S_RES_SAMPLER ? s->samp[r->metal] : s->samp[16 + r->metal];
+      h = dset_hash_word(h, (uintptr_t)sampler);
+    }
+  }
+  return h ? h : 1;
+}
+
+
+static VkDescriptorSet alloc_set(VkDescriptorSetLayout l);
+
 static VkDescriptorSet fill_set(struct stage_res *s, VkDescriptorSetLayout l) {
-  VkDescriptorSetAllocateInfo ai = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
   VkWriteDescriptorSet w[A2S_MAX_RES];
   VkDescriptorBufferInfo bi[A2S_MAX_RES];
   VkDescriptorImageInfo ii[A2S_MAX_RES], lv[A2S_MAX_RES][16];
   VkDescriptorSet set;
+  uint64_t hash = dset_hash(s, l);
+  unsigned slot = (unsigned)(hash % DSET_CACHE);
   unsigned n = 0;
 
-  ai.descriptorPool = arena.dpool, ai.descriptorSetCount = 1, ai.pSetLayouts = &l;
-  CK(vkAllocateDescriptorSets(dev, &ai, &set));
+  if (dset_cache[cur_arena][slot].set && dset_cache[cur_arena][slot].hash == hash && dset_cache[cur_arena][slot].layout == l) {
+    dset_cache_hits++;
+    return dset_cache[cur_arena][slot].set;
+  }
+  dset_cache_misses++;
+  set = alloc_set(l);
 
   for (unsigned i = 0; i < s->r->nres; i++) {
     const struct a2s_resource *r = &s->r->res[i];
@@ -4527,7 +5025,8 @@ static VkDescriptorSet fill_set(struct stage_res *s, VkDescriptorSetLayout l) {
     w[n].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, w[n].dstSet = set, w[n].dstBinding = r->binding;
     w[n].descriptorCount = 1, w[n].descriptorType = desc_type(r);
     if (r->kind == A2S_RES_BUFFER) {
-      bi[n].buffer = s->bufs[r->metal], bi[n].offset = 0, bi[n].range = VK_WHOLE_SIZE;
+      bi[n].buffer = s->bufs[r->metal], bi[n].offset = s->boff[r->metal];
+      bi[n].range = s->brange[r->metal] ? s->brange[r->metal] : VK_WHOLE_SIZE;
       w[n].pBufferInfo = &bi[n];
     } else if (r->kind == A2S_RES_TEXTURE && r->texel) {
       w[n].pTexelBufferView = &s->bviews[r->metal];
@@ -4555,6 +5054,9 @@ static VkDescriptorSet fill_set(struct stage_res *s, VkDescriptorSetLayout l) {
   }
 
   vkUpdateDescriptorSets(dev, n, w, 0, 0);
+  dset_cache[cur_arena][slot].hash = hash;
+  dset_cache[cur_arena][slot].layout = l;
+  dset_cache[cur_arena][slot].set = set;
   return set;
 }
 
@@ -4565,16 +5067,82 @@ static void keep_dpool(void) {
     arena.fbs[arena.nfb++] = arena.fb, arena.fb = 0;
 }
 
-static void new_dpool(void) {
-  keep_dpool();
-  VkDescriptorPoolSize ps[] = { { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 64 }, { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 64 },
-                                { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 32 },  { VK_DESCRIPTOR_TYPE_SAMPLER, 32 },
-                                { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 8 }, { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 16 },
-                                { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 16 } };
-  VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+// descriptor pools shared by an arena's jobs and reset with it: a pool per draw costs a create and a destroy,
+// which on venus is a trip to the host each
+#define SPOOLS 32
+#define SPOOL_SETS 256
+static struct {
+  VkDescriptorPool p;
+  unsigned used;
+} spools[2][SPOOLS];
+static unsigned spool_cur[2];
 
-  pci.maxSets = 2, pci.poolSizeCount = 7, pci.pPoolSizes = ps;
-  CK(vkCreateDescriptorPool(dev, &pci, 0, &arena.dpool));
+
+static VkDescriptorPool spool_make(void) {
+  VkDescriptorPoolSize ps[] = { { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 32 * SPOOL_SETS }, { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 32 * SPOOL_SETS },
+                                { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 16 * SPOOL_SETS },  { VK_DESCRIPTOR_TYPE_SAMPLER, 16 * SPOOL_SETS },
+                                { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 4 * SPOOL_SETS }, { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 8 * SPOOL_SETS },
+                                { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 8 * SPOOL_SETS } };
+  VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+  VkDescriptorPool p;
+
+  pci.maxSets = SPOOL_SETS, pci.poolSizeCount = 7, pci.pPoolSizes = ps;
+  CK(vkCreateDescriptorPool(dev, &pci, 0, &p));
+  return p;
+}
+
+// the arena's next pool, made the first time it is needed
+static void spool_next(void) {
+  unsigned a = cur_arena, k = spool_cur[a];
+
+  if (spools[a][k].p && k + 1 == SPOOLS)
+    decline("descriptor pools full");
+  if (spools[a][k].p)
+    spool_cur[a] = ++k;
+  if (!spools[a][k].p)
+    spools[a][k].p = spool_make();
+  spools[a][k].used = 0;
+}
+
+// a finished arena's pools are reset and kept
+static void spools_reset(int a) {
+  for (unsigned k = 0; k < SPOOLS && spools[a][k].p; k++) {
+    if (k <= spool_cur[a])
+      vkResetDescriptorPool(dev, spools[a][k].p, 0);
+    spools[a][k].used = 0;
+  }
+  spool_cur[a] = 0;
+  memset(dset_cache[a], 0, sizeof(dset_cache[a]));
+}
+
+static uint64_t spool_mark(void) {
+  return (uint64_t)spool_cur[cur_arena] * SPOOL_SETS + spools[cur_arena][spool_cur[cur_arena]].used;
+}
+
+static void new_dpool(void) {
+  unsigned a = cur_arena;
+
+  keep_dpool();
+  if (!spools[a][spool_cur[a]].p || spools[a][spool_cur[a]].used + 2 > SPOOL_SETS)
+    spool_next();
+  spools[a][spool_cur[a]].used += 2;
+}
+
+static VkDescriptorSet alloc_set(VkDescriptorSetLayout l) {
+  VkDescriptorSetAllocateInfo ai = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+  VkDescriptorSet set;
+  VkResult r;
+
+  ai.descriptorPool = spools[cur_arena][spool_cur[cur_arena]].p, ai.descriptorSetCount = 1, ai.pSetLayouts = &l;
+  r = vkAllocateDescriptorSets(dev, &ai, &set);
+  if (r == VK_ERROR_OUT_OF_POOL_MEMORY || r == VK_ERROR_FRAGMENTED_POOL) {
+    spool_next();
+    spools[cur_arena][spool_cur[cur_arena]].used += 2;
+    ai.descriptorPool = spools[cur_arena][spool_cur[cur_arena]].p;
+    r = vkAllocateDescriptorSets(dev, &ai, &set);
+  }
+  CK(r);
+  return set;
 }
 
 // spec constants: 0-2 the threadgroup, 8-10 the workgroup, 3-4 tile size, 16 + i bound sampler i
@@ -4627,9 +5195,28 @@ struct pipe {
 
 static struct pipe pipes[512];
 static unsigned npipes;
+#define PIPEHASH 1024
+// a hash over the pipeline array, most draws reuse one of a few hundred pipelines
+static unsigned pipehash[PIPEHASH];
+
+static unsigned pipe_slot(uint64_t key) {
+  key ^= key >> 33;
+  key *= 0xff51afd7ed558ccdull;
+  key ^= key >> 33;
+  key *= 0xc4ceb9fe1a85ec53ull;
+  key ^= key >> 33;
+  return (unsigned)key & (PIPEHASH - 1);
+}
 
 static struct pipe *find_pipe(uint64_t key) {
-  for (unsigned i = 0; i < npipes; i++) {
+  unsigned slot = pipe_slot(key);
+
+  for (unsigned n = 0; n < PIPEHASH; n++, slot = (slot + 1) & (PIPEHASH - 1)) {
+    unsigned i = pipehash[slot];
+
+    if (!i)
+      return 0;
+    i--;
     if (pipes[i].key == key) {
       // an entry whose build declined part way keeps its key but no pipeline: binding it would bind a null one
       if (!pipes[i].p)
@@ -4642,10 +5229,16 @@ static struct pipe *find_pipe(uint64_t key) {
 }
 
 static struct pipe *add_pipe(uint64_t key) {
+  unsigned slot = pipe_slot(key);
+
   if (npipes == sizeof(pipes) / sizeof(pipes[0]))
     decline("pipeline cache full");
+  while (pipehash[slot])
+    slot = (slot + 1) & (PIPEHASH - 1);
   memset(&pipes[npipes], 0, sizeof(pipes[0]));
+  sec.pipes_new++;
   pipes[npipes].key = key;
+  pipehash[slot] = npipes + 1;
   return &pipes[npipes++];
 }
 
@@ -4805,8 +5398,175 @@ static int compute_like(uint8_t *base, uint32_t bsize, const uint8_t *mtl, uint3
   return 0;
 }
 
+static int run_job(int (*fn)(void *, uint8_t *, uint32_t), void *r, uint8_t *base, uint32_t bsize);
+static int do_draw(void *vr, uint8_t *base, uint32_t bsize);
+
+// one line a second: what the jobs cost and where the time went
+static void second_summary(void) {
+  uint64_t now = now_us();
+
+  if (!sec.t0)
+    sec.t0 = now;
+  if (now - sec.t0 < 1000000)
+    return;
+  logmsg("AIRJITD: vulkan %.1f s: %llu jobs (%llu draws, %llu to the cpu), translations %llu new %llu reused, pipelines %llu new "
+         "%llu reused, flushes sync %llu table %llu finish %llu full %llu other %llu, %llu restarts, up %.1f MB down %.1f MB",
+         (now - sec.t0) / 1e6, (unsigned long long)sec.jobs, (unsigned long long)sec.draws, (unsigned long long)sec.fallbacks,
+         (unsigned long long)sec.translated, (unsigned long long)sec.translated_cached, (unsigned long long)sec.pipes_new,
+         (unsigned long long)sec.pipes_cached, (unsigned long long)sec.flush_sync, (unsigned long long)sec.flush_slot,
+         (unsigned long long)sec.flush_finish, (unsigned long long)sec.flush_full, (unsigned long long)sec.flush_other,
+         (unsigned long long)sec.restarts, sec.up / 1048576.0, sec.down / 1048576.0);
+  logmsg("AIRJITD: vulkan ms: in jobs %llu, translate %llu, pipelines %llu, bind and upload %llu (hashing %llu ms over %llu MB), "
+         "record %llu, readback %llu, fence waits %llu",
+         (unsigned long long)sec.wall / 1000, (unsigned long long)sec.translate / 1000, (unsigned long long)sec.pipeline / 1000,
+         (unsigned long long)sec.upload / 1000, (unsigned long long)(prof.hash_us - sec.hash_us0) / 1000,
+         (unsigned long long)(prof.hash_b - sec.hash_b0) >> 20, (unsigned long long)sec.run / 1000, (unsigned long long)sec.readback / 1000,
+         (unsigned long long)sec.wait / 1000);
+  logmsg("AIRJITD: descriptor set cache %llu hits %llu misses",
+         (unsigned long long)dset_cache_hits, (unsigned long long)dset_cache_misses);
+  dset_cache_hits = dset_cache_misses = 0;
+  logmsg("AIRJITD: format property queries %llu cache hits %llu",
+         (unsigned long long)format_props_queries, (unsigned long long)format_props_hits);
+  format_props_queries = format_props_hits = 0;
+  logmsg("AIRJITD: executor detail us: resident slot %llu overlap %llu LRU %llu; buffer scan %llu hash %llu copy %llu overlap %llu sync %llu; drawcmd %llu barriers %llu/%llu",
+         (unsigned long long)sec.res_slot, (unsigned long long)sec.res_overlap, (unsigned long long)sec.res_lru,
+         (unsigned long long)sec.buf_scan, (unsigned long long)sec.buf_hash, (unsigned long long)sec.buf_copy,
+         (unsigned long long)sec.buf_overlap, (unsigned long long)sec.buf_sync, (unsigned long long)sec.drawcmd,
+         (unsigned long long)sec.barrier, (unsigned long long)sec.barriers);
+  logmsg("AIRJITD: executor transfer this second: images %llu ms/%llu MB, buffers %llu/%llu MB, readback %llu/%llu MB; staging %llu/%llu ms; attachments %llu ms bind %llu ms; new images %llu/%llu ms",
+         (unsigned long long)sec.img_us / 1000, (unsigned long long)(sec.img_b >> 20),
+         (unsigned long long)sec.buf_us / 1000, (unsigned long long)(sec.buf_b >> 20),
+         (unsigned long long)sec.back_us / 1000, (unsigned long long)(sec.back_b >> 20),
+         (unsigned long long)sec.newbuf_n, (unsigned long long)sec.newbuf_us / 1000,
+         (unsigned long long)sec.att_us / 1000, (unsigned long long)sec.bind_us / 1000,
+         (unsigned long long)sec.newimg_n, (unsigned long long)sec.newimg_us / 1000);
+  logmsg("AIRJITD: resident slots this second: %llu inside a newer buffer, %llu hits %llu stale %llu new, %llu newer walked, %llu syncs %llu MB %llu ms",
+         (unsigned long long)slot_stats.inside, (unsigned long long)slot_stats.hits, (unsigned long long)slot_stats.stale_hits, (unsigned long long)slot_stats.misses,
+         (unsigned long long)slot_stats.walked, (unsigned long long)slot_stats.syncs,
+         (unsigned long long)(slot_stats.sync_bytes >> 20), (unsigned long long)slot_stats.sync_us / 1000);
+  memset(&slot_stats, 0, sizeof(slot_stats));
+  logmsg("AIRJITD: finish this second: %llu MB read back, %llu private buffers kept on the GPU (%llu MB)",
+         (unsigned long long)(finish_read_bytes >> 20), (unsigned long long)finish_private_kept,
+         (unsigned long long)(finish_private_bytes >> 20));
+  finish_private_kept = finish_private_bytes = finish_read_bytes = 0;
+  logmsg("AIRJITD: written pages this second: %llu queries %llu ms, %llu pages written",
+         (unsigned long long)pagemod_queries, (unsigned long long)pagemod_us / 1000, (unsigned long long)pagemod_written);
+  pagemod_queries = pagemod_us = pagemod_written = 0;
+  logmsg("AIRJITD: bind detail this second (count/ms): buffers %llu/%llu texel buffers %llu/%llu textures %llu/%llu samplers %llu/%llu",
+         (unsigned long long)bind_kind_n[0], (unsigned long long)bind_kind_us[0] / 1000,
+         (unsigned long long)bind_kind_n[1], (unsigned long long)bind_kind_us[1] / 1000,
+         (unsigned long long)bind_kind_n[2], (unsigned long long)bind_kind_us[2] / 1000,
+         (unsigned long long)bind_kind_n[3], (unsigned long long)bind_kind_us[3] / 1000);
+  memset(bind_kind_us, 0, sizeof(bind_kind_us)), memset(bind_kind_n, 0, sizeof(bind_kind_n));
+  {
+    struct resident *top[3] = { 0 };
+
+    for (unsigned i = 0; i < MAX_RESIDENT; i++) {
+      struct resident *r = &residents[i];
+
+      for (unsigned k = 0; r->live && r->hashed_b && k < 3; k++) {
+        if (!top[k] || r->hashed_b > top[k]->hashed_b) {
+          memmove(&top[k + 1], &top[k], (2 - k) * sizeof(top[0]));
+          top[k] = r;
+          break;
+        }
+      }
+    }
+    for (unsigned k = 0; k < 3 && top[k]; k++) {
+      logmsg("AIRJITD: most hashed %u: 0x%x + %u bytes, %llu MB hashed over %llu binds", k, top[k]->off, top[k]->size,
+             (unsigned long long)(top[k]->hashed_b >> 20), (unsigned long long)top[k]->binds);
+    }
+    for (unsigned i = 0; i < MAX_RESIDENT; i++) {
+      residents[i].hashed_b = 0, residents[i].binds = 0;
+    }
+  }
+  {
+    char line[512];
+    size_t n = 0;
+
+    for (unsigned i = 0; i < RH_N && n < sizeof(line) - 96; i++) {
+      n += (size_t)snprintf(line + n, sizeof(line) - n, " %s %llu calls %llu hits %llu misses (%llu collide %llu stale) %llu MB",
+                            range_hash_names[i], (unsigned long long)range_hash_stats[i].calls,
+                            (unsigned long long)range_hash_stats[i].hits, (unsigned long long)range_hash_stats[i].misses,
+                            (unsigned long long)range_hash_stats[i].collisions, (unsigned long long)range_hash_stats[i].invalidated,
+                            (unsigned long long)(range_hash_stats[i].bytes >> 20));
+    }
+    logmsg("AIRJITD: range hashes:%s; finish invalidations %llu", line, (unsigned long long)finish_hash_invalidations);
+    logmsg("AIRJITD: buffer watch: %llu attempts %llu active %llu MB watched, rejected disabled %llu bounds %llu managed-page %llu allocation %llu",
+           (unsigned long long)watch_stats.attempts, (unsigned long long)watch_stats.accepted,
+           (unsigned long long)(watch_stats.bytes >> 20), (unsigned long long)watch_stats.disabled,
+           (unsigned long long)watch_stats.bounds, (unsigned long long)watch_stats.managed_page,
+           (unsigned long long)watch_stats.alloc_fail);
+    logmsg("AIRJITD: small buffer cache: %llu hits, %llu MB reused",
+           (unsigned long long)small_buffer_reuse_hits, (unsigned long long)(small_buffer_reuse_bytes >> 20));
+    small_buffer_reuse_hits = small_buffer_reuse_bytes = 0;
+    memset(range_hash_stats, 0, sizeof(range_hash_stats)), finish_hash_invalidations = 0;
+    memset(&watch_stats, 0, sizeof(watch_stats));
+  }
+  {
+    char line[1024];
+    size_t n = 0;
+
+    for (unsigned i = 0; i < VKC_N && n < sizeof(line) - 64; i++) {
+      if (vkc_n[i])
+        n += (size_t)snprintf(line + n, sizeof(line) - n, " %s %llu/%llums", vkc_names[i], (unsigned long long)vkc_n[i],
+                              (unsigned long long)vkc_us[i] / 1000);
+    }
+    if (n)
+      logmsg("AIRJITD: vulkan calls (count/ms):%s", line);
+    memset(vkc_n, 0, sizeof(vkc_n)), memset(vkc_us, 0, sizeof(vkc_us));
+  }
+  memset(&sec, 0, sizeof(sec));
+  sec.t0 = now, sec.hash_us0 = prof.hash_us, sec.hash_b0 = prof.hash_b;
+}
+
 static int run(int (*fn)(void *, uint8_t *, uint32_t), void *r, uint8_t *base, uint32_t bsize) {
+  uint64_t t0, img_us0 = prof.img_us, img_b0 = prof.img_b, buf_us0 = prof.buf_us, buf_b0 = prof.buf_b;
+  uint64_t back_us0 = prof.back_us, back_b0 = prof.back_b, newbuf_us0 = prof.newbuf_us, newbuf_n0 = prof.newbuf_n;
+  uint64_t att_us0 = prof.att_us, bind_us0 = prof.bind_us, newimg_us0 = prof.newimg_us, newimg_n0 = prof.newimg_n;
+  struct range_hash_stats hash_before[RH_N];
   int rc;
+
+  pd_vk_lock();
+  memcpy(hash_before, range_hash_stats, sizeof(hash_before));
+  t0 = now_us();
+  rc = run_job(fn, r, base, bsize);
+
+  sec.jobs++, sec.draws += fn == do_draw, sec.fallbacks += rc == PD_VK_FALLBACK;
+  sec.translated_cached += pd_vk_last.translated_cached, sec.pipes_cached += pd_vk_last.pipeline_cached;
+  sec.up += pd_vk_last.up_bytes, sec.down += pd_vk_last.down_bytes;
+  sec.translate += pd_vk_last.translate, sec.pipeline += pd_vk_last.pipeline, sec.upload += pd_vk_last.upload;
+  sec.run += pd_vk_last.run, sec.readback += pd_vk_last.readback, sec.wait += pd_vk_last.wait;
+  sec.res_slot += pd_vk_last.res_slot_us, sec.res_overlap += pd_vk_last.res_overlap_us, sec.res_lru += pd_vk_last.res_lru_us;
+  sec.buf_scan += pd_vk_last.buffer_scan_us, sec.buf_hash += pd_vk_last.buffer_hash_us, sec.buf_copy += pd_vk_last.buffer_copy_us;
+  sec.buf_overlap += pd_vk_last.buffer_overlap_us, sec.buf_sync += pd_vk_last.buffer_sync_us;
+  sec.drawcmd += pd_vk_last.drawcmd_us, sec.barrier += pd_vk_last.barrier_us, sec.barriers += pd_vk_last.barriers;
+  sec.img_us += prof.img_us - img_us0, sec.img_b += prof.img_b - img_b0;
+  sec.buf_us += prof.buf_us - buf_us0, sec.buf_b += prof.buf_b - buf_b0;
+  sec.back_us += prof.back_us - back_us0, sec.back_b += prof.back_b - back_b0;
+  sec.newbuf_us += prof.newbuf_us - newbuf_us0, sec.newbuf_n += prof.newbuf_n - newbuf_n0;
+  sec.att_us += prof.att_us - att_us0, sec.bind_us += prof.bind_us - bind_us0;
+  sec.newimg_us += prof.newimg_us - newimg_us0, sec.newimg_n += prof.newimg_n - newimg_n0;
+  pd_vk_last.image_copy_us = prof.img_us - img_us0, pd_vk_last.image_copy_bytes = prof.img_b - img_b0;
+  pd_vk_last.image_create_us = prof.newimg_us - newimg_us0, pd_vk_last.image_creates = prof.newimg_n - newimg_n0;
+  pd_vk_last.attachment_us = prof.att_us - att_us0, pd_vk_last.bind_us = prof.bind_us - bind_us0;
+  for (unsigned i = 0; i < RH_N; i++) {
+    pd_vk_last.range_hash_calls += range_hash_stats[i].calls - hash_before[i].calls;
+    pd_vk_last.range_hash_hits += range_hash_stats[i].hits - hash_before[i].hits;
+    pd_vk_last.range_hash_misses += range_hash_stats[i].misses - hash_before[i].misses;
+    pd_vk_last.range_hash_collisions += range_hash_stats[i].collisions - hash_before[i].collisions;
+    pd_vk_last.range_hash_stale += range_hash_stats[i].invalidated - hash_before[i].invalidated;
+    pd_vk_last.range_hash_bytes += range_hash_stats[i].bytes - hash_before[i].bytes;
+  }
+  sec.wall += now_us() - t0;
+  second_summary();
+  pd_vk_unlock();
+  return rc;
+}
+
+static int run_job(int (*fn)(void *, uint8_t *, uint32_t), void *r, uint8_t *base, uint32_t bsize) {
+  volatile int rc;
+  int jr;
 
   memset(&pd_vk_last, 0, sizeof(pd_vk_last));
   reason[0] = 0;
@@ -4814,7 +5574,18 @@ static int run(int (*fn)(void *, uint8_t *, uint32_t), void *r, uint8_t *base, u
     return PD_VK_FALLBACK;
   njobimgs = 0, job_count++, nhostmaps = 0, job_is_tile = 0;
   draw_rect.on = 0;
-  if (setjmp(job_fail)) {
+  job_restarts = 0;
+  jr = _setjmp(job_fail);
+  in_job = 0;
+  // flushed in the middle: once more from the start in the fresh batch
+  if (jr == 2 && job_restarts++ < 2) {
+    sec.restarts++;
+    draw_rect.on = 0, keep_objects = 0, direct = 0, nhostmaps = 0, njobimgs = 0;
+    goto again;
+  }
+  if (jr == 2)
+    snprintf(reason, sizeof(reason), "the batch flushed inside the job %d times", job_restarts);
+  if (jr) {
     draw_rect.on = 0;
     keep_objects = 0, direct = 0;
     // a batch keeps what it recorded so far, an open render pass is closed
@@ -4833,9 +5604,13 @@ static int run(int (*fn)(void *, uint8_t *, uint32_t), void *r, uint8_t *base, u
   }
   if (resident_mode) {
     // a batch whose arena is filling up runs now
-    if (arena.nbuf > ARENA_BUFS - 64 || arena.nview > ARENA_VIEWS - 32 || arena.nbview > ARENA_VIEWS - 32 || arena.npool > ARENA_POOLS - 4 || arena.nimg > 48)
+    if (arena.nbuf > ARENA_BUFS - 64 || arena.nmem > ARENA_BUFS || arena.nview > ARENA_VIEWS - 32 || arena.nbview > ARENA_VIEWS - 32 || arena.npool > ARENA_POOLS - 4 || arena.nimg > 48)
       pd_vk_flush(1);
-    return fn(r, base, bsize);
+  again:
+    in_job = 1, restart_pending = 0, job_mark = arena_mark();
+    rc = fn(r, base, bsize);
+    in_job = 0;
+    return rc;
   }
   if (job_batch < 0) {
     const char *e = getenv("AIRJITD_VK_JOBBATCH");
@@ -4974,7 +5749,7 @@ static VkFormat vertex_format(unsigned f) {
 
   if (f >= 56 || !m[f])
     decline("vertex format %u", f);
-  vkGetPhysicalDeviceFormatProperties(phys, m[f], &fp);
+  format_props(m[f], &fp);
   if (!(fp.bufferFeatures & VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT))
     decline("vertex format %u has no vertex buffer support", f);
   return m[f];
@@ -5205,12 +5980,20 @@ static void presync_textures(const struct PDDrawTex *texs, const struct PDTexLay
     const struct PDTexLayout *l = layouts && (layouts[i].flags & PD_TEXLAYOUT_SET) ? &layouts[i] : 0;
     VkBufferImageCopy cp[96];
     uint64_t span;
+    uint64_t key;
+    struct resident *exact;
 
     if (!t->w || t->fmt >= NFMTS)
       continue;
     tex_regions(t, l, t->fmt, cp, 96, &span);
-    for (unsigned k = 0; k < MAX_RESIDENT; k++) {
-      struct resident *s = &residents[k];
+    key = layout_key(t, l, 0);
+    exact = res_lookup(t->off, (uint32_t)span, key, RES_IMG);
+    if (!exact)
+      exact = res_lookup(t->off, (uint32_t)span, layout_key(t, l, 1), RES_IMG);
+    if (exact && !exact->stale)
+      continue;
+    for (unsigned k = 0; k < newer_count; k++) {
+      struct resident *s = &residents[newer_residents[k]];
 
       if (!s->gpu_newer || !overlaps(s, t->off, (uint32_t)span))
         continue;
@@ -5261,7 +6044,7 @@ static int do_draw(void *vr, uint8_t *base, uint32_t bsize) {
       presync_textures(x->vtex, x->vtexLayout, PD_DRAW_TEXS);
   }
 
-  logv("AIRJITD: vulkan draw %u/%u: translate", q->vfn, q->ffn);
+  logv2("AIRJITD: vulkan draw %u/%u: translate", q->vfn, q->ffn);
   vs = translate(base + q->vmOff, q->vmSize, 0, 0);
   {
     struct a2s_pin pins[PD_DRAW_BUFS];
@@ -5276,7 +6059,7 @@ static int do_draw(void *vr, uint8_t *base, uint32_t bsize) {
     }
     fs = translate_pinned(base + q->fmOff, q->fmSize, 1, 64, pins, np);
   }
-  logv("AIRJITD: vulkan draw %u/%u: translated", q->vfn, q->ffn);
+  logv2("AIRJITD: vulkan draw %u/%u: translated", q->vfn, q->ffn);
   if (vs->refl->stage != A2S_VERTEX || fs->refl->stage != A2S_FRAGMENT)
     decline("stages are not a vertex and a fragment function");
 
@@ -5395,12 +6178,14 @@ static int do_draw(void *vr, uint8_t *base, uint32_t bsize) {
       continue;
     if (att[k].fmt < NFMTS && fmts[att[k].fmt].kind == 'c')
       decline("compressed format %u as an attachment", att[k].fmt);
-    if (ext_att.image && att[k].off == ext_att.off) {
+    struct external_attachment *external = external_by_off(att[k].off);
+
+    if (external && external->image) {
       // the presenter's image: drawn in place, its contents are already there
       if (att[k].fmt >= NFMTS)
         decline("texture format %u", att[k].fmt);
-      ext_att.written = 0;
-      jobimgs[njobimgs] = (struct img){ ext_att.image, ext_att.view, fmts[att[k].fmt].vk, att[k] };
+      external->written = 0;
+      jobimgs[njobimgs] = (struct img){ external->image, external->view, fmts[att[k].fmt].vk, att[k] };
     } else if (resident_mode) {
       jobimgs[njobimgs] = *res_image(base, bsize, &att[k], 0, 0, &attres[k]);
     } else {
@@ -5442,23 +6227,32 @@ static int do_draw(void *vr, uint8_t *base, uint32_t bsize) {
   t0 = now_us();
   spec_init(&vsp, vs->refl, x ? x->vsamp : q->samp, x ? x->vtex : q->ftex);
   spec_init(&fsp, fs->refl, q->samp, q->ftex);
-  logv("AIRJITD: vulkan draw %u/%u: create pipeline", q->vfn, q->ffn);
+  logv2("AIRJITD: vulkan draw %u/%u: create pipeline", q->vfn, q->ffn);
   pp = draw_pipe(q, x, vs, fs, atts, natt, zimg, &vsp, &fsp);
-  logv("AIRJITD: vulkan draw %u/%u: pipeline created", q->vfn, q->ffn);
+  logv2("AIRJITD: vulkan draw %u/%u: pipeline created", q->vfn, q->ffn);
   new_dpool();
   sets[0] = fill_set(&vsr, pp->dl[0]);
   sets[1] = fill_set(&fsr, pp->dl[1]);
   {
     VkFramebufferCreateInfo fbi = { VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
     unsigned n = 0;
+    int resident_views = 1;
     for (k = 0; k < natt; k++) {
-      if (atts[k])
+      if (atts[k]) {
         views[n++] = atts[k]->v;
+        if (!atts[k]->res)
+          resident_views = 0;
+      }
     }
-    if (zimg)
+    if (zimg) {
       views[n++] = zimg->v;
-    // only when every view is a pooled one
-    if (attpool_on > 0 && !zimg && pooled == n && n <= 4) {
+      if (!zimg->res)
+        resident_views = 0;
+    }
+    // pool-mode colour views and resident-image views outlive this draw, so their framebuffers are reused
+    // until res_destroy drops a view, transient and external views stay per draw
+    if (attpool_enabled() && n && n <= 5 &&
+        ((!zimg && pooled == n) || (resident_mode && resident_views))) {
       fb = cached_fb(pp->rp, views, n, q->tw, q->th);
     } else {
       fbi.renderPass = pp->rp, fbi.attachmentCount = n, fbi.pAttachments = views;
@@ -5468,15 +6262,15 @@ static int do_draw(void *vr, uint8_t *base, uint32_t bsize) {
     }
   }
   pd_vk_last.pipeline += now_us() - t0;
-  logv("AIRJITD: vulkan draw %u/%u: pipeline ready", q->vfn, q->ffn);
+  logv2("AIRJITD: vulkan draw %u/%u: pipeline ready", q->vfn, q->ffn);
 
   t0 = now_us();
   {
     VkRenderPassBeginInfo rbi = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
     VkViewport vp;
     VkRect2D sc = { { 0, 0 }, { q->tw, q->th } }, ra = sc;
-    PFN_vkCmdSetViewport setvp = (PFN_vkCmdSetViewport)vkGetDeviceProcAddr(dev, "vkCmdSetViewport");
-    PFN_vkCmdSetScissor setsc = (PFN_vkCmdSetScissor)vkGetDeviceProcAddr(dev, "vkCmdSetScissor");
+    PFN_vkCmdSetViewport setvp = cmd_set_viewport;
+    PFN_vkCmdSetScissor setsc = cmd_set_scissor;
 
     // metal's y points down: a viewport of negative height lands the same pixels
     vp.x = (float)q->viewport[0], vp.width = (float)q->viewport[2];
@@ -5499,63 +6293,119 @@ static int do_draw(void *vr, uint8_t *base, uint32_t bsize) {
       sc.extent.width = ex > sc.offset.x ? (uint32_t)(ex - sc.offset.x) : 0;
       sc.extent.height = ey > sc.offset.y ? (uint32_t)(ey - sc.offset.y) : 0;
     }
-    cb = begin();
-    job_fence(cb);
-    rbi.renderPass = pp->rp, rbi.framebuffer = fb, rbi.renderArea = ra;
-    vkCmdBeginRenderPass(cb, &rbi, VK_SUBPASS_CONTENTS_INLINE);
-    in_pass = resident_mode;
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pp->p);
-    setvp(cb, 0, 1, &vp);
-    setsc(cb, 0, 1, &sc);
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pp->pl, 0, 2, sets, 0, 0);
-    push_words(vs->refl, vpc, nogrid);
-    push_words(fs->refl, fpc, nogrid);
-    if (vs->refl->npc)
-      vkCmdPushConstants(cb, pp->pl, VK_SHADER_STAGE_VERTEX_BIT, 0, vs->refl->npc * 4, vpc);
-    if (fs->refl->npc)
-      vkCmdPushConstants(cb, pp->pl, VK_SHADER_STAGE_FRAGMENT_BIT, 64, fs->refl->npc * 4, fpc);
-    // the vertex buffers stage_in attributes read
+    // vertex and index buffers resolve before the pass: an upload or a flush cannot be recorded inside one
+    VkBuffer vbs[PD_DRAW_BUFS] = { 0 };
+    VkDeviceSize voffs[PD_DRAW_BUFS] = { 0 }, ib_off = 0;
+    struct buf ib = { 0 };
+    unsigned ib_bytes = x && q->indexBytes == 4 ? 4 : 2;
+    uint64_t tb = now_us();
+
     for (k = 0; x && k < vs->refl->nvin; k++) {
       unsigned b = x->attr[vs->refl->vin[k].location].buffer;
       const struct PDDrawBuffer *db = &q->vbuf[b];
-      VkDeviceSize zero = 0;
       struct buf vbuf;
 
-      if (db->off > bsize || db->size > bsize - db->off)
+      if (b >= PD_DRAW_BUFS || db->off > bsize || db->size > bsize - db->off)
         decline("vertex buffer %u outside the bridge", b);
+      if (vbs[b])
+        continue;
       if (resident_mode) {
         vbuf.b = res_buffer(base, db->off, db->size, 0, 0);
+        voffs[b] = res_boff;
       } else {
         vbuf = new_buf(db->size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         to_map(vbuf.map, base + db->off, db->size);
         pd_vk_last.up_bytes += db->size;
       }
-      vkCmdBindVertexBuffers(cb, b, 1, &vbuf.b, &zero);
+      vbs[b] = vbuf.b;
     }
     if ((x && (x->baseInstance || x->baseVertex || x->firstVertex)) && !lim.draw_params &&
         (vs->refl->needs[0] && strstr(vs->refl->needs, "DrawParameters")))
       decline("base vertex or instance in the shader");
     if (q->indexed) {
-      unsigned ib_bytes = x && q->indexBytes == 4 ? 4 : 2;
-      struct buf ib;
       if (q->indexOff > bsize || (uint64_t)q->count * ib_bytes > bsize - q->indexOff)
         decline("indices outside the bridge");
       if (resident_mode) {
         ib.b = res_buffer(base, q->indexOff, q->count * ib_bytes, 0, 0);
+        ib_off = res_boff;
       } else {
         ib = new_buf((VkDeviceSize)q->count * ib_bytes + 4, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
         to_map(ib.map, base + q->indexOff, (size_t)q->count * ib_bytes);
       }
-      vkCmdBindIndexBuffer(cb, ib.b, 0, ib_bytes == 4 ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16);
-      logv("AIRJITD:   indexed draw: %u indices of %u bytes at 0x%x, %u instances, base vertex %d, base instance %u", q->count,
+    }
+    pd_vk_last.buffer_us += now_us() - tb;
+    tb = now_us();
+    cb = begin();
+    job_fence(cb);
+    rbi.renderPass = pp->rp, rbi.framebuffer = fb, rbi.renderArea = ra;
+    vkCmdBeginRenderPass(cb, &rbi, VK_SUBPASS_CONTENTS_INLINE);
+    in_pass = resident_mode;
+    if (!draw_binding_cache_valid || bound_graphics_pipeline != pp->p)
+      vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pp->p), bound_graphics_pipeline = pp->p;
+    else
+      pd_vk_last.binds_skipped++;
+    if (!draw_binding_cache_valid || !bound_viewport_valid || memcmp(&bound_viewport, &vp, sizeof(vp)))
+      setvp(cb, 0, 1, &vp), bound_viewport = vp, bound_viewport_valid = 1;
+    else
+      pd_vk_last.binds_skipped++;
+    if (!draw_binding_cache_valid || !bound_scissor_valid || memcmp(&bound_scissor, &sc, sizeof(sc)))
+      setsc(cb, 0, 1, &sc), bound_scissor = sc, bound_scissor_valid = 1;
+    else
+      pd_vk_last.binds_skipped++;
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pp->pl, 0, 2, sets, 0, 0);
+    push_words(vs->refl, vpc, nogrid);
+    push_words(fs->refl, fpc, nogrid);
+    if (vs->refl->npc) {
+      unsigned bytes = vs->refl->npc * 4;
+      if (!draw_binding_cache_valid || !bound_vpc_valid || bound_vpc_layout != pp->pl || bound_vpc_bytes != bytes ||
+          memcmp(bound_vpc, vpc, bytes)) {
+        vkCmdPushConstants(cb, pp->pl, VK_SHADER_STAGE_VERTEX_BIT, 0, bytes, vpc);
+        memcpy(bound_vpc, vpc, bytes), bound_vpc_layout = pp->pl, bound_vpc_bytes = bytes, bound_vpc_valid = 1;
+      } else {
+        pd_vk_last.binds_skipped++;
+      }
+    }
+    if (fs->refl->npc) {
+      unsigned bytes = fs->refl->npc * 4;
+      if (!draw_binding_cache_valid || !bound_fpc_valid || bound_fpc_layout != pp->pl || bound_fpc_bytes != bytes ||
+          memcmp(bound_fpc, fpc, bytes)) {
+        vkCmdPushConstants(cb, pp->pl, VK_SHADER_STAGE_FRAGMENT_BIT, 64, bytes, fpc);
+        memcpy(bound_fpc, fpc, bytes), bound_fpc_layout = pp->pl, bound_fpc_bytes = bytes, bound_fpc_valid = 1;
+      } else {
+        pd_vk_last.binds_skipped++;
+      }
+    }
+    for (k = 0; k < PD_DRAW_BUFS; k++) {
+      VkDeviceSize zero = 0;
+
+      if (vbs[k]) {
+        if (!draw_binding_cache_valid || bound_vertex[k] != vbs[k] || bound_vertex_offset[k] != voffs[k])
+          vkCmdBindVertexBuffers(cb, k, 1, &vbs[k], &voffs[k]), bound_vertex[k] = vbs[k], bound_vertex_offset[k] = voffs[k];
+        else
+          pd_vk_last.binds_skipped++;
+      }
+      (void)zero;
+    }
+    if (q->indexed) {
+      VkIndexType type = ib_bytes == 4 ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
+      if (!draw_binding_cache_valid || bound_index != ib.b || bound_index_offset != ib_off || bound_index_type != type)
+        vkCmdBindIndexBuffer(cb, ib.b, ib_off, type), bound_index = ib.b, bound_index_offset = ib_off, bound_index_type = type;
+      else
+        pd_vk_last.binds_skipped++;
+      logv2("AIRJITD:   indexed draw: %u indices of %u bytes at 0x%x, %u instances, base vertex %d, base instance %u", q->count,
            ib_bytes, q->indexOff, q->instances, x ? x->baseVertex : 0, x ? x->baseInstance : 0);
       vkCmdDrawIndexed(cb, q->count, q->instances ? q->instances : 1, 0, x ? x->baseVertex : 0, x ? x->baseInstance : 0);
     } else {
       vkCmdDraw(cb, q->count, q->instances ? q->instances : 1, x ? x->firstVertex : 0, x ? x->baseInstance : 0);
     }
+    draw_binding_cache_valid = 1;
     vkCmdEndRenderPass(cb);
     in_pass = 0;
-    submit(cb);
+    if (resident_mode && cb == batch)
+      draw_barrier(cb);
+    else
+      submit(cb);
+    pd_vk_last.drawcmd_us += now_us() - tb;
   }
   pd_vk_last.run += now_us() - t0;
 
@@ -5582,7 +6432,7 @@ static int do_draw(void *vr, uint8_t *base, uint32_t bsize) {
 
   t0 = now_us();
   for (k = 0; k < 4; k++) {
-    if (atts[k] && !(ext_att.image && atts[k]->i == ext_att.image))
+    if (atts[k] && !external_by_image(atts[k]->i))
       outs[nout++] = atts[k];
   }
   draw_rect.on = draw_rect.w != 0;
