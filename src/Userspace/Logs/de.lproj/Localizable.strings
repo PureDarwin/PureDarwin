@@ -1,0 +1,78 @@
+/* No comment provided by engineer. */
+"%lu of %lu messages   %@" = "%lu von %lu Meldungen   %@";
+
+/* No comment provided by engineer. */
+"About %@" = "Über %@";
+
+/* No comment provided by engineer. */
+"All Messages" = "Alle Meldungen";
+
+/* No comment provided by engineer. */
+"Clear" = "Leeren";
+
+/* No comment provided by engineer. */
+"Copy" = "Kopieren";
+
+/* No comment provided by engineer. */
+"Crash Reports" = "Absturzberichte";
+
+/* No comment provided by engineer. */
+"Edit" = "Bearbeiten";
+
+/* No comment provided by engineer. */
+"Errors and Faults" = "Fehler";
+
+/* No comment provided by engineer. */
+"Errors and Warnings Only" = "Nur Fehler und Warnungen";
+
+/* No comment provided by engineer. */
+"Filter" = "Filtern";
+
+/* No comment provided by engineer. */
+"Find…" = "Suchen …";
+
+/* No comment provided by engineer. */
+"Following new messages" = "Neue Meldungen werden angezeigt";
+
+/* No comment provided by engineer. */
+"Hide %@" = "%@ ausblenden";
+
+/* No comment provided by engineer. */
+"Kernel" = "Kernel";
+
+/* No comment provided by engineer. */
+"Logs" = "Protokolle";
+
+/* No comment provided by engineer. */
+"Minimize" = "Im Dock ablegen";
+
+/* No comment provided by engineer. */
+"Pause" = "Anhalten";
+
+/* No comment provided by engineer. */
+"Paused" = "Angehalten";
+
+/* No comment provided by engineer. */
+"Quit %@" = "%@ beenden";
+
+/* No comment provided by engineer. */
+"Reports" = "Berichte";
+
+/* No comment provided by engineer. */
+"Resume" = "Fortsetzen";
+
+/* No comment provided by engineer. */
+"View" = "Darstellung";
+
+/* No comment provided by engineer. */
+"Window" = "Fenster";
+
+/* No comment provided by engineer. */
+"Zoom" = "Zoomen";
+
+/* No comment provided by engineer. */
+"every source" = "alle Quellen";
+
+/* No comment provided by engineer. */
+"kernel buffer and /var/log" = "Kernelpuffer und /var/log";
+

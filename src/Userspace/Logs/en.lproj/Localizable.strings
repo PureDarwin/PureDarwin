@@ -1,0 +1,78 @@
+/* No comment provided by engineer. */
+"%lu of %lu messages   %@" = "%lu of %lu messages   %@";
+
+/* No comment provided by engineer. */
+"About %@" = "About %@";
+
+/* No comment provided by engineer. */
+"All Messages" = "All Messages";
+
+/* No comment provided by engineer. */
+"Clear" = "Clear";
+
+/* No comment provided by engineer. */
+"Copy" = "Copy";
+
+/* No comment provided by engineer. */
+"Crash Reports" = "Crash Reports";
+
+/* No comment provided by engineer. */
+"Edit" = "Edit";
+
+/* No comment provided by engineer. */
+"Errors and Faults" = "Errors and Faults";
+
+/* No comment provided by engineer. */
+"Errors and Warnings Only" = "Errors and Warnings Only";
+
+/* No comment provided by engineer. */
+"Filter" = "Filter";
+
+/* No comment provided by engineer. */
+"Find…" = "Find…";
+
+/* No comment provided by engineer. */
+"Following new messages" = "Following new messages";
+
+/* No comment provided by engineer. */
+"Hide %@" = "Hide %@";
+
+/* No comment provided by engineer. */
+"Kernel" = "Kernel";
+
+/* No comment provided by engineer. */
+"Logs" = "Logs";
+
+/* No comment provided by engineer. */
+"Minimize" = "Minimize";
+
+/* No comment provided by engineer. */
+"Pause" = "Pause";
+
+/* No comment provided by engineer. */
+"Paused" = "Paused";
+
+/* No comment provided by engineer. */
+"Quit %@" = "Quit %@";
+
+/* No comment provided by engineer. */
+"Reports" = "Reports";
+
+/* No comment provided by engineer. */
+"Resume" = "Resume";
+
+/* No comment provided by engineer. */
+"View" = "View";
+
+/* No comment provided by engineer. */
+"Window" = "Window";
+
+/* No comment provided by engineer. */
+"Zoom" = "Zoom";
+
+/* No comment provided by engineer. */
+"every source" = "every source";
+
+/* No comment provided by engineer. */
+"kernel buffer and /var/log" = "kernel buffer and /var/log";
+
