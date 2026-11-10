@@ -1,0 +1,50 @@
+#!/bin/sh
+# argon-session for Linux: neuswc with pdwm, the Dock, the menu bar, pddecor and the opening apps.
+# ARGON_ROOT is the install prefix, the frameworks find /System/Library and /Applications under it
+: "${ARGON_ROOT:=@argonRoot@}"
+export ARGON_ROOT
+export XDG_CURRENT_DESKTOP=Argon XDG_SESSION_DESKTOP=Argon XDG_SESSION_TYPE=wayland
+: "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
+export XDG_RUNTIME_DIR
+export FONTCONFIG_FILE="$ARGON_ROOT/etc/fonts/argon.conf"
+export LD_LIBRARY_PATH="$ARGON_ROOT/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+logs=${ARGON_LOG_DIR:-$XDG_RUNTIME_DIR/argon}
+mkdir -p "$logs"
+log=$logs/neuswc.log
+
+# swc-launch holds the VT and hands the compositor DRM and input devices
+# NixOS installs a setuid copy of swc-launch among its wrappers
+launch=$ARGON_ROOT/bin/swc-launch
+[ -x /run/wrappers/bin/swc-launch ] && launch=/run/wrappers/bin/swc-launch
+"$launch" -- "$ARGON_ROOT/bin/neuswc" > "$log" 2>&1 &
+compositor=$!
+for i in $(seq 100); do [ -S "$XDG_RUNTIME_DIR/wayland-0" ] && break; sleep 0.1; done
+export WAYLAND_DISPLAY=wayland-0
+
+# each process logs to its own file in $logs
+app() { "$ARGON_ROOT/$1/$2.app/Contents/MacOS/$2" > "$logs/$2.log" 2>&1 & }
+# the Dock, pddecor and the menu bar come back when they exit, as launchd's KeepAlive does on PureDarwin
+keep() {
+    (
+        while kill -0 "$compositor" 2> /dev/null; do
+            start=$(date +%s)
+            "$ARGON_ROOT/$1/$2.app/Contents/MacOS/$2" >> "$logs/$2.log" 2>&1
+            echo "argon-session: $2 exited with status $?" >> "$logs/$2.log"
+            # one that dies straight away waits longer each time, so a broken one does not spin
+            if [ $(( $(date +%s) - start )) -lt 5 ]; then delay=$(( ${delay:-1} * 2 > 30 ? 30 : ${delay:-1} * 2 )); else delay=1; fi
+            sleep "$delay"
+        done
+    ) &
+}
+keep System/Library/CoreServices Dock
+[ -x "$ARGON_ROOT/System/Library/CoreServices/pddecor.app/Contents/MacOS/pddecor" ] && keep System/Library/CoreServices pddecor
+keep System/Library/CoreServices MenuBar
+sleep 1
+# the opening apps as paths under the root, Terminal alone by default as on PureDarwin
+for a in ${ARGON_APPS:-Applications/Utilities/Terminal}; do
+    app "${a%/*}" "${a##*/}"
+    sleep 0.5
+done
+wait $compositor
+# the keepers stop with the compositor, the apps lose their display and exit on their own
+kill $(jobs -p) 2> /dev/null
