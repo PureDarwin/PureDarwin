@@ -111,6 +111,10 @@ target_sources(Security PRIVATE
     compat/pd_libaks_acl.c
     compat/pd_security_unvendored.c
     compat/pd_security_codesign.c
+    compat/pd_securetransport.c
+    compat/pd_pkcs12.c
+    compat/pd_cms.c
+    compat/pd_security_macos_trust.c
     compat/pd_authsession.c
 )
 
@@ -137,6 +141,7 @@ target_include_directories(Security PRIVATE
     ${CMAKE_SOURCE_DIR}/src/Libraries/IOKit/iokituser/include
     ${PUREDARWIN_COREFOUNDATION_PREFIX}/include
     ${PUREDARWIN_SQLITE_PREFIX}/include
+    ${PUREDARWIN_OPENSSL_PREFIX}/include
     ${PUREDARWIN_LIBOBJC_PREFIX}/usr/include
     ${PUREDARWIN_FOUNDATION_PREFIX}/usr/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/corecrypto/include
@@ -207,6 +212,10 @@ target_link_options(Security PRIVATE
     -lFoundation
     -Wl,-L,${PUREDARWIN_SQLITE_PREFIX}/lib
     -lsqlite3
+    # SecureTransport's TLS, kept out of the framework's exports
+    -Wl,-L,${PUREDARWIN_OPENSSL_PREFIX}/lib
+    -Wl,-hidden-lssl
+    -Wl,-hidden-lcrypto
     -lSystem)
 
 file(GLOB _sec_cc ${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/corecrypto/src/*.c)
@@ -289,3 +298,84 @@ install(FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/include/Security/SecKeychain.h
     DESTINATION System/Library/Frameworks/Security.framework/Versions/A/Headers
     COMPONENT BaseSystem)
+
+# libtrustd: Apple's trust server, the code behind SecTrust evaluation. The trustd daemon serves it over XPC,
+# and trustd_spi.c can install it in a process directly, as Apple's own tests do
+file(GLOB _trustd_src
+    ${CMAKE_CURRENT_SOURCE_DIR}/${_sec}/trust/trustd/*.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/${_sec}/trust/trustd/*.m)
+list(FILTER _trustd_src EXCLUDE REGEX "/trustd\\.c$")
+add_library(libtrustd OBJECT ${_trustd_src} compat/pd_trustd_analytics.c)
+# trustd-include stands in for private headers this tree does not carry, see the files there
+target_include_directories(libtrustd PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/compat/trustd-include
+    $<TARGET_PROPERTY:Security,INCLUDE_DIRECTORIES>
+    ${CMAKE_CURRENT_SOURCE_DIR}/${_sec}/trust/trustd
+    ${CMAKE_SOURCE_DIR}/src/Libraries/XPC/libinfo/compat                 # dispatch/private.h
+    ${CMAKE_SOURCE_DIR}/src/Libraries/SystemConfiguration/include
+    ${CMAKE_SOURCE_DIR}/src/Libraries/XPC/libinfo/membership.subproj)
+target_compile_definitions(libtrustd PRIVATE
+    $<TARGET_PROPERTY:Security,COMPILE_DEFINITIONS>
+    LIBTRUSTD=1)
+target_compile_options(libtrustd PRIVATE
+    $<TARGET_PROPERTY:Security,COMPILE_OPTIONS>
+    # SHELL: keeps this -include from being folded into the one Security's options already carry
+    "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/compat/pd_trustd_prefix.h"
+    -nostdinc -fPIC)
+target_link_libraries(libtrustd PRIVATE
+    AvailabilityHeaders clang_bootstrap_headers libc_public_headers
+    libc_features pthread_common_headers)
+add_dependencies(libtrustd libc_features)
+
+# trustd, the daemon serving libtrustd to SecTrust over XPC, and pdtlscheck, which tests TLS trust
+# against it, or in its own process with -i
+function(pd_trust_executable name)
+    add_darwin_executable(${name} MACOSX_VERSION_MIN 26.5)
+    target_sources(${name} PRIVATE ${ARGN} $<TARGET_OBJECTS:libtrustd>)
+    target_include_directories(${name} PRIVATE $<TARGET_PROPERTY:libtrustd,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(${name} PRIVATE $<TARGET_PROPERTY:libtrustd,COMPILE_DEFINITIONS>)
+    # spelled out with SHELL: so CMake keeps each -include with its file next to the one add_darwin_executable adds
+    target_compile_options(${name} PRIVATE
+        -w -D__FP__
+        "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/compat/pd_security_prefix.h"
+        "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/compat/pd_trustd_prefix.h")
+    # MobileAsset is weak-linked and absent, its classes resolve to nil
+    target_link_options(${name} PRIVATE
+        -nostdlib
+        -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>
+        -Wl,-dylinker_install_name,/usr/lib/dyld
+        -Wl,-platform_version,macos,26.5,26.5
+        $<TARGET_FILE:Security>
+        "${PUREDARWIN_COREFOUNDATION_PREFIX}/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
+        -Wl,-L,${PUREDARWIN_LIBOBJC_PREFIX}/usr/lib
+        -lobjc
+        -Wl,-L,${PUREDARWIN_FOUNDATION_PREFIX}/usr/lib
+        -lFoundation
+        -Wl,-L,${PUREDARWIN_SQLITE_PREFIX}/lib
+        -lsqlite3
+        # revocation updates arrive compressed
+        -Wl,-L,${PUREDARWIN_ZLIB_PREFIX}/usr/lib
+        -lz
+        "-Wl,-U,_OBJC_CLASS_$_MAAsset"
+        "-Wl,-U,_OBJC_CLASS_$_MAAssetQuery"
+        "-Wl,-U,_OBJC_CLASS_$_MADownloadOptions"
+        "-Wl,-U,_OBJC_CLASS_$_ASAsset"
+        "-Wl,-U,_OBJC_CLASS_$_ASAssetQuery"
+        -lSystem)
+    target_link_libraries(${name} PRIVATE
+        AvailabilityHeaders clang_bootstrap_headers libc_public_headers
+        libc_features pthread_common_headers)
+    add_dependencies(${name} Security libc_features libSystem_B_stub dyld)
+endfunction()
+
+pd_trust_executable(trustd
+    ${_sec}/trust/trustd/trustd.c
+    # the IPC server's helpers trustd shares with securityd: entitlements of the calling task, localization off
+    ${_sec}/OSX/sec/ipc/server_entitlement_helpers.c
+    ${_sec}/OSX/sec/ipc/util.m)
+pd_trust_executable(pdtlscheck tools/pdtlscheck.c)
+# until libsandbox compiles com.apple.trustd.sb, trustd skips its own sandbox_init
+target_compile_definitions(trustd PRIVATE PUREDARWIN_TRUSTD_UNSANDBOXED=1)
+
+install(TARGETS trustd DESTINATION usr/libexec COMPONENT BaseSystem)
+install(TARGETS pdtlscheck DESTINATION usr/bin COMPONENT BaseSystem)

@@ -830,7 +830,10 @@ int main(int argc, char *argv[])
         kill(getpid(), SIGSTOP);
     }
 
+    // PureDarwin: libsandbox cannot compile com.apple.trustd.sb yet, so trustd runs unconfined there
+#if !PUREDARWIN_TRUSTD_UNSANDBOXED
     trustd_sandbox();
+#endif
     FixTrustdFilePermissions();
     /* set up SQLite before some other component has a chance to create a database connection */
     _SecDbServerSetup();
