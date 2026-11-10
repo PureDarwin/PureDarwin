@@ -63,10 +63,12 @@
 
 @end
 
-// the zeroing-weak calls libobjc exports (objc-internal.h)
+// the zeroing-weak calls libobjc exports (objc-internal.h), libobjc2 declares its own in objc-arc.h
+#if !ARGON_LIBOBJC2
 OBJC_EXPORT id objc_storeWeak(id *location, id obj);
 OBJC_EXPORT id objc_storeWeakOrNil(id *location, id obj);
 OBJC_EXPORT id objc_loadWeakRetained(id *location);
+#endif
 
 // one registration, observer and object held weakly. The observer reference zeroes when it goes away (macOS 10.11+)
 // and _observer keeps the raw pointer for removeObserver: from the observer's own -dealloc

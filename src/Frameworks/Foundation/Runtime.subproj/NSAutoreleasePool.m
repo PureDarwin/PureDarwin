@@ -19,6 +19,11 @@ extern void objc_autoreleasePoolPop(void *token);
 
 @implementation NSAutoreleasePool
 
+#if ARGON_LIBOBJC2
+// libobjc2 hands its pools to an NSAutoreleasePool without this marker, which recurses back here
+- (void)_ARCCompatibleAutoreleasePool {}
+#endif
+
 + (void)addObject:(id)object {
     [object autorelease];
 }

@@ -639,6 +639,12 @@ static BOOL _copyFileBytes(const char *from, const char *to, mode_t mode,
     }
 
     unsigned long long blockSize = (unsigned long long)info.f_bsize;
+    // glibc spells the fsid words __val
+#if defined(__linux__)
+    unsigned long fsNumber = (unsigned long)info.f_fsid.__val[0];
+#else
+    unsigned long fsNumber = (unsigned long)info.f_fsid.val[0];
+#endif
 
     return [NSDictionary dictionaryWithObjectsAndKeys:
         [NSNumber numberWithUnsignedLongLong:blockSize * info.f_blocks],
@@ -649,7 +655,7 @@ static BOOL _copyFileBytes(const char *from, const char *to, mode_t mode,
             NSFileSystemNodes,
         [NSNumber numberWithUnsignedLongLong:(unsigned long long)info.f_ffree],
             NSFileSystemFreeNodes,
-        [NSNumber numberWithUnsignedLong:(unsigned long)info.f_fsid.val[0]],
+        [NSNumber numberWithUnsignedLong:fsNumber],
             NSFileSystemNumber,
         nil];
 }

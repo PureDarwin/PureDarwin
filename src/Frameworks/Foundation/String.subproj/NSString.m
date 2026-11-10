@@ -21,6 +21,11 @@
 #include <stdarg.h>
 #include <stdlib.h>
 
+// a class constructor hands back an autoreleased object, CF creates are owned and may be NULL
+static inline id __NSAutoreleaseCF(CFTypeRef cf) {
+    return cf != NULL ? (id)CFAutorelease(cf) : nil;
+}
+
 extern CFStringRef _CFStringCreateWithFormatAndArgumentsAux(
     CFAllocatorRef allocator,
     CFStringRef (*copyDescription)(void *, const void *),
@@ -119,6 +124,11 @@ __attribute__((visibility("hidden"))) CFMutableStringRef __NSStringCreateCFCopy(
     return CFStringGetTypeID();
 }
 
+// a string describes itself, for every subclass and not only NSCFString
+- (NSString *)description {
+    return self;
+}
+
 // NSCFString overrides both with CF's own copies
 - (id)copyWithZone:(NSZone *)zone {
     CFMutableStringRef copy = __NSStringCreateCFCopy(self);
@@ -185,7 +195,7 @@ __attribute__((visibility("hidden"))) CFMutableStringRef __NSStringCreateCFCopy(
 }
 
 + (instancetype)stringWithUTF8String:(const char *)utf8String {
-    return [[self alloc] initWithUTF8String:utf8String];
+    return [[[self alloc] initWithUTF8String:utf8String] autorelease];
 }
 
 + (instancetype)stringWithFormat:(NSString *)format, ... {
@@ -193,7 +203,7 @@ __attribute__((visibility("hidden"))) CFMutableStringRef __NSStringCreateCFCopy(
     va_start(args, format);
     CFStringRef result = _NSStringCreateWithFormatAndArguments(format, args);
     va_end(args);
-    return (id)result;
+    return (id)__NSAutoreleaseCF(result);
 }
 
 - (NSString *)stringByAppendingFormat:(NSString *)format, ... {

@@ -14,11 +14,16 @@
 
 @class NSData, NSString;
 
+@class NSURL, NSError;
+
 @interface NSFileHandle : NSObject
 
 + (NSFileHandle *)fileHandleForReadingAtPath:(NSString *)path;
 + (NSFileHandle *)fileHandleForWritingAtPath:(NSString *)path;
 + (NSFileHandle *)fileHandleForUpdatingAtPath:(NSString *)path;
++ (NSFileHandle *)fileHandleForReadingFromURL:(NSURL *)url error:(NSError **)error;
++ (NSFileHandle *)fileHandleForWritingToURL:(NSURL *)url error:(NSError **)error;
++ (NSFileHandle *)fileHandleForUpdatingURL:(NSURL *)url error:(NSError **)error;
 + (NSFileHandle *)fileHandleWithStandardInput;
 + (NSFileHandle *)fileHandleWithStandardOutput;
 + (NSFileHandle *)fileHandleWithStandardError;

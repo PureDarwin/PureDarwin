@@ -17,6 +17,11 @@
 #include <objc/runtime.h>
 #include <pthread.h>
 
+// a non-owning method hands back an autoreleased object, CF creates are owned and may be NULL
+static inline id __NSAutoreleaseCF(CFTypeRef cf) {
+    return cf != NULL ? (id)CFAutorelease(cf) : nil;
+}
+
 /* Backed by CFBundle: -bundlePath and friends unwrap the CFBundleRef we hold
  * rather than reimplementing bundle layout. */
 
@@ -38,7 +43,19 @@
 }
 
 + (NSBundle *)bundleWithPath:(NSString *)path {
-    return [[self alloc] initWithPath:path];
+    return [[[self alloc] initWithPath:path] autorelease];
+}
+
++ (NSBundle *)bundleWithURL:(NSURL *)url {
+    return [[self alloc] initWithURL:url];
+}
+
+// only file URLs name bundles
+- (instancetype)initWithURL:(NSURL *)url {
+    if (![url isFileURL]) {
+        return nil;
+    }
+    return [self initWithPath:[url path]];
 }
 
 // the bundle of the binary the class was loaded from: its .framework, or the app it is part of
@@ -105,7 +122,7 @@
 }
 
 - (NSURL *)bundleURL {
-    return (NSURL *)CFBundleCopyBundleURL(_bundle);
+    return (NSURL *)__NSAutoreleaseCF(CFBundleCopyBundleURL(_bundle));
 }
 
 - (NSString *)bundleIdentifier {
@@ -114,7 +131,7 @@
 }
 
 - (NSURL *)executableURL {
-    return (NSURL *)CFBundleCopyExecutableURL(_bundle);
+    return (NSURL *)__NSAutoreleaseCF(CFBundleCopyExecutableURL(_bundle));
 }
 
 - (NSString *)executablePath {
@@ -233,6 +250,24 @@
     NSString *path = (NSString *)CFURLCopyFileSystemPath(url, kCFURLPOSIXPathStyle);
     CFRelease(url);
     return path;
+}
+
+// the resource from one localization's .lproj, CFBundle looks in the plain resources too
+- (NSString *)pathForResource:(NSString *)name
+                       ofType:(NSString *)extension
+                  inDirectory:(NSString *)subpath
+              forLocalization:(NSString *)localizationName {
+    CFURLRef url = CFBundleCopyResourceURLForLocalization(_bundle, (CFStringRef)name,
+                                                          (CFStringRef)extension,
+                                                          (CFStringRef)subpath,
+                                                          (CFStringRef)localizationName);
+    if (url == NULL) {
+        return nil;
+    }
+
+    NSString *path = (NSString *)CFURLCopyFileSystemPath(url, kCFURLPOSIXPathStyle);
+    CFRelease(url);
+    return [path autorelease];
 }
 
 - (NSArray *)pathsForResourcesOfType:(NSString *)extension

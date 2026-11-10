@@ -20,6 +20,12 @@
 extern int __CFConstantStringClassReference[];
 
 static BOOL ns_set_value_is_constant_string(const void *value) {
+#if ARGON_LIBOBJC2
+    // libobjc2 tags small objects in the low three bits, they have no isa to read
+    if ((uintptr_t)value & 7) {
+        return NO;
+    }
+#endif
     /* A nil member reaches the callbacks as NULL, and reading its isa
      * to classify it is what turned a stray nil into a crash. */
     if (value == NULL) {
@@ -478,7 +484,8 @@ static CFMutableSetRef _setFromArguments(id firstObject, va_list arguments) {
 + (instancetype)new {
     if (self != [NSMutableSet class])
         return [[self alloc] init];
-    return [self setWithCapacity:0];
+    // +new is owned, the convenience constructor is autoreleased
+    return [[self setWithCapacity:0] retain];
 }
 
 + (instancetype)set {

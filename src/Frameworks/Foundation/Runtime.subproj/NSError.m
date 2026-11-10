@@ -39,7 +39,7 @@ NSErrorUserInfoKey const NSURLErrorKey = @"NSURL";
 + (instancetype)errorWithDomain:(NSString *)domain
                            code:(NSInteger)code
                        userInfo:(NSDictionary *)userInfo {
-    return [[self alloc] initWithDomain:domain code:code userInfo:userInfo];
+    return [[[self alloc] initWithDomain:domain code:code userInfo:userInfo] autorelease];
 }
 
 - (instancetype)initWithDomain:(NSString *)domain
@@ -78,9 +78,9 @@ NSErrorUserInfoKey const NSURLErrorKey = @"NSURL";
     if (provided != nil) {
         return provided;
     }
-    return (NSString *)CFStringCreateWithFormat(kCFAllocatorDefault, NULL,
+    return (NSString *)CFAutorelease(CFStringCreateWithFormat(kCFAllocatorDefault, NULL,
                                                 CFSTR("%@ error %ld"),
-                                                (CFStringRef)_domain, (long)_code);
+                                                (CFStringRef)_domain, (long)_code));
 }
 
 - (NSString *)localizedFailureReason {
@@ -93,6 +93,14 @@ NSErrorUserInfoKey const NSURLErrorKey = @"NSURL";
 
 - (NSArray *)localizedRecoveryOptions {
     return [_userInfo objectForKey:NSLocalizedRecoveryOptionsErrorKey];
+}
+
+
+// SPI: daemons turn off localized file names in error descriptions. none are localized here, the flag is kept
+static BOOL fileNameLocalizationEnabled = YES;
+
++ (void)_setFileNameLocalizationEnabled:(BOOL)enabled {
+    fileNameLocalizationEnabled = enabled;
 }
 
 @end

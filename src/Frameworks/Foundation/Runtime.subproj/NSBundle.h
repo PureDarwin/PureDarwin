@@ -18,9 +18,11 @@
 
 + (NSBundle *)mainBundle;
 + (NSBundle *)bundleWithPath:(NSString *)path;
++ (NSBundle *)bundleWithURL:(NSURL *)url;
 + (NSBundle *)bundleForClass:(Class)aClass;
 
 - (instancetype)initWithPath:(NSString *)path;
+- (instancetype)initWithURL:(NSURL *)url;
 
 - (NSString *)bundlePath;
 - (NSURL *)bundleURL;
@@ -53,6 +55,7 @@
 - (NSString *)pathForResource:(NSString *)name
                        ofType:(NSString *)extension
                   inDirectory:(NSString *)subpath;
+- (NSString *)pathForResource:(NSString *)name ofType:(NSString *)extension inDirectory:(NSString *)subpath forLocalization:(NSString *)localizationName;
 - (NSArray *)pathsForResourcesOfType:(NSString *)extension
                          inDirectory:(NSString *)subpath;
 - (BOOL)load;

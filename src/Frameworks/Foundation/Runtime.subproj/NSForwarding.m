@@ -47,13 +47,29 @@ void NSForwardingHandler(struct NSForwardFrame *frame);
 
 #if defined(__x86_64__)
 
+// Mach-O prefixes C symbols with an underscore, ELF calls out of a shared object through the PLT
+#if defined(__APPLE__)
+#define NS_FWD_SYM(name) "_" #name
+#define NS_FWD_CALL(name) "_" #name
+#define NS_FWD_CFI(directive) ""
+#else
+#define NS_FWD_SYM(name) #name
+#define NS_FWD_CALL(name) #name "@PLT"
+// exceptions unwind through the trampoline, so ELF needs its frame described
+#define NS_FWD_CFI(directive) directive "\n"
+#endif
+
 __asm__(
 "   .text                                   \n"
-"   .globl _NSForwardingTrampoline          \n"
+"   .globl " NS_FWD_SYM(NSForwardingTrampoline) "\n"
 "   .p2align 4                              \n"
-"_NSForwardingTrampoline:                   \n"
+NS_FWD_SYM(NSForwardingTrampoline) ":\n"
+NS_FWD_CFI("   .cfi_startproc")
 "   pushq %rbp                              \n"
+NS_FWD_CFI("   .cfi_def_cfa_offset 16")
+NS_FWD_CFI("   .cfi_offset %rbp, -16")
 "   movq  %rsp, %rbp                        \n"
+NS_FWD_CFI("   .cfi_def_cfa_register %rbp")
 "   subq  $144, %rsp                        \n"
 "   movq  %rdi,    0(%rsp)                  \n"
 "   movq  %rsi,    8(%rsp)                  \n"
@@ -72,12 +88,14 @@ __asm__(
 "   leaq  16(%rbp), %rax                    \n"
 "   movq  %rax,  112(%rsp)                  \n"
 "   movq  %rsp, %rdi                        \n"
-"   callq _NSForwardingHandler              \n"
+"   callq " NS_FWD_CALL(NSForwardingHandler) "\n"
 "   movq  120(%rsp), %rax                   \n"
 "   movsd 128(%rsp), %xmm0                  \n"
 "   movq  %rbp, %rsp                        \n"
 "   popq  %rbp                              \n"
+NS_FWD_CFI("   .cfi_def_cfa %rsp, 8")
 "   retq                                    \n"
+NS_FWD_CFI("   .cfi_endproc")
 );
 
 extern void NSForwardingTrampoline(void);
@@ -176,6 +194,17 @@ static void _logUnrecognized(id target, SEL selector, void *caller) {
 void NSForwardingHandler(struct NSForwardFrame *frame) {
     id target = (id)(uintptr_t)frame->ints[0];
     SEL selector = (SEL)(uintptr_t)frame->ints[1];
+    // fast forwarding comes first, as on macOS, and only classes that implement it are asked
+    // the target receives the message as if it had been sent there
+    SEL fastForward = @selector(forwardingTargetForSelector:);
+    id forwardTarget = (selector != fastForward && class_respondsToSelector(object_getClass(target), fastForward)) ?
+        [target forwardingTargetForSelector:selector] : nil;
+    BOOL redirected = forwardTarget != nil && forwardTarget != target;
+
+    if (redirected) {
+        target = forwardTarget;
+        frame->ints[0] = (uint64_t)(uintptr_t)target;
+    }
 
     NSMethodSignature *signature = [target methodSignatureForSelector:selector];
 
@@ -235,7 +264,10 @@ void NSForwardingHandler(struct NSForwardFrame *frame) {
 #endif
     }
 
-    [target forwardInvocation:invocation];
+    if (redirected)
+        [invocation invokeWithTarget:target];
+    else
+        [target forwardInvocation:invocation];
 
     NSUInteger returnLength = [signature methodReturnLength];
 
@@ -285,9 +317,22 @@ static void _NSForwardingStretHandler(void *returnBuffer, id target, SEL selecto
 
 @end
 
+#if ARGON_LIBOBJC2
+#include <objc/hooks.h>
+
+static IMP _NSForwardIMPForSelector(id receiver, SEL selector) {
+    (void)receiver;
+    (void)selector;
+    return (IMP)NSForwardingTrampoline;
+}
+#endif
+
 __attribute__((constructor))
 static void _NSInstallForwardHandler(void) {
-#if defined(NS_HAVE_FORWARDING_TRAMPOLINE)
+#if defined(NS_HAVE_FORWARDING_TRAMPOLINE) && ARGON_LIBOBJC2
+    // libobjc2 asks for an IMP per unhandled message and calls it with the original arguments
+    __objc_msg_forward2 = _NSForwardIMPForSelector;
+#elif defined(NS_HAVE_FORWARDING_TRAMPOLINE)
     objc_setForwardHandler((void *)NSForwardingTrampoline,
                            (void *)_NSForwardingStretHandler);
 #endif

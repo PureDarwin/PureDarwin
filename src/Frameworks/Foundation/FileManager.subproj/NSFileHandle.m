@@ -7,6 +7,8 @@
  */
 
 #import <Foundation/NSFileHandle.h>
+#import <Foundation/NSError.h>
+#import <Foundation/NSURL.h>
 #import <Foundation/NSData.h>
 #import <Foundation/NSString.h>
 #include <CoreFoundation/CFData.h>
@@ -16,6 +18,7 @@
 #import <Foundation/NSValue.h>
 #include <CoreFoundation/CFRunLoop.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <unistd.h>
 #include <sys/select.h>
 
@@ -36,7 +39,28 @@ static NSFileHandle *_open(Class cls, NSString *path, int flags) {
     if (fd < 0) {
         return nil;
     }
-    return [[cls alloc] initWithFileDescriptor:fd closeOnDealloc:YES];
+    return [[[cls alloc] initWithFileDescriptor:fd closeOnDealloc:YES] autorelease];
+}
+
+// a URL that is not a file URL, or a file that will not open, gives nil and a POSIX error
+static NSFileHandle *_openURL(Class cls, NSURL *url, int flags, NSError **error) {
+    NSFileHandle *handle = [url isFileURL] ? _open(cls, [url path], flags) : nil;
+
+    if (handle == nil && error)
+        *error = [NSError errorWithDomain:NSPOSIXErrorDomain code:[url isFileURL] ? errno : EINVAL userInfo:nil];
+    return handle;
+}
+
++ (NSFileHandle *)fileHandleForReadingFromURL:(NSURL *)url error:(NSError **)error {
+    return _openURL(self, url, O_RDONLY, error);
+}
+
++ (NSFileHandle *)fileHandleForWritingToURL:(NSURL *)url error:(NSError **)error {
+    return _openURL(self, url, O_WRONLY, error);
+}
+
++ (NSFileHandle *)fileHandleForUpdatingURL:(NSURL *)url error:(NSError **)error {
+    return _openURL(self, url, O_RDWR, error);
 }
 
 + (NSFileHandle *)fileHandleForReadingAtPath:(NSString *)path {
@@ -52,20 +76,20 @@ static NSFileHandle *_open(Class cls, NSString *path, int flags) {
 }
 
 + (NSFileHandle *)fileHandleWithStandardInput {
-    return [[self alloc] initWithFileDescriptor:STDIN_FILENO];
+    return [[[self alloc] initWithFileDescriptor:STDIN_FILENO] autorelease];
 }
 
 + (NSFileHandle *)fileHandleWithStandardOutput {
-    return [[self alloc] initWithFileDescriptor:STDOUT_FILENO];
+    return [[[self alloc] initWithFileDescriptor:STDOUT_FILENO] autorelease];
 }
 
 + (NSFileHandle *)fileHandleWithStandardError {
-    return [[self alloc] initWithFileDescriptor:STDERR_FILENO];
+    return [[[self alloc] initWithFileDescriptor:STDERR_FILENO] autorelease];
 }
 
 + (NSFileHandle *)fileHandleWithNullDevice {
     int fd = open("/dev/null", O_RDWR);
-    return fd < 0 ? nil : [[self alloc] initWithFileDescriptor:fd closeOnDealloc:YES];
+    return fd < 0 ? nil : [[[self alloc] initWithFileDescriptor:fd closeOnDealloc:YES] autorelease];
 }
 
 - (instancetype)initWithFileDescriptor:(int)fd {

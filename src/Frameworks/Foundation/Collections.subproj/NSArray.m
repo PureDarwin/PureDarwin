@@ -13,6 +13,8 @@
 #import <Foundation/NSNull.h>
 #import <Foundation/NSString.h>
 #import <Foundation/NSURL.h>
+#import <Foundation/NSError.h>
+#import <Foundation/FoundationErrors.h>
 #import <Foundation/NSData.h>
 #include <CoreFoundation/CFBase.h>
 #include <CoreFoundation/CFArray.h>
@@ -22,9 +24,20 @@
 #include <objc/runtime.h>
 #include <stdarg.h>
 
+// a class constructor hands back an autoreleased object, CF creates are owned and may be NULL
+static inline id __NSAutoreleaseCF(CFTypeRef cf) {
+    return cf != NULL ? (id)CFAutorelease(cf) : nil;
+}
+
 extern int __CFConstantStringClassReference[];
 
 static BOOL ns_array_value_is_constant_string(const void *value) {
+#if ARGON_LIBOBJC2
+    // libobjc2 tags small objects in the low three bits, they have no isa to read
+    if ((uintptr_t)value & 7) {
+        return NO;
+    }
+#endif
     /* A nil member reaches the callbacks as NULL, and reading its isa
      * to classify it is what turned a stray nil into a crash. */
     if (value == NULL) {
@@ -111,13 +124,15 @@ static void __NSArrayAbstract(id self, SEL _cmd) {
     // a subclass outside the cluster gets a real instance of itself
     if (self != [NSArray class])
         return [[self alloc] init];
-    return [self array];
+    // +new is owned, the convenience constructor is autoreleased
+    return [[self array] retain];
 }
 
 - (instancetype)init {
     if (__NSArrayIsForeign(self))
         return [super init];
-    return [NSArray array];
+    // -init hands back an owned object, the convenience constructor an autoreleased one
+    return [[NSArray array] retain];
 }
 
 - (instancetype)initWithObjects:(id)firstObject, ... {
@@ -151,8 +166,8 @@ static void __NSArrayAbstract(id self, SEL _cmd) {
 }
 
 + (instancetype)array {
-    return (id)CFArrayCreate(kCFAllocatorDefault, NULL, 0,
-                             &ns_array_callbacks);
+    return (id)__NSAutoreleaseCF(CFArrayCreate(kCFAllocatorDefault, NULL, 0,
+                             &ns_array_callbacks));
 }
 
 + (instancetype)arrayWithObject:(id)object {
@@ -174,21 +189,21 @@ static void __NSArrayAbstract(id self, SEL _cmd) {
 
     CFArrayRef result = CFArrayCreateCopy(kCFAllocatorDefault, values);
     CFRelease(values);
-    return (id)result;
+    return (id)__NSAutoreleaseCF(result);
 }
 
 + (instancetype)arrayWithObjects:(const id *)objects count:(NSUInteger)count {
-    return (id)CFArrayCreate(kCFAllocatorDefault, (const void **)objects,
-                             (CFIndex)count, &ns_array_callbacks);
+    return (id)__NSAutoreleaseCF(CFArrayCreate(kCFAllocatorDefault, (const void **)objects,
+                             (CFIndex)count, &ns_array_callbacks));
 }
 
 + (instancetype)arrayWithArray:(NSArray *)array {
     // A nil argument is an empty array, not a crash in CFArrayGetCount.
     if (array == nil) {
-        return (id)CFArrayCreate(kCFAllocatorDefault, NULL, 0,
-                                 &ns_array_callbacks);
+        return (id)__NSAutoreleaseCF(CFArrayCreate(kCFAllocatorDefault, NULL, 0,
+                                 &ns_array_callbacks));
     }
-    return (id)CFArrayCreateCopy(kCFAllocatorDefault, (CFArrayRef)array);
+    return (id)__NSAutoreleaseCF(CFArrayCreateCopy(kCFAllocatorDefault, (CFArrayRef)array));
 }
 
 - (NSUInteger)count {
@@ -364,6 +379,22 @@ static void __NSArrayAbstract(id self, SEL _cmd) {
         return nil;
     }
     return [self arrayWithContentsOfFile:[url path]];
+}
+
++ (nullable instancetype)arrayWithContentsOfURL:(NSURL *)url error:(NSError **)error {
+    NSArray *result = [self arrayWithContentsOfURL:url];
+
+    if (result == nil && error)
+        *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileReadCorruptFileError userInfo:nil];
+    return result;
+}
+
+- (BOOL)writeToURL:(NSURL *)url error:(NSError **)error {
+    if ([url isFileURL] && [self writeToFile:[url path] atomically:YES])
+        return YES;
+    if (error)
+        *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteUnknownError userInfo:nil];
+    return NO;
 }
 
 /* Property-list serialisation, matching NSDictionary's. */
@@ -932,15 +963,16 @@ static CFComparisonResult ns_array_compare_block(const void *left,
 + (instancetype)new {
     if (self != [NSMutableArray class])
         return [[self alloc] init];
-    return [self arrayWithCapacity:0];
+    // +new is owned, the convenience constructor is autoreleased
+    return [[self arrayWithCapacity:0] retain];
 }
 
 + (instancetype)arrayWithCapacity:(NSUInteger)capacity {
     /* A non-zero CF capacity is a hard ceiling, while the Cocoa capacity is
      * only a hint; passing it through makes the collection halt once it grows
      * past the hint. See +[NSMutableData dataWithCapacity:]. */
-    return (id)CFArrayCreateMutable(kCFAllocatorDefault, 0,
-                                    &ns_array_callbacks);
+    return (id)__NSAutoreleaseCF(CFArrayCreateMutable(kCFAllocatorDefault, 0,
+                                    &ns_array_callbacks));
 }
 
 + (instancetype)array {
@@ -970,7 +1002,7 @@ static CFComparisonResult ns_array_compare_block(const void *left,
     if (object != nil) {
         CFArrayAppendValue(result, object);
     }
-    return (id)result;
+    return (id)__NSAutoreleaseCF(result);
 }
 
 + (instancetype)arrayWithObjects:(id)firstObject, ... {
@@ -986,7 +1018,7 @@ static CFComparisonResult ns_array_compare_block(const void *left,
     }
     va_end(arguments);
 
-    return (id)result;
+    return (id)__NSAutoreleaseCF(result);
 }
 
 + (instancetype)arrayWithArray:(NSArray *)array {
@@ -998,7 +1030,7 @@ static CFComparisonResult ns_array_compare_block(const void *left,
         CFArrayAppendArray(result, (CFArrayRef)array,
                            CFRangeMake(0, count));
     }
-    return (id)result;
+    return (id)__NSAutoreleaseCF(result);
 }
 
 - (instancetype)initWithArray:(NSArray *)array {

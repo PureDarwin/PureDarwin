@@ -276,4 +276,16 @@ static CFStringRef _applicationIDForDomain(NSString *domainName) {
     CFPreferencesSynchronize(appID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
 }
 
+// key-value coding reads and writes defaults by name, as on macOS, so bindings and valueForKey: see them
+- (id)valueForKey:(NSString *)key {
+    return [self objectForKey:key];
+}
+
+- (void)setValue:(id)value forKey:(NSString *)key {
+    if (value)
+        [self setObject:value forKey:key];
+    else
+        [self removeObjectForKey:key];
+}
+
 @end

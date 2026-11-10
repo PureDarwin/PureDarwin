@@ -13,6 +13,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+// a non-owning method hands back an autoreleased object, CF creates are owned and may be NULL
+static inline id __NSAutoreleaseCF(CFTypeRef cf) {
+    return cf != NULL ? (id)CFAutorelease(cf) : nil;
+}
+
 @implementation NSValue {
     void *_bytes;
     NSUInteger _size;
@@ -155,8 +160,8 @@
 }
 
 - (NSString *)description {
-    return (NSString *)CFStringCreateWithFormat(kCFAllocatorDefault, NULL,
-                                                CFSTR("<NSValue %s>"), _type);
+    return (NSString *)__NSAutoreleaseCF(CFStringCreateWithFormat(kCFAllocatorDefault, NULL,
+                                                CFSTR("<NSValue %s>"), _type));
 }
 
 @end

@@ -54,6 +54,7 @@
 #import <Foundation/NSInvocation.h>
 #import <Foundation/NSCalendar.h>
 #import <Foundation/NSNumberFormatter.h>
+#import <Foundation/NSByteCountFormatter.h>
 #import <Foundation/NSSocket.h>
 #import <Foundation/NSSocket_bsd.h>
 #import <Foundation/NSInputSource.h>
@@ -66,6 +67,7 @@
 #import <Foundation/NSSet.h>
 #import <Foundation/NSNumber.h>
 #import <Foundation/NSDate.h>
+#import <Foundation/NSDateInterval.h>
 #import <Foundation/NSTimer.h>
 #import <Foundation/NSURL.h>
 #import <Foundation/NSString.h>
@@ -104,8 +106,11 @@
 #import <Foundation/NSJSONSerialization.h>
 #import <Foundation/NSPortNameServer.h>
 #import <Foundation/NSURLQueryItem.h>
+#import <Foundation/NSURLComponents.h>
+#import <Foundation/NSURLAuthenticationChallenge.h>
 #import <Foundation/NSURLRequest.h>
 #import <Foundation/NSURLSession.h>
+#import <Foundation/NSURLProtocol.h>
 #import <Foundation/NSProgress.h>
 #import <Foundation/NSUserActivity.h>
 #import <Foundation/NSUserNotification.h>

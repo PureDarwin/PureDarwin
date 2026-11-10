@@ -97,6 +97,16 @@ typedef struct _NSZone NSZone;
 #define NS_ENUM_DEPRECATED_MAC(...)
 #define NS_ENUM_DEPRECATED_IOS(...)
 
+#ifndef NS_FORMAT_FUNCTION
+#define NS_FORMAT_FUNCTION(F, A) __attribute__((format(__NSString__, F, A)))
+#define NS_FORMAT_ARGUMENT(A) __attribute__((format_arg(A)))
+#endif
+
+#ifndef NS_ASSUME_NONNULL_BEGIN
+#define NS_ASSUME_NONNULL_BEGIN _Pragma("clang assume_nonnull begin")
+#define NS_ASSUME_NONNULL_END _Pragma("clang assume_nonnull end")
+#endif
+
 #ifndef FOUNDATION_EXPORT
     #ifdef __cplusplus
         #define FOUNDATION_EXPORT extern "C"

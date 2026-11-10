@@ -25,26 +25,13 @@ NS_INLINE NSRange NSMakeRange(NSUInteger loc, NSUInteger len) {
     return r;
 }
 
-NS_INLINE NSRange NSIntersectionRange(NSRange a, NSRange b) {
-    NSUInteger start = (a.location > b.location) ? a.location : b.location;
-    NSUInteger endA = a.location + a.length;
-    NSUInteger endB = b.location + b.length;
-    NSUInteger end = (endA < endB) ? endA : endB;
+@class NSString;
 
-    if (end <= start) {
-        return (NSRange){ 0, 0 };
-    }
-    return (NSRange){ start, end - start };
-}
-
-NS_INLINE NSRange NSUnionRange(NSRange a, NSRange b) {
-    NSUInteger start = (a.location < b.location) ? a.location : b.location;
-    NSUInteger endA = a.location + a.length;
-    NSUInteger endB = b.location + b.length;
-    NSUInteger end = (endA > endB) ? endA : endB;
-
-    return (NSRange){ start, end - start };
-}
+// exported functions as on macOS, binaries built there link them
+FOUNDATION_EXPORT NSRange NSIntersectionRange(NSRange a, NSRange b);
+FOUNDATION_EXPORT NSRange NSUnionRange(NSRange a, NSRange b);
+FOUNDATION_EXPORT NSString *NSStringFromRange(NSRange range);
+FOUNDATION_EXPORT NSRange NSRangeFromString(NSString *string);
 
 NS_INLINE NSUInteger NSMaxRange(NSRange range) {
     return range.location + range.length;

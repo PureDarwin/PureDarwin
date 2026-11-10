@@ -13,7 +13,12 @@
 #import <Foundation/NSString.h>
 #include <CoreFoundation/CFString.h>
 #include <crt_externs.h>
+#if defined(__linux__)
+#include <time.h>
+#include <unistd.h>
+#else
 #include <sys/sysctl.h>
+#endif
 #include <unistd.h>
 #include <string.h>
 
@@ -108,6 +113,13 @@ static NSString *_string(const char *cString) {
 /* Darwin is the MACH flavour in this (OpenStep-era) enumeration. */
 /* Seconds since boot, from the kernel's boot time. */
 - (NSTimeInterval)systemUptime {
+#if defined(__linux__)
+    struct timespec since;
+
+    if (clock_gettime(CLOCK_BOOTTIME, &since) != 0)
+        return 0.0;
+    return (NSTimeInterval)since.tv_sec + (NSTimeInterval)since.tv_nsec / 1e9;
+#else
     struct timeval boot;
     size_t size = sizeof(boot);
     int name[2] = { CTL_KERN, KERN_BOOTTIME };
@@ -121,6 +133,7 @@ static NSString *_string(const char *cString) {
     gettimeofday(&now, NULL);
     return (NSTimeInterval)(now.tv_sec - boot.tv_sec) +
            (NSTimeInterval)(now.tv_usec - boot.tv_usec) / 1000000.0;
+#endif
 }
 
 - (NSUInteger)operatingSystem {
@@ -189,12 +202,18 @@ static NSDictionary *systemVersionPlist(void) {
 }
 
 - (NSUInteger)processorCount {
+#if defined(__linux__)
+    long count = sysconf(_SC_NPROCESSORS_ONLN);
+
+    return count < 1 ? 1 : (NSUInteger)count;
+#else
     int count = 0;
     size_t length = sizeof(count);
     if (sysctlbyname("hw.ncpu", &count, &length, NULL, 0) != 0 || count < 1) {
         return 1;
     }
     return (NSUInteger)count;
+#endif
 }
 
 // no thermal or battery sensors are read here, the machine always reports nominal and mains power
@@ -242,12 +261,18 @@ static NSDictionary *systemVersionPlist(void) {
 }
 
 - (unsigned long long)physicalMemory {
+#if defined(__linux__)
+    long pages = sysconf(_SC_PHYS_PAGES), size = sysconf(_SC_PAGESIZE);
+
+    return pages > 0 && size > 0 ? (unsigned long long)pages * (unsigned long long)size : 0;
+#else
     uint64_t bytes = 0;
     size_t length = sizeof(bytes);
     if (sysctlbyname("hw.memsize", &bytes, &length, NULL, 0) != 0) {
         return 0;
     }
     return bytes;
+#endif
 }
 
 @end

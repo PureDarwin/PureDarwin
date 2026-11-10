@@ -20,7 +20,11 @@ typedef struct { void *isa; NSUInteger options; NSUInteger count; const id *keys
 @interface NSConstantDictionary : NSDictionary
 @end
 
+#if ARGON_LIBOBJC2
+extern char __NSConstantArrayClass __asm__("._OBJC_CLASS_NSConstantArray");
+#else
 extern char __NSConstantArrayClass __asm__("_OBJC_CLASS_$_NSConstantArray");
+#endif
 
 // what clang references for an empty @[], an NSConstantArray of no objects
 __attribute__((visibility("default")))

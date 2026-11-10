@@ -25,7 +25,33 @@ __NSNumberCreate(CFNumberType type, const void *value)
 
 /* CFNumber has no boolean storage of its own; kCFBooleanTrue/False are the
  * canonical bridged objects and are what a CFDictionary round-trips. */
+// what +[NSNumber alloc] returns, as Apple's NSPlaceholderNumber: every -init releases it and
+// returns a CFNumber, so it must not reach CFRelease, which would read it as a CF object
+#include <dispatch/dispatch.h>
+
+@interface NSPlaceholderNumber : NSNumber
+@end
+
+@implementation NSPlaceholderNumber
+- (id)retain { return self; }
+- (oneway void)release {}
+- (id)autorelease { return self; }
+- (NSUInteger)retainCount { return NSUIntegerMax; }
+@end
+
 @implementation NSNumber
+
++ (instancetype)allocWithZone:(NSZone *)zone {
+    static NSPlaceholderNumber *placeholder;
+    static dispatch_once_t once;
+
+    if (self != [NSNumber class])
+        return [super allocWithZone:zone];
+    dispatch_once(&once, ^{
+        placeholder = NSAllocateObject([NSPlaceholderNumber class], 0, NULL);
+    });
+    return (id)placeholder;
+}
 
 + (instancetype)numberWithChar:(char)value {
     return __NSNumberCreate(kCFNumberCharType, &value);

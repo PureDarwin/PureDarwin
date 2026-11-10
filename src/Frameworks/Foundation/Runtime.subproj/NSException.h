@@ -10,6 +10,7 @@
 #define NSException_h
 
 #import <Foundation/NSObject.h>
+#import <Foundation/NSAssertionHandler.h>
 #import <Foundation/NSObjCRuntime.h>
 
 @class NSString, NSDictionary, NSArray;
@@ -57,17 +58,38 @@ typedef void NSUncaughtExceptionHandler(NSException *exception);
 FOUNDATION_EXPORT NSUncaughtExceptionHandler *NSGetUncaughtExceptionHandler(void);
 FOUNDATION_EXPORT void NSSetUncaughtExceptionHandler(NSUncaughtExceptionHandler *handler);
 
+// kept for binaries built against the earlier PD macros, new code goes through NSAssertionHandler
 FOUNDATION_EXPORT void NSAssertionFailure(const char *function, const char *file,
                                           int line, NSString *format, ...)
     __attribute__((format(__NSString__, 4, 5)));
 
+// the same expansion as Apple's headers, so code built here also runs against Apple's Foundation
+#if !defined(NS_BLOCK_ASSERTIONS)
 #define NSAssert(condition, desc, ...) \
     do { \
         if (__builtin_expect(!(condition), 0)) { \
-            NSAssertionFailure(__PRETTY_FUNCTION__, __FILE__, __LINE__, \
-                               (desc), ##__VA_ARGS__); \
+            NSString *__assert_file__ = [NSString stringWithUTF8String:__FILE__]; \
+            __assert_file__ = __assert_file__ ? __assert_file__ : @"<Unknown File>"; \
+            [[NSAssertionHandler currentHandler] handleFailureInMethod:_cmd object:self \
+                file:__assert_file__ lineNumber:__LINE__ description:(desc), ##__VA_ARGS__]; \
         } \
     } while (0)
+
+#define NSCAssert(condition, desc, ...) \
+    do { \
+        if (__builtin_expect(!(condition), 0)) { \
+            NSString *__assert_fn__ = [NSString stringWithUTF8String:__PRETTY_FUNCTION__]; \
+            NSString *__assert_file__ = [NSString stringWithUTF8String:__FILE__]; \
+            __assert_fn__ = __assert_fn__ ? __assert_fn__ : @"<Unknown Function>"; \
+            __assert_file__ = __assert_file__ ? __assert_file__ : @"<Unknown File>"; \
+            [[NSAssertionHandler currentHandler] handleFailureInFunction:__assert_fn__ \
+                file:__assert_file__ lineNumber:__LINE__ description:(desc), ##__VA_ARGS__]; \
+        } \
+    } while (0)
+#else
+#define NSAssert(condition, desc, ...)  do {} while (0)
+#define NSCAssert(condition, desc, ...) do {} while (0)
+#endif
 
 #define NSAssert1(c, d, a1)                     NSAssert((c), (d), (a1))
 #define NSAssert2(c, d, a1, a2)                 NSAssert((c), (d), (a1), (a2))
@@ -75,16 +97,16 @@ FOUNDATION_EXPORT void NSAssertionFailure(const char *function, const char *file
 #define NSAssert4(c, d, a1, a2, a3, a4)         NSAssert((c), (d), (a1), (a2), (a3), (a4))
 #define NSAssert5(c, d, a1, a2, a3, a4, a5)     NSAssert((c), (d), (a1), (a2), (a3), (a4), (a5))
 
-#define NSCAssert(condition, desc, ...)         NSAssert((condition), (desc), ##__VA_ARGS__)
-#define NSCAssert1(c, d, a1)                    NSAssert((c), (d), (a1))
-#define NSCAssert2(c, d, a1, a2)                NSAssert((c), (d), (a1), (a2))
-#define NSCAssert3(c, d, a1, a2, a3)            NSAssert((c), (d), (a1), (a2), (a3))
-#define NSCAssert4(c, d, a1, a2, a3, a4)        NSAssert((c), (d), (a1), (a2), (a3), (a4))
-#define NSCAssert5(c, d, a1, a2, a3, a4, a5)    NSAssert((c), (d), (a1), (a2), (a3), (a4), (a5))
+#define NSCAssert1(c, d, a1)                    NSCAssert((c), (d), (a1))
+#define NSCAssert2(c, d, a1, a2)                NSCAssert((c), (d), (a1), (a2))
+#define NSCAssert3(c, d, a1, a2, a3)            NSCAssert((c), (d), (a1), (a2), (a3))
+#define NSCAssert4(c, d, a1, a2, a3, a4)        NSCAssert((c), (d), (a1), (a2), (a3), (a4))
+#define NSCAssert5(c, d, a1, a2, a3, a4, a5)    NSCAssert((c), (d), (a1), (a2), (a3), (a4), (a5))
 
 #define NSParameterAssert(condition) \
-    NSAssert((condition), @"Invalid parameter not satisfying: %s", #condition)
-#define NSCParameterAssert(condition) NSParameterAssert(condition)
+    NSAssert((condition), @"Invalid parameter not satisfying: %@", @#condition)
+#define NSCParameterAssert(condition) \
+    NSCAssert((condition), @"Invalid parameter not satisfying: %@", @#condition)
 
 /* The pre-@try exception macros; still used by ported Cocotron-era code. */
 #define NS_DURING           @try {

@@ -12,6 +12,7 @@
 #include <CoreFoundation/CFBase.h>
 #import <Foundation/NSURL.h>
 #import <Foundation/NSError.h>
+#import <Foundation/FoundationErrors.h>
 #import <Foundation/NSString.h>
 #include <CoreFoundation/CFDictionary.h>
 #include <CoreFoundation/CFPropertyList.h>
@@ -26,9 +27,20 @@
 #include <unistd.h>
 #include <sys/param.h>
 
+// a class constructor hands back an autoreleased object, CF creates are owned and may be NULL
+static inline id __NSAutoreleaseCF(CFTypeRef cf) {
+    return cf != NULL ? (id)CFAutorelease(cf) : nil;
+}
+
 extern int __CFConstantStringClassReference[];
 
 static BOOL ns_dictionary_value_is_constant_string(const void *value) {
+#if ARGON_LIBOBJC2
+    // libobjc2 tags small objects in the low three bits, they have no isa to read
+    if ((uintptr_t)value & 7) {
+        return NO;
+    }
+#endif
     /* A nil member reaches the callbacks as NULL, and reading its isa
      * to classify it is what turned a stray nil into a crash. */
     if (value == NULL) {
@@ -185,13 +197,15 @@ static void __NSDictionaryAbstract(id self, SEL _cmd) {
     // a subclass outside the cluster gets a real instance of itself
     if (self != [NSDictionary class])
         return [[self alloc] init];
-    return [self dictionary];
+    // +new is owned, the convenience constructor is autoreleased
+    return [[self dictionary] retain];
 }
 
 - (instancetype)init {
     if (__NSDictionaryIsForeign(self))
         return [super init];
-    return [NSDictionary dictionary];
+    // -init hands back an owned object, the convenience constructor an autoreleased one
+    return [[NSDictionary dictionary] retain];
 }
 
 - (instancetype)initWithDictionary:(NSDictionary *)dictionary {
@@ -249,17 +263,17 @@ static void __NSDictionaryAbstract(id self, SEL _cmd) {
 }
 
 + (instancetype)dictionary {
-    return (id)CFDictionaryCreate(kCFAllocatorDefault, NULL, NULL, 0,
+    return (id)__NSAutoreleaseCF(CFDictionaryCreate(kCFAllocatorDefault, NULL, NULL, 0,
                                   &ns_dictionary_key_callbacks,
-                                  &ns_dictionary_value_callbacks);
+                                  &ns_dictionary_value_callbacks));
 }
 
 + (instancetype)dictionaryWithObject:(id)object forKey:(id)key {
     const void *keys[] = { (const void *)key };
     const void *objects[] = { (const void *)object };
-    return (id)CFDictionaryCreate(kCFAllocatorDefault, keys, objects, 1,
+    return (id)__NSAutoreleaseCF(CFDictionaryCreate(kCFAllocatorDefault, keys, objects, 1,
                                   &ns_dictionary_key_callbacks,
-                                  &ns_dictionary_value_callbacks);
+                                  &ns_dictionary_value_callbacks));
 }
 
 + (instancetype)dictionaryWithObjectsAndKeys:(id)firstObject, ... {
@@ -267,7 +281,7 @@ static void __NSDictionaryAbstract(id self, SEL _cmd) {
         kCFAllocatorDefault, 0, &ns_dictionary_key_callbacks,
         &ns_dictionary_value_callbacks);
     if (result == NULL || firstObject == nil)
-        return (id)result;
+        return (id)__NSAutoreleaseCF(result);
 
     va_list arguments;
     va_start(arguments, firstObject);
@@ -280,7 +294,7 @@ static void __NSDictionaryAbstract(id self, SEL _cmd) {
         object = va_arg(arguments, id);
     }
     va_end(arguments);
-    return (id)result;
+    return (id)__NSAutoreleaseCF(result);
 }
 
 + (instancetype)dictionaryWithObjects:(NSArray *)objects
@@ -296,29 +310,29 @@ static void __NSDictionaryAbstract(id self, SEL _cmd) {
         CFDictionarySetValue(result, [keys objectAtIndex:i],
                              [objects objectAtIndex:i]);
     }
-    return (id)result;
+    return (id)__NSAutoreleaseCF(result);
 }
 
 + (instancetype)dictionaryWithDictionary:(NSDictionary *)dictionary {
     // A nil argument is an empty dictionary, not a crash inside CF.
     if (dictionary == nil) {
-        return (id)CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+        return (id)__NSAutoreleaseCF(CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
                                              &ns_dictionary_key_callbacks,
-                                             &ns_dictionary_value_callbacks);
+                                             &ns_dictionary_value_callbacks));
     }
-    return (id)CFDictionaryCreateCopy(kCFAllocatorDefault,
-                                      (CFDictionaryRef)dictionary);
+    return (id)__NSAutoreleaseCF(CFDictionaryCreateCopy(kCFAllocatorDefault,
+                                      (CFDictionaryRef)dictionary));
 }
 
 /* CFDictionaryCreate takes keys first, the ObjC spelling takes objects first. */
 + (instancetype)dictionaryWithObjects:(const id *)objects
                               forKeys:(const id *)keys
                                 count:(NSUInteger)count {
-    return (id)CFDictionaryCreate(kCFAllocatorDefault,
+    return (id)__NSAutoreleaseCF(CFDictionaryCreate(kCFAllocatorDefault,
                                   (const void **)keys, (const void **)objects,
                                   (CFIndex)count,
                                   &ns_dictionary_key_callbacks,
-                                  &ns_dictionary_value_callbacks);
+                                  &ns_dictionary_value_callbacks));
 }
 
 /* These are CF objects, not ObjC allocations: the default NSObject refcounting
@@ -539,6 +553,14 @@ BOOL pd_write_plist(CFPropertyListRef plist, NSString *path,
 
 - (BOOL)writeToFile:(NSString *)path atomically:(BOOL)atomically {
     return pd_write_plist((CFPropertyListRef)self, path, atomically);
+}
+
+- (BOOL)writeToURL:(NSURL *)url error:(NSError **)error {
+    if ([url isFileURL] && [self writeToFile:[url path] atomically:YES])
+        return YES;
+    if (error)
+        *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteUnknownError userInfo:nil];
+    return NO;
 }
 
 // the alloc'ed placeholder is dropped like the other initialisers do, a mutable receiver gets a mutable copy
@@ -838,7 +860,8 @@ BOOL pd_write_plist(CFPropertyListRef plist, NSString *path,
 + (instancetype)new {
     if (self != [NSMutableDictionary class])
         return [[self alloc] init];
-    return [self dictionaryWithCapacity:0];
+    // +new is owned, the convenience constructor is autoreleased
+    return [[self dictionaryWithCapacity:0] retain];
 }
 
 - (instancetype)init {
@@ -854,9 +877,9 @@ BOOL pd_write_plist(CFPropertyListRef plist, NSString *path,
     /* A non-zero CF capacity is a hard ceiling, while the Cocoa capacity is
      * only a hint; passing it through makes the collection halt once it grows
      * past the hint. See +[NSMutableData dataWithCapacity:]. */
-    return (id)CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+    return (id)__NSAutoreleaseCF(CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
                                          &ns_dictionary_key_callbacks,
-                                         &ns_dictionary_value_callbacks);
+                                         &ns_dictionary_value_callbacks));
 }
 
 - (instancetype)initWithCapacity:(NSUInteger)capacity {
@@ -881,7 +904,7 @@ BOOL pd_write_plist(CFPropertyListRef plist, NSString *path,
     if (object != nil && key != nil) {
         CFDictionarySetValue(result, (const void *)key, (const void *)object);
     }
-    return (id)result;
+    return (id)__NSAutoreleaseCF(result);
 }
 
 + (instancetype)dictionaryWithObjects:(NSArray *)objects forKeys:(NSArray *)keys {
@@ -899,7 +922,7 @@ BOOL pd_write_plist(CFPropertyListRef plist, NSString *path,
         CFDictionarySetValue(result, [keys objectAtIndex:i],
                              [objects objectAtIndex:i]);
     }
-    return (id)result;
+    return (id)__NSAutoreleaseCF(result);
 }
 
 + (instancetype)dictionaryWithObjectsAndKeys:(id)firstObject, ... {
@@ -910,7 +933,7 @@ BOOL pd_write_plist(CFPropertyListRef plist, NSString *path,
     id object = firstObject;
 
     if (firstObject == nil) {
-        return (id)result;
+        return (id)__NSAutoreleaseCF(result);
     }
 
     va_start(arguments, firstObject);
@@ -925,17 +948,17 @@ BOOL pd_write_plist(CFPropertyListRef plist, NSString *path,
     }
     va_end(arguments);
 
-    return (id)result;
+    return (id)__NSAutoreleaseCF(result);
 }
 
 + (instancetype)dictionaryWithDictionary:(NSDictionary *)dictionary {
     if (dictionary == nil) {
-        return (id)CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+        return (id)__NSAutoreleaseCF(CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
                                              &ns_dictionary_key_callbacks,
-                                             &ns_dictionary_value_callbacks);
+                                             &ns_dictionary_value_callbacks));
     }
-    return (id)CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0,
-                                             (CFDictionaryRef)dictionary);
+    return (id)__NSAutoreleaseCF(CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0,
+                                             (CFDictionaryRef)dictionary));
 }
 
 /* The initialiser forms need the same treatment as the class methods above. */

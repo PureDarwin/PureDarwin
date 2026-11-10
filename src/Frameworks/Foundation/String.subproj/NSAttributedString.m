@@ -14,6 +14,7 @@
 #import <Foundation/NSValue.h>
 #include <CoreFoundation/CFAttributedString.h>
 #include <CoreFoundation/ForFoundationOnly.h>
+#include <objc/runtime.h>
 
 /* Bridged onto CFAttributedString, so instances are CF objects: the class
  * factories return CF objects directly and -init* discards the placeholder
@@ -21,6 +22,12 @@
 
 static inline CFRange NSToCFRange(NSRange range) {
     return CFRangeMake((CFIndex)range.location, (CFIndex)range.length);
+}
+
+// CF instances carry NSAttributedString itself as their class, a subclass such as NSTextStorage keeps
+// its own storage and only answers the primitives, so CF must not read its memory
+static inline BOOL isCFInstance(id object) {
+    return object_getClass(object) == [NSAttributedString class];
 }
 
 static inline void CFToNSRange(CFRange cf, NSRangePointer out) {
@@ -67,6 +74,28 @@ static inline void CFToNSRange(CFRange cf, NSRangePointer out) {
 - (NSDictionary *)attributesAtIndex:(NSUInteger)index
               longestEffectiveRange:(NSRangePointer)range
                             inRange:(NSRange)limit {
+    if (!isCFInstance(self)) {
+        NSRange run;
+        NSDictionary *attributes = [self attributesAtIndex:index effectiveRange:&run];
+        NSUInteger start = run.location, end = NSMaxRange(run);
+
+        // widen across neighbours with equal attributes, inside the limit
+        while (start > limit.location) {
+            NSRange before;
+            if (![[self attributesAtIndex:start - 1 effectiveRange:&before] isEqualToDictionary:attributes])
+                break;
+            start = before.location;
+        }
+        while (end < NSMaxRange(limit)) {
+            NSRange after;
+            if (![[self attributesAtIndex:end effectiveRange:&after] isEqualToDictionary:attributes])
+                break;
+            end = NSMaxRange(after);
+        }
+        if (range != NULL)
+            *range = NSIntersectionRange(NSMakeRange(start, end - start), limit);
+        return attributes;
+    }
     CFRange longest = CFRangeMake(0, 0);
     CFDictionaryRef result = CFAttributedStringGetAttributesAndLongestEffectiveRange(
         (CFAttributedStringRef)self, (CFIndex)index, NSToCFRange(limit),
@@ -87,6 +116,29 @@ static inline void CFToNSRange(CFRange cf, NSRangePointer out) {
               atIndex:(NSUInteger)index
 longestEffectiveRange:(NSRangePointer)range
               inRange:(NSRange)limit {
+    if (!isCFInstance(self)) {
+        NSRange run;
+        id value = [self attribute:name atIndex:index effectiveRange:&run];
+        NSUInteger start = run.location, end = NSMaxRange(run);
+
+        while (start > limit.location) {
+            NSRange before;
+            id other = [self attribute:name atIndex:start - 1 effectiveRange:&before];
+            if (other != value && ![other isEqual:value])
+                break;
+            start = before.location;
+        }
+        while (end < NSMaxRange(limit)) {
+            NSRange after;
+            id other = [self attribute:name atIndex:end effectiveRange:&after];
+            if (other != value && ![other isEqual:value])
+                break;
+            end = NSMaxRange(after);
+        }
+        if (range != NULL)
+            *range = NSIntersectionRange(NSMakeRange(start, end - start), limit);
+        return value;
+    }
     CFRange longest = CFRangeMake(0, 0);
     CFTypeRef result = CFAttributedStringGetAttributeAndLongestEffectiveRange(
         (CFAttributedStringRef)self, (CFIndex)index, (CFStringRef)name,
@@ -125,15 +177,33 @@ longestEffectiveRange:(NSRangePointer)range
     if (other == nil) {
         return NO;
     }
+    if (!isCFInstance(self) || !isCFInstance(other)) {
+        NSUInteger at = 0, length = [self length];
+
+        if (length != [other length] || ![[self string] isEqualToString:[other string]])
+            return NO;
+        while (at < length) {
+            NSRange mine, theirs;
+            if (![[self attributesAtIndex:at effectiveRange:&mine] isEqualToDictionary:[other attributesAtIndex:at effectiveRange:&theirs]])
+                return NO;
+            at = MAX(at + 1, MIN(NSMaxRange(mine), NSMaxRange(theirs)));
+        }
+        return YES;
+    }
     return CFEqual((CFTypeRef)self, (CFTypeRef)other) ? YES : NO;
 }
 
 - (id)copyWithZone:(NSZone *)zone {
+    if (!isCFInstance(self))
+        return [[self attributedSubstringFromRange:NSMakeRange(0, [self length])] retain];
     return (id)CFAttributedStringCreateCopy(kCFAllocatorDefault,
                                             (CFAttributedStringRef)self);
 }
 
 - (id)mutableCopyWithZone:(NSZone *)zone {
+    if (!isCFInstance(self))
+        return (id)CFAttributedStringCreateMutableCopy(kCFAllocatorDefault, 0,
+            (CFAttributedStringRef)[self attributedSubstringFromRange:NSMakeRange(0, [self length])]);
     return (id)CFAttributedStringCreateMutableCopy(kCFAllocatorDefault, 0,
                                                    (CFAttributedStringRef)self);
 }
@@ -185,7 +255,28 @@ longestEffectiveRange:(NSRangePointer)range
                                     (CFDictionaryRef)attributes, true);
 }
 
+// a subclass gets each run's attributes changed through its own primitives
+static void editRuns(NSMutableAttributedString *self, NSRange range, void (^edit)(NSMutableDictionary *attributes)) {
+    NSUInteger at = range.location, end = NSMaxRange(range);
+
+    [self beginEditing];
+    while (at < end) {
+        NSRange run;
+        NSMutableDictionary *attributes = [[[self attributesAtIndex:at effectiveRange:&run] mutableCopy] autorelease] ?: [NSMutableDictionary dictionary];
+        NSUInteger runEnd = MIN(MAX(NSMaxRange(run), at + 1), end);
+
+        edit(attributes);
+        [self setAttributes:attributes range:NSMakeRange(at, runEnd - at)];
+        at = runEnd;
+    }
+    [self endEditing];
+}
+
 - (void)addAttribute:(NSAttributedStringKey)name value:(id)value range:(NSRange)range {
+    if (!isCFInstance(self)) {
+        editRuns(self, range, ^(NSMutableDictionary *attributes) { [attributes setObject:value forKey:name]; });
+        return;
+    }
     CFAttributedStringSetAttribute((CFMutableAttributedStringRef)self,
                                    NSToCFRange(range), (CFStringRef)name,
                                    (CFTypeRef)value);
@@ -193,20 +284,28 @@ longestEffectiveRange:(NSRangePointer)range
 
 /* clearOtherAttributes:false is what makes this "add" rather than "set". */
 - (void)addAttributes:(NSDictionary *)attributes range:(NSRange)range {
+    if (!isCFInstance(self)) {
+        editRuns(self, range, ^(NSMutableDictionary *existing) { [existing addEntriesFromDictionary:attributes]; });
+        return;
+    }
     CFAttributedStringSetAttributes((CFMutableAttributedStringRef)self,
                                     NSToCFRange(range),
                                     (CFDictionaryRef)attributes, false);
 }
 
 - (void)removeAttribute:(NSAttributedStringKey)name range:(NSRange)range {
+    if (!isCFInstance(self)) {
+        editRuns(self, range, ^(NSMutableDictionary *attributes) { [attributes removeObjectForKey:name]; });
+        return;
+    }
     CFAttributedStringRemoveAttribute((CFMutableAttributedStringRef)self,
                                       NSToCFRange(range), (CFStringRef)name);
 }
 
 - (void)appendAttributedString:(NSAttributedString *)string {
-    CFIndex length = CFAttributedStringGetLength((CFAttributedStringRef)self);
+    NSUInteger length = [self length];
 
-    [self replaceCharactersInRange:NSMakeRange((NSUInteger)length, 0)
+    [self replaceCharactersInRange:NSMakeRange(length, 0)
               withAttributedString:string];
 }
 
@@ -215,18 +314,21 @@ longestEffectiveRange:(NSRangePointer)range
 }
 
 - (void)setAttributedString:(NSAttributedString *)string {
-    CFIndex length = CFAttributedStringGetLength((CFAttributedStringRef)self);
+    NSUInteger length = [self length];
 
-    [self replaceCharactersInRange:NSMakeRange(0, (NSUInteger)length)
+    [self replaceCharactersInRange:NSMakeRange(0, length)
               withAttributedString:string];
 }
 
+// a subclass that batches its edits overrides these, one that does not has nothing to batch
 - (void)beginEditing {
-    CFAttributedStringBeginEditing((CFMutableAttributedStringRef)self);
+    if (isCFInstance(self))
+        CFAttributedStringBeginEditing((CFMutableAttributedStringRef)self);
 }
 
 - (void)endEditing {
-    CFAttributedStringEndEditing((CFMutableAttributedStringRef)self);
+    if (isCFInstance(self))
+        CFAttributedStringEndEditing((CFMutableAttributedStringRef)self);
 }
 
 // collects the runs first so the block may mutate the receiver, reverse walks them backwards

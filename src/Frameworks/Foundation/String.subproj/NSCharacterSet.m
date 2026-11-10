@@ -12,6 +12,11 @@
 
 extern Boolean _CFIsObjC(CFTypeID typeID, void *obj);
 
+// a class constructor hands back an autoreleased object, CF creates are owned and may be NULL
+static inline id __NSAutoreleaseCF(CFTypeRef cf) {
+    return cf != NULL ? (id)CFAutorelease(cf) : nil;
+}
+
 extern Boolean _CFCharacterSetIsLongCharacterMember(CFCharacterSetRef set,
                                                      UTF32Char character);
 
@@ -112,13 +117,13 @@ static NSCharacterSet *_urlComponentSet(CFStringRef punctuation) {
 }
 
 + (NSCharacterSet *)characterSetWithCharactersInString:(NSString *)string {
-    return (NSCharacterSet *)CFCharacterSetCreateWithCharactersInString(
-        kCFAllocatorDefault, (CFStringRef)string);
+    return (NSCharacterSet *)__NSAutoreleaseCF(CFCharacterSetCreateWithCharactersInString(
+        kCFAllocatorDefault, (CFStringRef)string));
 }
 
 + (NSCharacterSet *)characterSetWithRange:(NSRange)range {
-    return (NSCharacterSet *)CFCharacterSetCreateWithCharactersInRange(
-        kCFAllocatorDefault, CFRangeMake((CFIndex)range.location, (CFIndex)range.length));
+    return (NSCharacterSet *)__NSAutoreleaseCF(CFCharacterSetCreateWithCharactersInRange(
+        kCFAllocatorDefault, CFRangeMake((CFIndex)range.location, (CFIndex)range.length)));
 }
 
 - (BOOL)characterIsMember:(unichar)character {
@@ -132,8 +137,8 @@ static NSCharacterSet *_urlComponentSet(CFStringRef punctuation) {
 }
 
 - (NSCharacterSet *)invertedSet {
-    return (NSCharacterSet *)CFCharacterSetCreateInvertedSet(kCFAllocatorDefault,
-                                                             (CFCharacterSetRef)self);
+    return (NSCharacterSet *)__NSAutoreleaseCF(CFCharacterSetCreateInvertedSet(kCFAllocatorDefault,
+                                                             (CFCharacterSetRef)self));
 }
 
 /* CoreFoundation uses one runtime class for mutable and immutable sets. */
@@ -209,7 +214,7 @@ static void __NSCharacterSetBridgeInit(void) {
     CFMutableCharacterSetRef set = CFCharacterSetCreateMutable(kCFAllocatorDefault);
     CFCharacterSetAddCharactersInRange(set, CFRangeMake((CFIndex)range.location,
                                                         (CFIndex)range.length));
-    return (NSMutableCharacterSet *)set;
+    return (NSMutableCharacterSet *)__NSAutoreleaseCF(set);
 }
 
 @end

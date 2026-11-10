@@ -25,8 +25,14 @@ extern CFStringRef _NSCopyFormattingDescription(void *value, const void *locale)
  * ___CFConstantStringClassReference, so that symbol has to *be* a class.
  * CoreFoundation only references it (CFRuntime.c) - Foundation owns the class,
  * matching Apple, where __NSCFConstantString lives in Foundation. */
+#if ARGON_LIBOBJC2
+// ELF has no underscore prefix, and libobjc2 names the class ._OBJC_CLASS_NSCFString
+__asm__(".globl __CFConstantStringClassReference\n\t"
+        ".set __CFConstantStringClassReference, ._OBJC_CLASS_NSCFString");
+#else
 __asm__(".globl ___CFConstantStringClassReference\n\t"
         ".set ___CFConstantStringClassReference, _OBJC_CLASS_$_NSCFString");
+#endif
 
 CF_EXPORT void *__CFConstantStringClassReferencePtr;
 extern Boolean _CFIsObjC(CFTypeID typeID, void *obj);

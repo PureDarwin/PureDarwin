@@ -50,6 +50,8 @@ typedef NS_OPTIONS(NSUInteger, NSBinarySearchingOptions) {
  * result is mutable. */
 + (nullable instancetype)arrayWithContentsOfFile:(NSString *_Nonnull)path;
 + (nullable instancetype)arrayWithContentsOfURL:(NSURL *_Nonnull)url;
++ (nullable instancetype)arrayWithContentsOfURL:(NSURL *_Nonnull)url error:(NSError **)error;
+- (BOOL)writeToURL:(NSURL *_Nonnull)url error:(NSError **)error;
 
 - (NSUInteger)count;
 - (ObjectType)objectAtIndex:(NSUInteger)index;

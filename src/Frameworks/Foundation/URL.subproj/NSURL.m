@@ -18,6 +18,11 @@
 
 extern Boolean _CFIsObjC(CFTypeID typeID, void *obj);
 
+// a class constructor hands back an autoreleased object, CF creates are owned and may be NULL
+static inline id __NSAutoreleaseCF(CFTypeRef cf) {
+    return cf != NULL ? (id)CFAutorelease(cf) : nil;
+}
+
 @implementation NSURL
 
 /* Immutable and with no mutable counterpart, so a copy is the object itself.

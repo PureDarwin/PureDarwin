@@ -11,7 +11,12 @@
 
 #import <Foundation/NSObject.h>
 #import <Foundation/NSRunLoop.h>
+#if __has_include(<mach/mach.h>)
 #include <mach/mach.h>
+#else
+// Linux has no Mach, NSMachPort keeps its field type for the shared declarations
+typedef unsigned int mach_port_t;
+#endif
 
 @class NSRunLoop, NSDate, NSMutableArray, NSPortMessage;
 
