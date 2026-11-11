@@ -247,7 +247,8 @@ static MDNode *output_md(LLVMContext &c, const std::string &stage, const std::ve
   Md md(c);
   std::string x;
 
-  if (has(a, "user", &x) && stage == "vertex")
+  // the plugin names a field without an attribute generated(...), which takes the place of a user(...) one
+  if ((has(a, "user", &x) || has(a, "generated", &x)) && stage == "vertex")
     md.s("air.vertex_output").s(x);
   else if (stage == "vertex" && (a.empty() || (a.size() == 1 && a[0].empty())) && !name.empty())
     md.s("air.vertex_output").s(generated_name(lt, tname, name));
@@ -411,7 +412,7 @@ static Function *build_entry(Module &m, Entry &e) {
         fm.i(gi + j);
         if (e.stage == "vertex" && has(a, "attribute", &x))
           fm.s("air.vertex_input").s("air.location_index").i(attr_int(x)).i(1);
-        else if (has(a, "user", &x))
+        else if (has(a, "user", &x) || has(a, "generated", &x))
           fm.s("air.fragment_input").s(x), interp(fm, a);
         else if (e.stage == "fragment" && (a.empty() || (a.size() == 1 && a[0].empty())))
           fm.s("air.fragment_input").s(generated_name(fl.f[2], fl.f[3], fl.f[5])), interp(fm, a);
