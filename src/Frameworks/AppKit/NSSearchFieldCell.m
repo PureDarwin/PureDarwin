@@ -169,6 +169,8 @@ static BOOL hasDefaultImage(NSButtonCell *cell,NSString *name) {
 }
 
 -(void)drawWithFrame:(NSRect)frame inView:(NSView *)control {
+   PD_TRACE(@"%@ bezelStyle=%d bezeled=%d bordered=%d drawsBackground=%d editable=%d value=\"%@\" frame=%@ flipped=%d %@ controlView=%@",[self class],(int)[self bezelStyle],[self isBezeled],[self isBordered],[self drawsBackground],[self isEditable],
+            [self stringValue],NSStringFromRect(frame),PDContextIsFlipped(),PDTraceAppearance(control),control ? NSStringFromClass([control class]) : @"nil");
    PDDrawContext c=PDCurrentDrawContext(control);
    NSColor *background=[self drawsBackground] ? [self backgroundColor] : nil;
    NSRect glass=[self searchButtonRectForBounds:frame];

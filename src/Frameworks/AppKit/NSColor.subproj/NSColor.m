@@ -8,6 +8,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 #include <dispatch/dispatch.h>
 #include <pthread.h>
+#import <AppKit/PDControlDrawing.h>
 #import <AppKit/NSColor.h>
 #import <AppKit/NSColorSpace.h>
 #import <AppKit/NSDisplay.h>
@@ -740,6 +741,17 @@ static const struct { const char *name; CGFloat r, g, b, a; } _pdSystemDarkColor
 }
 
 +(NSColor *)colorWithCatalogName:(NSString *)catalogName colorName:(NSString *)colorName {
+   if(PDTraceOn()){
+    static NSMutableSet *seen=nil;
+    NSString *key=[NSString stringWithFormat:@"%@/%@",catalogName,colorName];
+
+    if(seen==nil)
+     seen=[[NSMutableSet alloc] init];
+    if(![seen containsObject:key]){
+     [seen addObject:key];
+     PDTrace(@"NSColor named %@",key);
+    }
+   }
     // system colors are shared and never freed, as on macOS, where apps keep them unretained in static tables.
     // each resolves against the drawing appearance when used, so one instance per name serves every appearance
     if([catalogName isEqualToString:@"System"]) {

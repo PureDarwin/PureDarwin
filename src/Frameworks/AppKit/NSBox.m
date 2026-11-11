@@ -299,6 +299,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(void)drawRect:(NSRect)rect {
+   PD_TRACE(@"NSBox type=%d border=%d titlePosition=%d title=\"%@\" transparent=%d bounds=%@ fill=%@ borderColor=%@ borderWidth=%g radius=%g %@",(int)_boxType,(int)_borderType,(int)_titlePosition,[self title],[self isTransparent],NSStringFromRect(_bounds),[self fillColor],[self borderColor],[self borderWidth],[self cornerRadius],PDTraceAppearance(self));
    NSRect              grooveRect=_bounds;
    NSRect              titleRect=[self titleRect];
    BOOL                drawTitle=YES;
@@ -347,16 +348,22 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
         if (_boxType == NSBoxCustom){
 
-                // a custom box without colours of its own draws only the 1 point grey line macOS draws
+                // a custom box fills and strokes its own rounded rect, with a 1 point grey line when it has no colours
+                CGFloat width=[self borderWidth]>0 ? [self borderWidth] : 1;
+                CGFloat radius=[self cornerRadius];
+                NSRect inner=NSInsetRect(_bounds,width/2,width/2);
+                NSBezierPath *path=radius>0 ? [NSBezierPath bezierPathWithRoundedRect:inner xRadius:radius yRadius:radius] : [NSBezierPath bezierPathWithRect:inner];
+
                 if([self fillColor]!=nil){
-                        [[self fillColor] set];
-                        NSRectFill(rect);
+                        [[self fillColor] setFill];
+                        [path fill];
                 }
 
                 if (_borderType != NSNoBorder)
                 {
-                        [([self borderColor]?:[NSColor colorWithCalibratedWhite:0.46 alpha:1]) set];
-                        NSFrameRectWithWidth(_bounds,[self borderWidth]>0 ? [self borderWidth] : 1);
+                        [([self borderColor]?:[NSColor colorWithCalibratedWhite:0.46 alpha:1]) setStroke];
+                        [path setLineWidth:width];
+                        [path stroke];
                 }
         } else if (_boxType == NSBoxSeparator) {
                 // These are just the simple divider lines

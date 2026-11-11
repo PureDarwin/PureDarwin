@@ -1136,7 +1136,7 @@ static char PDDestructiveActionKey;
 
 static char PDAllowedFileTypesKey, PDAllowedContentTypesKey, PDNameFieldLabelKey, PDAccessoryDisclosedKey;
 
-// the open panel offers the allowed types, content types count by their filename extensions
+// allowed types are extensions or type identifiers, macOS reports content types as their identifiers
 @implementation NSSavePanel (ContentTypes)
 
 - (NSArray *)allowedFileTypes
@@ -1147,31 +1147,48 @@ static char PDAllowedFileTypesKey, PDAllowedContentTypesKey, PDNameFieldLabelKey
 - (void)setAllowedFileTypes:(NSArray *)types
 {
     PDSet(self, &PDAllowedFileTypesKey, [[types copy] autorelease]);
+    PDSet(self, &PDAllowedContentTypesKey, nil);
 }
 
 - (NSArray *)allowedContentTypes
 {
-    return PDGet(self, &PDAllowedContentTypesKey) ?: [NSArray array];
+    NSArray *types = PDGet(self, &PDAllowedContentTypesKey);
+    Class utType = NSClassFromString(@"UTType");
+
+    if (types != nil || utType == nil)
+        return types ?: [NSArray array];
+
+    NSMutableArray *derived = [NSMutableArray array];
+    for (NSString *type in [self allowedFileTypes]) {
+        id ut = [type rangeOfString:@"."].location != NSNotFound ? [utType typeWithIdentifier:type] : [utType typeWithFilenameExtension:type];
+
+        if (ut != nil)
+            [derived addObject:ut];
+    }
+    return derived;
 }
 
 - (void)setAllowedContentTypes:(NSArray *)types
 {
-    NSMutableArray *extensions = [NSMutableArray array];
+    NSMutableArray *identifiers = [NSMutableArray array];
 
     for (id type in types) {
-        NSString *extension = [type respondsToSelector:@selector(preferredFilenameExtension)] ?
-            [type performSelector:@selector(preferredFilenameExtension)] : nil;
+        NSString *identifier = [type respondsToSelector:@selector(identifier)] ? [type performSelector:@selector(identifier)] : nil;
 
-        if ([extension length])
-            [extensions addObject:extension];
+        if ([identifier length])
+            [identifiers addObject:identifier];
     }
+    PDSet(self, &PDAllowedFileTypesKey, [identifiers count] ? identifiers : nil);
     PDSet(self, &PDAllowedContentTypesKey, [[types copy] autorelease]);
-    [self setAllowedFileTypes:[extensions count] ? extensions : nil];
 }
 
 - (NSString *)nameFieldLabel
 {
-    return PDGet(self, &PDNameFieldLabelKey) ?: @"Save As:";
+    NSString *label = PDGet(self, &PDNameFieldLabelKey);
+
+    if (label == nil && ![self isKindOfClass:[NSOpenPanel class]])
+        return @"Save As:";
+    return label;
 }
 
 - (void)setNameFieldLabel:(NSString *)label

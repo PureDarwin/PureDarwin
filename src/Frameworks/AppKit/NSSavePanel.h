@@ -58,8 +58,13 @@ enum {
 - (void)setTreatsFilePackagesAsDirectories:(BOOL)flag;
 
 - (void)setAccessoryView:(NSView *)view;
+- (BOOL)canCreateDirectories;
 - (void)setCanCreateDirectories:(BOOL)value;
+- (BOOL)allowsOtherFileTypes;
 - (void)setAllowsOtherFileTypes:(BOOL)value;
+
+- (void)ok:(id)sender;
+- (void)cancel:(id)sender;
 
 - (void)setMessage:(NSString *)message;
 - (NSString *)message;

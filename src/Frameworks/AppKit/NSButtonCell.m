@@ -858,6 +858,26 @@ static NSRect pushTitleRect(NSRect frame,NSUInteger i) {
    return NSMakeRect(frame.origin.x,NSMinY(frame)+floor((frame.size.height-base[i])/2),frame.size.width,height[i]);
 }
 
+// the bezel styles drawn by PDDrawBezelStyle, the disclosure triangle and the help button
+-(BOOL)_isModernOtherBezel {
+   if(_bezelStyle==NSDisclosureBezelStyle)
+    return YES;
+   if(![self isBordered])
+    return NO;
+   switch((NSUInteger)_bezelStyle){
+    case NSShadowlessSquareBezelStyle:
+    case NSTexturedSquareBezelStyle:
+    case NSHelpButtonBezelStyle:
+    case NSSmallSquareBezelStyle:
+    case NSTexturedRoundedBezelStyle:
+    case NSRoundRectBezelStyle:
+    case NSRecessedBezelStyle:
+    case NSInlineBezelStyle:
+     return YES;
+   }
+   return NO;
+}
+
 -(BOOL)_isModernDefault:(NSView *)controlView {
    NSWindow *window=[controlView window];
 
@@ -929,6 +949,43 @@ static NSRect titleLineRect(NSAttributedString *title,NSFont *font,CGFloat x,CGF
     return YES;
    }
 
+   if([self _isModernOtherBezel] && ([self image]==nil || [self imagePosition]==NSNoImage || _bezelStyle==NSDisclosureBezelStyle)){
+    NSRect body=PDBezelStyleBody(c,frame,_bezelStyle);
+    NSColor *color=nil;
+    NSRect titleRect;
+
+    if(_bezelStyle==NSDisclosureBezelStyle)
+     return YES;
+    if(_bezelStyle==NSHelpButtonBezelStyle){
+     NSFont *bold=[NSFont boldSystemFontOfSize:15];
+     NSDictionary *attributes=[NSDictionary dictionaryWithObjectsAndKeys:bold,NSFontAttributeName,[NSColor controlTextColor],NSForegroundColorAttributeName,nil];
+     NSAttributedString *mark=[[[NSAttributedString alloc] initWithString:@"?" attributes:attributes] autorelease];
+     NSRect disc=PDRectFromTop(frame,c.flipped,1,MIN(21,MIN(frame.size.width,frame.size.height)-2));
+     CGFloat w=ceil([mark size].width);
+
+     [mark _clipAndDrawInRect:titleLineRect(mark,bold,floor(NSMidX(frame)-w/2),w+1,NSMidY(disc),1,c.flipped)];
+     return YES;
+    }
+    if([title length]==0)
+     return YES;
+    // textured and inline titles are the secondary grey macOS uses
+    if(_bezelStyle==NSTexturedSquareBezelStyle || _bezelStyle==NSTexturedRoundedBezelStyle || _bezelStyle==NSInlineBezelStyle)
+     color=[self isEnabled] ? [NSColor colorWithCalibratedWhite:c.dark ? 0.7 : 0.42 alpha:1] : [NSColor colorWithCalibratedWhite:c.dark ? 0.45 : 0.72 alpha:1];
+    if(color!=nil && ![_titleOrAttributedTitle isKindOfClass:[NSAttributedString class]]){
+     NSMutableAttributedString *grey=[[title mutableCopy] autorelease];
+
+     [grey addAttribute:NSForegroundColorAttributeName value:color range:NSMakeRange(0,[grey length])];
+     if(_bezelStyle==NSInlineBezelStyle)
+      [grey addAttribute:NSFontAttributeName value:[NSFont boldSystemFontOfSize:[font pointSize]-2] range:NSMakeRange(0,[grey length])];
+     title=grey;
+    }
+    else
+     title=[self _modernTitle:title onAccent:NO];
+    titleRect=titleLineRect(title,font,NSMinX(body)+4,body.size.width-8,NSMidY(body),1,c.flipped);
+    [self drawTitle:title withFrame:titleRect inView:controlView];
+    return YES;
+   }
+
    if([self _isModernPushBezel] && ([self image]==nil || [self imagePosition]==NSNoImage)){
     NSRect bezel=[self _modernBezelRectForFrame:frame flipped:c.flipped];
     BOOL onAccent=[self _isModernDefault:controlView] && c.active && [self isEnabled] && _bezelStyle!=NSRegularSquareBezelStyle;
@@ -959,7 +1016,25 @@ static NSRect titleLineRect(NSAttributedString *title,NSFont *font,CGFloat x,CGF
 }
 
 -(void)drawBezelWithFrame:(NSRect)frame inView:(NSView *)controlView {
+   PD_TRACE(@"%@ drawBezelWithFrame state=%d highlighted=%d enabled=%d bezel=%d bordered=%d title=\"%@\" frame=%@ flipped=%d %@ controlView=%@",[self class],(int)[self state],[self isHighlighted],[self isEnabled],(int)_bezelStyle,[self isBordered],[self title],NSStringFromRect(frame),PDContextIsFlipped(),PDTraceAppearance(controlView),controlView ? NSStringFromClass([controlView class]) : @"nil");
+   // an empty frame draws nothing on macOS, Qt passes one for a popup's arrow
+   if(frame.size.width<1 || frame.size.height<1)
+    return;
    BOOL defaulted=([[controlView window] defaultButtonCell] == self);
+
+   if([self _isModernOtherBezel]){
+    PDDrawContext c=PDCurrentDrawContext(controlView);
+    BOOL pressed=([self highlightsBy]&(NSPushInCellMask|NSChangeGrayCellMask|NSChangeBackgroundCellMask)) && [self isHighlighted];
+    BOOL on=[self state]!=NSOffState && ([self showsStateBy]&(NSChangeGrayCellMask|NSChangeBackgroundCellMask|NSContentsCellMask));
+
+    if(_bezelStyle==NSDisclosureBezelStyle)
+     PDDrawDisclosure(c,frame,[self state]!=NSOffState,[self isEnabled]);
+    else if(_bezelStyle==NSHelpButtonBezelStyle)
+     PDDrawHelpButton(c,frame,pressed);
+    else
+     PDDrawBezelStyle(c,frame,_bezelStyle,on,pressed,[self isEnabled]);
+    return;
+   }
 
    if([self _isModernPushBezel]){
     PDDrawContext c=PDCurrentDrawContext(controlView);
@@ -1056,6 +1131,7 @@ static NSRect titleLineRect(NSAttributedString *title,NSFont *font,CGFloat x,CGF
 }
 
 -(void)drawImage:(NSImage *)image withFrame:(NSRect)rect inView:(NSView *)controlView {
+   PD_TRACE(@"%@ drawImage name=%@ size=%@ rect=%@",[self class],[image name],NSStringFromSize([image size]),NSStringFromRect(rect));
    BOOL enabled=[self isEnabled]?YES:![self imageDimsWhenDisabled];
    BOOL mixed=([self state]==NSMixedState)?YES:NO;
 
@@ -1133,6 +1209,9 @@ static NSSize scaledImageSizeInFrameSize(NSSize imageSize,NSSize frameSize,NSIma
 }
 
 -(void)drawInteriorWithFrame:(NSRect)frame inView:(NSView *)controlView {
+   PD_TRACE(@"%@ drawInteriorWithFrame title=\"%@\" frame=%@ flipped=%d %@",[self class],[self title],NSStringFromRect(frame),PDContextIsFlipped(),PDTraceAppearance(controlView));
+   if(frame.size.width<1 || frame.size.height<1)
+    return;
 /* This method gets the original button frame. We have to compensate for borders.
    There is some duplication of rect calculation which can be split out
  */

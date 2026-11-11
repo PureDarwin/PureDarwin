@@ -40,41 +40,40 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(NSArray *)filenames {
-   id ret=nil;
-   @synchronized(self)
-   {
-      ret=[[_filenames copy] autorelease];
-   }
-   return ret;
-}
+   NSArray        *urls=[self URLs];
+   NSMutableArray *result=[NSMutableArray arrayWithCapacity:[urls count]];
+   int             i,count=[urls count];
 
--(NSArray *)URLs {
-   NSArray        *paths=[self filenames];
-   NSMutableArray *result=[NSMutableArray arrayWithCapacity:[paths count]];
-   int             i,count=[paths count];
-   
    for(i=0;i<count;i++)
-    [result addObject:[NSURL fileURLWithPath:[paths objectAtIndex:i]]];
-    
+    [result addObject:[[urls objectAtIndex:i] path]];
+
    return result;
 }
 
+-(NSArray *)URLs {
+   return [self _chosenURLs];
+}
+
 -(int)runModalForDirectory:(NSString *)directory file:(NSString *)file types:(NSArray *)types {
-   [self _setFilename:file];
-   [self setDirectory:directory];
-   return [[NSDisplay currentDisplay] openPanel:self runModalForDirectory:directory file:file types:types];
+   if(directory!=nil)
+    [self setDirectory:directory];
+   if(file!=nil)
+    [self _setNameFieldValue:file];
+   if(types!=nil)
+    [self setAllowedFileTypes:types];
+   return [self _runFilePanelModal];
 }
 
 -(int)runModalForTypes:(NSArray *)types {
-   return [self runModalForDirectory:[self directory] file:nil types:types];
+   return [self runModalForDirectory:nil file:nil types:types];
 }
 
 -(int)runModalForDirectory:(NSString *)directory file:(NSString *)file {
-   return [self runModalForDirectory:directory file:file types:[self allowedFileTypes]];
+   return [self runModalForDirectory:directory file:file types:nil];
 }
 
 -(int)runModal {
-   return [self runModalForDirectory:nil file:nil types:[self allowedFileTypes]];
+   return [self _runFilePanelModal];
 }
 
 -(BOOL)allowsMultipleSelection {

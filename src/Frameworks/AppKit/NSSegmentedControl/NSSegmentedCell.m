@@ -312,6 +312,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(void)drawSegment:(NSInteger)idx inFrame:(NSRect)frame withView:(NSView *)view {
+   PD_TRACE(@"NSSegmentedCell segment=%d label=\"%@\" selected=%d rect=%@",(int)idx,[[_segments objectAtIndex:idx] label],[[_segments objectAtIndex:idx] isSelected],NSStringFromRect(frame));
    NSSegmentItem *segment=[_segments objectAtIndex:idx];
    PDDrawContext c=PDCurrentDrawContext(view);
    NSString *label=[segment label];
@@ -320,7 +321,19 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    BOOL enabled=[self isEnabled] && [segment isEnabled];
    NSRect body=PDRectFromTop(frame,c.flipped,1,frame.size.height-2);
 
-   if(selected && [self trackingMode]!=NSSegmentSwitchTrackingMomentary)
+   NSInteger style=[self segmentStyle];
+   BOOL separated=(style==8);
+   BOOL flat=(style==2 || style==4 || style==5 || style==6);
+   BOOL onAccent=NO;
+
+   // separated segments are their own capsules, the selected one in the accent gradient with a white title
+   if(separated){
+    if(selected)
+     onAccent=PDDrawSegmentAccent(c,body,enabled);
+    else
+     PDDrawSegmentTrack(c,body);
+   }
+   else if(selected && !flat && [self trackingMode]!=NSSegmentSwitchTrackingMomentary)
     PDDrawSegmentSelection(c,body);
    if(image!=nil){
     NSSize size=[image size];
@@ -333,6 +346,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    if([label length]){
     NSFont *font=[self _segmentFont];
     NSColor *color=enabled ? [NSColor controlTextColor] : [NSColor disabledControlTextColor];
+
+    if(onAccent)
+     color=[NSColor whiteColor];
+    else if(flat)
+     color=[NSColor colorWithCalibratedWhite:[[NSAppearance currentDrawingAppearance] _isDark] ? 0.75 : 0.35 alpha:1];
     NSDictionary *attributes=[NSDictionary dictionaryWithObjectsAndKeys:font,NSFontAttributeName,color,NSForegroundColorAttributeName,nil];
     NSSize size=[label sizeWithAttributes:attributes];
     CGFloat cap=[font capHeight]>0 ? [font capHeight] : [font ascender]*0.72;
@@ -347,6 +365,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 - (void)drawWithFrame:(NSRect)cellFrame inView:(NSView *)controlView {
+   PD_TRACE(@"NSSegmentedCell count=%d style=%d selected=%d frame=%@ flipped=%d %@ controlView=%@",(int)[self segmentCount],(int)[self segmentStyle],(int)[self selectedSegment],
+            NSStringFromRect(cellFrame),PDContextIsFlipped(),PDTraceAppearance(controlView),controlView ? NSStringFromClass([controlView class]) : @"nil");
    PDDrawContext c=PDCurrentDrawContext(controlView);
    int i=0, count=[self segmentCount];
    NSRect track=PDRectFromTop(NSInsetRect(cellFrame,2,0),c.flipped,floor((cellFrame.size.height-24)/2)+1,22);
@@ -355,7 +375,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
    _lastDrawRect=cellFrame;
    [self _layoutSegmentsInWidth:cellFrame.size.width];
-   PDDrawSegmentTrack(c,track);
+   if([self segmentStyle]!=8)
+    PDDrawSegmentTrack(c,track);
 
    for(i=0; i<count; i++)
     if([[_segments objectAtIndex:i] isSelected])
@@ -371,7 +392,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
       if(i==count-1)
        segmentFrame.size.width-=3;
       // dividers sit between two segments that are not selected
-      if(i>0 && i!=selected && i-1!=selected)
+      if(i>0 && i!=selected && i-1!=selected && [self segmentStyle]!=8)
        PDDrawSegmentDivider(c,track,x);
       [self drawSegment:i inFrame:segmentFrame withView:controlView];
       x+=w;

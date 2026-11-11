@@ -209,60 +209,50 @@ static char NSSavePanelCanCreateDirectoriesKey, NSSavePanelAllowsOtherFileTypesK
    _accessoryView=view;
 }
 
+-(BOOL)canCreateDirectories {
+   NSNumber *value=objc_getAssociatedObject(self,&NSSavePanelCanCreateDirectoriesKey);
+
+   if(value==nil)
+    return ![self isKindOfClass:[NSOpenPanel class]];
+
+   return [value boolValue];
+}
+
 -(void)setCanCreateDirectories:(BOOL)value {
-   NSUnimplementedMethod();
+   objc_setAssociatedObject(self,&NSSavePanelCanCreateDirectoriesKey,[NSNumber numberWithBool:value],OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+-(BOOL)allowsOtherFileTypes {
+   return [objc_getAssociatedObject(self,&NSSavePanelAllowsOtherFileTypesKey) boolValue];
 }
 
 -(void)setAllowsOtherFileTypes:(BOOL)value {
-   NSUnimplementedMethod();
+   objc_setAssociatedObject(self,&NSSavePanelAllowsOtherFileTypesKey,[NSNumber numberWithBool:value],OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
-- (void)beginSheetForDirectory:(NSString *)path
-						  file:(NSString *)name 
-				modalForWindow:(NSWindow *)docWindow
-				 modalDelegate:(id)modalDelegate 
-				didEndSelector:(SEL)didEndSelector 
-				   contextInfo:(void *)contextInfo
-{
-	id inv=[NSInvocation invocationWithMethodSignature:[self methodSignatureForSelector:@selector(_background_beginSheetForDirectory:file:modalForWindow:modalDelegate:didEndSelector:contextInfo:)]];
-	[inv setTarget:self];
-	[inv setSelector:@selector(_background_beginSheetForDirectory:file:modalForWindow:modalDelegate:didEndSelector:contextInfo:)];
-	[inv setArgument:&path atIndex:2];
-	[inv setArgument:&name atIndex:3];
-	[inv setArgument:&docWindow atIndex:4];
-	[inv setArgument:&modalDelegate atIndex:5];
-	[inv setArgument:&didEndSelector atIndex:6];
-	[inv setArgument:&contextInfo atIndex:7];
-	[inv retainArguments];
-	[inv performSelectorInBackground:@selector(invoke) withObject:nil];
-}
+typedef void (*NSSavePanelDidEndFunction)(id,SEL,id,int,void *);
 
-- (void)_selector_savePanelDidEnd:(NSSavePanel *)sheet returnCode:(int)returnCode  contextInfo:(void  *)contextInfo;
+// the sheet attaches to the document window and calls the old-style selector when it ends
+-(void)beginSheetForDirectory:(NSString *)path
+                         file:(NSString *)name
+               modalForWindow:(NSWindow *)docWindow
+                modalDelegate:(id)modalDelegate
+               didEndSelector:(SEL)didEndSelector
+                  contextInfo:(void *)contextInfo
 {
-	
-}
+   if(path!=nil)
+    [self setDirectory:path];
+   if(name!=nil)
+    [self _setNameFieldValue:name];
 
-- (void)_background_beginSheetForDirectory:(NSString *)path
-									  file:(NSString *)name 
-							modalForWindow:(NSWindow *)docWindow
-							 modalDelegate:(id)modalDelegate 
-							didEndSelector:(SEL)didEndSelector 
-							   contextInfo:(void *)contextInfo
-{
-	id pool=[NSAutoreleasePool new];
-	int ret=[self runModalForDirectory:path file:name];
-   
-	id inv=[NSInvocation invocationWithMethodSignature:[self methodSignatureForSelector:@selector(_selector_savePanelDidEnd:returnCode:contextInfo:)]];
-	
-	[inv setTarget:modalDelegate];
-	[inv setSelector:didEndSelector];
-	[inv setArgument:&self atIndex:2];
-	[inv setArgument:&ret atIndex:3];
-	[inv setArgument:&contextInfo atIndex:4];
-	[inv retainArguments];
-	
-	[inv performSelectorOnMainThread:@selector(invoke) withObject:nil waitUntilDone:YES];
-   [pool release];
+   [self _beginFilePanelForWindow:docWindow handler:^(NSInteger result){
+      if(modalDelegate!=nil && didEndSelector!=NULL){
+       NSSavePanelDidEndFunction function=(NSSavePanelDidEndFunction)[modalDelegate methodForSelector:didEndSelector];
+
+       if(function!=NULL)
+        function(modalDelegate,didEndSelector,self,(int)result,contextInfo);
+      }
+   }];
 }
 
 @end

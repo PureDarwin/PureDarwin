@@ -148,6 +148,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(void)drawRect:(NSRect)clipRect {
+   PD_TRACE(@"NSProgressIndicator %p draw style=%d indeterminate=%d min=%g max=%g value=%g animating=%d bounds=%@ window=%d %@",self,(int)_style,(int)_isIndeterminate,_minValue,_maxValue,_value,_animationTimer!=nil,
+            NSStringFromRect(_bounds),[self window]!=nil,PDTraceAppearance(self));
    if(_style==NSProgressIndicatorBarStyle){
     PDDrawContext c=PDCurrentDrawContext(self);
 
