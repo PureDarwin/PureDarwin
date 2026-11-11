@@ -41,6 +41,8 @@ COREGRAPHICS_EXPORT void CGDirectDisplaySetDiscoverer(void (*discover)(void));
 struct CGDirectDisplayPointerProvider {
     bool (*associate)(bool connected);
     bool (*warp)(CGPoint point);
+    // adds one hide or one show to the cursor's nesting count
+    void (*hide)(bool hide);
 };
 
 COREGRAPHICS_EXPORT void CGDirectDisplaySetPointerProvider(const struct CGDirectDisplayPointerProvider *provider);

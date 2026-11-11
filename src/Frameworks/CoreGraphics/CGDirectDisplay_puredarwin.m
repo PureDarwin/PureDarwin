@@ -580,6 +580,21 @@ CGError CGWarpMouseCursorPosition(CGPoint newCursorPosition) {
     return kCGErrorSuccess;
 }
 
+// one hide on the shared count, which [NSCursor hide] also adds to, every display shows the one cursor
+CGError CGDisplayHideCursor(CGDirectDisplayID display) {
+    if (pointerProvider == NULL || pointerProvider->hide == NULL)
+        return kCGErrorCannotComplete;
+    pointerProvider->hide(true);
+    return kCGErrorSuccess;
+}
+
+CGError CGDisplayShowCursor(CGDirectDisplayID display) {
+    if (pointerProvider == NULL || pointerProvider->hide == NULL)
+        return kCGErrorCannotComplete;
+    pointerProvider->hide(false);
+    return kCGErrorSuccess;
+}
+
 CGError CGDisplayMoveCursorToPoint(CGDirectDisplayID display, CGPoint point) {
     CGRect bounds = CGDisplayBounds(display);
 
