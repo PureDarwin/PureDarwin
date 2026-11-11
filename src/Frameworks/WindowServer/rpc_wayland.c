@@ -430,10 +430,12 @@ static void windowReleaseFrames(struct wsWindow *window);
 
 static bool pointerAssociate(bool connected);
 static bool pointerWarp(CGPoint point);
+static void pointerProviderHide(bool hide);
 
 static const struct CGDirectDisplayPointerProvider pointerProvider = {
     .associate = pointerAssociate,
     .warp = pointerWarp,
+    .hide = pointerProviderHide,
 };
 
 static void registryGlobal(void *data, struct wl_registry *registry, uint32_t name,
@@ -1010,7 +1012,20 @@ static int windowPresentDamage(struct wsWindow *window, int dx, int dy, int dw, 
         }
     }
 
+    // stale rects can predate a resize, so they may lie outside the current size
+    cx1 = cx1 > w ? w : cx1, cy1 = cy1 > h ? h : cy1;
+    if (cx0 >= cx1 || cy0 >= cy1)
+        cx0 = cy0 = cx1 = cy1 = 0;
+
     size_t pitch = (size_t)w * 4, copied = 0;
+
+    // both buffers must hold a full w x h image, report and skip the copy if not
+    if (cx0 < cx1 && (frame->size < pitch * (size_t)h || window->pixelsSize < pitch * (size_t)h ||
+                      frame->w != w || frame->h != h || cx0 < 0 || cy0 < 0)) {
+        fprintf(stderr, "WindowServer: window %d present skipped, %dx%d pixelsSize %zu frame %dx%d size %zu rect %d,%d-%d,%d\n",
+                window->windowID, w, h, window->pixelsSize, frame->w, frame->h, frame->size, cx0, cy0, cx1, cy1);
+        cx0 = cy0 = cx1 = cy1 = 0;
+    }
 
     if (cx0 < cx1) {
         if (cx0 == 0 && cx1 == w) {
@@ -1338,14 +1353,30 @@ void _windowServerSetCursorImage(const void *argb, int width, int height, int ho
     pthread_mutex_unlock(&cursor.lock);
 }
 
-void _windowServerSetCursorHidden(int hidden) {
+// hides nest as on macOS, NSCursor and CGDisplayHideCursor share the count and each show undoes one hide
+static void cursorAdjustHidden(int delta) {
+    static int count;
+
     if (!ensureConnected())
         return;
     pthread_mutex_lock(&cursor.lock);
-    cursor.hidden = hidden;
+    count += delta;
+    if (count < 0)
+        count = 0;
+    cursor.hidden = count > 0;
+    if (getenv("PD_WS_TRACE"))
+        fprintf(stderr, "WindowServer: cursor hide count %d, inside %d\n", count, cursor.inside);
     cursorApplyLocked();
     wl_display_flush(ws.display);
     pthread_mutex_unlock(&cursor.lock);
+}
+
+void _windowServerSetCursorHidden(int hidden) {
+    cursorAdjustHidden(hidden ? 1 : -1);
+}
+
+static void pointerProviderHide(bool hide) {
+    cursorAdjustHidden(hide ? 1 : -1);
 }
 
 
