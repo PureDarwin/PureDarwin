@@ -178,6 +178,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSAccessibilityElement.h>
 #import <AppKit/NSModernAppKit.h>
 #import <AppKit/NSLayoutAnchor.h>
+#import <AppKit/NSStackView.h>
 #import <AppKit/NSGlassEffectView.h>
 #import <AppKit/NSMenuItemBadge.h>
 

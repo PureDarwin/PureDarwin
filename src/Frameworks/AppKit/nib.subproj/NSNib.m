@@ -23,6 +23,35 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 NSString * const NSNibOwner=@"NSOwner";
 NSString * const NSNibTopLevelObjects=@"NSNibTopLevelObjects";
 
+// a nib directory from Xcode 9 on holds keyedobjects-<OS>.nib copies, 101300 for 10.13 and 110000 for 11.0, and
+// macOS takes the newest its version allows, the oldest when none does
+static NSString *keyedObjectsInNibDirectory(NSString *path) {
+   NSString *plain=[[path stringByAppendingPathComponent:@"keyedobjects"] stringByAppendingPathExtension:@"nib"];
+   NSOperatingSystemVersion os=[[NSProcessInfo processInfo] operatingSystemVersion];
+   NSInteger current=os.majorVersion*10000+os.minorVersion*100+os.patchVersion;
+   NSInteger best=-1,lowest=-1;
+   NSString *name;
+
+   if([[NSFileManager defaultManager] fileExistsAtPath:plain])
+    return plain;
+   for(name in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:path error:NULL]){
+    NSInteger version;
+
+    if(![name hasPrefix:@"keyedobjects-"] || ![[name pathExtension] isEqualToString:@"nib"])
+     continue;
+    version=[[[name stringByDeletingPathExtension] substringFromIndex:13] integerValue];
+    if(version<=current && version>best)
+     best=version;
+    if(lowest<0 || version<lowest)
+     lowest=version;
+   }
+   if(best<0)
+    best=lowest;
+   if(best<0)
+    return plain;
+   return [path stringByAppendingPathComponent:[NSString stringWithFormat:@"keyedobjects-%ld.nib",(long)best]];
+}
+
 @implementation NSNib
 
 -initWithContentsOfFile:(NSString *)path {
@@ -33,7 +62,7 @@ NSString * const NSNibTopLevelObjects=@"NSNibTopLevelObjects";
    BOOL      isDirectory=NO;
 
 	if([[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDirectory] && isDirectory)
-    keyedobjects=[[path stringByAppendingPathComponent:@"keyedobjects"] stringByAppendingPathExtension:@"nib"];
+    keyedobjects=keyedObjectsInNibDirectory(path);
    
    if(!keyedobjects && !isDirectory)
       keyedobjects=path; // assume new-style compiled xib

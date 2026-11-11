@@ -253,7 +253,8 @@ static double doubleOf(NibValue *v) {
     return (NSInteger)intOf([self valueForKey:key]);
 }
 
-- (CGFloat)decodeFloatForKey:(NSString *)key {
+// float as NSCoder declares it, a CGFloat return reaches a caller through the float declaration as its low half, 0
+- (float)decodeFloatForKey:(NSString *)key {
     return (float)doubleOf([self valueForKey:key]);
 }
 

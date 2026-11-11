@@ -400,6 +400,16 @@ NSString * const NSSpellingStateAttributeName=@"NSSpellingStateAttributeName"; /
 NSFont *NSFontAttributeInDictionary(NSDictionary *dictionary) {
    NSFont *font=[dictionary objectForKey:NSFontAttributeName];
 
+   // a CTFont stands in for an NSFont on macOS (toll-free bridged), Qt puts them in its attributes: the NSFont of the same
+   // face and size takes its place, as the text system only knows NSFont
+   if(font!=nil && ![font isKindOfClass:[NSFont class]] && [font respondsToSelector:@selector(copyName)] &&
+      [font respondsToSelector:@selector(pointSize)]){
+    NSString *name=[(id)font performSelector:@selector(copyName)];
+    CGFloat   size=[(NSFont *)font pointSize];
+
+    font=[NSFont fontWithName:name size:size];
+    [name release];
+   }
    if(font==nil)
     font=[NSFont fontWithName:@"Inter-Regular" size:12.0];
 
