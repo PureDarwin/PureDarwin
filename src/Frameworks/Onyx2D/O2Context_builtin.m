@@ -478,7 +478,8 @@ static O2GlyphCacheEntry *cachedGlyph(FT_Face face,FT_F26Dot6 size,FT_UInt glyph
      glyphCacheCount=0;
      return cachedGlyph(face,size,glyph,phase);
     }
-    if(FT_Load_Glyph(face,glyph,FT_LOAD_TARGET_LIGHT|FT_LOAD_NO_BITMAP)!=0)
+    // unhinted as macOS draws, light hinting snapped the x-height up a pixel and squeezed small details like the dot of an i
+    if(FT_Load_Glyph(face,glyph,FT_LOAD_NO_HINTING|FT_LOAD_NO_BITMAP)!=0)
      return NULL;
     if(face->glyph->format==FT_GLYPH_FORMAT_OUTLINE)
      FT_Outline_Translate(&face->glyph->outline,phase*16,0);

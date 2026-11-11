@@ -7,6 +7,8 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
 #import <Onyx2D/O2ImageSource_ICNS.h>
+#import <Onyx2D/O2ImageSource.h>
+#include <string.h>
 #import <Onyx2D/O2DataProvider.h>
 #import <Onyx2D/O2ColorSpace.h>
 #import <Onyx2D/O2Image.h>
@@ -196,6 +198,22 @@ static uint32_t nextUnsigned32(O2ImageSource_ICNS *self) {
    bool     maskFollows=FALSE;
    
    //NSLog(@" .icns icon type=%c %c %c %c",type>>24,type>>16,type>>8,type);
+
+   // ic07 to ic14 and other modern entries hold a whole PNG file, whatever the tag
+   if(length>=8 && _position+length<=_length && memcmp(_bytes+_position,"\x89PNG\r\n\x1a\n",8)==0){
+    NSData *png=[[NSData alloc] initWithBytes:_bytes+_position length:length];
+    O2ImageSourceRef source=[O2ImageSource newImageSourceWithData:(CFDataRef)png options:NULL];
+    O2Image *image=source!=NULL ? [source createImageAtIndex:0 options:nil] : NULL;
+
+    if(image!=NULL){
+     [_images addObject:image];
+     O2ImageRelease(image);
+    }
+    [source release];
+    [png release];
+    _position+=length;
+    return;
+   }
 
    switch(type){
    
