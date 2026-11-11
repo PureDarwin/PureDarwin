@@ -170,6 +170,8 @@
 , tegra210Dtb ? null
 , tx1GlRootArm64Bundle ? null
 , tx1DesktopArm64Bundle ? null
+, a690GlArm64Bundle ? null
+, argonMsmArm64Bundle ? null
 , kextsBuild
 , launchctlBuild
 , launchdBuild
@@ -1349,8 +1351,26 @@ let
       ramdiskArm64Sc8280xpBuild = ramdiskArm64T8010Build.override {
         kc = kcArm64Sc8280xpReleaseBuild;
         xnuLoader = xnuLoaderArm64Sc8280xp;
-        extraPackages = [ zshArm64Build libiconvArm64Build toyboxArm64Build adrenoFirmwareBuild ];
+        extraPackages = [ zshArm64Build libiconvArm64Build toyboxArm64Build adrenoFirmwareBuild ]
+          ++ lib.optional (a690GlArm64Bundle != null) a690GlArm64Bundle;
+        ramdiskMB = 448;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=0 rd=md0 hid-legacy-shim=1";
+      };
+      # X13s disk image: ESP + read-write ext4 root on the boot stick, no ramdisk
+      imageArm64Sc8280xpBuild = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystemArm64VirtMinimal;
+        extraPackages = [ zshArm64Build libiconvArm64Build toyboxArm64Build adrenoFirmwareBuild ]
+          ++ lib.optional (a690GlArm64Bundle != null) a690GlArm64Bundle
+          ++ lib.optional (argonMsmArm64Bundle != null) argonMsmArm64Bundle;
+        kc = kcArm64Sc8280xpReleaseBuild;
+        xnuLoader = xnuLoaderArm64Sc8280xp;
+        apfsprogs = pkgs.apfsprogs;
+        efiBinary = "BOOTAA64.EFI";
+        espMB = 256;
+        rootMB = 2048;
+        rootUUID = "5c8a1f3e-2b7d-4e91-a6c4-0d3f8e2b9a17";
+        imageFileName = "puredarwin-arm64-sc8280xp.img";
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=0 hid-legacy-shim=1 msgbuf=1048576 boot-uuid=5C8A1F3E-2B7D-4E91-A6C4-0D3F8E2B9A17 pdmsm=1";
       };
       imageArm64Bcm2837Build = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemArm64VirtMinimal;
@@ -2583,6 +2603,7 @@ EOF
       ramdisk-arm64-tegra210-mainline-dtb = ramdiskArm64Tegra210MainlineDtbBuild;
       ramdisk-arm64-tegra210-sd-mainline-dtb = ramdiskArm64Tegra210SdMainlineDtbBuild;
       ramdisk-arm64-sc8280xp = ramdiskArm64Sc8280xpBuild;
+      image-arm64-sc8280xp = imageArm64Sc8280xpBuild;
       kc-arm64-t8010 = kcArm64T8010ReleaseBuild;
       kc-arm64-virt4k-debug = kcArm64Virt4kDebugBuild;
       kc-arm64-sun50i = kcArm64Sun50iReleaseBuild;

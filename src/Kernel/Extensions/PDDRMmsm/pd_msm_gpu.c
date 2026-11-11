@@ -187,13 +187,18 @@ pd_msm_gpu_completed(struct pd_msm_dev *mdev)
 int
 pd_msm_gpu_wait(struct pd_msm_dev *mdev, u32 seqno, s64 timeout_ns)
 {
-	u64 deadline = ktime_get_ns() + (timeout_ns > 0 ? timeout_ns : 0);
+	u64 start = ktime_get_ns(), deadline = start + (timeout_ns > 0 ? timeout_ns : 0);
+    bool dumped = false;
 
 	for (;;) {
 		if ((s32)(pd_msm_gpu_completed(mdev) - seqno) >= 0)
 			break;
 		if (timeout_ns <= 0 || ktime_get_ns() >= deadline)
 			return (-ETIMEDOUT);
+        if (!dumped && ktime_get_ns() - start > 1000000000ull && mdev->info->funcs->dump != NULL) {
+            mdev->info->funcs->dump(mdev);
+            dumped = true;
+        }
 		usleep_range(50, 100);
 	}
 	if (mdev->info->funcs->fence_ack != NULL)

@@ -29,6 +29,7 @@
 #define CP_SQE_INSTR_BASE               0x0830
 #define RBBM_INT_0_STATUS               0x0201
 #define RBBM_STATUS                     0x0210
+#define RBBM_STATUS3                    0x0213
 
 #define RING_DWORDS                     (RING_BYTES / 4)
 #define RB_CNTL_32K                     0x0000020c
@@ -75,6 +76,13 @@ static void gpu_write64(struct pd_msm_dev *mdev, u32 word, u64 v)
 {
     gpu_write(mdev, word, (u32)v);
     gpu_write(mdev, word + 1, (u32)(v >> 32));
+}
+
+static u64
+gpu_read64(struct pd_msm_dev *mdev, u32 word)
+{
+    u64 low = gpu_read(mdev, word);
+    return (low | (u64)gpu_read(mdev, word + 1) << 32);
 }
 
 static u32
@@ -483,8 +491,12 @@ a6xx_submit(struct pd_msm_dev *mdev, struct drm_file *file, const u64 *ib_iova,
     u64 fence = g->memptrs->iova;
     int error;
     
-    if ((error = ring_reserve(mdev, nib * 4 + 7)) != 0)
+    if ((error = ring_reserve(mdev, nib * 4 + 11)) != 0)
         return (error);
+    ring_emit(g, pkt7(CP_EVENT_WRITE, 1));
+    ring_emit(g, 0x18); // PC_CCU_INVALIDATE_DEPTH = 0x18
+    ring_emit(g, pkt7(CP_EVENT_WRITE, 1));
+    ring_emit(g, 0x19); // PC_CCU_INVALIDATE_COLOR = 0x19
     for (int i = 0; i < nib; i++) {
         ring_emit(g, pkt7(CP_INDIRECT_BUFFER, 3));
         ring_emit(g, (u32)ib_iova[i]);
@@ -673,11 +685,32 @@ out:
     return (error);
 }
 
+static void
+a6xx_dump(struct pd_msm_dev *mdev)
+{
+    struct pd_msm_gpu *g = &mdev->gpu;
+    struct a6xx_state *st = g->gen;
+    
+    gmu_write(st, GMU_PWR_COL_KEEPALIVE, 1);
+    printf("pd msm: a6xx: dump: fence %u of %u, rptr %u wptr %u, rbbm_status 0x%08x status3 0x%08x "
+           "int0 0x%08x\n", a6xx_completed(mdev), g->seqno, ring_rptr(g), g->wptr,
+           gpu_read(mdev, RBBM_STATUS), gpu_read(mdev, RBBM_STATUS3),
+           gpu_read(mdev, RBBM_INT_0_STATUS));
+    printf("pd msm: a6xx: dump: ib1 0x%llx rem %u, ib2 0x%llx rem %u, hw_fault 0x%08x "
+           "cp_int 0x%08x protect 0x%08x\n",
+           (unsigned long long)gpu_read64(mdev, 0x0928), gpu_read(mdev, 0x092a),
+           (unsigned long long)gpu_read64(mdev, 0x092b), gpu_read(mdev, 0x092d),
+           gpu_read(mdev, 0x0821), gpu_read(mdev, 0x0823), gpu_read(mdev, 0x0824));
+    gmu_write(st, GMU_PWR_COL_KEEPALIVE, 0);
+    g->iommu->dump_fault(g->iommu_priv);
+}
+
 const struct pd_msm_gpu_funcs pd_msm_a6xx_funcs = {
     .init = a6xx_init,
     .start = a6xx_start,
     .submit = a6xx_submit,
     .completed = a6xx_completed,
     .fence_ack = a6xx_fence_ack,
+    .dump = a6xx_dump,
     .selftest_ib = a6xx_selftest_ib,
 };

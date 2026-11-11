@@ -972,6 +972,39 @@ let
     done
     rm -rf $out/nix-support $out/include $out/lib/pkgconfig
   '';
+  # the a690's gles stack for the x13s ramdisk: freedreno, pdgltri + dylibs
+  a690GlArm64Bundle = pkgs.runCommand "puredarwin-a690-gl-arm64" { } ''
+    otool=${nativeMesonToolsDir}/bin/otool
+    place() {
+      for f in "$@"; do
+        id=$($otool -D "$f" | sed -n 2p)
+        case "$id" in
+          /*) [ -e "$out$id" ] || { mkdir -p "$out$(dirname "$id")"; cp -L "$f" "$out$id"; } ;;
+          *) echo "a690 gl: $f has install name '$id', not placed" ;;
+        esac
+      done
+    }
+    mkdir -p $out/usr/sbin
+    cp ${pdgltriMsmArm64Build}/usr/sbin/pdgltri $out/usr/sbin/
+    place ${mesaMsmArm64Build}/usr/lib/*.dylib
+    place $(find -L ${libdrmDriArm64Build} ${llvmCrossArm64Build} ${waylandArm64Build} \
+      ${xvfbZlibArm64Build} ${expatArm64Build} \
+      \( -name 'libdrm*.dylib' -o -name 'libLLVM*.dylib' -o -name 'libwayland-client*.dylib' \
+         -o -name 'libz*.dylib' -o -name 'libexpat*.dylib' \) -print)
+    chmod -R u+w $out
+    ln -s libSystem.B.dylib $out/usr/lib/libm.dylib
+    missing=0
+    for f in $out/usr/sbin/pdgltri $(find $out -name '*.dylib'); do
+      for dep in $($otool -L "$f" | tail -n +2 | awk '{ print $1 }'); do
+        [ -e "$out$dep" ] || [ -e "${splitBaseSystemArm64VirtMinimal}$dep" ] && continue
+        [ -L "$out$dep" ] && [ -e "${splitBaseSystemArm64VirtMinimal}$(dirname "$dep")/$(readlink "$out$dep")" ] && continue
+        echo "a690 gl: $f loads $dep, which nothing provides"
+        missing=1
+      done
+    done
+    [ $missing = 0 ]
+    du -sh $out
+  '';
   neuswcMsmArm64Build = mkArm64Build ./pkgs/wayland/neuswc.nix {
     pdwmSource = ../src/Userspace/pdwm/pdwm.c;
     corefoundation = coreFoundationArm64Build;
@@ -3702,6 +3735,7 @@ in
     calculatorMsmArm64Build
     argonDesktopMsmArm64Bundle
     pdgltriMsmArm64Build
+    a690GlArm64Bundle
     mesaPvrNativeToolsBuild
     mesaPowervrArm64Build
     vulkanLoaderArm64Build

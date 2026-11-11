@@ -46,14 +46,38 @@ static const struct pd_msm_info a690_info = {
     .core_clk = NULL,               // the gmu sets the gpu clock through hfi votes
     // user and kernel buffers share one range below 2^48, the smmu's ttbr0 half
     .va_start = 0x100000000ull,
-    .va_end = 0x1000000000000ull,
+    .va_end = 0x0000fffffffff000ull,
     .dma_max = ~0ull,
+    // msm-uapi.md reports 0x1fffffffff000 under linux, in the ttbr1 half. bank 0 has no ttbr1
+    .uche_trap_base = 0x0000fffffffff000ull,
+    .highest_bank_bit = 16,
+    .ubwc_swizzle = 6,
+    .macrotile_mode = 1,
     .funcs = &pd_msm_a6xx_funcs,
 };
 
 struct pd_msm_file {
 	u32	next_queue;
 };
+
+// params only a6xx and later answer (msm-uapi.md, identity a690)
+static int
+get_param_a6xx(const struct pd_msm_info *info, struct drm_msm_param *p)
+{
+    if (info->uche_trap_base == 0)
+        return -EINVAL;
+    switch (p->param) {
+    case MSM_PARAM_VA_START:                p->value = info->va_start; break;
+    case MSM_PARAM_VA_SIZE:                 p->value = info->va_end - info->va_start; break;
+    case MSM_PARAM_UCHE_TRAP_BASE:          p->value = info->uche_trap_base; break;
+    case MSM_PARAM_HIGHEST_BANK_BIT:        p->value = info->highest_bank_bit; break;
+    case MSM_PARAM_UBWC_SWIZZLE:            p->value = info->ubwc_swizzle; break;
+    case MSM_PARAM_MACROTILE_MODE:          p->value = info->macrotile_mode; break;
+    default:
+            return -EINVAL;
+    }
+    return 0;
+}
 
 static int
 get_param(struct drm_device *drm, void *data, struct drm_file *file)
@@ -74,7 +98,7 @@ get_param(struct drm_device *drm, void *data, struct drm_file *file)
 	case MSM_PARAM_FAULTS:		p->value = 0; break;
 	case MSM_PARAM_SUSPENDS:	p->value = 0; break;
 	default:
-		return (-EINVAL);
+		return (get_param_a6xx(info, p));
 	}
 	return (0);
 }

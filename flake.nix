@@ -4448,6 +4448,7 @@
             calculatorMsmArm64Build
             argonDesktopMsmArm64Bundle
             pdgltriMsmArm64Build
+            a690GlArm64Bundle
             mesaPvrNativeToolsBuild
             mesaPowervrArm64Build
             vulkanLoaderArm64Build
@@ -5269,7 +5270,7 @@
               iomediacheckBuild ioregBuild isDarwin jsoncBuild kc-tools kernelArm64Build kernelArm64VirtBuild
               kernelArm64VirtDebugBuild kernelArm64VirtAmpBuild kernelArm64T8010Build kernelArm64T8010DebugBuild kernelArm64S8000Build kernelArm64S8000DebugBuild kernelArm64T8103Build kernelArm64T8103DebugBuild kernelArm64Bcm2837Build kernelArm64Bcm2837DebugBuild kernelArm64Sun50iBuild kernelArm64Sun50iDebugBuild kernelArm64Sc8280xpBuild kernelArm64Sc8280xpDebugBuild kernelArm64Virt4kDebugBuild kernelArm32Bcm2835Build kernelArm32Bcm2835DebugBuild kernelArm32Bcm2835DevBuild
               kextsArm32Bcm2835Build compilerRtArmv6Build
-              kernelBuild kernelDebugBuild kernelSource kextsArm64Build drmMsmArm64Build kextsBuild drmNouveauArm64Build nouveauFirmwareGm20b tegra210XusbFirmware tx1GlRootArm64Bundle tx1DesktopArm64Bundle pdadbdArm64Build sharedMimeInfoBuild certificatesBundleBuild libdrmAmdgpuBuild libelfBuild
+              kernelBuild kernelDebugBuild kernelSource kextsArm64Build drmMsmArm64Build a690GlArm64Bundle argonMsmArm64Bundle kextsBuild drmNouveauArm64Build nouveauFirmwareGm20b tegra210XusbFirmware tx1GlRootArm64Bundle tx1DesktopArm64Bundle pdadbdArm64Build sharedMimeInfoBuild certificatesBundleBuild libdrmAmdgpuBuild libelfBuild
               launchctlBuild launchdBuild lib libSystemBuild libdrmBuild libXftBuild libapfsrwBuild libcssBuild waylandBuild waylandProtocolsBuild neuwldBuild neuswcBuild wlrootsBuild swayBuild wlrootsNoxBuild swayNoxBuild
               pdsurfaceBuild libgbmBuild libcurlDylibBuild libcxxDylibBuild libcxxTestBuild libcxxabiDylibBuild libdisplayInfoBuild
               libdomBuild libepoxyBuild libevBuild libffiBuild libhubbubBuild libiconvArm64Build

@@ -19,6 +19,12 @@
 // set at probe from the chip: below 4 GB for a3xx, anywhere for a6xx
 u64 pd_msm_dma_max = 0xffffffffull;
 
+// xnu's page, the unit its mmap lists pages in: 16 KB on the X13s, though the
+// linuxkpi headers say 4 KB
+extern int PAGE_SHIFT_CONST;
+#define XNU_PAGE_SHIFT        ((unsigned int)PAGE_SHIFT_CONST)
+#define XNU_PAGE_SIZE ((size_t)1 << XNU_PAGE_SHIFT)
+
 extern int (*pd_drm_mmap_pages)(struct linux_file *filp, off_t offset, size_t size, int prot,
     uint32_t *pages, unsigned int *wimg, void (**release)(void *), void **release_arg);
 
@@ -97,13 +103,13 @@ bo_alloc_chunks(struct pd_msm_bo *bo, size_t size)
 
 		if (want > left)
 			want = left;
-		c->alloc = pdos_malloc_contig(want, PAGE_SIZE, pd_msm_dma_max, &c->phys);
+		c->alloc = pdos_malloc_contig(want, XNU_PAGE_SIZE, pd_msm_dma_max, &c->phys);
 		if (c->alloc == NULL) {
-			if (want == PAGE_SIZE)
+			if (want == XNU_PAGE_SIZE)
 				return (-ENOMEM);
-			want = (want / 2) & ~(size_t)(PAGE_SIZE - 1);
-			if (want < PAGE_SIZE)
-				want = PAGE_SIZE;
+			want = (want / 2) & ~(size_t)(XNU_PAGE_SIZE - 1);
+			if (want < XNU_PAGE_SIZE)
+				want = XNU_PAGE_SIZE;
 			continue;
 		}
 		// zeroed through the cacheable view, which then holds no line the gpu could lose
@@ -121,7 +127,7 @@ pd_msm_bo_new(struct drm_device *drm, size_t size, u32 flags)
 {
 	struct pd_msm_bo *bo;
 
-	size = round_up(size, PAGE_SIZE);
+	size = round_up(size, XNU_PAGE_SIZE);
 	if (size == 0)
 		return (ERR_PTR(-EINVAL));
 	bo = kzalloc(sizeof(*bo), GFP_KERNEL);
@@ -203,10 +209,10 @@ pd_msm_mmap_pages(struct linux_file *filp, off_t offset, size_t size, int prot,
 	struct drm_device *dev = priv->minor->dev;
 	struct drm_vma_offset_node *node;
 	struct drm_gem_object *obj = NULL;
-	unsigned long npages = size >> PAGE_SHIFT;
+	unsigned long npages = size >> XNU_PAGE_SHIFT;
 
 	drm_vma_offset_lock_lookup(dev->vma_offset_manager);
-	node = drm_vma_offset_exact_lookup_locked(dev->vma_offset_manager, offset >> PAGE_SHIFT, npages);
+	node = drm_vma_offset_exact_lookup_locked(dev->vma_offset_manager, offset >> PAGE_SHIFT, size >> PAGE_SHIFT);
 	if (node != NULL) {
 		obj = container_of(node, struct drm_gem_object, vma_node);
 		if (!kref_get_unless_zero(&obj->refcount))
@@ -221,11 +227,11 @@ pd_msm_mmap_pages(struct linux_file *filp, off_t offset, size_t size, int prot,
 	}
 	struct pd_msm_bo *bo = to_pd_msm_bo(obj);
 	for (unsigned long i = 0, c = 0, in = 0; i < npages; i++, in++) {
-		if (in == bo->chunks[c].size >> PAGE_SHIFT) {
+		if (in == bo->chunks[c].size >> XNU_PAGE_SHIFT) {
 			c++;
 			in = 0;
 		}
-		pages[i] = (uint32_t)((bo->chunks[c].phys >> PAGE_SHIFT) + in);
+		pages[i] = (uint32_t)((bo->chunks[c].phys >> XNU_PAGE_SHIFT) + in);
 	}
 	*wimg = PD_DRI_WIMG_WCOMB;
 	*release = mmap_release;

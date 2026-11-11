@@ -74,6 +74,11 @@ struct pd_msm_info {
 	const char		*core_clk;	// the clock run at max_freq
 	u64			va_start, va_end;
     u64         dma_max;        // highest physical address the gpu's memory may use, 0 for 4 GB
+    // a6xx parameters (msm-uapi.md, identity a690)
+    u64         uche_trap_base; // 0 means none
+    u32         highest_bank_bit;
+    u32         ubwc_swizzle;
+    u32         macrotile_mode;
 	const struct pd_msm_gpu_funcs *funcs;
 };
 
