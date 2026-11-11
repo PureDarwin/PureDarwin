@@ -1,0 +1,13 @@
+--- a/src/Metal/MTLLibrary.mm
++++ b/src/Metal/MTLLibrary.mm
+@@ -35,8 +35,8 @@
+ 		_function = function;
+ 		_device = [device retain];
+ 
+-		// cache the name
+-		_name = [NSString stringWithUTF8String: _function->name().c_str()];
++		// cache the name, retained since dealloc releases it
++		_name = [[NSString alloc] initWithUTF8String: _function->name().c_str()];
+ 	}
+ 	return self;
+ }

@@ -72,7 +72,7 @@ stdenv.mkDerivation {
   postUnpack = ''
     cp -r ${darlingMetal} $sourceRoot/darling-metal
     chmod -R u+w $sourceRoot/darling-metal
-    (cd $sourceRoot/darling-metal && patch -p1 < ${./darling-metal-pd.patch})
+    (cd $sourceRoot/darling-metal && patch -p1 < ${./darling-metal-pd.patch}) && (cd $sourceRoot/darling-metal && patch -p1 < ${./darling-metal-function-name.patch})
   '';
 
   buildPhase = ''
