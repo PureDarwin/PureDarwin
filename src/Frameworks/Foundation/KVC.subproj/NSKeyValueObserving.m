@@ -10,6 +10,7 @@
 #import <Foundation/NSKeyValueCoding.h>
 #import <Foundation/NSString.h>
 #import <Foundation/NSArray.h>
+#import <Foundation/NSIndexSet.h>
 #import <Foundation/NSDictionary.h>
 #import <Foundation/NSNumber.h>
 #import <Foundation/NSLock.h>
@@ -289,6 +290,40 @@ static BOOL observationMatches(id object, NSKVOObservation *entry, NSString *key
                                          context:entry->_context];
     }
     [list release];
+}
+
+@end
+
+@implementation NSArray (NSKeyValueObserverRegistration)
+
+- (void)addObserver:(NSObject *)observer
+ toObjectsAtIndexes:(NSIndexSet *)indexes
+         forKeyPath:(NSString *)keyPath
+            options:(NSKeyValueObservingOptions)options
+            context:(void *)context {
+    NSUInteger i;
+
+    for (i = [indexes firstIndex]; i != NSNotFound; i = [indexes indexGreaterThanIndex:i])
+        [[self objectAtIndex:i] addObserver:observer forKeyPath:keyPath options:options context:context];
+}
+
+- (void)removeObserver:(NSObject *)observer
+  fromObjectsAtIndexes:(NSIndexSet *)indexes
+            forKeyPath:(NSString *)keyPath
+               context:(void *)context {
+    NSUInteger i;
+
+    for (i = [indexes firstIndex]; i != NSNotFound; i = [indexes indexGreaterThanIndex:i])
+        [[self objectAtIndex:i] removeObserver:observer forKeyPath:keyPath context:context];
+}
+
+- (void)removeObserver:(NSObject *)observer
+  fromObjectsAtIndexes:(NSIndexSet *)indexes
+            forKeyPath:(NSString *)keyPath {
+    NSUInteger i;
+
+    for (i = [indexes firstIndex]; i != NSNotFound; i = [indexes indexGreaterThanIndex:i])
+        [[self objectAtIndex:i] removeObserver:observer forKeyPath:keyPath];
 }
 
 @end

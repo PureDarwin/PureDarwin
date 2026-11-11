@@ -6,6 +6,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+#import <Foundation/NSString.h>
 #import <Foundation/NSSet.h>
 #include <CoreFoundation/CFBase.h>
 #import <Foundation/NSArray.h>
@@ -600,3 +601,29 @@ static void __NSCFSetBridgeInit(void) {
     _CFRuntimeBridgeClasses(CFSetGetTypeID(), "NSSet");
 }
 #endif
+
+// the form macOS logs a set in, nested levels four spaces further in
+@implementation NSSet (PDDescription)
+
+- (NSString *)descriptionWithLocale:(id)locale indent:(NSUInteger)level {
+    NSString *pad = [@"" stringByPaddingToLength:level * 4 withString:@" " startingAtIndex:0];
+    NSMutableString *out = [NSMutableString stringWithString:@"{(\n"];
+    NSUInteger i = 0, count = [self count];
+    id o;
+
+    for (o in self) {
+        [out appendFormat:@"%@    %@%@\n", pad, [o respondsToSelector:@selector(descriptionWithLocale:indent:)] ? [o descriptionWithLocale:locale indent:level + 1] : [o description], ++i < count ? @"," : @""];
+    }
+    [out appendFormat:@"%@)}", pad];
+    return out;
+}
+
+- (NSString *)descriptionWithLocale:(id)locale {
+    return [self descriptionWithLocale:locale indent:0];
+}
+
+- (NSString *)description {
+    return [self descriptionWithLocale:nil indent:0];
+}
+
+@end

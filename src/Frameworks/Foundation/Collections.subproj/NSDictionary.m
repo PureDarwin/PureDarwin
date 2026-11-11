@@ -1020,3 +1020,30 @@ static void __NSCFDictionaryBridgeInit(void) {
     _CFRuntimeBridgeClasses(CFDictionaryGetTypeID(), "NSDictionary");
 }
 #endif
+
+// the old-style property list form macOS logs a dictionary in, nested levels four spaces further in
+@implementation NSDictionary (PDDescription)
+
+- (NSString *)descriptionWithLocale:(id)locale indent:(NSUInteger)level {
+    NSString *pad = [@"" stringByPaddingToLength:level * 4 withString:@" " startingAtIndex:0];
+    NSMutableString *out = [NSMutableString stringWithString:@"{\n"];
+    id key;
+
+    for (key in self) {
+        id o = [self objectForKey:key];
+
+        [out appendFormat:@"%@    %@ = %@;\n", pad, key, [o respondsToSelector:@selector(descriptionWithLocale:indent:)] ? [o descriptionWithLocale:locale indent:level + 1] : [o description]];
+    }
+    [out appendFormat:@"%@}", pad];
+    return out;
+}
+
+- (NSString *)descriptionWithLocale:(id)locale {
+    return [self descriptionWithLocale:locale indent:0];
+}
+
+- (NSString *)description {
+    return [self descriptionWithLocale:nil indent:0];
+}
+
+@end

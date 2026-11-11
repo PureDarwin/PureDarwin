@@ -19,10 +19,15 @@ enum {
     NSURLErrorUnsupportedURL = -1002,
     NSURLErrorCannotFindHost = -1003,
     NSURLErrorCannotConnectToHost = -1004,
+    NSURLErrorNetworkConnectionLost = -1005,
+    NSURLErrorHTTPTooManyRedirects = -1007,
     NSURLErrorNotConnectedToInternet = -1009,
+    NSURLErrorZeroByteResource = -1014,
     NSURLErrorFileDoesNotExist = -1100,
     NSURLErrorFileIsDirectory = -1101,
     NSURLErrorNoPermissionsToReadFile = -1102,
+    NSURLErrorSecureConnectionFailed = -1200,
+    NSURLErrorServerCertificateUntrusted = -1202,
 };
 
 typedef NS_ENUM(NSInteger, NSURLSessionTaskState) {
@@ -135,6 +140,12 @@ FOUNDATION_EXPORT const int64_t NSURLSessionTransferSizeUnknown;
                             completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler;
 - (NSURLSessionDataTask *)dataTaskWithURL:(NSURL *)url
                         completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler;
+- (NSURLSessionDownloadTask *)downloadTaskWithRequest:(NSURLRequest *)request;
+- (NSURLSessionDownloadTask *)downloadTaskWithURL:(NSURL *)url;
+- (NSURLSessionDownloadTask *)downloadTaskWithRequest:(NSURLRequest *)request
+                                    completionHandler:(void (^)(NSURL *location, NSURLResponse *response, NSError *error))completionHandler;
+- (NSURLSessionDownloadTask *)downloadTaskWithURL:(NSURL *)url
+                                completionHandler:(void (^)(NSURL *location, NSURLResponse *response, NSError *error))completionHandler;
 - (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromData:(NSData *)bodyData
                                 completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler;
 

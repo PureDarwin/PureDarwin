@@ -1077,3 +1077,30 @@ static void __NSCFArrayBridgeInit(void) {
     _CFRuntimeBridgeClasses(CFArrayGetTypeID(), "NSArray");
 }
 #endif
+
+// the old-style property list form macOS logs an array in, nested levels four spaces further in
+@implementation NSArray (PDDescription)
+
+- (NSString *)descriptionWithLocale:(id)locale indent:(NSUInteger)level {
+    NSString *pad = [@"" stringByPaddingToLength:level * 4 withString:@" " startingAtIndex:0];
+    NSMutableString *out = [NSMutableString stringWithString:@"(\n"];
+    NSUInteger i, count = [self count];
+
+    for (i = 0; i < count; i++) {
+        id o = [self objectAtIndex:i];
+
+        [out appendFormat:@"%@    %@%@\n", pad, [o respondsToSelector:@selector(descriptionWithLocale:indent:)] ? [o descriptionWithLocale:locale indent:level + 1] : [o description], i + 1 < count ? @"," : @""];
+    }
+    [out appendFormat:@"%@)", pad];
+    return out;
+}
+
+- (NSString *)descriptionWithLocale:(id)locale {
+    return [self descriptionWithLocale:locale indent:0];
+}
+
+- (NSString *)description {
+    return [self descriptionWithLocale:nil indent:0];
+}
+
+@end

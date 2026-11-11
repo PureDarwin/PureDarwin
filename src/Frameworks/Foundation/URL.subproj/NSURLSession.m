@@ -3,6 +3,11 @@
 
 // other schemes fail with NSURLErrorUnsupportedURL, there is no network URL loading system here
 #import <Foundation/NSURLSession.h>
+#import <Foundation/NSCharacterSet.h>
+#import <dispatch/dispatch.h>
+#include <dlfcn.h>
+#import <Foundation/NSPathUtilities.h>
+#import <Foundation/NSProcessInfo.h>
 #import <Foundation/NSURLFileTypeMappings.h>
 #import <Foundation/NSURL.h>
 #import <Foundation/NSData.h>
@@ -25,6 +30,7 @@ NSString *const NSURLErrorFailingURLStringErrorKey = @"NSErrorFailingURLStringKe
 - (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)task didReceiveData:(NSData *)data;
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error;
 - (void)URLSession:(NSURLSession *)session didBecomeInvalidWithError:(NSError *)error;
+- (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)task didFinishDownloadingToURL:(NSURL *)location;
 @end
 
 @implementation NSURLSessionConfiguration
@@ -205,6 +211,94 @@ NSString *const NSURLErrorFailingURLStringErrorKey = @"NSErrorFailingURLStringKe
 @implementation NSURLSessionDownloadTask
 @end
 
+// HTTP and HTTPS go through libcurl, looked up at runtime so Foundation does not link it. The option and info
+// numbers are curl's stable ABI values from curl.h
+enum {
+    PD_CURLOPT_WRITEDATA = 10001, PD_CURLOPT_URL = 10002, PD_CURLOPT_POSTFIELDS = 10015, PD_CURLOPT_USERAGENT = 10018,
+    PD_CURLOPT_HTTPHEADER = 10023, PD_CURLOPT_HEADERDATA = 10029, PD_CURLOPT_CUSTOMREQUEST = 10036,
+    PD_CURLOPT_CAINFO = 10065, PD_CURLOPT_ACCEPT_ENCODING = 10102, PD_CURLOPT_WRITEFUNCTION = 20011,
+    PD_CURLOPT_HEADERFUNCTION = 20079, PD_CURLOPT_POSTFIELDSIZE_LARGE = 30120, PD_CURLOPT_NOBODY = 44,
+    PD_CURLOPT_FOLLOWLOCATION = 52, PD_CURLOPT_TIMEOUT_MS = 155, PD_CURLOPT_NOSIGNAL = 99,
+    PD_CURLINFO_EFFECTIVE_URL = 0x100001, PD_CURLINFO_RESPONSE_CODE = 0x200002,
+};
+
+static struct {
+    void *(*init)(void);
+    int (*setopt)(void *, int, ...);
+    int (*perform)(void *);
+    int (*getinfo)(void *, int, ...);
+    void (*cleanup)(void *);
+    const char *(*strerror)(int);
+    void *(*slist_append)(void *, const char *);
+    void (*slist_free_all)(void *);
+} pdCurl;
+
+static BOOL pdCurlLoad(void) {
+    static dispatch_once_t once;
+    static BOOL loaded;
+
+    dispatch_once(&once, ^{
+        void *lib = dlopen("/usr/lib/libcurl.4.dylib", RTLD_NOW | RTLD_LOCAL);
+
+        if (lib == NULL)
+            return;
+        pdCurl.init = dlsym(lib, "curl_easy_init");
+        pdCurl.setopt = dlsym(lib, "curl_easy_setopt");
+        pdCurl.perform = dlsym(lib, "curl_easy_perform");
+        pdCurl.getinfo = dlsym(lib, "curl_easy_getinfo");
+        pdCurl.cleanup = dlsym(lib, "curl_easy_cleanup");
+        pdCurl.strerror = dlsym(lib, "curl_easy_strerror");
+        pdCurl.slist_append = dlsym(lib, "curl_slist_append");
+        pdCurl.slist_free_all = dlsym(lib, "curl_slist_free_all");
+        loaded = pdCurl.init && pdCurl.setopt && pdCurl.perform && pdCurl.getinfo && pdCurl.cleanup &&
+                 pdCurl.strerror && pdCurl.slist_append && pdCurl.slist_free_all;
+    });
+    return loaded;
+}
+
+static size_t pdCurlBody(char *bytes, size_t size, size_t count, void *context) {
+    [(NSMutableData *)context appendBytes:bytes length:size * count];
+    return size * count;
+}
+
+// one header line per call. A redirect or a 100 Continue starts a new status line, which clears what came before
+static size_t pdCurlHeader(char *bytes, size_t size, size_t count, void *context) {
+    NSMutableDictionary *headers = context;
+    NSString *line = [[[NSString alloc] initWithBytes:bytes length:size * count encoding:NSISOLatin1StringEncoding] autorelease];
+    NSRange colon;
+
+    line = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if ([line hasPrefix:@"HTTP/"]) {
+        NSArray *parts = [line componentsSeparatedByString:@" "];
+
+        [headers removeAllObjects];
+        [headers setObject:[[parts objectAtIndex:0] substringFromIndex:5] forKey:@"\x01version"];
+    } else if ((colon = [line rangeOfString:@":"]).location != NSNotFound) {
+        NSString *name = [line substringToIndex:colon.location];
+        NSString *value = [[line substringFromIndex:colon.location + 1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        NSString *previous = [headers objectForKey:name];
+
+        [headers setObject:previous ? [NSString stringWithFormat:@"%@, %@", previous, value] : value forKey:name];
+    }
+    return size * count;
+}
+
+// curl's failures as the NSURLError codes macOS reports for them
+static NSInteger pdCurlErrorCode(int code) {
+    switch (code) {
+    case 1: case 3: return NSURLErrorUnsupportedURL;
+    case 5: case 6: return NSURLErrorCannotFindHost;
+    case 7: return NSURLErrorCannotConnectToHost;
+    case 28: return NSURLErrorTimedOut;
+    case 47: return NSURLErrorHTTPTooManyRedirects;
+    case 52: return NSURLErrorZeroByteResource;
+    case 55: case 56: return NSURLErrorNetworkConnectionLost;
+    case 60: case 51: case 77: return NSURLErrorServerCertificateUntrusted;
+    case 35: case 58: case 59: case 83: return NSURLErrorSecureConnectionFailed;
+    }
+    return NSURLErrorUnknown;
+}
+
 static NSError *urlError(NSInteger code, NSURL *url, NSString *description) {
     NSMutableDictionary *info = [NSMutableDictionary dictionaryWithObject:description forKey:NSLocalizedDescriptionKey];
 
@@ -303,7 +397,100 @@ static NSError *urlError(NSInteger code, NSURL *url, NSString *description) {
     return [[[NSURLSessionUploadTask alloc] _initWithSession:self request:upload completion:completionHandler] autorelease];
 }
 
-// file URLs are read from disk, anything else has nowhere to go
+- (NSURLSessionDownloadTask *)downloadTaskWithRequest:(NSURLRequest *)request {
+    return [self downloadTaskWithRequest:request completionHandler:nil];
+}
+
+- (NSURLSessionDownloadTask *)downloadTaskWithURL:(NSURL *)url {
+    return [self downloadTaskWithURL:url completionHandler:nil];
+}
+
+- (NSURLSessionDownloadTask *)downloadTaskWithRequest:(NSURLRequest *)request
+                                    completionHandler:(void (^)(NSURL *, NSURLResponse *, NSError *))completionHandler {
+    return [[[NSURLSessionDownloadTask alloc] _initWithSession:self request:request completion:completionHandler] autorelease];
+}
+
+- (NSURLSessionDownloadTask *)downloadTaskWithURL:(NSURL *)url
+                                completionHandler:(void (^)(NSURL *, NSURLResponse *, NSError *))completionHandler {
+    return [self downloadTaskWithRequest:[NSURLRequest requestWithURL:url] completionHandler:completionHandler];
+}
+
+// a finished download's bytes, in a temporary file the caller moves before it returns
+static NSURL *downloadFile(NSData *data) {
+    NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:
+        [NSString stringWithFormat:@"CFNetworkDownload_%@.tmp", [[NSProcessInfo processInfo] globallyUniqueString]]];
+
+    return [data writeToFile:path atomically:NO] ? [NSURL fileURLWithPath:path] : nil;
+}
+
+- (void)_loadHTTP:(NSURLSessionTask *)task url:(NSURL *)url data:(NSData **)data response:(NSURLResponse **)response error:(NSError **)error {
+    NSURLRequest *request = [task originalRequest];
+    NSMutableDictionary *fields = [NSMutableDictionary dictionary];
+    NSMutableDictionary *received = [NSMutableDictionary dictionary];
+    NSMutableData *body = [NSMutableData data];
+    NSString *method = [request HTTPMethod] ? [request HTTPMethod] : @"GET";
+    NSTimeInterval timeout = [request timeoutInterval] > 0 ? [request timeoutInterval] : [_configuration timeoutIntervalForRequest];
+    void *headers = NULL, *curl;
+    long status = 0;
+    char *effective = NULL;
+    int result;
+
+    if (!pdCurlLoad() || (curl = pdCurl.init()) == NULL) {
+        *error = urlError(NSURLErrorUnsupportedURL, url, @"URL loading over the network is not available on this system.");
+        return;
+    }
+    // the session's extra headers first, the request's own win
+    [fields addEntriesFromDictionary:[_configuration HTTPAdditionalHeaders]];
+    [fields addEntriesFromDictionary:[request allHTTPHeaderFields]];
+    for (NSString *name in fields)
+        headers = pdCurl.slist_append(headers, [[NSString stringWithFormat:@"%@: %@", name, [fields objectForKey:name]] UTF8String]);
+
+    pdCurl.setopt(curl, PD_CURLOPT_URL, [[url absoluteString] UTF8String]);
+    pdCurl.setopt(curl, PD_CURLOPT_NOSIGNAL, 1L);
+    pdCurl.setopt(curl, PD_CURLOPT_FOLLOWLOCATION, 1L);
+    pdCurl.setopt(curl, PD_CURLOPT_ACCEPT_ENCODING, "");
+    pdCurl.setopt(curl, PD_CURLOPT_CAINFO, "/etc/ssl/cert.pem");
+    if ([fields objectForKey:@"User-Agent"] == nil)
+        pdCurl.setopt(curl, PD_CURLOPT_USERAGENT, [[NSString stringWithFormat:@"%@ CFNetwork Darwin",
+            [[[NSProcessInfo processInfo] processName] stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]]] UTF8String]);
+    pdCurl.setopt(curl, PD_CURLOPT_HTTPHEADER, headers);
+    pdCurl.setopt(curl, PD_CURLOPT_WRITEFUNCTION, pdCurlBody);
+    pdCurl.setopt(curl, PD_CURLOPT_WRITEDATA, body);
+    pdCurl.setopt(curl, PD_CURLOPT_HEADERFUNCTION, pdCurlHeader);
+    pdCurl.setopt(curl, PD_CURLOPT_HEADERDATA, received);
+    if (timeout > 0)
+        pdCurl.setopt(curl, PD_CURLOPT_TIMEOUT_MS, (long)(timeout * 1000));
+    if ([method isEqualToString:@"HEAD"])
+        pdCurl.setopt(curl, PD_CURLOPT_NOBODY, 1L);
+    else if (![method isEqualToString:@"GET"])
+        pdCurl.setopt(curl, PD_CURLOPT_CUSTOMREQUEST, [method UTF8String]);
+    if ([request HTTPBody] != nil) {
+        pdCurl.setopt(curl, PD_CURLOPT_POSTFIELDS, [[request HTTPBody] bytes]);
+        pdCurl.setopt(curl, PD_CURLOPT_POSTFIELDSIZE_LARGE, (long long)[[request HTTPBody] length]);
+    }
+
+    result = pdCurl.perform(curl);
+    if (result != 0) {
+        NSString *why = [NSString stringWithUTF8String:pdCurl.strerror(result)];
+
+        *error = urlError(pdCurlErrorCode(result), url, why ? why : @"The network request failed.");
+    } else {
+        NSString *version = [[[received objectForKey:@"\x01version"] retain] autorelease];
+        NSURL *final = url;
+
+        pdCurl.getinfo(curl, PD_CURLINFO_RESPONSE_CODE, &status);
+        if (pdCurl.getinfo(curl, PD_CURLINFO_EFFECTIVE_URL, &effective) == 0 && effective != NULL)
+            final = [NSURL URLWithString:[NSString stringWithUTF8String:effective]] ?: url;
+        [received removeObjectForKey:@"\x01version"];
+        *data = body;
+        *response = [[[NSHTTPURLResponse alloc] initWithURL:final statusCode:status
+            HTTPVersion:version ? [@"HTTP/" stringByAppendingString:version] : @"HTTP/1.1" headerFields:received] autorelease];
+    }
+    pdCurl.slist_free_all(headers);
+    pdCurl.cleanup(curl);
+}
+
+// file URLs are read from disk, http and https go to libcurl
 - (void)_load:(NSURLSessionTask *)task data:(NSData **)data response:(NSURLResponse **)response error:(NSError **)error {
     NSURL *url = [[task originalRequest] URL];
     BOOL directory = NO;
@@ -313,6 +500,10 @@ static NSError *urlError(NSInteger code, NSURL *url, NSString *description) {
     *error = nil;
     if (url == nil) {
         *error = urlError(NSURLErrorBadURL, nil, @"The URL is not valid.");
+        return;
+    }
+    if ([[[url scheme] lowercaseString] isEqualToString:@"http"] || [[[url scheme] lowercaseString] isEqualToString:@"https"]) {
+        [self _loadHTTP:task url:url data:data response:response error:error];
         return;
     }
     if (![url isFileURL]) {
@@ -365,7 +556,22 @@ static NSError *urlError(NSInteger code, NSURL *url, NSString *description) {
         [_delegateQueue addOperationWithBlock:^{
             void (^completion)(NSData *, NSURLResponse *, NSError *) = task->_completion;
 
-            if (completion != nil) {
+            // a download hands over a file, which goes once the handler or the delegate returns, as on macOS
+            if ([task isKindOfClass:[NSURLSessionDownloadTask class]]) {
+                void (^downloaded)(NSURL *, NSURLResponse *, NSError *) = task->_completion;
+                NSURL *location = error == nil ? downloadFile(data) : nil;
+
+                if (downloaded != nil)
+                    downloaded(location, response, error);
+                else {
+                    if (location != nil && [_delegate respondsToSelector:@selector(URLSession:downloadTask:didFinishDownloadingToURL:)])
+                        [_delegate URLSession:self downloadTask:(NSURLSessionDownloadTask *)task didFinishDownloadingToURL:location];
+                    if ([_delegate respondsToSelector:@selector(URLSession:task:didCompleteWithError:)])
+                        [_delegate URLSession:self task:task didCompleteWithError:error];
+                }
+                if (location != nil)
+                    [[NSFileManager defaultManager] removeItemAtPath:[location path] error:NULL];
+            } else if (completion != nil) {
                 completion(data, response, error);
             } else {
                 if (data != nil && [_delegate respondsToSelector:@selector(URLSession:dataTask:didReceiveData:)])

@@ -96,6 +96,12 @@ NSErrorUserInfoKey const NSURLErrorKey = @"NSURL";
 }
 
 
+// the form macOS logs an error in
+- (NSString *)description {
+    return [NSString stringWithFormat:@"Error Domain=%@ Code=%ld \"%@\" UserInfo=%@", [self domain], (long)[self code],
+        [self localizedDescription], [self userInfo]];
+}
+
 // SPI: daemons turn off localized file names in error descriptions. none are localized here, the flag is kept
 static BOOL fileNameLocalizationEnabled = YES;
 

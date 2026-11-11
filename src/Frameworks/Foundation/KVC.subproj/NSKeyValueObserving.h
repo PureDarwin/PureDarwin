@@ -11,6 +11,7 @@
 
 #import <Foundation/NSObject.h>
 #import <Foundation/NSObjCRuntime.h>
+#import <Foundation/NSArray.h>
 
 @class NSString, NSDictionary, NSSet, NSIndexSet;
 
@@ -59,6 +60,26 @@ FOUNDATION_EXPORT NSKeyValueChangeKey const NSKeyValueChangeNotificationIsPriorK
 
 - (void)willChangeValueForKey:(NSString *)key;
 - (void)didChangeValueForKey:(NSString *)key;
+
+@end
+
+@class NSIndexSet;
+
+// an array observes nothing itself, these register the observer on each element at the indexes
+@interface NSArray (NSKeyValueObserverRegistration)
+
+- (void)addObserver:(NSObject *)observer
+ toObjectsAtIndexes:(NSIndexSet *)indexes
+         forKeyPath:(NSString *)keyPath
+            options:(NSKeyValueObservingOptions)options
+            context:(void *)context;
+- (void)removeObserver:(NSObject *)observer
+  fromObjectsAtIndexes:(NSIndexSet *)indexes
+            forKeyPath:(NSString *)keyPath
+               context:(void *)context;
+- (void)removeObserver:(NSObject *)observer
+  fromObjectsAtIndexes:(NSIndexSet *)indexes
+            forKeyPath:(NSString *)keyPath;
 
 @end
 
