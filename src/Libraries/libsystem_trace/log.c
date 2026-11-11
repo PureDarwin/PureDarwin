@@ -297,6 +297,28 @@ static void pd_append_cf_object(char** outp, size_t* remp, const void* cf)
         goto advance;
     }
 
+    // an Objective-C object, CFStrings included, says what -description says, as NSLog prints it
+    {
+        static void* (*send)(const void*, void*, ...);
+        static void* (*sel)(const char*);
+        static int   objc_looked_up;
+
+        if (!objc_looked_up) {
+            send = dlsym(RTLD_DEFAULT, "objc_msgSend");
+            sel  = dlsym(RTLD_DEFAULT, "sel_registerName");
+            objc_looked_up = 1;
+        }
+        if (send != NULL && sel != NULL) {
+            void* text = send(cf, sel("description"));
+            const char* utf8 = text != NULL ? send(text, sel("UTF8String")) : NULL;
+
+            if (utf8 != NULL) {
+                n = snprintf(*outp, *remp, "%s", utf8);
+                goto advance;
+            }
+        }
+    }
+
     if (copy_description == NULL || get_cstring == NULL || cf_release == NULL) {
         n = snprintf(*outp, *remp, "<%p>", cf);
         goto advance;
@@ -329,6 +351,83 @@ advance:
     *remp -= (size_t)n;
 }
 
+/* where a render takes its arguments from: a va_list, or the buffer os_log's macros pack, two header bytes
+ * (flags, count) and per argument a descriptor byte, a size byte and the value */
+struct pd_os_log_args {
+    va_list* ap;
+    const uint8_t* at;
+    const uint8_t* end;
+};
+
+static const uint8_t* pd_os_log_item(struct pd_os_log_args* a, uint8_t* size)
+{
+    const uint8_t* value;
+
+    if (a->at == NULL || a->at + 2 > a->end) {
+        *size = 0;
+        return NULL;
+    }
+    *size = a->at[1];
+    value = a->at + 2;
+    if (value + *size > a->end) {
+        a->at = a->end;
+        *size = 0;
+        return NULL;
+    }
+    a->at = value + *size;
+    return value;
+}
+
+static int64_t pd_os_log_packed_int(struct pd_os_log_args* a)
+{
+    uint8_t size;
+    const uint8_t* v = pd_os_log_item(a, &size);
+    int8_t b;
+    int16_t h;
+    int32_t w;
+    int64_t q = 0;
+
+    switch (v != NULL ? size : 0) {
+    case 1: memcpy(&b, v, 1); return b;
+    case 2: memcpy(&h, v, 2); return h;
+    case 4: memcpy(&w, v, 4); return w;
+    case 8: memcpy(&q, v, 8); return q;
+    }
+    return 0;
+}
+
+static double pd_os_log_packed_double(struct pd_os_log_args* a)
+{
+    uint8_t size;
+    const uint8_t* v = pd_os_log_item(a, &size);
+    float f;
+    double d = 0;
+
+    if (v != NULL && size == 4) {
+        memcpy(&f, v, 4);
+        return f;
+    }
+    if (v != NULL && size == 8)
+        memcpy(&d, v, 8);
+    return d;
+}
+
+static const void* pd_os_log_packed_pointer(struct pd_os_log_args* a)
+{
+    uint8_t size;
+    const uint8_t* v = pd_os_log_item(a, &size);
+    const void* ptr = NULL;
+
+    if (v != NULL && size == sizeof(ptr))
+        memcpy(&ptr, v, sizeof(ptr));
+    return ptr;
+}
+
+#define ARG_i(a) pd_os_log_packed_int(a)
+#define ARG_d(a) pd_os_log_packed_double(a)
+#define ARG_p(a) pd_os_log_packed_pointer(a)
+#define ARG(type, kind) (a->ap != NULL ? va_arg(*a->ap, type) : (type)ARG_##kind(a))
+
 /*
  * Render a format string and its arguments to text.
  *
@@ -338,7 +437,7 @@ advance:
  * ordinary specifier to snprintf on its own, and expand %@ via CoreFoundation.
  */
 static void pd_os_log_render(char* out, size_t out_size, const char* format,
-    va_list ap)
+    struct pd_os_log_args* a)
 {
     const char* p = format;
     char*       o = out;
@@ -397,7 +496,7 @@ static void pd_os_log_render(char* out, size_t out_size, const char* format,
         /* width */
         if (*p == '*') {
             star_width = 1;
-            width = va_arg(ap, int);
+            width = ARG(int, i);
             p++;
         } else {
             while (*p >= '0' && *p <= '9' && slen < sizeof(spec) - 8) {
@@ -409,7 +508,7 @@ static void pd_os_log_render(char* out, size_t out_size, const char* format,
             spec[slen++] = *p++;
             if (*p == '*') {
                 star_prec = 1;
-                prec = va_arg(ap, int);
+                prec = ARG(int, i);
                 p++;
             } else {
                 while (*p >= '0' && *p <= '9' && slen < sizeof(spec) - 8) {
@@ -455,44 +554,44 @@ static void pd_os_log_render(char* out, size_t out_size, const char* format,
 
         switch (conv) {
         case '@':
-            pd_append_cf_object(&o, &rem, va_arg(ap, const void*));
+            pd_append_cf_object(&o, &rem, ARG(const void*, p));
             continue;
         case 'd': case 'i':
             if (lenmod == 2 || lenmod == 3) {
-                n = snprintf(o, rem, spec, va_arg(ap, long long));
+                n = snprintf(o, rem, spec, ARG(long long, i));
             } else if (lenmod == 1) {
-                n = snprintf(o, rem, spec, va_arg(ap, long));
+                n = snprintf(o, rem, spec, ARG(long, i));
             } else {
-                n = snprintf(o, rem, spec, va_arg(ap, int));
+                n = snprintf(o, rem, spec, ARG(int, i));
             }
             break;
         case 'o': case 'u': case 'x': case 'X':
             if (lenmod == 2 || lenmod == 3) {
-                n = snprintf(o, rem, spec, va_arg(ap, unsigned long long));
+                n = snprintf(o, rem, spec, ARG(unsigned long long, i));
             } else if (lenmod == 1) {
-                n = snprintf(o, rem, spec, va_arg(ap, unsigned long));
+                n = snprintf(o, rem, spec, ARG(unsigned long, i));
             } else {
-                n = snprintf(o, rem, spec, va_arg(ap, unsigned int));
+                n = snprintf(o, rem, spec, ARG(unsigned int, i));
             }
             break;
         case 'c':
-            n = snprintf(o, rem, spec, va_arg(ap, int));
+            n = snprintf(o, rem, spec, ARG(int, i));
             break;
         case 's': {
-            const char* sv = va_arg(ap, const char*);
+            const char* sv = ARG(const char*, p);
             n = snprintf(o, rem, spec, sv ? sv : "(null)");
             break;
         }
         case 'p':
-            n = snprintf(o, rem, spec, va_arg(ap, void*));
+            n = snprintf(o, rem, spec, ARG(void*, p));
             break;
         case 'f': case 'F': case 'e': case 'E':
         case 'g': case 'G': case 'a': case 'A':
-            n = snprintf(o, rem, spec, va_arg(ap, double));
+            n = snprintf(o, rem, spec, ARG(double, d));
             break;
         case 'n':
             /* Never write through a caller pointer from a log format. */
-            (void)va_arg(ap, void*);
+            (void)ARG(void*, p);
             n = 0;
             break;
         default:
@@ -564,7 +663,11 @@ uint8_t* os_log_pack_fill(void* pack,
     s->olp_pc = dso;
 
     va_start(ap, format);
-    pd_os_log_render((char*)payload, avail, format, ap);
+    {
+        struct pd_os_log_args args = { &ap, NULL, NULL };
+
+        pd_os_log_render((char*)payload, avail, format, &args);
+    }
     va_end(ap);
 
     s->olp_format = (const char *)payload;
@@ -633,10 +736,14 @@ void __os_log_impl(void* dso,
 
     /* This _should_ be identical to the NSObject layout */
     struct os_log_s* s = (struct os_log_s*)log;
-    fprintf(stderr, "[%s] %s.%s(%p): ", _typeToStr(type), s->subsystem, s->category, dso);
-    fputs(format, stderr);
-    //vfprintf(stderr, format, args); // FIXME
-    fputc('\n', stderr);
+    // the message with its arguments filled in from the packed buffer
+    struct pd_os_log_args args = { NULL, buffer != NULL ? buffer + 2 : NULL, buffer != NULL ? buffer + buffer_size : NULL };
+    char message[2048];
+
+    if (buffer == NULL || buffer_size < 2)
+        args.at = args.end = NULL;
+    pd_os_log_render(message, sizeof(message), format, &args);
+    fprintf(stderr, "[%s] %s.%s(%p): %s\n", _typeToStr(type), s->subsystem, s->category, dso, message);
 
 }
 
