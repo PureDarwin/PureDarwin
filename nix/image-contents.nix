@@ -2040,7 +2040,7 @@ let
               export LD_LIBRARY_PATH="${pkgs.mesa}/lib:${pkgs.libglvnd}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
             fi
 
-            exec qemu-system-x86_64 "''${qemu_args[@]}" "$@"
+            exec "''${PUREDARWIN_VM_QEMU:-qemu-system-x86_64}" "''${qemu_args[@]}" "$@"
           '';
         };
 
