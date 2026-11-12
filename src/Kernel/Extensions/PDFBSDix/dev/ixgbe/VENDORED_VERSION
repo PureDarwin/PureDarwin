@@ -6,4 +6,4 @@ local changes:
   if_ix.c, ix_txrx.c: the kernel option headers sit under #ifndef __HAIKU__, ixgbe_rss.h: the rss headers too, pd_ix_compat.h stands in for them
   if_ix.c: netmap and the mdio bus (includes, methods, DRIVER_MODULE, MODULE_DEPEND, ixgbe_mdio_attach) sit under #ifndef __HAIKU__, as do bus_add_child and ifdi_power_prepare with ixgbe_if_power_prepare
   if_ix.c: sysctl handlers that read oidp or req->oldptr are stubbed under __HAIKU__ and D3_HOT is D3, ix_txrx.c: the SCTP checksum case is left out, all as in PDFBSDigc
-  ixgbe.h: includes pd_ix_shims.h under __HAIKU__, for the atomics, sized sysctls, pme and newer iflib calls the haiku layer lacks
+  ixgbe.h: includes fbsdkpi pd_iflib_shims.h under __HAIKU__, for the atomics, sized sysctls, pme and newer iflib calls the haiku layer lacks

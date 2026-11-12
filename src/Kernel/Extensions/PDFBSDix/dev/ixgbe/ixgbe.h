@@ -82,7 +82,7 @@
 #include <machine/smp.h>
 #include <sys/sbuf.h>
 #ifdef __HAIKU__
-#include "pd_ix_shims.h"
+#include "pd_iflib_shims.h"
 #endif
 
 #include "ixgbe_api.h"

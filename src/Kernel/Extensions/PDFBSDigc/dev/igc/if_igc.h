@@ -85,6 +85,9 @@
 #include <machine/in_cksum.h>
 #include <dev/pci/pcivar.h>
 #include <dev/pci/pcireg.h>
+#ifdef __HAIKU__
+#include "pd_iflib_shims.h"
+#endif
 
 #include "igc_api.h"
 #include "igc_i225.h"

@@ -220,49 +220,6 @@ is_pci_device(device_t dev)
 	return true;
 }
 
-int
-pci_disable_busmaster(device_t dev)
-{
-	pci_write_config(dev, PCIR_COMMAND, pci_read_config(dev, PCIR_COMMAND, 2)
-		& ~PCIM_CMD_BUSMASTEREN, 2);
-	return 0;
-}
-
-int
-pci_disable_io(device_t dev, int space)
-{
-	int bit = space == SYS_RES_IOPORT ? PCIM_CMD_PORTEN : PCIM_CMD_MEMEN;
-	pci_write_config(dev, PCIR_COMMAND, pci_read_config(dev, PCIR_COMMAND, 2) & ~bit, 2);
-	return 0;
-}
-
-int
-pci_get_max_payload(device_t dev)
-{
-	int reg;
-	if (pci_find_cap(dev, PCIY_EXPRESS, &reg) != 0)
-		return 0;
-	uint16_t ctl = pci_read_config(dev, reg + 0x8, 2);
-	return 128 << ((ctl >> 5) & 0x7);
-}
-
-// config space survives here since the device is never powered down
-void
-pci_save_state(device_t dev)
-{
-}
-
-void
-pci_restore_state(device_t dev)
-{
-}
-
-bool
-pci_has_pme(device_t dev, int state)
-{
-	return false;
-}
-
 // other devices on the bus, read through their config space only
 device_t pd_pci_peer_at(uint8 bus, uint8 slot, uint8 func);
 device_t pd_pci_peer_next(device_t from, int (*match)(const pci_info *info, void *arg), void *arg);
@@ -435,18 +392,6 @@ bus_get_domain(device_t dev, int *domain)
 	return 0;
 }
 
-
-uint8_t
-pci_get_class(device_t dev)
-{
-	return pci_read_config(dev, 0x0b, 1);
-}
-
-uint8_t
-pci_get_subclass(device_t dev)
-{
-	return pci_read_config(dev, 0x0a, 1);
-}
 
 device_t
 devclass_get_device(devclass_t dc, int unit)

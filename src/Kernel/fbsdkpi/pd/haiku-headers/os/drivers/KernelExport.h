@@ -239,6 +239,7 @@ extern status_t		unregister_kernel_daemon(daemon_hook hook, void *arg);
 
 extern void			call_all_cpus(void (*func)(void *, int), void *cookie);
 extern void			call_all_cpus_sync(void (*func)(void *, int), void *cookie);
+extern void			memory_full_barrier(void);
 extern void			memory_read_barrier(void);
 extern void			memory_write_barrier(void);
 

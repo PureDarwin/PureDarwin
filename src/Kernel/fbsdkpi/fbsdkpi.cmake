@@ -130,6 +130,7 @@ function(add_fbsdkpi_driver name)
     list(APPEND core
         "${FBSDKPI_DIR}/pd/pd_haiku_kernel.cpp"
         "${FBSDKPI_DIR}/pd/pd_pci.c"
+        "${FBSDKPI_DIR}/pd/pd_fbsd_glue.c"
         "${FBSDKPI_DIR}/pd/pd_driver.c"
         "${FBSDKPI_DIR}/pd/pd_kernel_util.c"
         "${FBSDKPI_DIR}/pd/pd_firmware.c"
@@ -219,6 +220,10 @@ function(add_fbsdkpi_driver name)
             INCLUDES ${FD_INCLUDES} ${iflibinc} ${lkpiinc}
             DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${FD_DEFINITIONS}
             OPTIONS ${lkpiopt})
+        # an undeclared call links to nothing and panics on first use, so iflib drivers fail the build
+        if(FD_IFLIB)
+            target_compile_options(${name}_driver PRIVATE -Werror=implicit-function-declaration)
+        endif()
         list(APPEND objects $<TARGET_OBJECTS:${name}_driver>)
     endif()
 

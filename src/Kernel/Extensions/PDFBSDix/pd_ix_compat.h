@@ -3,21 +3,6 @@
 #ifndef PD_IX_COMPAT_H
 #define PD_IX_COMPAT_H
 
-// net/rss_config.h's hash types, the receive hash ix programs into MRQC
-#define RSS_HASHTYPE_RSS_IPV4           (1 << 1)
-#define RSS_HASHTYPE_RSS_TCP_IPV4       (1 << 2)
-#define RSS_HASHTYPE_RSS_IPV6           (1 << 3)
-#define RSS_HASHTYPE_RSS_TCP_IPV6       (1 << 4)
-#define RSS_HASHTYPE_RSS_IPV6_EX        (1 << 5)
-#define RSS_HASHTYPE_RSS_TCP_IPV6_EX    (1 << 6)
-#define RSS_HASHTYPE_RSS_UDP_IPV4       (1 << 7)
-#define RSS_HASHTYPE_RSS_UDP_IPV6       (1 << 9)
-#define RSS_HASHTYPE_RSS_UDP_IPV6_EX    (1 << 10)
-
-// no kernel rss, so a random key and the tcp and ip hashes, as igc does
-#define rss_getkey(key) arc4rand((key), 40, 0)
-#define rss_gethashconfig() (RSS_HASHTYPE_RSS_IPV4 | RSS_HASHTYPE_RSS_TCP_IPV4 | \
-    RSS_HASHTYPE_RSS_IPV6 | RSS_HASHTYPE_RSS_TCP_IPV6)
 
 // sys/types.h's 32.32 fixed point time, only the vf mailbox deadlines use it
 typedef long long sbintime_t;

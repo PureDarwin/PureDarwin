@@ -6,3 +6,4 @@ local changes:
   if_igc.h: the kernel option headers sit under #ifndef __HAIKU__, as in PDFBSDem's if_em.h
   if_igc.c, igc_txrx.c: machine/_inttypes.h and the rss headers sit under #ifndef __HAIKU__, pd_igc_compat.h stands in for them
   if_igc.c: sysctl handlers that read oidp are stubbed under __HAIKU__ and D3_HOT is D3, igc_txrx.c: the SCTP checksum case is left out, both as in PDFBSDem
+  if_igc.h: includes fbsdkpi pd_iflib_shims.h under __HAIKU__, for the atomics, pme and newer iflib calls the haiku layer lacks
