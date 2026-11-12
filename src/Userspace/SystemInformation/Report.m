@@ -166,17 +166,29 @@ static NSArray *eachService(const char *cls, NSDictionary *(^describe)(io_servic
     return groups;
 }
 
-// the driver attached under a device, the class name of its first child in the service plane
+// the driver attached under a device, a child in the service plane. The firmware framebuffer stays attached
+// after a gpu driver takes the device over, so it only answers when nothing else is there
 static NSString *driverFor(io_registry_entry_t entry)
 {
-    io_registry_entry_t child = IO_OBJECT_NULL;
-    NSString *cls;
+    io_iterator_t iter = IO_OBJECT_NULL;
+    io_registry_entry_t child;
+    NSString *firmware = nil, *driver = nil;
 
-    if (IORegistryEntryGetChildEntry(entry, kIOServicePlane, &child) != KERN_SUCCESS)
+    if (IORegistryEntryGetChildIterator(entry, kIOServicePlane, &iter) != KERN_SUCCESS)
         return NSLocalizedString(@"None", @"");
-    cls = entryClass(child);
-    IOObjectRelease(child);
-    return cls;
+    while (driver == nil && (child = IOIteratorNext(iter)) != IO_OBJECT_NULL) {
+        NSString *cls = entryClass(child);
+
+        if ([cls isEqualToString:@"IOGOPFramebuffer"])
+            firmware = cls;
+        else
+            driver = cls;
+        IOObjectRelease(child);
+    }
+    IOObjectRelease(iter);
+    if (driver != nil)
+        return driver;
+    return firmware != nil ? firmware : NSLocalizedString(@"None", @"");
 }
 
 static NSString *pciVendor(uint32_t vendor)
