@@ -18,6 +18,11 @@
   outputs = { self, nixpkgs, iig-tools, kc-tools, xnu-loader, corecrypto-src, pd-sb-key }:
     let
       lib = nixpkgs.lib;
+      # a relative path input resolves inside this flake's own store path, so its hash follows every
+      # file in the repo. copied by content, an edit elsewhere no longer rebuilds what reads it
+      # (corecrypto feeds native-ld, and with it the whole toolchain)
+      corecryptoSource = builtins.path { name = "corecrypto-source"; path = corecrypto-src; };
+      sbKeySource = builtins.path { name = "pd-sb-key"; path = pd-sb-key; };
       systems = [ "x86_64-linux" "x86_64-darwin" "aarch64-linux" "aarch64-darwin" ];
       forAllSystems = lib.genAttrs systems;
 
@@ -108,7 +113,7 @@
             pkgs.callPackage ./nix/pkgs/toolchain/native-ld.nix {
               darwinCrossToolchain = bootstrapCrossToolchain;
               inherit libtapi iig;
-              corecryptoSrc = corecrypto-src;
+              corecryptoSrc = corecryptoSource;
             };
           # Not actually a *cross* toolchain on Darwin - the wrappers pin the
           # target triple, the pinned SDK and the linker, which is what every
@@ -230,7 +235,7 @@
             inherit appleSdk darwinCrossToolchain nativeLd nativeUnifdef nativeMigcom iig;
             # the kernel proper never builds corecrypto, keep its hash independent of it
             corecryptoSrc = if lib.hasPrefix "puredarwin-kernel" (args.pname or "") || lib.hasPrefix "puredarwin-xnu-headers" (args.pname or "")
-              then null else corecrypto-src;
+              then null else corecryptoSource;
             compilerRt = compilerRtBuild;
             compilerRtArm64 = arm64.compilerRtArm64Build or null;
             compilerRtRiscv64 = compilerRtRiscv64Build;
@@ -6052,7 +6057,7 @@
           shimIa32Build = pkgs.callPackage ./nix/pkgs/boot/shim-ia32.nix { };
           mkSecureBootImage = image: pkgs.callPackage ./nix/lib/secureboot.nix { shim = shimBuild; shimIa32 = shimIa32Build; } {
             inherit image;
-            key = pd-sb-key;
+            key = sbKeySource;
           };
           # the combined gpu image with the BIOS loader in the MBR
           imageGpuLegacyBuild = imageGpuBuild.override {
