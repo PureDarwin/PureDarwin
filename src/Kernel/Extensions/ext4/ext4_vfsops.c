@@ -363,11 +363,23 @@ ext4_vfs_getattr(struct mount *mp, struct vfs_attr *fsap,
 	return 0;
 }
 
+// write back the dirty cached pages of one file
 static int
-ext4_sync(struct mount *mp, __unused int waitfor, vfs_context_t ctx)
+ext4_sync_callback(vnode_t vp, void *arg)
+{
+	if (vnode_isreg(vp) && ubc_pages_resident(vp))
+		(void)ubc_msync(vp, 0, ubc_getsize(vp), NULL,
+		    UBC_PUSHDIRTY | (*(int *)arg == MNT_WAIT ? UBC_SYNC : 0));
+	return VNODE_RETURNED;
+}
+
+static int
+ext4_sync(struct mount *mp, int waitfor, vfs_context_t ctx)
 {
 	struct ext4mount *emp = VFSTOEXT4(mp);
 
+	// file data first, so the journal commit below covers the metadata it caused
+	(void)vnode_iterate(mp, 0, ext4_sync_callback, &waitfor);
 	if (emp) {
 		/* periodic syncer: flush the batched journal txn too */
 		ext4_fs_lock(emp);

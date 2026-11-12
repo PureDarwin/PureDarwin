@@ -342,6 +342,10 @@ struct ext4node {
 	ino_t             e_ino;
 	struct ext4_inode e_raw;        /* cached on-disk inode */
 	uint64_t          e_size;
+	// end of a write that is still extending the file, so pageout may already write up to it
+	uint64_t          e_new_size;
+	uint64_t          e_last_pblk;  // last block allocated to this file, the goal for the next
+	void             *e_tlock;      // IORWLock*: writers share it, truncation excludes them
 	enum vtype        e_vtype;
 	LIST_ENTRY(ext4node) e_hash;    /* em_node_hash linkage */
 	int               e_alloc_wip;  /* vnode_create in progress; sleep on &e_vp */
@@ -388,6 +392,9 @@ int  ext4_inode_truncate_extents(struct ext4mount *emp, ino_t ino, struct ext4_i
                uint64_t keep_blocks);
 int  ext4_bmap(struct ext4mount *emp, ino_t ino, struct ext4_inode *inode,
                uint32_t lblk, uint64_t *pblk_out);
+int  ext4_bmap_run(struct ext4mount *emp, ino_t ino, struct ext4_inode *inode,
+               uint32_t lblk, uint32_t maxblks, uint64_t *pblk_out,
+               uint32_t *run_out, int *unwritten_out);
 int  ext4_ino_is_live(struct ext4mount *emp, ino_t ino);
 int  ext4_indirect_lookup(struct ext4mount *emp, uint32_t blk, uint32_t lblk,
                int level, uint64_t *pblk_out);
@@ -467,6 +474,7 @@ int  ext4_jnl_should_commit(struct ext4mount *emp);
 /* Overlay pending (logged, not yet checkpointed) contents of pblk into out.
  * Returns 1 if an overlay was applied. */
 int  ext4_jnl_read_overlay(struct ext4mount *emp, uint64_t pblk, void *out);
+void ext4_jnl_forget(struct ext4mount *emp, uint64_t pblk);
 
 /* Journaled metadata write: logs the block, then writes it in place.
  * Falls back to plain buf_bwrite when the fs has no journal. */

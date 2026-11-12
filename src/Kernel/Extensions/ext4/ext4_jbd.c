@@ -618,26 +618,26 @@ ext4_jnl_log_block(struct ext4mount *emp, uint64_t pblk, const void *data)
 
 	if (j == NULL)
 		return ENOENT;   /* caller falls back to write-through */
-	if (j->j_tx_overflow)
-		return ENOSPC;
-	if (j->j_tx_count == 0) {
-		struct timeval tv;
-		microuptime(&tv);
-		j->j_tx_first_us = (uint64_t)tv.tv_sec * 1000000ull +
-		    (uint64_t)tv.tv_usec;
-	}
 
+	// a block already in the txn is updated in place, even when the txn is full
 	for (i = 0; i < j->j_tx_count; i++) {
 		if (j->j_tx[i].pblk == pblk) {
 			memcpy(j->j_tx[i].data, data, emp->em_blocksize);
 			return 0;
 		}
 	}
+	// a full txn is committed and a new one started: writing this block through while an older
+	// copy of another block waits in the txn would let the commit replay stale metadata
 	if (j->j_tx_count >= E4J_MAX_TX_BLOCKS) {
-		E4LOG("journal txn overflow (>%u blocks); falling back to "
-		    "write-through for this transaction", E4J_MAX_TX_BLOCKS);
-		j->j_tx_overflow = 1;
-		return ENOSPC;
+		int cerr = ext4_jnl_commit(emp);
+		if (cerr)
+			return cerr;
+	}
+	if (j->j_tx_count == 0) {
+		struct timeval tv;
+		microuptime(&tv);
+		j->j_tx_first_us = (uint64_t)tv.tv_sec * 1000000ull +
+		    (uint64_t)tv.tv_usec;
 	}
 	copy = (char *)_MALLOC(emp->em_blocksize, M_TEMP, M_WAITOK);
 	if (copy == NULL)
@@ -647,6 +647,25 @@ ext4_jnl_log_block(struct ext4mount *emp, uint64_t pblk, const void *data)
 	j->j_tx[j->j_tx_count].data = copy;
 	j->j_tx_count++;
 	return 0;
+}
+
+// drop the open txn's copy of a block that is being reallocated
+void
+ext4_jnl_forget(struct ext4mount *emp, uint64_t pblk)
+{
+	struct e4jnl *j = (struct e4jnl *)emp->em_jnl;
+	uint32_t i;
+
+	if (j == NULL)
+		return;
+	for (i = 0; i < j->j_tx_count; i++) {
+		if (j->j_tx[i].pblk != pblk)
+			continue;
+		_FREE(j->j_tx[i].data, M_TEMP);
+		j->j_tx[i] = j->j_tx[j->j_tx_count - 1];
+		j->j_tx_count--;
+		return;
+	}
 }
 
 int
