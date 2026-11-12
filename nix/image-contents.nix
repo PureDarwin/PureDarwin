@@ -61,6 +61,7 @@
 , corevideoBuild
 , coredataBuild
 , cgScreenDemoBuild
+, pdresBuild
 , systemFontsBuild
 , sharedMimeInfoBuild
 , cairoNoxBuild
@@ -641,6 +642,7 @@ let
     corevideo = corevideoBuild;
     coredata = coredataBuild;
     cg-screen-demo = cgScreenDemoBuild;
+    pdres = pdresBuild;
     system-fonts = systemFontsBuild;
     shared-mime-info = sharedMimeInfoBuild;
     icucore = icuCoreBuild;
@@ -1738,6 +1740,7 @@ let
           coregraphicsBuild
           coretextBuild
           cgScreenDemoBuild
+          pdresBuild
           systemFontsBuild
           waylandBuild
           waylandProtocolsBuild

@@ -1584,6 +1584,17 @@
               foundation = foundationBuild;
               src = ./src/Frameworks/CoreData;
             };
+          # pdres: display modes listed and switched from a shell, through CoreGraphics as Settings does
+          pdresBuild =
+            pkgs.callPackage ./nix/pkgs/apps/pdres.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              pdsurface = pdsurfaceBuild;
+              coregraphics = coregraphicsBuild;
+              src = ./src/Userspace/pdres;
+            };
           cgScreenDemoBuild =
             pkgs.callPackage ./nix/pkgs/apps/cg-screen-demo.nix {
               inherit darwinCrossToolchain nativeLd;
@@ -5253,7 +5264,7 @@
               libXcursorSharedBuild libXrandrSharedBuild libXxf86vmSharedBuild nettleSharedBuild gnutlsSharedBuild glibNetworkingBuild llvmCrossBuild vulkanLoaderBuild libxshmfenceSharedBuild vulkanToolsBuild vulkanLoaderNoxBuild vulkanToolsNoxBuild mesaVenusWaylandBuild venusTestsNoxBuild libdrmVirtgpuBuild glfwPdBuild metalPdNoxBuild metalObjcPdNoxBuild metalAppleSamplesNoxBuild spirvCrossPdBuild mslcPdBuild
               fbdoomBuild fbdoomExternalSrc fileBuild flexBuild fontconfigBuild foundationBuild frameworkCompatBuild swiftRuntimeBuild cocoaBuild appFrameworksBuild cgFfTestsBuild frameworksFfTestsBuild mpsNoxBuild audiotoolboxBuild pcmplayBuild coreaudiodBuild pdMetalSurfaceBuild carbonBuild iosurfaceBuild iosurfaceTestsBuild
               freetype2Build fribidiBuild garconBuild gdkPixbufBuild gitBuild glibBuild gnum4Build
-              gnumakeBuild gtk3Build gtkLayerShellBuild gtk3NoxBuild gtkLayerShellNoxBuild onyx2dBuild coregraphicsBuild coretextBuild quartzcoreBuild corevideoBuild coredataBuild cgScreenDemoBuild systemFontsBuild cairoNoxBuild dbusNoxBuild pdEpollShimBuild tllistBuild fcftBuild footBuild userlandNoxBuild pangoNoxBuild netsurfNoxBuild libepoxyNoxBuild fastfetchNoxBuild harfbuzzNoxBuild atspi2CoreNoxBuild cairoGobjectNoxBuild xkbcommonNoxBuild mesaNoxBuild openglFrameworkNoxBuild mesaDemosNoxBuild librsvgNoxBuild harfbuzzBuild i3Build i3statusShimBuild iceauthBuild
+              gnumakeBuild gtk3Build gtkLayerShellBuild gtk3NoxBuild gtkLayerShellNoxBuild onyx2dBuild coregraphicsBuild coretextBuild quartzcoreBuild corevideoBuild coredataBuild cgScreenDemoBuild pdresBuild systemFontsBuild cairoNoxBuild dbusNoxBuild pdEpollShimBuild tllistBuild fcftBuild footBuild userlandNoxBuild pangoNoxBuild netsurfNoxBuild libepoxyNoxBuild fastfetchNoxBuild harfbuzzNoxBuild atspi2CoreNoxBuild cairoGobjectNoxBuild xkbcommonNoxBuild mesaNoxBuild openglFrameworkNoxBuild mesaDemosNoxBuild librsvgNoxBuild harfbuzzBuild i3Build i3statusShimBuild iceauthBuild
               cursorThemeBuild iconThemesBuild icuCoreBuild imageExtraPackagesArm64 imageExtraPackagesArm64Nox imageExtraPackagesArm64Sg2002 splitBaseSystemArm64Sg2002 iographicsBuild iokitBuild asmjitTestArm64Build
               iomediacheckBuild ioregBuild isDarwin jsoncBuild kc-tools kernelArm64Build kernelArm64VirtBuild
               kernelArm64VirtDebugBuild kernelArm64VirtAmpBuild kernelArm64T8010Build kernelArm64T8010DebugBuild kernelArm64S8000Build kernelArm64S8000DebugBuild kernelArm64T8103Build kernelArm64T8103DebugBuild kernelArm64Bcm2837Build kernelArm64Bcm2837DebugBuild kernelArm64Sun50iBuild kernelArm64Sun50iDebugBuild kernelArm64Sc8280xpBuild kernelArm64Sc8280xpDebugBuild kernelArm64Virt4kDebugBuild kernelArm32Bcm2835Build kernelArm32Bcm2835DebugBuild kernelArm32Bcm2835DevBuild
@@ -6201,6 +6212,7 @@
             iovirtiogpu-kext = kextBuilds.IOVirtIOGPU;
             apple-sdk = appleSdk;
             cg-screen-demo = cgScreenDemoBuild;
+            pdres = pdresBuild;
             drm-kmod-src = drmKmodSrc;
             drm-amdgpu = drmAmdgpuBuild;
             drm-msm-arm64 = drmMsmArm64Build;
