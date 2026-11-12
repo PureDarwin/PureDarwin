@@ -10,6 +10,7 @@
 #include "pd_fbsd_os.h"
 
 #include "pd_msm_a6xx.h"
+#include "pd_msm_a6xx_regs.h"
 
 #define RING_BYTES                      (32 * 1024)     // spec 4.3
 #define GMU_GX_SPTPRAC_CLOCK_CONTROL    0x1a880
@@ -620,6 +621,34 @@ a6xx_init(struct pd_msm_dev *mdev)
     return (0);
 }
 
+// pdmsmregs=1: every register the bring-up programs, in tools/a690-capture's format, to diff
+// against linux. gx only while the oob holds the gpu on
+static void
+a6xx_regdump(struct pd_msm_dev *mdev, struct a6xx_state *st, bool gx)
+{
+    static const char *const names[] = { A6XX_REG_WINDOW_NAMES };
+    void __iomem *win[W_COUNT] = {
+        [W_GPU] = gx ? mdev->gpu.mmio : NULL, [W_GMU] = st->gmu, [W_RSCC] = st->rscc,
+        [W_PDC] = st->pdc,
+        [W_SMMU_GR0] = pd_msm_smmu500_window(mdev->gpu.iommu_priv, 0),
+        [W_SMMU_GR1] = pd_msm_smmu500_window(mdev->gpu.iommu_priv, 1),
+        [W_SMMU_CB0] = pd_msm_smmu500_window(mdev->gpu.iommu_priv, 2),
+        [W_SMMU_CB1] = pd_msm_smmu500_window(mdev->gpu.iommu_priv, 3),
+        [W_GPUCC] = pd_msm_gpucc8280_window(1), [W_GCC] = pd_msm_gpucc8280_window(0),
+    };
+    
+    if (pdos_bootarg_int("pdmsmregs", 0) == 0)
+        return;
+#define DUMP(w, off, name) \
+    if (win[w] != NULL) \
+        printf("pd msm: reg %s 0x%05x 0x%08x %s\n", names[w], (u32)(off), \
+               readl((u8 __iomem *)win[w] + (off)), name); \
+    else \
+        printf("pd msm: reg %s 0x%05x unread %s\n", names[w], (u32)(off), name);
+    A6XX_REGS(DUMP)
+#undef DUMP
+}
+
 static bool
 stop_at(int stage)
 {
@@ -705,6 +734,7 @@ a6xx_start(struct pd_msm_dev *mdev)
     }
     dev_info(dev, "a6xx: cp running\n");
 out:
+    a6xx_regdump(mdev, st, oob);
     // the gpu oob is handed back on every path once granted
     if (oob)
         a6xx_gmu_oob_gpu(st, false);

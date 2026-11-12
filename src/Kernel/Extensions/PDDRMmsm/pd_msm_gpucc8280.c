@@ -243,6 +243,13 @@ static const struct pd_power_ops sPowerOps = {
     .power_off = gdsc_off,
 };
 
+// the gcc (0) and gpucc (1) windows for the pdmsmregs dump, NULL until a clock maps them
+void __iomem *
+pd_msm_gpucc8280_window(int which)
+{
+    return (which == 0 ? sGcc : sGpucc);
+}
+
 void
 pd_msm_gpucc8280_register(void)
 {

@@ -493,6 +493,23 @@ int pd_msm_smmu500_gmu_map(void *priv, u32 gmu_va, u64 phys, size_t size)
     return (error);
 }
 
+// a register window for the pdmsmregs dump: 0 global space 0, 1 global space 1, 2 and 3 banks 0, 1
+void __iomem *
+pd_msm_smmu500_window(void *priv, int which)
+{
+    struct smmu500 *s = priv;
+
+    if (s == NULL || s->base == NULL)
+        return (NULL);
+    switch (which) {
+    case 0: return (s->base);
+    case 1: return (s->base + s->cb_size);
+    case 2: return (s->cb);
+    case 3: return (s->cb + s->cb_size);
+    default: return (NULL);
+    }
+}
+
 const struct pd_msm_iommu pd_msm_iommu_smmu500 = {
     .compatible = "qcom,adreno-smmu",
     .attach = smmu_attach,

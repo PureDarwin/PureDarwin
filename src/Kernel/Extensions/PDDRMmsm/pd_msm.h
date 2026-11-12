@@ -143,11 +143,13 @@ extern const struct pd_msm_iommu pd_msm_iommu_v1;
 // pd_msm_smmu500.c: sc8280xp's adreno smmu-500
 extern const struct pd_msm_iommu pd_msm_iommu_smmu500;
 int pd_msm_smmu500_gmu_map(void *priv, u32 gmu_va, u64 phys, size_t size);
+void __iomem *pd_msm_smmu500_window(void *priv, int which);
 
 // the soc clock and power providers: pd_msm_gcc8916.c
 void pd_msm_gcc8916_register(void);
 // pd_msm_gpucc8280.c: sc8280xp's gcc gpu clocks, gpucc and the cx gdsc
 void pd_msm_gpucc8280_register(void);
+void __iomem *pd_msm_gpucc8280_window(int which);
 
 // pd_msm_gpu.c: flight staging from the pdmsmstage boot-arg, 0 runs everything
 int pd_msm_stage(void);
