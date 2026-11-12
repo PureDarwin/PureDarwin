@@ -2291,6 +2291,19 @@ IOReturn RavynXHCIPort::abortInterruptEndpoint(UInt32 slotId, UInt8 epNum, bool 
 
 #define kMaxTDTRBs          160U
 
+// a table one transfer needs, on the heap: the storage stack above a transfer is deep enough
+// that a few KiB of tables on the kernel stack overflowed it
+template <typename T> struct PDXferTable {
+    T *v;
+    explicit PDXferTable(UInt32 n) : v((T *)IOMalloc(n * sizeof(T))), n(n) {}
+    ~PDXferTable() { if (v) IOFree(v, n * sizeof(T)); }
+    PDXferTable(const PDXferTable &) = delete;
+    PDXferTable &operator=(const PDXferTable &) = delete;
+private:
+    UInt32 n;
+};
+struct PDXferTRBSpan { UInt32 idx, off, len; };
+
 bool RavynXHCIPort::bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
                                  IOBufferMemoryDescriptor *xferMem, UInt32 len, UInt32 timeoutMs,
                                  UInt32 *outActual, UInt8 *outCC)
@@ -2343,7 +2356,10 @@ bool RavynXHCIPort::bulkTransferSegs(UInt32 slotId, UInt8 epNum, bool in, const 
     }
 
     // ring index, offset and length of each trb, so a short packet maps back to a byte count
-    struct { UInt32 idx, off, len; } trbs[kMaxTDTRBs];
+    PDXferTable<PDXferTRBSpan> trbTable(kMaxTDTRBs);
+    PDXferTRBSpan *trbs = trbTable.v;
+    if (!trbs)
+        return false;
     UInt32 ntrb = 0;
     UInt32 start = enqueue;
     UInt32 remaining = len;
@@ -2727,16 +2743,27 @@ bool RavynXHCIPort::enumerateSlotDevice(UInt32 slotId, UInt32 rootPort0based, UI
     bzero(&cfgHdr, sizeof(cfgHdr));
     USBSetupPacket getCfgHdr = { 0x80, USB_REQ_GET_DESCRIPTOR,
                                 (UInt16)(USB_DESC_CONFIGURATION << 8), 0, sizeof(cfgHdr) };
-    if (!controlTransfer(slotId, getCfgHdr, &cfgHdr, sizeof(cfgHdr), true)) return false;
+    if (!controlTransfer(slotId, getCfgHdr, &cfgHdr, sizeof(cfgHdr), true)) {
+        XHCI_Log("slot %u: config descriptor header read failed", slotId);
+        return false;
+    }
 
+    // composites with audio and vendor interfaces run past 512 bytes, wTotalLength is 16 bits
     UInt16 totalLen = cfgHdr.wTotalLength;
-    if (totalLen < sizeof(cfgHdr) || totalLen > 512) return false;
+    if (totalLen < sizeof(cfgHdr) || totalLen > 4096) {
+        XHCI_Log("slot %u: config descriptor length %u not usable", slotId, totalLen);
+        return false;
+    }
 
     uint8_t *cfgBuf = (uint8_t *)IOMalloc(totalLen);
     if (!cfgBuf) return false;
     USBSetupPacket getCfgFull = { 0x80, USB_REQ_GET_DESCRIPTOR,
                                  (UInt16)(USB_DESC_CONFIGURATION << 8), 0, totalLen };
-    if (!controlTransfer(slotId, getCfgFull, cfgBuf, totalLen, true)) { IOFree(cfgBuf, totalLen); return false; }
+    if (!controlTransfer(slotId, getCfgFull, cfgBuf, totalLen, true)) {
+        XHCI_Log("slot %u: config descriptor read of %u bytes failed", slotId, totalLen);
+        IOFree(cfgBuf, totalLen);
+        return false;
+    }
     UInt8 cfgValue = cfgHdr.bConfigurationValue;
 
     // note the hub's interrupt IN endpoint while the blob is at hand. real silicon forwards nothing to
@@ -2769,7 +2796,10 @@ bool RavynXHCIPort::enumerateSlotDevice(UInt32 slotId, UInt32 rootPort0based, UI
     IOFree(cfgBuf, totalLen);
 
     USBSetupPacket setCfg = { 0x00, USB_REQ_SET_CONFIGURATION, cfgValue, 0, 0 };
-    if (!controlTransfer(slotId, setCfg, NULL, 0, false)) return false;
+    if (!controlTransfer(slotId, setCfg, NULL, 0, false)) {
+        XHCI_Log("slot %u: SET_CONFIGURATION %u failed", slotId, cfgValue);
+        return false;
+    }
 
     if (devDesc.bDeviceClass == USB_DEV_CLASS_HUB) {
         if (depth >= 4) {
@@ -2831,6 +2861,8 @@ bool RavynXHCIPort::enumerateSlotDevice(UInt32 slotId, UInt32 rootPort0based, UI
     UInt8 bulkInEp = 0, bulkOutEp = 0;
     UInt16 bulkInMaxPkt = 0, bulkOutMaxPkt = 0;
     UInt8 mscIface = 0;
+    // any interface that is not the disk: then the device is a composite and every interface needs publishing
+    bool otherIface = false;
 
     UInt32 off = 0;
     bool inMSCInterface = false;
@@ -2846,6 +2878,7 @@ bool RavynXHCIPort::enumerateSlotDevice(UInt32 slotId, UInt32 rootPort0based, UI
                               ifd->bInterfaceProtocol == USB_IF_PROTOCOL_BULK_ONLY);
             if (inMSCInterface && !foundMSC) mscIface = ifd->bInterfaceNumber;
             if (inMSCInterface) foundMSC = true;
+            else if (ifd->bAlternateSetting == 0) otherIface = true;
         } else if (type == 5 /* endpoint */ && len >= sizeof(USBEndpointDescriptor)) {
             USBEndpointDescriptor *epd = (USBEndpointDescriptor *)(cfgBuf + off);
             if (inMSCInterface && (epd->bmAttributes & USB_EP_TYPE_MASK) == USB_EP_TYPE_BULK) {
@@ -2862,8 +2895,11 @@ bool RavynXHCIPort::enumerateSlotDevice(UInt32 slotId, UInt32 rootPort0based, UI
     }
     IOFree(cfgBuf, totalLen);
 
-    if (!foundMSC || !bulkInEp || !bulkOutEp) {
-        XHCI_Log("slot %u: no bulk-only mass storage interface found; publishing generic USB device", slotId);
+    if (!foundMSC || !bulkInEp || !bulkOutEp || otherIface) {
+        if (foundMSC && otherIface)
+            XHCI_Log("slot %u: mass storage beside other interfaces; publishing generic USB device", slotId);
+        else
+            XHCI_Log("slot %u: no bulk-only mass storage interface found; publishing generic USB device", slotId);
 
         // other device types go to the generic IOUSBController/IOUSBDevice stack for personality matching
         if (!fUSBBus) return false;
@@ -3120,9 +3156,11 @@ IOReturn RavynXHCIPort::botTransferLocked(UInt32 slotId,
     UInt32 moved = 0;
     if (dataLen > 0) {
         // reads and writes go straight to and from the client's pages, the small commands bounce
-        RavynXferSeg segs[kMaxTDTRBs];
+        PDXferTable<RavynXferSeg> segTable(kMaxTDTRBs);
+        RavynXferSeg *segs = segTable.v;
         UInt32 nseg = 0;
-        bool direct = !allowShort && mapClientSegs(buffer, bufOff, dataLen, dataIn, segs, &nseg);
+        // without the table the transfer bounces, as a short read does
+        bool direct = segs && !allowShort && mapClientSegs(buffer, bufOff, dataLen, dataIn, segs, &nseg);
         if (direct) {
             bool leaked = false;
             ok = bulkTransferSegs(slotId, dataIn ? m.bulkInEp : m.bulkOutEp, dataIn, segs, nseg, NULL,
