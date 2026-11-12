@@ -1053,6 +1053,16 @@ let
           "${drmMsmArm64Build}/System/Library/Extensions/PDDRMDri.kext"
           "${drmMsmArm64Build}/System/Library/Extensions/PDDRMmsm.kext"
         ];
+        # with msm the kexts ran 1.5 MB past the 16 MB below the kernel: drivers for other boards,
+        # qemu and usb 1/2 hosts go. the x13s keeps i2c hid, xhci, gop, nvme and the filesystems
+        omitKexts = [
+          "PDTegraSDMMC" "PDTegraUSB" "PDTegraXUSB" "PDTegraDisplay"
+          "PDPowerVR" "PDSun60iDisplay" "PDSg2002SD" "PDSg2002Eth"
+          "IOVirtIOFamily" "IOVirtIOGPU" "IOVirtIOBlock" "IOVirtIONet"
+          "AppleUSBEHCI" "AppleUSBOHCI"
+          # the e1000 nic is pci only, the x13s has none
+          "PDFBSDem"
+        ];
       };
       kcArm64Sc8280xpDebugBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
         kernel = kernelArm64Sc8280xpDebugBuild;
