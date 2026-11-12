@@ -89,6 +89,9 @@ a6xx_gmu_power(struct pd_msm_dev *mdev, struct a6xx_state *st)
     struct device *dev = &mdev->pdev->dev;
     int error;
     
+    // once: clocks and the gdsc have no off path yet, a retried start must not count them up
+    if (st->gmu_powered)
+        return (0);
     // cx only: gdsc_xlate refuses gx, the second entry
     if ((error = pd_power_domains_on(st->gmu_np)) != 0) {
         dev_err(dev, "a6xx: cx did not come on: %d\n", error);
@@ -114,6 +117,7 @@ a6xx_gmu_power(struct pd_msm_dev *mdev, struct a6xx_state *st)
     }
     dev_info(dev, "a6xx: gmu powered, gmu %lu Hz, hub %lu Hz\n", clk_get_rate(st->gmu_clk),
              clk_get_rate(st->hub_clk));
+    st->gmu_powered = true;
     return (0);
 }
 
@@ -168,7 +172,7 @@ gmu_cpu(struct a6xx_state *st, u32 va, u32 len)
     for (int i = 0; i < st->nmem; i++) {
         struct a6xx_gmu_mem *m = &st->mem[i];
         
-        if (va >= m->gmu_va && va + len <= m->gmu_va + m->size)
+        if (va >= m->gmu_va && (u64)va + len <= (u64)m->gmu_va + m->size)
             return ((u8 *)m->cpu + (va - m->gmu_va));
     }
     return (NULL);
@@ -213,19 +217,20 @@ a6xx_gmu_load(struct pd_msm_dev *mdev, struct a6xx_state *st, const struct firmw
         
         memcpy(h, p + off, sizeof(h));
         u32 va = le32_to_cpu(h[0]), size = le32_to_cpu(h[1]);
+        u64 end = (u64)va + size;       // 64-bit, so a block can't wrap into a window
         const u8 *payload = p + off + 16;
         
-        if (off + 16 + size > fw->size) {
+        if (size > fw->size - off - 16) {
             printf("pd msm: a6xx: gmu image: block at 0x%zx runs past the end\n", off);
             return (-EINVAL);
         }
         if (size == 0) {
             // a descriptor: nothing to copy, its range is one of sGmuRanges (spec 5.2a)
-        } else if (va + size <= ITCM_END) {
+        } else if (end <= ITCM_END) {
             gmu_tcm_write(st, GMU_CM3_ITCM_START, va, payload, size);
             printf("pd msm: a6xx: gmu block 0x%08x +0x%x -> itcm\n", va, size);
             nblocks++;
-        } else if (va >= DTCM_BASE && va + size <= DTCM_END) {
+        } else if (va >= DTCM_BASE && end <= DTCM_END) {
             gmu_tcm_write(st, GMU_CM3_DTCM_START, va - DTCM_BASE, payload, size);
             printf("pd msm: a6xx: gmu block 0x%08x +0x%x -> dtcm\n", va, size);
             nblocks++;
@@ -461,7 +466,7 @@ a6xx_gmu_oob_gpu(struct a6xx_state *st, bool request)
     gmu_write(st, GMU_HOST2GMU_INTR_SET, OOB_GPU_REQUEST);
     for (i = 0; (gmu_read(st, GMU_GMU2HOST_INTR_INFO) & OOB_GPU_GRANTED) == 0; i++) {
         if (i == 1000) {
-            printf("pd msm: a6xx: gpu oob not granted, info 0x08x\n",
+            printf("pd msm: a6xx: gpu oob not granted, info 0x%08x\n",
                    gmu_read(st, GMU_GMU2HOST_INTR_INFO));
             return (-ETIMEDOUT);
         }

@@ -45,7 +45,6 @@
 #define SMR_VALID        (1u << 31)
 #define SMR(id, mask)    (SMR_VALID | ((u32)(mask) << 16) | (id))
 #define S2CR_CB(n)       (n) // type translate (0), context bank n
-#define STREAM_MASK      0xc00 // the iommus cells' mask (spec 6.3)
 // stage 1 descriptors, 4 KB granule (ARM-SMMU; the same bits as pd_msm_smmu.c)
 #define DESC_VALID       0x3ull // table at levels 0-2, page at level 3
 #define DESC_AP_RW       (1ull << 6) // AP 0b01: read-write
@@ -71,21 +70,35 @@
 #define CB_FAR            0x060 // 64-bit
 #define CB_FSYNR0         0x068
 
+#define PT_ENTRIES       512
+
+// one translation table: the smmu walks it by phys, the driver through child[]
+struct pt {
+    u64 *va; // uncached view
+    u64 phys;
+    void *alloc;
+    struct pt *child[PT_ENTRIES]; // next level, NULL at level 3
+    u32 used; // valid entries
+};
+
+// a stream from an iommus entry: id and mask are its two cells
+struct smmu_stream {
+    u32 id;
+    u32 mask;
+    int bank;
+};
+
+#define MAX_STREAMS      3 // two gpu entries and the gmu's
+
 struct smmu500 {
-    void __iomem *base; // 0x03da0000: global space 0, 1, then the banks
-    u32 gpu_sid[2]; // from the gpu's iommus
-    u32 gmu_sid; // from the gpu's iommus
+    void __iomem *base; // global space 0, 1, then the banks
     struct mutex lock;
-    struct {
-        u64 *va;
-        u64 phys;
-        void *alloc;
-    } tabs[2048];
-    int ntabs;
-    u64 *root[2]; // each bank's level 0 table, tabs[] entries
+    struct smmu_stream streams[MAX_STREAMS];
+    int nstreams;
+    int nsmr, ncb; // from idr0 and idr1
+    struct pt *root[2]; // each bank's level 0 table
     void __iomem *cb; // the first context bank, from IDR1
     u32 cb_size; // one bank, and one global space
-    u64 pt_phys[2]; // each bank's root table, for ttbr0
 };
 
 static int
@@ -100,6 +113,12 @@ smmu_reset(struct smmu500 *s)
 
     printf("pd msm: smmu500: idr0 0x%08x idr1 0x%08x idr2 0x%08x, %d smrs, %d banks\n",
         idr0, idr1, idr2, nsmr, ncb);
+    s->nsmr = nsmr;
+    s->ncb = ncb;
+    if (nsmr < s->nstreams || ncb < 2) {
+        printf("pd msm: smmu500: %d streams and 2 banks needed\n", s->nstreams);
+        return (-ENODEV);
+    }
     s->cb = s->base + npages * pagesize;
     s->cb_size = pagesize;
 
@@ -137,60 +156,72 @@ smmu_reset(struct smmu500 *s)
     return (0);
 }
 
-static u64 *
-table_new(struct smmu500 *s, u64 *phys)
+static struct pt *
+pt_new(void)
 {
-    if (s->ntabs == nitems(s->tabs))
-        return (NULL);
-    s->tabs[s->ntabs].va = pd_msm_dma_alloc(0x1000, &s->tabs[s->ntabs].phys,
-        &s->tabs[s->ntabs].alloc);
-    if (s->tabs[s->ntabs].va == NULL)
-        return (NULL);
-    *phys = s->tabs[s->ntabs].phys;
-    return (s->tabs[s->ntabs++].va);
-}
+    struct pt *t = kzalloc(sizeof(*t), GFP_KERNEL);
 
-// the next-level table below parent[index], made on first use
-static u64 *
-table_at(struct smmu500 *s, u64 *parent, u32 index)
-{
-    u64 d = parent[index], phys;
-    u64 *t;
-
-    if ((d & 1) != 0) {
-        for (int i = 0; i < s->ntabs; i++) {
-            if (s->tabs[i].phys == (d & DESC_ADDR))
-                return (s->tabs[i].va);
-        }
+    if (t == NULL)
+        return (NULL);
+    t->va = pd_msm_dma_alloc(0x1000, &t->phys, &t->alloc);
+    if (t->va == NULL) {
+        kfree(t);
         return (NULL);
     }
-    if ((t = table_new(s, &phys)) == NULL)
-        return (NULL);
-    parent[index] = (phys & DESC_ADDR) | DESC_VALID;
     return (t);
 }
 
-// the level 3 entry for a 48-bit iova: levels 0-3 from bits 47:39, 38:30, 29:21 and 20:12
-static u64 *
-leaf(struct smmu500 *s, int bank, u64 iova)
+static void
+pt_free(struct pt *t)
 {
-    u64 *l1 = table_at(s, s->root[bank], (iova >> 39) & 0x1ff);
-    u64 *l2 = l1 != NULL ? table_at(s, l1, (iova >> 30) & 0x1ff) : NULL;
-    u64 *l3 = l2 != NULL ? table_at(s, l2, (iova >> 21) & 0x1ff) : NULL;
+    pd_msm_dma_free(t->va, t->alloc, 0x1000);
+    kfree(t);
+}
 
-    return (l3 != NULL ? &l3[(iova >> 12) & 0x1ff] : NULL);
+static u32
+pt_index(u64 iova, int level)
+{
+    return ((iova >> (39 - 9 * level)) & (PT_ENTRIES - 1));
+}
+
+// the level 3 table for a 48-bit iova, its parents made on the way if create
+static struct pt *
+leaf_table(struct smmu500 *s, int bank, u64 iova, bool create)
+{
+    struct pt *t = s->root[bank];
+
+    for (int level = 0; level < 3; level++) {
+        u32 i = pt_index(iova, level);
+
+        if (t->child[i] == NULL) {
+            struct pt *n;
+
+            if (!create || (n = pt_new()) == NULL)
+                return (NULL);
+            t->va[i] = (n->phys & DESC_ADDR) | DESC_VALID;
+            t->child[i] = n;
+            t->used++;
+        }
+        t = t->child[i];
+    }
+    return (t);
 }
 
 // invalidate the bank's asid, then wait for the sync (spec 6.5, as pd_msm_smmu.c's flush)
-static void
+static int
 bank_flush(struct smmu500 *s, int bank)
 {
     void __iomem *cb = s->cb + bank * s->cb_size;
 
     writel(bank, cb + CB_TLBIASID); // asid = bank number (0 gpu, 1 gmu)
     writel(0, cb + CB_TLBSYNC);
-    for (int us = 0; us < 10000 && (readl(cb + CB_TLBSTATUS) & 1) != 0; us++)
+    for (int us = 0; us < 10000; us++) {
+        if ((readl(cb + CB_TLBSTATUS) & 1) == 0)
+            return (0);
         udelay(1);
+    }
+    printf("pd msm: smmu500: bank %d: tlb sync never completed\n", bank);
+    return (-ETIMEDOUT);
 }
 
 // called with s->lock held (smmu_map, pd_msm_smmu500_gmu_map). 4 KB leaves: the kernel's
@@ -199,44 +230,63 @@ static int
 table_map(struct smmu500 *s, int bank, u64 iova, u64 phys, size_t size)
 {
     u64 attr = bank == 1 ? DESC_PAGE_PRIV : DESC_PAGE;
-    if (((iova | phys | size) & 0xfff) != 0 || (iova >> 48) != 0)
+
+    if (((iova | phys | size) & 0xfff) != 0 || ((iova + size - 1) >> 48) != 0 ||
+        iova + size < iova)
         return (-EINVAL);
     for (size_t off = 0; off < size; off += 0x1000) {
-        u64 *e = leaf(s, bank, iova + off);
+        struct pt *l3 = leaf_table(s, bank, iova + off, true);
+        u32 i = pt_index(iova + off, 3);
 
-        if (e == NULL) {
+        if (l3 == NULL) {
             printf("pd msm: smmu500: bank %d: no table for 0x%llx\n", bank,
                 (unsigned long long)(iova + off));
             return (-ENOMEM);
         }
-        *e = ((phys + off) & DESC_ADDR) | attr;
+        if (l3->va[i] == 0)
+            l3->used++;
+        l3->va[i] = ((phys + off) & DESC_ADDR) | attr;
     }
     wmb();
-    bank_flush(s, bank);
-    return (0);
+    return (bank_flush(s, bank));
 }
 
+// clears the leaves, then frees the level 3 tables left empty once the tlb no longer holds them
 static void
 table_unmap(struct smmu500 *s, int bank, u64 iova, size_t size)
 {
     for (size_t off = 0; off < size; off += 0x1000) {
-        u64 *e = leaf(s, bank, iova + off);
+        struct pt *l3 = leaf_table(s, bank, iova + off, false);
+        u32 i = pt_index(iova + off, 3);
 
-        if (e != NULL)
-            *e = 0;
+        if (l3 != NULL && l3->va[i] != 0) {
+            l3->va[i] = 0;
+            l3->used--;
+        }
     }
     wmb();
     bank_flush(s, bank);
+    for (u64 va = iova & ~0x1fffffull; va < iova + size; va += 0x200000) {
+        struct pt *l1 = s->root[bank]->child[pt_index(va, 0)];
+        struct pt *l2 = l1 != NULL ? l1->child[pt_index(va, 1)] : NULL;
+        u32 i = pt_index(va, 2);
+
+        if (l2 == NULL || l2->child[i] == NULL || l2->child[i]->used != 0)
+            continue;
+        l2->va[i] = 0;
+        wmb();
+        bank_flush(s, bank);
+        pt_free(l2->child[i]);
+        l2->child[i] = NULL;
+        l2->used--;
+    }
 }
 
 static int
 bank_table(struct smmu500 *s, int bank)
 {
-    u64 phys;
-
-    if ((s->root[bank] = table_new(s, &phys)) == NULL)
+    if ((s->root[bank] = pt_new()) == NULL)
         return (-ENOMEM);
-    s->pt_phys[bank] = phys; // keep this one field for the ttbr0 write
     return (0);
 }
 
@@ -254,7 +304,7 @@ smmu_bank_gpu(struct smmu500 *s)
     writel(0x0001f300, gr1 + SMMU_CBAR(0)); // type 1: stage 1, stage 2 bypass
     writel(0x00038011, cb + CB_TCR2); // pasize 36-bit, 16-bit asid, sep 7
     writel(0x00803510, cb + CB_TCR);
-    writeq(s->pt_phys[0] | (0ull << 48), cb + CB_TTBR0); // asid 1
+    writeq(s->root[0]->phys | (0ull << 48), cb + CB_TTBR0); // asid 0
     writeq(0, cb + CB_TTBR1);
     writel(0xf404ff44, cb + CB_MAIR0);
     writel(0xffffffff, cb + CB_MAIR1);
@@ -278,7 +328,7 @@ smmu_bank_gmu(struct smmu500 *s)
     writel(0x0001f300, gr1 + SMMU_CBAR(1)); // type 1: stage 1, stage 2 bypass
     writel(0x00038011, cb + CB_TCR2); // pasize 36-bit, 16-bit asid, sep 7
     writel(0x00803510, cb + CB_TCR);
-    writeq(s->pt_phys[1] | (1ull << 48), cb + CB_TTBR0); // asid 0
+    writeq(s->root[1]->phys | (1ull << 48), cb + CB_TTBR0); // asid 1
     writeq(1ull << 48, cb + CB_TTBR1);
     writel(0xf404ff44, cb + CB_MAIR0);
     writel(0xffffffff, cb + CB_MAIR1);
@@ -290,17 +340,25 @@ smmu_bank_gmu(struct smmu500 *s)
 static int
 smmu_streams(struct smmu500 *s)
 {
-    const u32 sid[3] = { s->gpu_sid[0], s->gpu_sid[1], s->gmu_sid };
-    const u32 bank[3] = { 0, 0, 1 };
-
-    for (int i = 0; i < 3; i++)
-        writel(SMR(sid[i], STREAM_MASK), s->base + SMMU_SMR(i));
-    for (int i = 0; i < 3; i++)
-        writel(S2CR_CB(bank[i]), s->base + SMMU_S2CR(i));
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < s->nstreams; i++)
+        writel(SMR(s->streams[i].id, s->streams[i].mask), s->base + SMMU_SMR(i));
+    for (int i = 0; i < s->nstreams; i++)
+        writel(S2CR_CB(s->streams[i].bank), s->base + SMMU_S2CR(i));
+    for (int i = 0; i < s->nstreams; i++)
         printf("pd msm: smmu500: smr%d 0x%08x s2cr%d 0x%08x\n", i,
             readl(s->base + SMMU_SMR(i)), i, readl(s->base + SMMU_S2CR(i)));
     return (0);
+}
+
+// one iommus entry: its stream id and, with a second cell, its mask
+static void
+stream_add(struct smmu500 *s, const struct of_phandle_args *args, int bank)
+{
+    struct smmu_stream *st = &s->streams[s->nstreams++];
+
+    st->id = args->args[0];
+    st->mask = args->args_count > 1 ? args->args[1] : 0;
+    st->bank = bank;
 }
 
 // both banks and the global fault state; call it whenever a later step times out. Faults are
@@ -335,22 +393,38 @@ smmu_attach(struct device *dev)
 {
     struct smmu500 *s;
     struct of_phandle_args args;
-    struct device_node *np, *gmu;
+    struct device_node *np = NULL, *gmu;
 
-    if (of_parse_phandle_with_args(dev->of_node, "iommus", "#iommu-cells", 0, &args) != 0)
-        return (NULL);
-    np = args.np;
     s = kzalloc(sizeof(*s), GFP_KERNEL);
+    if (s == NULL)
+        return (NULL);
     mutex_init(&s->lock);
-    s->gpu_sid[0] = args.args[0];
-    if (of_parse_phandle_with_args(dev->of_node, "iommus", "#iommu-cells", 1, &args) == 0)
-        s->gpu_sid[1] = args.args[0];
+    // the gpu's entries go to bank 0, at most two of them
+    for (int i = 0; i < 2; i++) {
+        if (of_parse_phandle_with_args(dev->of_node, "iommus", "#iommu-cells", i, &args) != 0)
+            break;
+        if (np == NULL)
+            np = args.np;
+        else if (args.np != np) {
+            dev_err(dev, "smmu500: gpu streams on two iommus\n");
+            goto fail;
+        }
+        stream_add(s, &args, 0);
+    }
+    if (np == NULL) {
+        dev_err(dev, "smmu500: no gpu stream\n");
+        goto fail;
+    }
     gmu = of_parse_phandle(dev->of_node, "qcom,gmu", 0);
     if (gmu == NULL || of_parse_phandle_with_args(gmu, "iommus", "#iommu-cells", 0, &args) != 0) {
         dev_err(dev, "smmu500: no gmu stream\n");
         goto fail;
     }
-    s->gmu_sid = args.args[0];
+    if (args.np != np) {
+        dev_err(dev, "smmu500: gmu stream on another iommu\n");
+        goto fail;
+    }
+    stream_add(s, &args, 1);
     if (pd_power_domains_on(np) != 0) {
         dev_err(dev, "smmu500: power domain did not come on\n");
         goto fail;
@@ -367,14 +441,21 @@ smmu_attach(struct device *dev)
         dev_err(dev, "smmu500: cannot map %s\n", np->full_name);
         goto fail;
     }
-    dev_info(dev, "smmu500: %s, gpu streams %u %u, gmu stream %u\n", np->full_name,
-        s->gpu_sid[0], s->gpu_sid[1], s->gmu_sid);
+    for (int i = 0; i < s->nstreams; i++)
+        dev_info(dev, "smmu500: %s stream %u mask 0x%x, bank %d\n", np->full_name,
+            s->streams[i].id, s->streams[i].mask, s->streams[i].bank);
     if (smmu_reset(s) != 0 || smmu_bank_gpu(s) != 0 || smmu_bank_gmu(s) != 0 || smmu_streams(s) != 0) {
         dev_err(dev, "smmu500: setup failed\n");
         goto fail;
     }
     return (s);
 fail:
+    // power and clocks stay on: the smmu has no off path yet
+    for (int b = 0; b < 2; b++)
+        if (s->root[b] != NULL)
+            pt_free(s->root[b]);
+    if (s->base != NULL)
+        iounmap(s->base);
     kfree(s);
     return (NULL);
 }

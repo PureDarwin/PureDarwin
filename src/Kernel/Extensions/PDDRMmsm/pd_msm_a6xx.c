@@ -326,11 +326,13 @@ scm_call(u64 in[7], int *resumes)
 static void
 dcache_clean(const void *va, size_t size)
 {
+#ifndef PD_MSM_HOST_TEST
     uintptr_t p = (uintptr_t)va & ~63ul, end = (uintptr_t)va + size;
     
     for (; p < end; p += 64)
         __asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
     __asm__ volatile("dsb sy" : : : "memory");
+#endif
 }
 
 // the zap region is device memory to xnu: single-byte stores only
@@ -423,7 +425,7 @@ a6xx_zap(struct pd_msm_dev *mdev, struct a6xx_state *st, const struct firmware *
             continue;
         zap_copy(region + (ph[i].paddr - minpa), fw + ph[i].offset, ph[i].filesz, ph[i].memsz);
     }
-    __asm__ volatile("dsb sy" : : : "memory");
+    wmb();
     pdos_unmap_phys(region, st->zap_size);
     
     memset(in, 0, sizeof(in));
@@ -550,9 +552,17 @@ a6xx_selftest_ib(u32 *ib, u64 dst, u32 value)
     return 4;
 }
 
+#ifdef PD_MSM_HOST_TEST
+// the linux host tests stand in for secure firmware
+void pd_msm_test_smc(const u64 in[7], u64 out[4], u64 *out6);
+#endif
+
 void
 a6xx_smc(const u64 in[7], u64 out[4], u64 *out6)
 {
+#ifdef PD_MSM_HOST_TEST
+    pd_msm_test_smc(in, out, out6);
+#else
     register u64 x0 __asm__("x0") = in[0];
     register u64 x1 __asm__("x1") = in[1];
     register u64 x2 __asm__("x2") = in[2];
@@ -570,6 +580,7 @@ a6xx_smc(const u64 in[7], u64 out[4], u64 *out6)
     out[3] = x3;
     if (out6 != NULL)
         *out6 = x6;
+#endif
 }
 
 // probe: the generation's state, gmu node, kernel's buffers. gpu is still off so no reads here
@@ -625,6 +636,7 @@ a6xx_start(struct pd_msm_dev *mdev)
     struct device *dev = &mdev->pdev->dev;
     struct a6xx_state *st = mdev->gpu.gen;
     const struct firmware *sqe = NULL, *gmu = NULL, *zap = NULL;
+    bool oob = false;
     int error;
     
     if ((error = request_firmware(&sqe, "qcom/a660_sqe.fw", dev)) != 0 ||
@@ -633,10 +645,27 @@ a6xx_start(struct pd_msm_dev *mdev)
         dev_err(dev, "a6xx: firmware: %d\n", error);
         goto out;
     }
-    st->sqe = pd_msm_bo_new(&mdev->drm, sqe->size - 4, PD_MSM_BO_KERNEL);
-    if (IS_ERR(st->sqe) || (error = pd_msm_bo_iova(mdev, st->sqe)) != 0) {
-        error = -ENOMEM;
+    if (sqe->size <= 4) {
+        error = -EINVAL;
         goto out;
+    }
+    // a retried start reuses the sqe buffer, it only grows if the file did
+    if (st->sqe != NULL && st->sqe->base.size < sqe->size - 4) {
+        drm_gem_object_put(&st->sqe->base);
+        st->sqe = NULL;
+    }
+    if (st->sqe == NULL) {
+        struct pd_msm_bo *bo = pd_msm_bo_new(&mdev->drm, sqe->size - 4, PD_MSM_BO_KERNEL);
+        
+        if (IS_ERR(bo)) {
+            error = PTR_ERR(bo);
+            goto out;
+        }
+        if ((error = pd_msm_bo_iova(mdev, bo)) != 0) {
+            drm_gem_object_put(&bo->base);
+            goto out;
+        }
+        st->sqe = bo;
     }
     // spec 4.2: the gpu is given the file from byte 4
     memcpy(st->sqe->cpu, sqe->data + 4, sqe->size - 4);
@@ -654,8 +683,10 @@ a6xx_start(struct pd_msm_dev *mdev)
         error = -EAGAIN;
         goto out;
     }
-    if ((error = a6xx_gmu_oob_gpu(st, true)) != 0 || (error = a6xx_hw_init(mdev, st)) != 0 ||
-        (error = a6xx_cp_start(mdev, st)) != 0)
+    if ((error = a6xx_gmu_oob_gpu(st, true)) != 0)
+        goto out;
+    oob = true;
+    if ((error = a6xx_hw_init(mdev, st)) != 0 || (error = a6xx_cp_start(mdev, st)) != 0)
         goto out;
     if (stop_at(3)) {
         error = -EAGAIN;
@@ -672,10 +703,11 @@ a6xx_start(struct pd_msm_dev *mdev)
         error = -EAGAIN;
         goto out;
     }
-    error = a6xx_gmu_oob_gpu(st, false);
-    if (error == 0)
-        dev_info(dev, "a6xx: cp running\n");
+    dev_info(dev, "a6xx: cp running\n");
 out:
+    // the gpu oob is handed back on every path once granted
+    if (oob)
+        a6xx_gmu_oob_gpu(st, false);
     if (sqe != NULL)
         release_firmware(sqe);
     if (gmu != NULL)

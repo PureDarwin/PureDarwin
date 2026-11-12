@@ -67,12 +67,25 @@ pd_msm_dma_free(void *cpu, void *alloc, size_t size)
 	pdos_free_contig(alloc, size);
 }
 
+#define BO_FREE_WAIT_NS	5000000000ll
+
 static void
 bo_free(struct drm_gem_object *obj)
 {
 	struct pd_msm_bo *bo = to_pd_msm_bo(obj);
 	struct pd_msm_dev *mdev = to_pd_msm(obj->dev);
 
+	// the gpu may still use it: wait for its last submit, or keep the memory if that never ends
+	if (bo->last_fence != 0 && mdev->gpu.running &&
+	    pd_msm_gpu_wait(mdev, bo->last_fence, BO_FREE_WAIT_NS) != 0) {
+		printf("pd msm: bo %s: fence %u never completed, its memory is kept\n", bo->name,
+		    bo->last_fence);
+		drm_gem_free_mmap_offset(obj);
+		drm_gem_object_release(obj);
+		kvfree(bo->chunks);
+		kfree(bo);
+		return;
+	}
 	if (bo->iova != 0)
 		pd_msm_iommu_unmap(mdev, bo->iova, obj->size);
 	drm_gem_free_mmap_offset(obj);

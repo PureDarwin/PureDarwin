@@ -32,6 +32,7 @@ struct a6xx_state {
     int                     nmem;
     struct a6xx_gmu_mem     *hfi;           // the hfi region at gmu 0x60008000
     u32                     hfi_seq;
+    bool                    gmu_powered;    // clocks and cx on, once
     bool                    rscc_done;      // once per boot (spec 9.1)
     bool                    zap_done;       // once per boot (spec 7.2)
     struct pd_msm_bo        *sqe;           // the sqe image from file byte 4 (spec 4.2)
