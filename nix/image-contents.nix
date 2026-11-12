@@ -277,6 +277,7 @@
 , symptomReporterBuild
 , splitBaseSystemArm64VirtMinimal
 , splitBaseSystemArm64VirtMinimalRelease
+, splitBaseSystemArm64Sc8280xp
 , splitBaseSystemArm64VirtWayland
 , startupNotificationBuild
 , system
@@ -1358,7 +1359,7 @@ let
       };
       # X13s disk image: ESP + read-write ext4 root on the boot stick, no ramdisk
       imageArm64Sc8280xpBuild = pkgs.callPackage ../image.nix {
-        baseSystem = splitBaseSystemArm64VirtMinimal;
+        baseSystem = splitBaseSystemArm64Sc8280xp;
         extraPackages = [ zshArm64Build libiconvArm64Build toyboxArm64Build adrenoFirmwareBuild ]
           ++ lib.optional (a690GlArm64Bundle != null) a690GlArm64Bundle
           ++ lib.optional (argonMsmArm64Bundle != null) argonMsmArm64Bundle;

@@ -996,8 +996,8 @@ let
     missing=0
     for f in $out/usr/sbin/pdgltri $(find $out -name '*.dylib'); do
       for dep in $($otool -L "$f" | tail -n +2 | awk '{ print $1 }'); do
-        [ -e "$out$dep" ] || [ -e "${splitBaseSystemArm64VirtMinimal}$dep" ] && continue
-        [ -L "$out$dep" ] && [ -e "${splitBaseSystemArm64VirtMinimal}$(dirname "$dep")/$(readlink "$out$dep")" ] && continue
+        [ -e "$out$dep" ] || [ -e "${splitBaseSystemArm64Sc8280xp}$dep" ] && continue
+        [ -L "$out$dep" ] && [ -e "${splitBaseSystemArm64Sc8280xp}$(dirname "$dep")/$(readlink "$out$dep")" ] && continue
         echo "a690 gl: $f loads $dep, which nothing provides"
         missing=1
       done
@@ -3247,7 +3247,8 @@ let
   # ARM64 kernel and kexts. Keep the kernel payload separate so this
   # composition cannot accidentally pull the x86 kernel into the ARM
   # image.
-  splitBaseSystemArm64VirtMinimal = pkgs.runCommand "puredarwin-basesystem-arm64-virt-minimal-0.1" { } ''
+  # the minimal base system around one kernel, each board shipping the kernel its kc carries
+  mkSplitBaseSystemArm64Minimal = { name, kernel }: pkgs.runCommand name { } ''
     mkdir -p "$out"
     cp -a ${libSystemArm64Build}/. "$out/"
     chmod -R u+w "$out"
@@ -3279,11 +3280,22 @@ let
     fi
     cp -a ${userlandArm64Build}/. "$out/"
     chmod -R u+w "$out"
-    cp -a ${kernelArm64VirtDebugBuild}/. "$out/"
+    cp -a ${kernel}/. "$out/"
     chmod -R u+w "$out"
     cp -a ${kextsArm64Build}/. "$out/"
     chmod -R u+w "$out"
   '';
+
+  splitBaseSystemArm64VirtMinimal = mkSplitBaseSystemArm64Minimal {
+    name = "puredarwin-basesystem-arm64-virt-minimal-0.1";
+    kernel = kernelArm64VirtDebugBuild;
+  };
+
+  # the x13s boots the kernel in its sc8280xp kc, so the root carries that one, not virt-debug
+  splitBaseSystemArm64Sc8280xp = mkSplitBaseSystemArm64Minimal {
+    name = "puredarwin-basesystem-arm64-sc8280xp-0.1";
+    kernel = kernelArm64Sc8280xpBuild;
+  };
 
   # licheerv nano: the minimal base with a userland that skips the xorg drivers, so a kernel
   # edit does not rebuild llvm, mesa and xorg, and the sun50i kernel the board actually runs
@@ -3813,6 +3825,7 @@ in
     kextsArm64Build
     splitBaseSystemArm64VirtMinimal
     splitBaseSystemArm64VirtMinimalRelease
+    splitBaseSystemArm64Sc8280xp
     splitBaseSystemArm64VirtWayland
     imageExtraPackageSetArm64
     imageExtraPackagesArm64

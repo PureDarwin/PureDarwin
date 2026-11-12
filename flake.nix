@@ -4518,6 +4518,7 @@
             kextsArm64Build
             splitBaseSystemArm64VirtMinimal
             splitBaseSystemArm64VirtMinimalRelease
+            splitBaseSystemArm64Sc8280xp
             splitBaseSystemArm64VirtWayland
             imageExtraPackageSetArm64
             imageExtraPackagesArm64Nox
@@ -5280,7 +5281,7 @@
               mesaDemosBuild migcomDarwinBuild mkPureDarwinBuild clangCrossBuild dsymutilBuild cmakeBuild kcToolsGuestBuild mesonBuild nanoBuild nativeLd ncursesBuild ninjaBuild
               netsurfBuild objcTestBuild openglFrameworkBuild opensshBuild opensslBuild
               pangoBuild pcre2Build pdVirglShimBuild pkgconfBuild pkgs pythonBuild
-              securityBuild symptomReporterBuild splitBaseSystemArm64VirtMinimal splitBaseSystemArm64VirtMinimalRelease splitBaseSystemArm64VirtWayland
+              securityBuild symptomReporterBuild splitBaseSystemArm64VirtMinimal splitBaseSystemArm64VirtMinimalRelease splitBaseSystemArm64Sc8280xp splitBaseSystemArm64VirtWayland
               startupNotificationBuild system systemConfigurationBuild systemStarterBuild tccBuild
               fastfetchNoGLArm64Build foundationArm64Build vmprobeArm64Build
               toyboxArm64Build toyboxBuild userlandBuild vteBuild xcalcBuild xcbBuild xcbCursorBuild
