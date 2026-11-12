@@ -27,10 +27,13 @@
 #include <IOKit/IOKitKeys.h>
 #include <IOKit/storage/IOStorage.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
+#include <IOKit/IOKitKeys.h>
 #include "RavynXHCIMassStorageDisk.h"
 
 #define super IOBlockStorageDevice
 OSDefineMetaClassAndStructors(RavynXHCIMassStorageDisk, IOBlockStorageDevice);
+
+#define kMaxTransferBytes     (512U * 1024U)
 
 // SCSI opcodes we need
 #define SCSI_TEST_UNIT_READY  0x00
@@ -55,6 +58,9 @@ RavynXHCIMassStorageDisk::initWithPort(RavynXHCIPort *parent, UInt32 mscIndex)
     strlcpy(fRevisionStr, "0000", sizeof(fRevisionStr));
 
     setProperty(kIOBlockStorageDeviceTypeKey, kIOBlockStorageDeviceTypeGeneric);
+    // the largest transfer one TD takes when the client's pages are all separate
+    setProperty(kIOMaximumByteCountReadKey, (UInt64)kMaxTransferBytes, 64);
+    setProperty(kIOMaximumByteCountWriteKey, (UInt64)kMaxTransferBytes, 64);
     char loc[8];
     snprintf(loc, sizeof(loc), "%u", mscIndex);
     setLocation(loc);

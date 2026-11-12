@@ -11,6 +11,7 @@
 
 #include <IOKit/IOService.h>
 #include <IOKit/IOLocks.h>
+#include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/usb/IOUSBInterface.h>
 #include <IOKit/usb/IOUSBPipe.h>
 #include "IOUSBBOTTransport.h"
@@ -37,6 +38,8 @@ private:
     IOUSBMassStorageDisk *fDisk;
     UInt32                fTag;
     IOLock               *fBOTLock;
+    IOBufferMemoryDescriptor *fCBWMem;
+    IOBufferMemoryDescriptor *fCSWMem;
 
     bool findBulkPipes(void);
     IOReturn botTransferLocked(const void *cb, UInt8 cbLen, UInt32 dataLen, bool dataIn,

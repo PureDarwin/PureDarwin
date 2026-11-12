@@ -30,6 +30,7 @@
 #include <IOKit/IOService.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOMemoryDescriptor.h>
+#include <IOKit/IODMACommand.h>
 #include <IOKit/IOLocks.h>
 #include <IOKit/IOWorkLoop.h>
 #include <IOKit/IOInterruptEventSource.h>
@@ -42,6 +43,9 @@ extern void XHCI_Log(const char *fmt, ...);
 class RavynXHCIMassStorageDisk;
 class RavynXHCIUSBBus;
 class IOUSBDevice;
+
+// a physically contiguous run of a transfer buffer
+struct RavynXferSeg { UInt64 addr; UInt32 len; };
 
 class RavynXHCIPort : public IOService
 {
@@ -295,6 +299,8 @@ private:
     UInt64                     fBOTCommands;
     UInt64                     fBOTBytes;
     uint64_t                   fBOTTime;
+    // maps a client's pages for reads and writes that skip the bounce buffer
+    IODMACommand             * fMSCDMA;
 
     InterruptInEndpoint fIntrIn[64][16]; // [slotId][endpoint number]
 
@@ -426,6 +432,15 @@ private:
     bool bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
                       IOBufferMemoryDescriptor *xferMem, UInt32 len, UInt32 timeoutMs,
                       UInt32 *outActual = NULL, UInt8 *outCC = NULL);
+    // the same over a list of physical runs. *outLeaked is set when the controller could not be stopped
+    // and may still touch the memory
+    typedef RavynXferSeg XferSeg;
+    bool bulkTransferSegs(UInt32 slotId, UInt8 epNum, bool in, const XferSeg *segs, UInt32 nseg,
+                          IOBufferMemoryDescriptor *flushMem, UInt32 len, UInt32 timeoutMs,
+                          UInt32 *outActual, UInt8 *outCC, bool *outLeaked);
+    // the client's pages as runs, mapped into fMSCDMA until it is cleared. false when they do not fit a TD
+    bool mapClientSegs(IOMemoryDescriptor *buffer, UInt64 off, UInt32 len, bool in,
+                       XferSeg *segs, UInt32 *nseg);
     // stop or reset the endpoint, move its dequeue past the abandoned td, then clear the device halt
     bool abortFailedTD(UInt32 slotId, UInt8 epNum, bool in);
     // bulk-only mass storage reset recovery (bot 5.3.4)

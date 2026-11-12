@@ -629,6 +629,7 @@ bool RavynXHCIPort::start(IOService *provider)
     fPlatformInterrupt = false;
     fEventWaitLock = NULL;
     fMSCLock = NULL;
+    fMSCDMA = NULL;
     fEventWaitChannel = 0;
     fEventGeneration = 0;
     fPortChangePending = false;
@@ -888,6 +889,7 @@ void RavynXHCIPort::free()
     OSSafeReleaseNULL(fBOTCBWMem);
     OSSafeReleaseNULL(fBOTCSWMem);
     OSSafeReleaseNULL(fBOTDataMem);
+    OSSafeReleaseNULL(fMSCDMA);
     if (fUSBBus) { fUSBBus->release(); fUSBBus = NULL; }
 
     if (fCmdLock) { IOLockFree(fCmdLock); fCmdLock = NULL; }
@@ -1139,6 +1141,9 @@ bool RavynXHCIPort::setupEventRing()
 
     // set IMAN.IE in case some silicon ties event posting to it
     rtWrite32(XHCI_RT_IR0 + XHCI_IR_IMAN, XHCI_IMAN_IE);
+    // the reset value moderates interrupts to one per millisecond, which every synchronous
+    // transfer would pay for. Bulk TDs raise one event each, so nothing needs the delay
+    rtWrite32(XHCI_RT_IR0 + XHCI_IR_IMOD, 0);
     return true;
 }
 
@@ -2284,18 +2289,40 @@ IOReturn RavynXHCIPort::abortInterruptEndpoint(UInt32 slotId, UInt8 epNum, bool 
 // for one transfer event per TD. an overflowed length once corrupted large pagein reads
 #define kMaxTRBTransferBytes 0x10000U
 
-#define kMaxTDTRBs          64U
+#define kMaxTDTRBs          160U
 
 bool RavynXHCIPort::bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
                                  IOBufferMemoryDescriptor *xferMem, UInt32 len, UInt32 timeoutMs,
                                  UInt32 *outActual, UInt8 *outCC)
+{
+    XferSeg seg = { xferMem->getPhysicalAddress(), len };
+    bool leaked = false;
+    bool ok = bulkTransferSegs(slotId, epNum, in, &seg, 1, xferMem, len, timeoutMs, outActual, outCC, &leaked);
+    // the controller may still write it, so the buffer is leaked and never reused, botBufferDone drops it from its cache
+    if (leaked)
+        xferMem->retain();
+    return ok;
+}
+
+// trbs a run list takes, one per 64 KiB window each run touches
+static UInt32 pdXferTRBs(const RavynXferSeg *segs, UInt32 nseg)
+{
+    UInt32 n = 0;
+    for (UInt32 i = 0; i < nseg; i++)
+        n += (UInt32)(((segs[i].addr & (kMaxTRBTransferBytes - 1)) + segs[i].len + kMaxTRBTransferBytes - 1) /
+                      kMaxTRBTransferBytes);
+    return n;
+}
+
+bool RavynXHCIPort::bulkTransferSegs(UInt32 slotId, UInt8 epNum, bool in, const XferSeg *segs, UInt32 nseg,
+                                     IOBufferMemoryDescriptor *xferMem, UInt32 len, UInt32 timeoutMs,
+                                     UInt32 *outActual, UInt8 *outCC, bool *outLeaked)
 {
     SlotResources &sr = fSlots[slotId];
     volatile XHCITRB *ring = in ? sr.bulkInRing : sr.bulkOutRing;
     UInt32 &enqueue = in ? sr.bulkInEnqueue : sr.bulkOutEnqueue;
     UInt8 &cycle = in ? sr.bulkInCycle : sr.bulkOutCycle;
     UInt32 dci = in ? (epNum * 2 + 1) : (epNum * 2);
-    UInt64 base = xferMem->getPhysicalAddress();
     UInt64 ringBase = (in ? sr.bulkInRingMem : sr.bulkOutRingMem)->getPhysicalAddress();
 
     // the endpoint's max packet size, as the controller holds it, for the TD Size field
@@ -2306,9 +2333,10 @@ bool RavynXHCIPort::bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
 
     if (outActual) *outActual = 0;
     if (outCC) *outCC = 0;
+    if (outLeaked) *outLeaked = false;
 
     // one TRB per 64 KiB window the buffer touches. The TD must fit in the ring and the table below.
-    UInt64 needed = (((base & (kMaxTRBTransferBytes - 1)) + len + kMaxTRBTransferBytes - 1) / kMaxTRBTransferBytes);
+    UInt64 needed = pdXferTRBs(segs, nseg);
     if (needed > kMaxTDTRBs || needed > kRingTRBs - 2) {
         XHCI_Log("bulk transfer of %u bytes needs %llu TRBs, more than a TD holds", len, needed);
         return false;
@@ -2320,13 +2348,17 @@ bool RavynXHCIPort::bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
     UInt32 start = enqueue;
     UInt32 remaining = len;
     UInt32 offset = 0;
-    dmaFlush(xferMem->getBytesNoCopy(), len);
+    UInt32 segIdx = 0, segOff = 0;
+    if (xferMem) dmaFlush(xferMem->getBytesNoCopy(), len);
     do {
-        UInt64 addr = base + offset;
-        UInt32 chunk = remaining;
+        UInt64 addr = segs[segIdx].addr + segOff;
+        UInt32 chunk = segs[segIdx].len - segOff;
         // a TRB's buffer may not cross a 64 KiB boundary (xHCI 1.1 6.4.1.1)
         UInt32 toBoundary = kMaxTRBTransferBytes - (UInt32)(addr & (kMaxTRBTransferBytes - 1));
         if (chunk > toBoundary) chunk = toBoundary;
+        if (chunk > remaining) chunk = remaining;
+        segOff += chunk;
+        if (segOff == segs[segIdx].len) { segIdx++; segOff = 0; }
         bool isLast = (offset + chunk >= len);
         // packets left in the TD after this TRB, at most 31, and 0 on the last (xHCI 1.1 4.11.2.4)
         UInt32 tdSize = 0;
@@ -2380,8 +2412,7 @@ bool RavynXHCIPort::bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
         // a halted endpoint fails the stop, abortFailedTD resets it instead
         if (!stopRing(slotId, dci, ringBase + (UInt64)enqueue * sizeof(XHCITRB), cycle) &&
             !abortFailedTD(slotId, epNum, in)) {
-            // the controller may still write it, so the buffer is leaked and never reused
-            xferMem->retain();
+            if (outLeaked) *outLeaked = true;
             XHCI_Log("slot %u dci %u did not stop, keeping its %u-byte buffer", slotId, dci, len);
             return false;
         }
@@ -2392,7 +2423,7 @@ bool RavynXHCIPort::bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
         XHCI_Log("bulk transfer slot=%u ep=%u completed during abort cc=%u", slotId, epNum, cc);
     }
     if (outCC) *outCC = cc;
-    dmaFlush(xferMem->getBytesNoCopy(), len);
+    if (xferMem) dmaFlush(xferMem->getBytesNoCopy(), len);
     if (cc != TRB_CC_SUCCESS && cc != TRB_CC_SHORT_PACKET) {
         XHCI_Log("bulk transfer failed slot=%u ep=%u in=%d len=%u cc=%u USBSTS=%08x", slotId, epNum, in, len,
                 cc, opRead32(XHCI_USBSTS));
@@ -3003,6 +3034,52 @@ void RavynXHCIPort::botBufferDone(IOBufferMemoryDescriptor **cache, IOBufferMemo
     mem->release();
 }
 
+bool RavynXHCIPort::mapClientSegs(IOMemoryDescriptor *buffer, UInt64 off, UInt32 len, bool in,
+                                  XferSeg *segs, UInt32 *nseg)
+{
+    if (fNonCoherent || !buffer || off + len > buffer->getLength())
+        return false;
+    if (!fMSCDMA) {
+        UInt8 bits = (fDMAMask >> 32) ? 64 : 32;
+        fMSCDMA = IODMACommand::withSpecification(kIODMACommandOutputHost64, bits, 0, IODMACommand::kMapped);
+        if (!fMSCDMA) return false;
+    }
+    if (fMSCDMA->setMemoryDescriptor(buffer, false) != kIOReturnSuccess)
+        return false;
+    if (fMSCDMA->prepare(off, len) != kIOReturnSuccess) {
+        fMSCDMA->clearMemoryDescriptor(false);
+        return false;
+    }
+
+    UInt32 n = 0;
+    UInt64 pos = off;
+    bool ok = true;
+    while (pos < off + len) {
+        IODMACommand::Segment64 seg;
+        UInt32 cnt = 1;
+        if (fMSCDMA->gen64IOVMSegments(&pos, &seg, &cnt) != kIOReturnSuccess || cnt != 1 || !seg.fLength ||
+            n == kMaxTDTRBs) {
+            ok = false;
+            break;
+        }
+        // neighbours that touch are one run
+        if (n && segs[n - 1].addr + segs[n - 1].len == seg.fIOVMAddr) {
+            segs[n - 1].len += (UInt32)seg.fLength;
+        } else {
+            segs[n].addr = seg.fIOVMAddr;
+            segs[n].len = (UInt32)seg.fLength;
+            n++;
+        }
+    }
+    if (ok && pdXferTRBs(segs, n) > kMaxTDTRBs) ok = false;
+    if (!ok) {
+        fMSCDMA->clearMemoryDescriptor(true);
+        return false;
+    }
+    *nseg = n;
+    return true;
+}
+
 IOReturn RavynXHCIPort::botTransferLocked(UInt32 slotId,
                                           const void *cbwCB, UInt8 cbwLen,
                                           UInt32 dataLen, bool dataIn,
@@ -3042,16 +3119,33 @@ IOReturn RavynXHCIPort::botTransferLocked(UInt32 slotId,
     IOBufferMemoryDescriptor *xferMem = NULL;
     UInt32 moved = 0;
     if (dataLen > 0) {
-        xferMem = botBuffer(&fBOTDataMem, kBOTMaxTransferBytes, dataLen);
-        if (!xferMem) {
-            // the device is waiting for a data phase that will never come
-            botResetRecovery(idx);
-            return kIOReturnNoMemory;
-        }
-        if (!dataIn && buffer) buffer->readBytes(bufOff, xferMem->getBytesNoCopy(), dataLen);
-        else bzero(xferMem->getBytesNoCopy(), dataLen);
+        // reads and writes go straight to and from the client's pages, the small commands bounce
+        RavynXferSeg segs[kMaxTDTRBs];
+        UInt32 nseg = 0;
+        bool direct = !allowShort && mapClientSegs(buffer, bufOff, dataLen, dataIn, segs, &nseg);
+        if (direct) {
+            bool leaked = false;
+            ok = bulkTransferSegs(slotId, dataIn ? m.bulkInEp : m.bulkOutEp, dataIn, segs, nseg, NULL,
+                                  dataLen, kBOTDataTimeoutMs, &moved, &cc, &leaked);
+            if (leaked) {
+                // the controller may still write it, so the pages stay held
+                buffer->retain();
+                fMSCDMA = NULL;
+            } else {
+                fMSCDMA->clearMemoryDescriptor(true);
+            }
+        } else {
+            xferMem = botBuffer(&fBOTDataMem, kBOTMaxTransferBytes, dataLen);
+            if (!xferMem) {
+                // the device is waiting for a data phase that will never come
+                botResetRecovery(idx);
+                return kIOReturnNoMemory;
+            }
+            if (!dataIn && buffer) buffer->readBytes(bufOff, xferMem->getBytesNoCopy(), dataLen);
+            else bzero(xferMem->getBytesNoCopy(), dataLen);
 
-        ok = bulkTransfer(slotId, dataIn ? m.bulkInEp : m.bulkOutEp, dataIn, xferMem, dataLen, kBOTDataTimeoutMs, &moved, &cc);
+            ok = bulkTransfer(slotId, dataIn ? m.bulkInEp : m.bulkOutEp, dataIn, xferMem, dataLen, kBOTDataTimeoutMs, &moved, &cc);
+        }
         if (!ok && cc != TRB_CC_STALL) {
             XHCI_Log("BOT tag=%u data %s failed cc=%u", tag, dataIn ? "in" : "out", cc);
             botBufferDone(&fBOTDataMem, xferMem);

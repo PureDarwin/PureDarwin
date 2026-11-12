@@ -78,6 +78,16 @@ IOUSBMassStorageClass::start(IOService *provider)
 
     fTag = 1;
     fBOTLock = IOLockAlloc();
+    // the wrappers are reused for every command, the controller reads them in place
+    fCBWMem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+        kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, kCBWLength, 0xffffffffULL);
+    fCSWMem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+        kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, kCSWLength, 0xffffffffULL);
+    if (!fBOTLock || !fCBWMem || !fCSWMem) {
+        MSC_Log("no memory for the transport");
+        fInterface->close(this);
+        return false;
+    }
 
     fDisk = new IOUSBMassStorageDisk;
     if (!fDisk || !fDisk->initWithTransport(this, 0)) {
@@ -123,6 +133,8 @@ IOUSBMassStorageClass::free()
         IOLockFree(fBOTLock);
         fBOTLock = NULL;
     }
+    OSSafeReleaseNULL(fCBWMem);
+    OSSafeReleaseNULL(fCSWMem);
     super::free();
 }
 
@@ -150,11 +162,7 @@ IOUSBMassStorageClass::sendCBW(const void *cb, UInt8 cbLen, UInt32 dataLen, bool
     if (cbLen > 16)
         return kIOReturnBadArgument;
 
-    IOBufferMemoryDescriptor *cbwMem = IOBufferMemoryDescriptor::inTaskWithOptions(
-        kernel_task, kIODirectionOut, kCBWLength);
-    if (!cbwMem)
-        return kIOReturnNoMemory;
-
+    IOBufferMemoryDescriptor *cbwMem = fCBWMem;
     BOTCommandBlockWrapper *cbw = (BOTCommandBlockWrapper *)cbwMem->getBytesNoCopy();
     bzero(cbw, kCBWLength);
     cbw->dCBWSignature = OSSwapHostToLittleInt32(kCBWSignature);
@@ -167,17 +175,13 @@ IOUSBMassStorageClass::sendCBW(const void *cb, UInt8 cbLen, UInt32 dataLen, bool
 
     IOReturn ret = fBulkOut->Write(cbwMem, kBOTTimeoutMs, kBOTTimeoutMs,
                                    kCBWLength, NULL);
-    cbwMem->release();
     return ret;
 }
 
 IOReturn
 IOUSBMassStorageClass::readCSW(UInt32 *residueOut, UInt8 *statusOut)
 {
-    IOBufferMemoryDescriptor *cswMem = IOBufferMemoryDescriptor::inTaskWithOptions(
-        kernel_task, kIODirectionIn, kCSWLength);
-    if (!cswMem)
-        return kIOReturnNoMemory;
+    IOBufferMemoryDescriptor *cswMem = fCSWMem;
     bzero(cswMem->getBytesNoCopy(), kCSWLength);
 
     IOByteCount got = 0;
@@ -210,7 +214,6 @@ IOUSBMassStorageClass::readCSW(UInt32 *residueOut, UInt8 *statusOut)
         }
     }
 
-    cswMem->release();
     return ret;
 }
 

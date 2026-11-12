@@ -4,6 +4,7 @@
 #include <IOKit/IOService.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOMemoryDescriptor.h>
+#include <IOKit/IODMACommand.h>
 #include <IOKit/pci/IOPCIDevice.h>
 #include <IOKit/usb/IOUSBCommand.h>
 #include <IOKit/usb/IOUSBControllerV3.h>
@@ -150,6 +151,7 @@ protected:
     // pdehcitrace=1 logs every bulk transfer
     UInt32 _bulkTrace;
     IOLock *_transferLock;
+    IODMACommand *_bulkDMA;
     UInt8 _nextAddress;
     bool _enumRunning;
 
@@ -182,6 +184,8 @@ protected:
                                Endpoint *endpoint);
     IOReturn bulkTransfer(IOMemoryDescriptor *buffer, USBDeviceAddress address,
                           Endpoint *endpoint, bool isWrite);
+    bool buildDirectChain(IOMemoryDescriptor *buffer, UInt32 length, UInt32 maxPacket, bool isWrite,
+                          UInt32 *tdIndex, UInt32 *tdLength, UInt32 *tdCount);
     IOReturn waitForBulkChain(const UInt32 *tdIndex, const UInt32 *tdLength,
                               UInt32 count, UInt32 timeoutMs, UInt32 *movedOut);
     static void enumThreadEntry(void *arg, wait_result_t);

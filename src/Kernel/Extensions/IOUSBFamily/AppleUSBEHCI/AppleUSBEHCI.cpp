@@ -28,6 +28,7 @@ bool AppleUSBEHCI::init(OSDictionary *propTable)
 
     _device = NULL;
     _transferLock = NULL;
+    _bulkDMA = NULL;
     _barDesc = NULL;
     _deviceBase = NULL;
     _dmaCoherent = true;
@@ -198,6 +199,7 @@ void AppleUSBEHCI::free()
         IOLockFree(_transferLock);
         _transferLock = NULL;
     }
+    OSSafeReleaseNULL(_bulkDMA);
     releaseHardwareResources();
     super::free();
 }
@@ -539,6 +541,18 @@ bool AppleUSBEHCI::setupPeriodicSchedule(void)
     return true;
 }
 
+// one poll step: spin for the first few ms so a completion shows up within microseconds, then sleep
+static inline void ehciPollStep(UInt64 *waitedUs)
+{
+    if (*waitedUs < 4000) {
+        IODelay(10);
+        *waitedUs += 10;
+    } else {
+        IOSleep(1);
+        *waitedUs += 1000;
+    }
+}
+
 bool AppleUSBEHCI::enableAsyncSchedule(bool enable)
 {
     UInt32 cmd = opRead32(kEHCIUSBCmd);
@@ -548,11 +562,10 @@ bool AppleUSBEHCI::enableAsyncSchedule(bool enable)
         cmd &= ~kEHCIUSBCmdAsyncEnable;
     opWrite32(kEHCIUSBCmd, cmd);
 
-    for (int i = 0; i < 100; i++) {
+    for (UInt64 waited = 0; waited < 1000000; ehciPollStep(&waited)) {
         bool status = (opRead32(kEHCIUSBSts) & kEHCIUSBStsAsyncStatus) != 0;
         if (status == enable)
             return true;
-        IOSleep(10);
     }
     return false;
 }
@@ -566,11 +579,10 @@ bool AppleUSBEHCI::enablePeriodicSchedule(bool enable)
         cmd &= ~kEHCIUSBCmdPeriodicEnable;
     opWrite32(kEHCIUSBCmd, cmd);
 
-    for (int i = 0; i < 100; i++) {
+    for (UInt64 waited = 0; waited < 1000000; ehciPollStep(&waited)) {
         bool status = (opRead32(kEHCIUSBSts) & kEHCIUSBStsPeriodicStatus) != 0;
         if (status == enable)
             return true;
-        IOSleep(10);
     }
     return false;
 }
@@ -586,11 +598,10 @@ bool AppleUSBEHCI::runController(bool run)
         cmd &= ~kEHCIUSBCmdRunStop;
     opWrite32(kEHCIUSBCmd, cmd);
 
-    for (int i = 0; i < 100; i++) {
+    for (UInt64 waited = 0; waited < 1000000; ehciPollStep(&waited)) {
         bool halted = (opRead32(kEHCIUSBSts) & kEHCIUSBStsHalted) != 0;
         if (halted != run)
             return true;
-        IOSleep(10);
     }
     return false;
 }
@@ -669,14 +680,13 @@ struct EHCITransferGuard {
 IOReturn AppleUSBEHCI::waitForQTD(EHCIGeneralTransferDescriptorSharedPtr qtd,
                                   UInt32 timeoutMs)
 {
-    for (UInt32 i = 0; i < timeoutMs; i++) {
+    for (UInt64 waited = 0; waited < (UInt64)timeoutMs * 1000; ehciPollStep(&waited)) {
         UInt32 token = USBToHostLong(qtd->flags);
         if (!(token & kEHCIqTDStatusActive)) {
             if (token & kEHCIqTDStatusHalted)
                 return kIOReturnIOError;
             return kIOReturnSuccess;
         }
-        IOSleep(1);
     }
     return kIOReturnTimeout;
 }
@@ -911,7 +921,7 @@ IOReturn AppleUSBEHCI::waitForBulkChain(const UInt32 *tdIndex, const UInt32 *tdL
     if (movedOut)
         *movedOut = 0;
 
-    for (UInt32 elapsed = 0; elapsed < timeoutMs; elapsed++) {
+    for (UInt64 waited = 0; waited < (UInt64)timeoutMs * 1000; ehciPollStep(&waited)) {
         UInt32 moved = 0;
         bool halted = false;
         bool done = false;
@@ -962,9 +972,116 @@ IOReturn AppleUSBEHCI::waitForBulkChain(const UInt32 *tdIndex, const UInt32 *tdL
                 *movedOut = moved;
             return halted ? kIOUSBPipeStalled : kIOReturnSuccess;
         }
-        IOSleep(1);
     }
     return kIOReturnTimeout;
+}
+
+// the client's pages go straight into the qTDs: no bounce copy, no contiguous allocation.
+// _bulkDMA is set up on the caller's buffer and stays so until the transfer is done
+bool AppleUSBEHCI::buildDirectChain(IOMemoryDescriptor *buffer, UInt32 length, UInt32 maxPacket,
+                                    bool isWrite, UInt32 *tdIndex, UInt32 *tdLength, UInt32 *tdCount)
+{
+    struct Seg { UInt32 addr, len; };
+    enum { kMaxSegs = 288 };
+    Seg segs[kMaxSegs];
+    UInt32 nseg = 0;
+
+    if (!_bulkDMA) {
+        _bulkDMA = IODMACommand::withSpecification(kIODMACommandOutputHost32, 32, 0,
+                                                   IODMACommand::kMapped);
+        if (!_bulkDMA)
+            return false;
+    }
+    if (_bulkDMA->setMemoryDescriptor(buffer, true) != kIOReturnSuccess)
+        return false;
+
+    UInt64 off = 0;
+    while (off < length) {
+        IODMACommand::Segment32 seg;
+        UInt32 n = 1;
+        if (_bulkDMA->gen32IOVMSegments(&off, &seg, &n) != kIOReturnSuccess || n != 1 ||
+            !seg.fLength || nseg == kMaxSegs) {
+            _bulkDMA->clearMemoryDescriptor(true);
+            return false;
+        }
+        // neighbours that touch are one run
+        if (nseg && segs[nseg - 1].addr + segs[nseg - 1].len == seg.fIOVMAddr &&
+            (UInt64)segs[nseg - 1].len + seg.fLength < 0x10000000ULL) {
+            segs[nseg - 1].len += (UInt32)seg.fLength;
+        } else {
+            segs[nseg].addr = (UInt32)seg.fIOVMAddr;
+            segs[nseg].len = (UInt32)seg.fLength;
+            nseg++;
+        }
+    }
+
+    // a qTD holds five page pointers: the first may start anywhere in its page, a later one must
+    // start on a page boundary. A qTD that is not the last must end on a packet boundary.
+    UInt32 si = 0, so = 0, remaining = length, n = 0;
+    while (remaining) {
+        if (n == kEHCIBulkMaxTDs)
+            goto fail;
+        UInt32 ptr[5], np = 0, bytes = 0;
+        UInt32 ci = si, co = so;
+        while (ci < nseg && np < 5) {
+            UInt32 a = segs[ci].addr + co;
+            UInt32 l = segs[ci].len - co;
+            UInt32 inPage = 0x1000U - (a & 0xfffU);
+            if (np && (a & 0xfffU))
+                break;
+            if (l > inPage)
+                l = inPage;
+            ptr[np++] = a;
+            bytes += l;
+            co += l;
+            if (co == segs[ci].len) { ci++; co = 0; }
+            if (l < inPage)
+                break;
+        }
+        if (bytes > remaining)
+            bytes = remaining;
+        if (bytes < remaining && (bytes % maxPacket)) {
+            bytes -= bytes % maxPacket;
+            if (!bytes)
+                goto fail;
+        }
+        // advance the cursor by exactly bytes
+        {
+            UInt32 left = bytes;
+            while (left) {
+                UInt32 avail = segs[si].len - so;
+                UInt32 take = left < avail ? left : avail;
+                so += take;
+                left -= take;
+                if (so == segs[si].len) { si++; so = 0; }
+            }
+        }
+        {
+            bool last = (bytes == remaining);
+            EHCIGeneralTransferDescriptorSharedPtr qtd = qTDAt(n);
+            bzero(qtd, sizeof(*qtd));
+            qtd->nextTD = HostToUSBLong(last ? kEHCIqTDTerminate : qTDPhys(n + 1));
+            qtd->altTD = HostToUSBLong(kEHCIqTDTerminate);
+            UInt32 pages = ((ptr[0] & 0xfffU) + bytes + 0xfffU) >> 12;
+            for (UInt32 p = 0; p < pages && p < 5; p++)
+                qtd->bufferPtr[p] = HostToUSBLong(ptr[p]);
+            qtd->flags = HostToUSBLong(kEHCIqTDStatusActive |
+                                       (isWrite ? kEHCIqTDPIDOut : kEHCIqTDPIDIn) |
+                                       (3U << kEHCIqTDCerrShift) |
+                                       ((bytes & 0x7fffU) << kEHCIqTDBytesShift) |
+                                       (last ? kEHCIqTDIOC : 0));
+            tdIndex[n] = n;
+            tdLength[n] = bytes;
+            n++;
+            remaining -= bytes;
+        }
+    }
+    *tdCount = n;
+    return true;
+
+fail:
+    _bulkDMA->clearMemoryDescriptor(true);
+    return false;
 }
 
 IOReturn AppleUSBEHCI::bulkTransfer(IOMemoryDescriptor *buffer, USBDeviceAddress address,
@@ -981,50 +1098,58 @@ IOReturn AppleUSBEHCI::bulkTransfer(IOMemoryDescriptor *buffer, USBDeviceAddress
         return kIOReturnBadArgument;
 
     UInt32 maxPacket = endpoint->maxPacketSize ? endpoint->maxPacketSize : 512;
-    UInt32 tdCount = (length + kEHCIBulkBytesPerTD - 1) / kEHCIBulkBytesPerTD;
-    if (tdCount > kEHCIBulkMaxTDs)
-        return kIOReturnNoResources;
-
-    IOBufferMemoryDescriptor *dataMem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-        kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, length,
-        0x00000000ffffffffULL);
-    if (!dataMem || dataMem->prepare() != kIOReturnSuccess) {
-        if (dataMem)
-            dataMem->release();
-        return kIOReturnNoMemory;
-    }
-
-    UInt8 *data = (UInt8 *)dataMem->getBytesNoCopy();
-    if (isWrite)
-        buffer->readBytes(0, data, length);
-    else
-        bzero(data, length);
-    usbDMASync(dataMem, _dmaCoherent);
-
-    USBPhysicalAddress32 dataPhys = (USBPhysicalAddress32)dataMem->getPhysicalAddress();
+    UInt32 tdIndex[kEHCIBulkMaxTDs];
+    UInt32 tdLength[kEHCIBulkMaxTDs];
+    UInt32 tdCount = 0;
+    IOBufferMemoryDescriptor *dataMem = NULL;
+    UInt8 *data = NULL;
     UInt8 epNum = endpoint->number & 0x0fU;
     UInt8 dirIndex = isWrite ? 1 : 0;
     UInt8 toggle = _bulkDataToggle[address & 0x7fU][epNum][dirIndex];
 
-    UInt32 tdIndex[kEHCIBulkMaxTDs];
-    UInt32 tdLength[kEHCIBulkMaxTDs];
-    UInt32 offset = 0;
+    // coherent controllers read and write the client's pages in place, the rest bounce
+    bool direct = _dmaCoherent &&
+                  buildDirectChain(buffer, length, maxPacket, isWrite, tdIndex, tdLength, &tdCount);
+    if (!direct) {
+        tdCount = (length + kEHCIBulkBytesPerTD - 1) / kEHCIBulkBytesPerTD;
+        if (tdCount > kEHCIBulkMaxTDs)
+            return kIOReturnNoResources;
 
-    for (UInt32 i = 0; i < tdCount; i++) {
-        UInt32 chunk = length - offset;
-        if (chunk > kEHCIBulkBytesPerTD)
-            chunk = kEHCIBulkBytesPerTD;
+        dataMem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+            kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, length,
+            0x00000000ffffffffULL);
+        if (!dataMem || dataMem->prepare() != kIOReturnSuccess) {
+            if (dataMem)
+                dataMem->release();
+            return kIOReturnNoMemory;
+        }
 
-        tdIndex[i] = i;
-        tdLength[i] = chunk;
+        data = (UInt8 *)dataMem->getBytesNoCopy();
+        if (isWrite)
+            buffer->readBytes(0, data, length);
+        else
+            bzero(data, length);
+        usbDMASync(dataMem, _dmaCoherent);
 
-        bool last = (i == tdCount - 1);
-        // The data toggle is left to the queue head (DTC=0 below), so the value
-        // handed to fillQTD here is ignored by the controller.
-        fillQTD(qTDAt(i), last ? 0 : qTDPhys(i + 1),
-                isWrite ? kEHCIqTDPIDOut : kEHCIqTDPIDIn, 0,
-                dataPhys + offset, chunk, last);
-        offset += chunk;
+        USBPhysicalAddress32 dataPhys = (USBPhysicalAddress32)dataMem->getPhysicalAddress();
+        UInt32 offset = 0;
+
+        for (UInt32 i = 0; i < tdCount; i++) {
+            UInt32 chunk = length - offset;
+            if (chunk > kEHCIBulkBytesPerTD)
+                chunk = kEHCIBulkBytesPerTD;
+
+            tdIndex[i] = i;
+            tdLength[i] = chunk;
+
+            bool last = (i == tdCount - 1);
+            // The data toggle is left to the queue head (DTC=0 below), so the value
+            // handed to fillQTD here is ignored by the controller.
+            fillQTD(qTDAt(i), last ? 0 : qTDPhys(i + 1),
+                    isWrite ? kEHCIqTDPIDOut : kEHCIqTDPIDIn, 0,
+                    dataPhys + offset, chunk, last);
+            offset += chunk;
+        }
     }
 
     /*
@@ -1051,8 +1176,12 @@ IOReturn AppleUSBEHCI::bulkTransfer(IOMemoryDescriptor *buffer, USBDeviceAddress
 
     if (!runController(true)) {
         EHCI_Log("bulk transfer: controller failed to run");
-        dataMem->complete();
-        dataMem->release();
+        if (direct) {
+            _bulkDMA->clearMemoryDescriptor(true);
+        } else {
+            dataMem->complete();
+            dataMem->release();
+        }
         return kIOReturnTimeout;
     }
     opWrite32(kEHCIConfigFlag, 1);
@@ -1068,7 +1197,7 @@ IOReturn AppleUSBEHCI::bulkTransfer(IOMemoryDescriptor *buffer, USBDeviceAddress
     if (ret == kIOReturnSuccess) {
         _bulkDataToggle[address & 0x7fU][epNum][dirIndex] =
             (USBToHostLong(_asyncQH->qTDFlags) & kEHCIqTDDataToggle) ? 1 : 0;
-        if (!isWrite && moved) {
+        if (!direct && !isWrite && moved) {
             usbDMASync(dataMem, _dmaCoherent);
             buffer->writeBytes(0, data, moved);
         }
@@ -1098,8 +1227,12 @@ IOReturn AppleUSBEHCI::bulkTransfer(IOMemoryDescriptor *buffer, USBDeviceAddress
     _asyncQH->nextqTDPtr = HostToUSBLong(kEHCIqTDTerminate);
     _asyncQH->qTDFlags = HostToUSBLong(kEHCIqTDStatusHalted);
 
-    dataMem->complete();
-    dataMem->release();
+    if (direct) {
+        _bulkDMA->clearMemoryDescriptor(true);
+    } else {
+        dataMem->complete();
+        dataMem->release();
+    }
     return ret;
 }
 

@@ -4,6 +4,7 @@
  */
 
 #include <IOKit/storage/IOStorage.h>
+#include <IOKit/IOKitKeys.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOLib.h>
 #include "IOUSBMassStorageDisk.h"
@@ -22,6 +23,7 @@ MSD_Log(const char *fmt, ...)
     IOLog("[IOUSBMassStorage] %s\n", buf);
 }
 
+#define kMaxTransferBytes     (512U * 1024U)
 #define SCSI_INQUIRY          0x12
 #define SCSI_READ_CAPACITY10  0x25
 #define SCSI_READ10           0x28
@@ -41,6 +43,9 @@ IOUSBMassStorageDisk::initWithTransport(IOUSBBOTTransport *transport, UInt32 uni
     strlcpy(fRevisionStr, "0000", sizeof(fRevisionStr));
 
     setProperty(kIOBlockStorageDeviceTypeKey, kIOBlockStorageDeviceTypeGeneric);
+    // the largest transfer the controller takes in one chain
+    setProperty(kIOMaximumByteCountReadKey, (UInt64)kMaxTransferBytes, 64);
+    setProperty(kIOMaximumByteCountWriteKey, (UInt64)kMaxTransferBytes, 64);
     char loc[8];
     snprintf(loc, sizeof(loc), "%u", unit);
     setLocation(loc);
