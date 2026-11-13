@@ -519,12 +519,25 @@ key_of(const char *path, char *key, size_t size, int *fdnum)
     return 1;
 }
 
+// NVIDIA's driver files are there only with PDNVLoader's /dev/nvidiactl, a Linux program elsewhere sees none
+static int
+present(const char *path)
+{
+    static int nvidia = -1;
+
+    if (strncmp(path, "proc/driver", 11) && strncmp(path, "sys/module", 10))
+        return 1;
+    if (nvidia < 0)
+        nvidia = access("/dev/nvidiactl", F_OK) == 0;
+    return nvidia;
+}
+
 static const Node *
 find(const char *key)
 {
     for (unsigned i = 0; i < sizeof(nodes) / sizeof(nodes[0]); i++) {
         if (!strcmp(nodes[i].path, key))
-            return &nodes[i];
+            return present(nodes[i].path) ? &nodes[i] : NULL;
     }
     return NULL;
 }
@@ -612,7 +625,7 @@ open_dir(const char *key)
     for (unsigned i = 0; i < sizeof(nodes) / sizeof(nodes[0]) && n < 256; i++) {
         const char *p = nodes[i].path;
 
-        if (!strncmp(p, key, klen) && p[klen] == '/' && !strchr(p + klen + 1, '/'))
+        if (!strncmp(p, key, klen) && p[klen] == '/' && !strchr(p + klen + 1, '/') && present(p))
             names[n++] = p + klen + 1;
     }
     if (!strcmp(key, "proc")) {
