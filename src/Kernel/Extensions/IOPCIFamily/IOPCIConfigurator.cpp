@@ -1500,6 +1500,23 @@ void CLASS::bridgeScanBus(IOPCIConfigEntry * bridge, uint8_t busNum)
 			noLink = kPCIDeviceStateNoLink;
 		}
 
+		// The link-active bit is clear on ports that never raise it for a device present at power on
+		// (QEMU's pcie-root-port, some boards early in boot). Outside tunnels, trust a device that answers.
+		if (noLink && (kPCIHotPlugTunnel != (kPCIHPTypeMask & bridge->supportsHotPlug)))
+		{
+			IOPCIAddressSpace probe = space;
+			uint32_t          id;
+
+			probe.s.deviceNum   = bridge->subDeviceNum;
+			probe.s.functionNum = 0;
+			id = configRead32(bridge, kIOPCIConfigVendorID, &probe);
+			if ((id & 0xFFFF) != 0xFFFF && (id & 0xFFFF) != 0)
+			{
+				DLOG("bridge " D() " link active clear, device 0x%08x answers\n", DEVICE_IDENT(bridge), id);
+				noLink = 0;
+			}
+		}
+
 		if ((kPCIDeviceStateNoLink & bridge->deviceState) != noLink)
 		{
 			bridge->deviceState &= ~kPCIDeviceStateNoLink;
