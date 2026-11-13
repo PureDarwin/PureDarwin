@@ -350,7 +350,7 @@ crash_dump(int code, void *address, const x86_thread_state64_t *s)
         }
     }
     const uint64_t *sp = (const uint64_t *)(uintptr_t)s->__rsp;
-    for (int i = 0; i < 32; i++) {
+    for (int i = 0; i < (getenv("ELFTRANS_CRASHDUMP_WORDS") ? atoi(getenv("ELFTRANS_CRASHDUMP_WORDS")) : 32); i++) {
         crash_name(sp[i], name, sizeof(name));
         if (!name[0])
             continue;
