@@ -975,13 +975,22 @@ let
   # the a690's gles stack for the x13s ramdisk: freedreno, pdgltri + dylibs
   a690GlArm64Bundle = pkgs.runCommand "puredarwin-a690-gl-arm64" { } ''
     otool=${nativeMesonToolsDir}/bin/otool
+    int=${nativeMesonToolsDir}/bin/install_name_tool
+    # an absolute install name is where the file goes. @rpath ones (libdrm, wayland) live at /lib on
+    # the image, as mesa's own wayland references expect, so they go there and are renamed to match
     place() {
       for f in "$@"; do
         id=$($otool -D "$f" | sed -n 2p)
         case "$id" in
-          /*) [ -e "$out$id" ] || { mkdir -p "$out$(dirname "$id")"; cp -L "$f" "$out$id"; } ;;
-          *) echo "a690 gl: $f has install name '$id', not placed" ;;
+          /*) dest=$id ;;
+          @rpath/*) dest=/lib/''${id#@rpath/} ;;
+          *) echo "a690 gl: $f has install name '$id', not placed"; continue ;;
         esac
+        [ -e "$out$dest" ] && continue
+        mkdir -p "$out$(dirname "$dest")"
+        cp -L "$f" "$out$dest"
+        chmod u+w "$out$dest"
+        [ "$dest" = "$id" ] || $int -id "$dest" "$out$dest"
       done
     }
     mkdir -p $out/usr/sbin
@@ -992,9 +1001,17 @@ let
       \( -name 'libdrm*.dylib' -o -name 'libLLVM*.dylib' -o -name 'libwayland-client*.dylib' \
          -o -name 'libz*.dylib' -o -name 'libexpat*.dylib' \) -print)
     chmod -R u+w $out
+    # @rpath references to what the bundle carries point at its /lib copy, mesa has no rpath to search
+    for f in $out/usr/sbin/pdgltri $(find $out -name '*.dylib' -type f); do
+      for dep in $($otool -L "$f" | tail -n +2 | awk '{ print $1 }'); do
+        case "$dep" in
+          @rpath/*) [ -e "$out/lib/''${dep#@rpath/}" ] && $int -change "$dep" "/lib/''${dep#@rpath/}" "$f" ;;
+        esac
+      done
+    done
     ln -s libSystem.B.dylib $out/usr/lib/libm.dylib
     missing=0
-    for f in $out/usr/sbin/pdgltri $(find $out -name '*.dylib'); do
+    for f in $out/usr/sbin/pdgltri $(find $out -name '*.dylib' -type f); do
       for dep in $($otool -L "$f" | tail -n +2 | awk '{ print $1 }'); do
         [ -e "$out$dep" ] || [ -e "${splitBaseSystemArm64Sc8280xp}$dep" ] && continue
         [ -L "$out$dep" ] && [ -e "${splitBaseSystemArm64Sc8280xp}$(dirname "$dep")/$(readlink "$out$dep")" ] && continue
