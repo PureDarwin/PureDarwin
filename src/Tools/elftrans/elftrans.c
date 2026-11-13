@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -629,10 +630,63 @@ cache_dir(char *out, size_t capacity)
 
 static int must_not_convert(const char *path);
 
+// converted copies and the files they came from, so /proc/self/maps names the file the guest opened
+#define AOT_SOURCES 256
+static struct { char aot[PATH_MAX]; char source[PATH_MAX]; } aot_sources[AOT_SOURCES];
+static unsigned aot_source_count;
+static pthread_mutex_t aot_source_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void
+remember_source(const char *aot, const char *source)
+{
+    pthread_mutex_lock(&aot_source_lock);
+    for (unsigned i = 0; i < aot_source_count; i++) {
+        if (!strcmp(aot_sources[i].aot, aot)) {
+            pthread_mutex_unlock(&aot_source_lock);
+            return;
+        }
+    }
+    if (aot_source_count < AOT_SOURCES && strcmp(aot, source)) {
+        snprintf(aot_sources[aot_source_count].aot, PATH_MAX, "%s", aot);
+        snprintf(aot_sources[aot_source_count].source, PATH_MAX, "%s", source);
+        aot_source_count++;
+    }
+    pthread_mutex_unlock(&aot_source_lock);
+}
+
+// the file a converted copy was made from, the path itself for any other
+const char *
+elftrans_source_of(const char *path)
+{
+    const char *found = path;
+
+    pthread_mutex_lock(&aot_source_lock);
+    for (unsigned i = 0; i < aot_source_count; i++) {
+        if (!strcmp(aot_sources[i].aot, path)) {
+            found = aot_sources[i].source;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&aot_source_lock);
+    return found;
+}
+
+static int prepare_aot_uncached(const char *source, char *out, size_t capacity);
+
 // the converted copy of source: the file itself when elfaot already made it, else the cache's copy, made
 // now by elfaot when there is none or the file changed since. None for a file that must stay as shipped
 int
 prepare_aot(const char *source, char *out, size_t capacity)
+{
+    int result = prepare_aot_uncached(source, out, capacity);
+
+    if (!result)
+        remember_source(out, source);
+    return result;
+}
+
+static int
+prepare_aot_uncached(const char *source, char *out, size_t capacity)
 {
     static const char version[] = ELFAOT_MAGIC "-capstone5";
     const char *converter = getenv("ELFTRANS_ELFAOT");

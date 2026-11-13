@@ -8,6 +8,7 @@
 #include <mach-o/ldsyms.h>
 #include <pthread.h>
 #include <signal.h>
+#include <libproc.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -299,6 +300,65 @@ sys_rt_sigreturn(GuestRegs *r)
     return SYSCALL_RESTORED;
 }
 
+// ELFTRANS_CRASHDUMP: a fault in guest code prints its registers and the top of its stack, each value with
+// the file mapped there, so a return address names the caller
+static void
+crash_name(uint64_t v, char *out, size_t size)
+{
+    char path[PATH_MAX];
+
+    out[0] = 0;
+    if (v < 0x1000 || proc_regionfilename(getpid(), v, path, sizeof(path)) <= 0)
+        return;
+    const char *base = strrchr(path, '/');
+    snprintf(out, size, " %s", base ? base + 1 : path);
+}
+
+void
+crash_dump(int code, void *address, const x86_thread_state64_t *s)
+{
+    static const char *const names[] = { "rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp", "r8", "r9",
+        "r10", "r11", "r12", "r13", "r14", "r15", "rip" };
+    const uint64_t regs[] = { s->__rax, s->__rbx, s->__rcx, s->__rdx, s->__rsi, s->__rdi, s->__rbp, s->__rsp,
+        s->__r8, s->__r9, s->__r10, s->__r11, s->__r12, s->__r13, s->__r14, s->__r15, s->__rip };
+    char line[PATH_MAX + 96], name[PATH_MAX + 8];
+    int n;
+
+    n = snprintf(line, sizeof(line), "elftrans: crash, %d at %p\n", code, address);
+    write(2, line, (size_t)n);
+    for (unsigned i = 0; i < sizeof(regs) / sizeof(regs[0]); i++) {
+        crash_name(regs[i], name, sizeof(name));
+        n = snprintf(line, sizeof(line), "elftrans:   %-3s %016llx%s\n", names[i], (unsigned long long)regs[i], name);
+        write(2, line, (size_t)n);
+    }
+    // on the faulting thread (the signal path, code is the signal) its TLS: the FS base set for it and the TCB
+    // there, whose first word glibc points back at itself, with the tid at 0x2d0 in glibc's struct pthread
+    if (code < 32) {
+        extern uint64_t elftrans_guest_fs_base(void);
+        uint64_t fs = elftrans_guest_fs_base();
+
+        n = snprintf(line, sizeof(line), "elftrans:   fs base %016llx%s\n", (unsigned long long)fs,
+            fs ? "" : " (none)");
+        write(2, line, (size_t)n);
+        if (fs) {
+            const uint64_t *tcb = (const uint64_t *)(uintptr_t)fs;
+
+            crash_name(tcb[0], name, sizeof(name));
+            n = snprintf(line, sizeof(line), "elftrans:   fs:0 %016llx%s, fs:0x10 %016llx, tid %d\n",
+                (unsigned long long)tcb[0], name, (unsigned long long)tcb[2], *(const int *)(uintptr_t)(fs + 0x2d0));
+            write(2, line, (size_t)n);
+        }
+    }
+    const uint64_t *sp = (const uint64_t *)(uintptr_t)s->__rsp;
+    for (int i = 0; i < 32; i++) {
+        crash_name(sp[i], name, sizeof(name));
+        if (!name[0])
+            continue;
+        n = snprintf(line, sizeof(line), "elftrans:   [rsp+%#x] %016llx%s\n", i * 8, (unsigned long long)sp[i], name);
+        write(2, line, (size_t)n);
+    }
+}
+
 // in guest code the thread goes in through elftrans_entry and gets the signal there, in elftrans or libSystem
 // code it waits as pending while the host call returns EINTR
 static void
@@ -318,6 +378,8 @@ host_signal(int native, siginfo_t *si, void *context)
         if (n > 0) write(2, line, (size_t)(n < (int)sizeof(line) ? n : (int)sizeof(line) - 1));
         _exit(128 + native);
     }
+    if (fault && !host && getenv("ELFTRANS_CRASHDUMP"))
+        crash_dump(native, si->si_addr, s);
     if (!self)
         return;
     if (sig) {

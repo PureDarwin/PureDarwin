@@ -226,14 +226,18 @@ gen_maps(Buf *b)
         // the mapped file, through proc_pidinfo: libSystem has no proc_regionfilename export
         struct proc_regionwithpathinfo rp;
 
+        // a file mapping shows the file the guest opened (not elftrans's converted copy) and the offset in it
+        unsigned long long offset = 0;
+
         path[0] = 0;
         if (proc_pidinfo(getpid(), PROC_PIDREGIONPATHINFO, addr, &rp, sizeof(rp)) == (int)sizeof(rp) &&
-            rp.prp_prinfo.pri_address <= addr)
-            snprintf(path, sizeof(path), "%s", rp.prp_vip.vip_path);
+            rp.prp_prinfo.pri_address <= addr && rp.prp_vip.vip_path[0]) {
+            snprintf(path, sizeof(path), "%s", elftrans_source_of(rp.prp_vip.vip_path));
+            offset = rp.prp_prinfo.pri_offset + (addr - rp.prp_prinfo.pri_address);
+        }
         put(b, "%08llx-%08llx %c%c%c%c %08llx 00:00 0", (unsigned long long)addr, (unsigned long long)(addr + size),
             info.protection & VM_PROT_READ ? 'r' : '-', info.protection & VM_PROT_WRITE ? 'w' : '-',
-            info.protection & VM_PROT_EXECUTE ? 'x' : '-', info.share_mode == SM_SHARED ? 's' : 'p',
-            (unsigned long long)info.offset);
+            info.protection & VM_PROT_EXECUTE ? 'x' : '-', info.share_mode == SM_SHARED ? 's' : 'p', offset);
         put(b, path[0] ? "                          %s\n" : "\n", path);
         addr += size;
     }
