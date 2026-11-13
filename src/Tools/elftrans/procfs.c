@@ -369,6 +369,19 @@ static void gen_comm(Buf *b) { put(b, "%.15s\n", comm()); }
 static void gen_pid_max(Buf *b) { put(b, "%d\n", 99999); }
 static void gen_hostname(Buf *b) { char h[256]; if (gethostname(h, sizeof(h))) strcpy(h, "localhost"); put(b, "%s\n", h); }
 
+// the majors NVIDIA's libraries look up: nvidia-caps is the major of PDNVLoader's capability nodes, there
+// only when they are
+static void
+gen_devices(Buf *b)
+{
+    struct stat st;
+
+    put(b, "Character devices:\n  1 mem\n  4 tty\n  5 /dev/tty\n195 nvidia-frontend\n");
+    if (!stat("/dev/nvidia-caps/nvidia-cap1", &st) && S_ISCHR(st.st_mode))
+        put(b, "%3d nvidia-caps\n", (int)major(st.st_rdev));
+    put(b, "\nBlock devices:\n  8 sd\n");
+}
+
 // relative to /proc/self or /, the self files listed with the "self/" prefix
 static const Node nodes[] = {
     { "proc", F_DIR, NULL, NULL },
@@ -411,6 +424,40 @@ static const Node nodes[] = {
     { "proc/sys/fs", F_DIR, NULL, NULL },
     { "proc/sys/fs/file-max", F_FILE, NULL, "9223372036854775807\n" },
     { "proc/sys/fs/nr_open", F_FILE, NULL, "1048576\n" },
+    // NVIDIA's driver as its user libraries look for it on Linux: loaded, and the device files are
+    // PDNVLoader's own devfs nodes, which they must leave alone (ModifyDeviceFiles 0)
+    // the majors Linux has for them, NVIDIA's libraries look up nvidia-caps here
+    { "proc/devices", F_FILE, gen_devices, NULL },
+    { "proc/driver", F_DIR, NULL, NULL },
+    { "proc/driver/nvidia", F_DIR, NULL, NULL },
+    { "proc/driver/nvidia/params", F_FILE, NULL,
+        "ResmanDebugLevel: 4294967295\nRmLogonRC: 1\nModifyDeviceFiles: 0\nDeviceFileUID: 0\n"
+        "DeviceFileGID: 0\nDeviceFileMode: 438\nInitializeSystemMemoryAllocations: 1\n"
+        "UsePageAttributeTable: 4294967295\nEnableMSI: 1\nEnablePCIeGen3: 0\nMemoryPoolSize: 0\n"
+        "KMallocHeapMaxSize: 0\nVMallocHeapMaxSize: 0\nIgnoreMMIOCheck: 0\nEnableStreamMemOPs: 0\n"
+        "EnableUserNUMAManagement: 1\nNvLinkDisable: 0\nRmProfilingAdminOnly: 1\nPreserveVideoMemoryAllocations: 0\n"
+        "EnableS0ixPowerManagement: 0\nS0ixPowerManagementVideoMemoryThreshold: 256\n"
+        "DynamicPowerManagement: 3\nDynamicPowerManagementVideoMemoryThreshold: 200\n"
+        "RegisterPCIDriver: 1\nEnablePCIERelaxedOrderingMode: 0\nEnableResizableBar: 0\n"
+        "EnableGpuFirmware: 18\nEnableGpuFirmwareLogs: 2\nEnableDbgBreakpoint: 0\n"
+        "OpenRmEnableUnsupportedGpus: 1\nDmaRemapPeerMmio: 1\nImexChannelCount: 2048\n"
+        "CreateImexChannel0: 0\nGrdmaPciTopoCheckOverride: 0\nCoherentGPUMemoryMode: \"\"\n"
+        "RegistryDwords: \"\"\nRegistryDwordsPerDevice: \"\"\nRmMsg: \"\"\nGpuBlacklist: \"\"\n"
+        "TemporaryFilePath: \"\"\nExcludedGpus: \"\"\n" },
+    // the MIG capabilities nv-caps lists on every system, minors in its table order and nothing to
+    // modify, as ModifyDeviceFiles is 0
+    { "proc/driver/nvidia/capabilities", F_DIR, NULL, NULL },
+    { "proc/driver/nvidia/capabilities/mig", F_DIR, NULL, NULL },
+    { "proc/driver/nvidia/capabilities/mig/config", F_FILE, NULL,
+        "DeviceFileMinor: 1\nDeviceFileMode: 256\nDeviceFileModify: 0\n" },
+    { "proc/driver/nvidia/capabilities/mig/monitor", F_FILE, NULL,
+        "DeviceFileMinor: 2\nDeviceFileMode: 292\nDeviceFileModify: 0\n" },
+    { "proc/driver/nvidia/version", F_FILE, NULL,
+        "NVRM version: NVIDIA UNIX x86_64 Kernel Module  580.196.07  (PureDarwin PDNVLoader)\n"
+        "GCC version:  \n" },
+    { "sys/module", F_DIR, NULL, NULL },
+    { "sys/module/nvidia", F_DIR, NULL, NULL },
+    { "sys/module/nvidia/initstate", F_FILE, NULL, "live\n" },
     { "sys", F_DIR, NULL, NULL },
     { "sys/devices", F_DIR, NULL, NULL },
     { "sys/devices/system", F_DIR, NULL, NULL },

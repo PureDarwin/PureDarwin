@@ -38,6 +38,7 @@
 
 uintptr_t guest_library_bias;
 static volatile unsigned traced_syscalls;
+static const char *trace_path(long nr, const GuestRegs *r);
 static unsigned trace_limit;
 #define BRK_SIZE (256UL * 1024 * 1024)
 static uintptr_t brk_base, brk_current;
@@ -346,17 +347,47 @@ linux_recvmsg(int fd, LinuxMsgHdr *guest, int linux_flags)
     return received;
 }
 
+// a device number as Linux code reads it. /dev/nvidiactl and /dev/nvidiaN are PDNVLoader's clone nodes:
+// the clone slot goes and their major is NVIDIA's 195, as NVIDIA's libraries check
+static void
+linux_devnum(dev_t d, uint32_t *major_out, uint32_t *minor_out)
+{
+    static int nvidia_major = -2;
+    uint32_t ma = (uint32_t)major(d), mi = (uint32_t)minor(d);
+
+    if (nvidia_major == -2) {
+        struct stat st;
+
+        nvidia_major = !stat("/dev/nvidiactl", &st) && S_ISCHR(st.st_mode) ? (int)major(st.st_rdev) : -1;
+    }
+    if (nvidia_major >= 0 && ma == (uint32_t)nvidia_major)
+        ma = 195, mi &= 0xff;
+    *major_out = ma;
+    *minor_out = mi;
+}
+
+// glibc's makedev: minor's low byte, the major's 12 bits, the rest of the minor, the rest of the major
+static uint64_t
+linux_dev(dev_t d)
+{
+    uint32_t ma, mi;
+
+    linux_devnum(d, &ma, &mi);
+    return (uint64_t)(mi & 0xff) | ((uint64_t)(ma & 0xfff) << 8) | ((uint64_t)(mi & ~0xffu) << 12) |
+        ((uint64_t)(ma & ~0xfffu) << 32);
+}
+
 static void
 copy_stat(LinuxStat *out, const struct stat *in)
 {
     memset(out, 0, sizeof(*out));
-    out->dev = in->st_dev;
+    out->dev = linux_dev(in->st_dev);
     out->ino = in->st_ino;
     out->nlink = in->st_nlink;
     out->mode = in->st_mode;
     out->uid = in->st_uid;
     out->gid = in->st_gid;
-    out->rdev = in->st_rdev;
+    out->rdev = S_ISCHR(in->st_mode) || S_ISBLK(in->st_mode) ? linux_dev(in->st_rdev) : 0;
     out->size = in->st_size;
     out->blksize = in->st_blksize;
     out->blocks = in->st_blocks;
@@ -788,6 +819,19 @@ sys_fchown(GuestRegs *r)
 {
     return fchown((int)r->rdi, (uid_t)r->rsi,
         (gid_t)r->rdx) ? -linux_error(errno) : 0;
+}
+
+// chown and lchown take the path first, fchownat a directory and the path, AT_SYMLINK_NOFOLLOW 0x100
+static long
+sys_chown(GuestRegs *r)
+{
+    long nr = (long)r->rax;
+
+    if (nr == 92) return chown((const char *)(uintptr_t)r->rdi, (uid_t)r->rsi, (gid_t)r->rdx) ? -linux_error(errno) : 0;
+    if (nr == 94) return lchown((const char *)(uintptr_t)r->rdi, (uid_t)r->rsi, (gid_t)r->rdx) ? -linux_error(errno) : 0;
+    int dirfd = (int)r->rdi == -100 ? AT_FDCWD : (int)r->rdi;
+    return fchownat(dirfd, (const char *)(uintptr_t)r->rsi, (uid_t)r->rdx, (gid_t)r->r10,
+        (r->r8 & 0x100) ? AT_SYMLINK_NOFOLLOW : 0) ? -linux_error(errno) : 0;
 }
 
 static long
@@ -1794,8 +1838,9 @@ sys_statx(GuestRegs *r)
     out->btime = (LinuxStatxTime){ st.st_birthtimespec.tv_sec, (uint32_t)st.st_birthtimespec.tv_nsec, 0 };
     out->ctime = (LinuxStatxTime){ st.st_ctimespec.tv_sec, (uint32_t)st.st_ctimespec.tv_nsec, 0 };
     out->mtime = (LinuxStatxTime){ st.st_mtimespec.tv_sec, (uint32_t)st.st_mtimespec.tv_nsec, 0 };
-    out->rdev_major = major(st.st_rdev), out->rdev_minor = minor(st.st_rdev);
-    out->dev_major = major(st.st_dev), out->dev_minor = minor(st.st_dev);
+    if (S_ISCHR(st.st_mode) || S_ISBLK(st.st_mode))
+        linux_devnum(st.st_rdev, &out->rdev_major, &out->rdev_minor);
+    linux_devnum(st.st_dev, &out->dev_major, &out->dev_minor);
     return 0;
 }
 
@@ -1910,6 +1955,29 @@ sys_setsockopt(GuestRegs *r)
         -linux_error(errno) : 0;
 }
 
+// /dev/nvidia* from PDNVLoader: the driver takes the Linux ioctls of NVIDIA's user libraries as they are
+static int
+nvidia_device(int fd)
+{
+    char path[PATH_MAX];
+    struct stat st;
+
+    return !fstat(fd, &st) && S_ISCHR(st.st_mode) && fcntl(fd, F_GETPATH, path) != -1 &&
+        !strncmp(path, "/dev/nvidia", 11);
+}
+
+// Linux puts kernel-to-user in bit 31 and user-to-kernel in bit 30, BSD the other way round. NVIDIA uses
+// both bits everywhere, where the two agree, a request with one of them gets it moved
+static long
+nvidia_ioctl(int fd, unsigned long request, void *argument)
+{
+    unsigned long dir = (request >> 30) & 3;
+
+    if (dir == 1 || dir == 2)
+        request = (request & ~(3UL << 30)) | ((dir ^ 3UL) << 30);
+    return ioctl(fd, request, argument) ? -linux_error(errno) : 0;
+}
+
 // the terminal and descriptor ioctls programs use to probe a fd, ENOTTY for the rest as Linux answers
 static long
 sys_ioctl(GuestRegs *r)
@@ -1941,7 +2009,7 @@ sys_ioctl(GuestRegs *r)
     case 0x5450: case 0x5451:
         return fcntl(fd, F_SETFD, request == 0x5451 ? FD_CLOEXEC : 0) ? -linux_error(errno) : 0;
     default:
-        return -25;
+        return nvidia_device(fd) ? nvidia_ioctl(fd, request, argument) : -25;
     }
 }
 
@@ -2203,7 +2271,10 @@ static long (*const syscalls[NSYSCALLS])(GuestRegs *) = {
     [88] = sys_symlink,
     [89] = sys_readlink,
     [267] = sys_readlink,
+    [92] = sys_chown,
     [93] = sys_fchown,
+    [94] = sys_chown,
+    [260] = sys_chown,
     [96] = sys_gettimeofday,
     [102] = sys_getuid,
     [104] = sys_getgid,
@@ -2254,8 +2325,13 @@ elftrans_dispatch(GuestRegs *r)
             result = LINUX_ERESTARTSYS;
         unsigned trace_index = __sync_fetch_and_add(&traced_syscalls, 1);
         if (result == -38 || trace_index < trace_limit) {
-            char line[96];
-            int size = snprintf(line, sizeof(line), "elftrans: syscall %ld -> %ld\n", nr, result);
+            char line[384];
+            const char *path = trace_path(nr, r);
+            int size = nr == 16 ?
+                snprintf(line, sizeof(line), "elftrans: syscall 16 (fd %d, 0x%lx) -> %ld\n", (int)r->rdi,
+                    (unsigned long)r->rsi, result) :
+                path ? snprintf(line, sizeof(line), "elftrans: syscall %ld (%.256s) -> %ld\n", nr, path, result) :
+                snprintf(line, sizeof(line), "elftrans: syscall %ld -> %ld\n", nr, result);
             if (size > 0 && size < (int)sizeof(line))
                 write(2, line, (size_t)size);
         }
@@ -2431,6 +2507,20 @@ syscall_server(void *unused)
             MACH_PORT_NULL);
     }
     return NULL;
+}
+
+// the path a traced file syscall names: open, stat, lstat, access, readlink take it first, the *at calls second
+static const char *
+trace_path(long nr, const GuestRegs *r)
+{
+    switch (nr) {
+    case 2: case 4: case 6: case 21: case 89:
+        return (const char *)(uintptr_t)r->rdi;
+    case 257: case 259: case 262: case 267: case 269:
+        return (const char *)(uintptr_t)r->rsi;
+    default:
+        return NULL;
+    }
 }
 
 void

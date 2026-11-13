@@ -253,15 +253,26 @@ register_mapped_aot(int fd, off_t offset, uintptr_t address, size_t length)
 // a converted image mapped from its file: an ET_EXEC at the addresses it was linked for, an ET_DYN wherever
 // there is room, data pages private copies, bss anonymous, everything writable until protect_object
 static int
-map_image(int fd, LoadedObject *obj, int require_entry)
+map_image(int fd, LoadedObject *obj, int require_entry, int raw)
 {
     AotFooter footer;
     ElfHeader eh;
     ProgHeader *ph;
     uint64_t payload_size;
     uintptr_t lo = UINTPTR_MAX, hi = 0;
+    struct stat st;
 
-    if (read_footer(fd, &footer, &payload_size) || read_headers(fd, payload_size, &eh, &ph))
+    // a file that must run as shipped has no footer: the whole file is the ELF, its syscalls reach
+    // the EXC_SYSCALL fallback
+    if (raw) {
+        if (fstat(fd, &st))
+            return -1;
+        memset(&footer, 0, sizeof(footer));
+        payload_size = (uint64_t)st.st_size;
+    } else if (read_footer(fd, &footer, &payload_size)) {
+        return -1;
+    }
+    if (read_headers(fd, payload_size, &eh, &ph))
         return -1;
     for (unsigned i = 0; i < eh.phnum; ++i) {
         if (ph[i].type == PT_INTERP)
@@ -519,13 +530,16 @@ protect_object(const LoadedObject *obj)
     return 0;
 }
 
+static int must_not_convert(const char *path);
+
 static int
 load_path(const char *path, LoadedObject *obj, int require_entry)
 {
+    int raw = must_not_convert(path);
     int fd = open(path, O_RDONLY);
-    int result = fd < 0 ? -1 : map_image(fd, obj, require_entry);
+    int result = fd < 0 ? -1 : map_image(fd, obj, require_entry, raw);
 
-    if (result) fprintf(stderr, "elftrans: %s: cannot map the converted image\n", path);
+    if (result) fprintf(stderr, "elftrans: %s: cannot map the %s image\n", path, raw ? "unconverted" : "converted");
     if (fd >= 0) close(fd);
     return result;
 }
@@ -613,8 +627,10 @@ cache_dir(char *out, size_t capacity)
     return n < 0 || (size_t)n >= capacity || make_cache_dir(out) ? -1 : 0;
 }
 
+static int must_not_convert(const char *path);
+
 // the converted copy of source: the file itself when elfaot already made it, else the cache's copy, made
-// now by elfaot when there is none or the file changed since
+// now by elfaot when there is none or the file changed since. None for a file that must stay as shipped
 int
 prepare_aot(const char *source, char *out, size_t capacity)
 {
@@ -624,6 +640,10 @@ prepare_aot(const char *source, char *out, size_t capacity)
     AotFooter footer;
     uint64_t payload_size, hash = UINT64_C(14695981039346656037);
     struct stat st;
+
+    // it runs as shipped: the source itself is mapped, unconverted
+    if (must_not_convert(source))
+        return (size_t)snprintf(out, capacity, "%s", source) >= capacity ? -1 : 0;
     int fd = open(source, O_RDONLY);
 
     if (fd < 0 || fstat(fd, &st)) {
@@ -668,13 +688,39 @@ prepare_aot(const char *source, char *out, size_t capacity)
     return 0;
 }
 
+// binaries whose license forbids changing them, NVIDIA's driver libraries first among them: never converted,
+// they run as shipped and the EXC_SYSCALL fallback serves their syscalls. ELFTRANS_NOCONVERT adds
+// colon-separated path prefixes to the default list
+static int
+must_not_convert(const char *path)
+{
+    static const char *const defaults[] = { "/usr/lib/nvidia/", "/usr/lib/x86_64-linux-gnu/nvidia/",
+        "/usr/share/nvidia/" };
+    const char *list = getenv("ELFTRANS_NOCONVERT");
+
+    for (size_t i = 0; i < sizeof(defaults) / sizeof(defaults[0]); i++) {
+        if (!strncmp(path, defaults[i], strlen(defaults[i])))
+            return 1;
+    }
+    while (list && *list) {
+        const char *end = strchr(list, ':');
+        size_t n = end ? (size_t)(end - list) : strlen(list);
+
+        if (n && !strncmp(path, list, n))
+            return 1;
+        list = end ? end + 1 : NULL;
+    }
+    return 0;
+}
+
 // a converted copy of the file behind fd, for a mapping the guest makes executable
 int
 aot_open(int fd)
 {
     char path[PATH_MAX], converted[PATH_MAX];
 
-    if (fcntl(fd, F_GETPATH, path) == -1 || !is_elf_path(path) || prepare_aot(path, converted, sizeof(converted)))
+    if (fcntl(fd, F_GETPATH, path) == -1 || !is_elf_path(path) || must_not_convert(path) ||
+        prepare_aot(path, converted, sizeof(converted)))
         return -1;
     return open(converted, O_RDONLY);
 }
@@ -717,7 +763,8 @@ main(int argc, char **argv)
         fprintf(stderr, "usage: elftrans linux-elf [library] [args...]\n");
         return 2;
     }
-    if (getenv("ELFTRANS_TRACE")) elftrans_set_trace(2048);
+    // ELFTRANS_TRACE=1 traces the first 2048 syscalls, a larger number that many
+    if (getenv("ELFTRANS_TRACE")) elftrans_set_trace(atoi(getenv("ELFTRANS_TRACE")) > 1 ? (unsigned)atoi(getenv("ELFTRANS_TRACE")) : 2048);
 
     int has_interpreter = elf_interpreter(argv[1], interpreter, sizeof(interpreter));
     if (has_interpreter < 0 || prepare_aot(argv[1], main_aot, sizeof(main_aot)) ||
