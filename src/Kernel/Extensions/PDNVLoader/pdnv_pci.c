@@ -1,6 +1,7 @@
 // pdnv_pci.c - the interface layer's PCI and mapping functions, and the probe that gives the resource manager a GPU
 // Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 #include <IOKit/IOLib.h>
+#include <libkern/OSAtomic.h>
 #include <kern/thread.h>
 #include <kern/thread_call.h>
 
@@ -289,6 +290,8 @@ fail:
 }
 
 // interrupts, as nvidia_isr and nvidia_isr_bh: 0 not ours, 1 handled, 2 handled with bottom half work
+// interrupt counts, logged by the RC watchdog when they change
+
 int
 pdnv_gpu_isr(void *g)
 {

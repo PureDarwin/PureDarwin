@@ -2,6 +2,7 @@
 // Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 #include <IOKit/IOLib.h>
 #include <IOKit/IOLocks.h>
+#include <kern/thread_call.h>
 #include <sys/conf.h>
 #include <sys/errno.h>
 #include <sys/file.h>
@@ -20,9 +21,12 @@
 #include <nv-ioctl.h>
 #include <nv-ioctl-numbers.h>
 #include <nv-ioctl-numa.h>
+#include <nv-gpu-info.h>
+#include <nvkms-ioctl.h>
 
 #include "pdnv_port.h"
 #include "pdnv_pci.h"
+#include "pdnv_kms.h"
 
 int pdnv_stack_alloc(nvidia_stack_t **sp);
 void pdnv_stack_free(nvidia_stack_t *sp);
@@ -35,6 +39,7 @@ typedef NV_STATUS (*rm_numa_fn)(nvidia_stack_t *, nv_state_t *, nv_ioctl_numa_in
 
 // a clone minor is (open slot << 8) | node, node 255 is the control device and 0-7 are GPUs, as on Linux
 #define PDNV_CTL_NODE       255
+#define PDNV_KMS_NODE       254     // /dev/nvidia-modeset, the modeset core's
 #define PDNV_MAX_GPUS       8
 #define PDNV_SLOTS          1024
 #define SLOT(dev)           ((minor(dev) >> 8) & 0xffff)
@@ -49,7 +54,8 @@ typedef NV_STATUS (*rm_numa_fn)(nvidia_stack_t *, nv_state_t *, nv_ioctl_numa_in
 // what nv_linux_file_private_t is on Linux: the resource manager's part first, then ours
 struct pdnv_file {
 	nv_file_private_t nvfp;
-	nv_state_t *nv;
+	nv_state_t *nv;             // NULL on /dev/nvidia-modeset
+	void *kms;                  // the modeset core's per-open record there
 	pid_t pid;                  // the opener, for nv_is_gpu_accessible
 	NvU32 *attached_gpus;
 	size_t num_attached_gpus;
@@ -60,6 +66,10 @@ struct pdnv_file {
 	nv_event_t ev[PDNV_EVENTS];
 	unsigned ev_head, ev_count;
 	NvBool dataless_pending;
+	// select's state: selrecord and selwakeup under sel_lock (xnu's "primitive lock"), the wakeup on a thread
+	// call, the RM posts events holding its own spinlocks
+	IOLock *sel_lock;
+	thread_call_t wake_call;
 	struct selinfo ev_sel;
 };
 
@@ -120,6 +130,17 @@ nv_clone(dev_t dev, int action)
 	return 0;
 }
 
+static void
+nv_wake(thread_call_param_t p0, thread_call_param_t p1)
+{
+	struct pdnv_file *f = p0;
+
+	(void)p1;
+	IOLockLock(f->sel_lock);
+	selwakeup(&f->ev_sel);
+	IOLockUnlock(f->sel_lock);
+}
+
 static int
 nv_open(dev_t dev, int flags, int devtype, proc_t p)
 {
@@ -129,6 +150,23 @@ nv_open(dev_t dev, int flags, int devtype, proc_t p)
 
 	(void)flags;
 	(void)devtype;
+	if (NODE(dev) == PDNV_KMS_NODE && slot > 0 && slot < PDNV_SLOTS) {
+		void *kms = pdnvkms_open();
+
+		if (kms == NULL)
+			return EPERM;
+		f = IOMallocZero(sizeof(*f));
+		if (f == NULL) {
+			pdnvkms_close(kms);
+			return ENOMEM;
+		}
+		f->kms = kms;
+		f->pid = proc_pid(p);
+		IOLockLock(sLock);
+		sSlots[slot] = f;
+		IOLockUnlock(sLock);
+		return 0;
+	}
 	if (nv == NULL || slot <= 0 || slot >= PDNV_SLOTS)
 		return ENXIO;
 	// a GPU is started at probe and stays up, as with persistence mode on Linux
@@ -140,7 +178,15 @@ nv_open(dev_t dev, int flags, int devtype, proc_t p)
 	f->nv = nv;
 	f->pid = proc_pid(p);
 	f->ev_lock = IOSimpleLockAlloc();
-	if (f->ev_lock == NULL) {
+	f->sel_lock = IOLockAlloc();
+	f->wake_call = thread_call_allocate(nv_wake, f);
+	if (f->ev_lock == NULL || f->sel_lock == NULL || f->wake_call == NULL) {
+		if (f->ev_lock != NULL)
+			IOSimpleLockFree(f->ev_lock);
+		if (f->sel_lock != NULL)
+			IOLockFree(f->sel_lock);
+		if (f->wake_call != NULL)
+			thread_call_free(f->wake_call);
 		IOFree(f, sizeof(*f));
 		return ENOMEM;
 	}
@@ -161,6 +207,14 @@ nv_close(dev_t dev, int flags, int devtype, proc_t p)
 	(void)p;
 	if (f == NULL)
 		return 0;
+	if (f->kms != NULL) {
+		pdnvkms_close(f->kms);
+		IOLockLock(sLock);
+		sSlots[SLOT(dev)] = NULL;
+		IOLockUnlock(sLock);
+		IOFree(f, sizeof(*f));
+		return 0;
+	}
 	// posts still running against this descriptor finish first, as nvidia_close waits for them
 	while (__atomic_load_n(&f->nvfp.event_posting_refcount, __ATOMIC_ACQUIRE) != 0)
 		IOSleep(1);
@@ -179,7 +233,12 @@ nv_close(dev_t dev, int flags, int devtype, proc_t p)
 	IOLockLock(sLock);
 	sSlots[SLOT(dev)] = NULL;
 	IOLockUnlock(sLock);
+	thread_call_cancel_wait(f->wake_call);
+	thread_call_free(f->wake_call);
+	IOLockLock(f->sel_lock);
 	selthreadclear(&f->ev_sel);
+	IOLockUnlock(f->sel_lock);
+	IOLockFree(f->sel_lock);
 	IOSimpleLockFree(f->ev_lock);
 	IOFree(f, sizeof(*f));
 	return 0;
@@ -320,6 +379,14 @@ nv_ioctl(dev_t dev, u_long cmd, caddr_t data, int fflag, proc_t p)
 	// fcntl's O_NONBLOCK and O_ASYNC reach a device as these, Linux never hands them to the driver
 	if (cmd == FIONBIO || cmd == FIOASYNC)
 		return 0;
+	// the modeset core takes one request, NVKMS_IOCTL_CMD, its parameters already copied in
+	if (f->kms != NULL) {
+		struct NvKmsIoctlParams *params = (struct NvKmsIoctlParams *)data;
+
+		if (((cmd >> 8) & 0xff) != NVKMS_IOCTL_MAGIC || nr != NVKMS_IOCTL_CMD || size != sizeof(*params))
+			return ENOTTY;
+		return pdnvkms_ioctl(f->kms, params->cmd, params->address, params->size) == 0 ? 0 : EPERM;
+	}
 	if (((cmd >> 8) & 0xff) != NV_IOCTL_MAGIC)
 		return ENOTTY;
 	if (nr != NV_ESC_IOCTL_XFER_CMD)
@@ -484,7 +551,7 @@ nv_post_event(nv_event_t *event, NvHandle handle, NvU32 index, NvU32 info32, NvU
 	IOSimpleLockUnlockEnableInterrupt(f->ev_lock, is);
 	if (dropped)
 		nv_printf(NV_DBG_ERRORS, "NVRM: event queue full, event for 0x%x dropped\n", handle);
-	selwakeup(&f->ev_sel);
+	thread_call_enter(f->wake_call);
 }
 
 // the oldest queued event, as nv_get_event
@@ -517,9 +584,12 @@ nv_select(dev_t dev, int which, void *wql, proc_t p)
 
 	if (f == NULL)
 		return 1;
+	if (f->kms != NULL)
+		return which == FREAD ? pdnvkms_select(f->kms, wql, p) : 0;
 	if (which != FREAD)
 		return 0;
 	// recorded before the check, so a post between the two still wakes the waiter
+	IOLockLock(f->sel_lock);
 	selrecord(p, &f->ev_sel, wql);
 	is = IOSimpleLockLockDisableInterrupt(f->ev_lock);
 	if (f->ev_count != 0 || f->dataless_pending) {
@@ -527,6 +597,7 @@ nv_select(dev_t dev, int which, void *wql, proc_t p)
 		ready = 1;
 	}
 	IOSimpleLockUnlockEnableInterrupt(f->ev_lock, is);
+	IOLockUnlock(f->sel_lock);
 	return ready;
 }
 
@@ -708,4 +779,81 @@ NV_STATUS NV_API_CALL
 os_memcpy_to_user(void *to, const void *from, NvU32 n)
 {
 	return copyout(from, (user_addr_t)(uintptr_t)to, n) == 0 ? NV_OK : NV_ERR_INVALID_ADDRESS;
+}
+
+// /dev/nvidia-modeset, once the modeset core is loaded
+int
+pdnv_dev_kms_node(void)
+{
+	if (sMajor < 0 || devfs_make_node_clone(makedev(sMajor, PDNV_KMS_NODE), DEVFS_CHAR, 0, 0, 0666, nv_clone,
+	    "nvidia-modeset") == NULL)
+		return -1;
+	IOLog("PDNVLoader: /dev/nvidia-modeset\n");
+	return 0;
+}
+
+int
+pdnv_dev_gpu_present(uint32_t gpu_id)
+{
+	for (unsigned i = 0; i < sNumGPUs; i++)
+		if (sGPUs[i]->gpu_id == gpu_id)
+			return 1;
+	return 0;
+}
+
+// as nvidia_modeset_enumerate_gpus: no NUMA to set up, the IOPCIDevice as the OS device
+uint32_t
+pdnv_dev_enumerate_gpus(void *out)
+{
+	nv_gpu_info_t *gpu_info = out;
+
+	for (unsigned i = 0; i < sNumGPUs; i++) {
+		nv_state_t *nv = sGPUs[i];
+
+		bzero(&gpu_info[i], sizeof(gpu_info[i]));
+		gpu_info[i].gpu_id = nv->gpu_id;
+		gpu_info[i].pci_info.domain = nv->pci_info.domain;
+		gpu_info[i].pci_info.bus = nv->pci_info.bus;
+		gpu_info[i].pci_info.slot = nv->pci_info.slot;
+		gpu_info[i].pci_info.function = nv->pci_info.function;
+		gpu_info[i].needs_numa_setup = NV_FALSE;
+		gpu_info[i].os_device_ptr = nv->handle;
+	}
+	return sNumGPUs;
+}
+
+// whether a descriptor of the caller is one of these nodes, and the modeset record behind it
+static struct pdnv_file *
+fd_file(int fd, int *is_ours)
+{
+	struct pdnv_file *f = NULL;
+	vnode_t vp = NULL;
+
+	*is_ours = 0;
+	if (file_vnode(fd, &vp) != 0)
+		return NULL;
+	if (vnode_ischr(vp) && major(vnode_specrdev(vp)) == sMajor) {
+		*is_ours = 1;
+		f = slot_file(vnode_specrdev(vp));
+	}
+	file_drop(fd);
+	return f;
+}
+
+int
+pdnv_dev_fd_is_nvidia(int fd)
+{
+	int ours;
+
+	fd_file(fd, &ours);
+	return ours;
+}
+
+void *
+pdnv_dev_kms_per_open(int fd)
+{
+	int ours;
+	struct pdnv_file *f = fd_file(fd, &ours);
+
+	return f != NULL ? f->kms : NULL;
 }
