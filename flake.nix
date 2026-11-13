@@ -6138,6 +6138,11 @@
               libSystem = libSystemBuild;
               libdrmAmdgpu = libdrmAmdgpuBuild;
             };
+          pdnvprobeBuild =
+            pkgs.callPackage ./nix/pkgs/gpu/pdnvprobe.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+            };
           pdgltriBuild =
             pkgs.callPackage ./nix/pkgs/gpu/pdgltri.nix {
               inherit darwinCrossToolchain nativeLd;
@@ -6248,6 +6253,7 @@
             image-iwlwifi = imageIwlwifiBuild;
             image-i915-legacy = imageI915LegacyBuild;
             kc-gpu = kcGpuBuild;
+            pdnvprobe = pdnvprobeBuild;
             image-gpu = imageGpuBuild;
             image-gpu-sb = mkSecureBootImage imageGpuBuild;
             image-gpu-legacy = imageGpuLegacyBuild;
