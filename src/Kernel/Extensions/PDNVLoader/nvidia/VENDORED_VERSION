@@ -1,0 +1,3 @@
+NVIDIA Linux x86_64 driver 580.196.07 (NVIDIA-Linux-x86_64-580.196.07.run, sha256 0aab0518db53cf73c412dc7f32bbc850ca95e839d8923d0de4bff42c1c9169ce)
+files: kernel/common/inc/* and kernel/nvidia/nv-reg.h, unmodified, each under its own MIT notice
+local changes: none (the NVIDIA Driver License Agreement 2.4 forbids distributing modified header files)

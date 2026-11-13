@@ -132,6 +132,7 @@ in
     headers = [ "IOCDStorageFamily" "IODVDStorageFamily" "IOStorageFamily" ]; arches = all; }
   { name = "PDAuxHello.kext"; dir = "PDAuxHello"; arches = x86; }
   { name = "PDWatchdog.kext"; dir = "PDWatchdog"; arches = all; }
+  { name = "PDNVLoader.kext"; dir = "PDNVLoader"; headers = [ "IOPCIFamily" ]; arches = x86; }
   { name = "PDDiskImages2.kext"; dir = "PDDiskImages2"; headers = [ "IOStorageFamily" ]; arches = x86arm; }
   { name = "PDLifs.kext"; dir = "PDLifs"; arches = x86arm; }
   { name = "PDSerialHID.kext"; dir = "PDSerialHID"; headers = [ "IOHIDFamily" ]; arches = x86arm; }

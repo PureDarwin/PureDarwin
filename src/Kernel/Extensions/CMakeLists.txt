@@ -217,6 +217,8 @@ add_dependencies(kexts Sandbox.kext)
 # IOWatchdog service that watchdogd opens at boot
 add_subdirectory(PDWatchdog)
 add_dependencies(kexts PDWatchdog.kext)
+add_subdirectory(PDNVLoader)
+add_dependencies(kexts PDNVLoader.kext)
 if(PUREDARWIN_ARCH STREQUAL "arm64")
     add_subdirectory(PDInfernoStubs)
 endif()
