@@ -2869,6 +2869,23 @@ kmem_insert_entry(vm_map_address_t start, vm_map_address_t end, bool guard)
 	vm_entry_unlock_exclusive(kernel_map, entry);
 }
 
+/*
+ * PureDarwin: on x86_64 the kmem ranges stay below the top 2 GB, which is left an ordinary hole of
+ * kernel_map for modules built for the kernel code model (sign-extended 32-bit absolute addresses, as
+ * Linux places them), NVIDIA's resource manager first. The fuzzing and the range placement both stop here.
+ */
+static vm_map_offset_t
+kmem_ranges_max(void)
+{
+#if defined(__x86_64__)
+	const vm_map_offset_t top2g = 0xffffffff80000000ULL;
+
+	return vm_map_max(kernel_map) > top2g ? top2g : vm_map_max(kernel_map);
+#else
+	return vm_map_max(kernel_map);
+#endif
+}
+
 __attribute__((always_inline))
 static struct mach_vm_range
 kmem_fuzz_start(void)
@@ -2877,7 +2894,7 @@ kmem_fuzz_start(void)
 	struct mach_vm_range hole = { };
 	struct mach_vm_range range = {
 		vm_map_min(kernel_map),
-		vm_map_max(kernel_map),
+		kmem_ranges_max(),
 	};
 	uint32_t kmapoff_pgcnt;
 
@@ -2895,7 +2912,7 @@ kmem_fuzz_start(void)
 		vm_map_size_t hole_size;
 
 		hole_size = vm_map_store_lookup_hole(kernel_map,
-		    vmsr_start(rsv), vm_map_max(kernel_map));
+		    vmsr_start(rsv), kmem_ranges_max());
 		if (mach_vm_range_size(&hole) < hole_size) {
 			if (hole.min_address) {
 				kmem_insert_entry(hole.min_address,
@@ -3211,7 +3228,7 @@ kmem_scramble_ranges(void)
 		vm_map_offset_t hole_size, sp_size;
 
 		hole_size = vm_map_store_lookup_hole(kernel_map,
-		    km_range.min_address, vm_map_max(kernel_map));
+		    km_range.min_address, kmem_ranges_max());
 		sp_size   = kmem_claim_to_allocation_size(sp.kc_size, is_last);
 
 		if (hole_size < sp_size) {
