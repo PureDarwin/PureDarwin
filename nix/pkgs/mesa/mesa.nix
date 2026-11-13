@@ -393,7 +393,10 @@ EOF
     # the X server loads for AIGLX is Mesa's "dril" stub, whose
     # createNewContext returns NULL by design, so an indirect context cannot be
     # created at all (and the server then crashes destroying it)
+    # the sandbox has no network: an optional dependency meson would fetch a wrap for (freedreno's
+    # libarchive) is left out instead of failing the configure
     meson setup build \
+      --wrap-mode=nodownload \
       --cross-file puredarwin-cross.ini \
       --prefix=$out/usr \
       --libdir=lib \
