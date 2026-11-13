@@ -297,6 +297,7 @@ PDNVLoader::initRM(struct pdelf_obj *obj)
 	pdnv_rm.ioctl = (void *)pdelf_export(obj, "rm_ioctl");
 	pdnv_rm.cleanup_file_private = (void *)pdelf_export(obj, "rm_cleanup_file_private");
 	pdnv_rm.perform_version_check = (void *)pdelf_export(obj, "rm_perform_version_check");
+	pdnv_rm.get_gpu_numa_info = (void *)pdelf_export(obj, "rm_get_gpu_numa_info");
 	pdnv_pci_init();
 	pdnv_work_init();
 	if (init == NULL || pdnv_rm.is_altstack_in_use == NULL) {

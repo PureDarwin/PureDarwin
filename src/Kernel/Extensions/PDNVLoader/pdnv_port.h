@@ -61,6 +61,7 @@ struct pdnv_rm_calls {
 	void *ioctl;                        // NV_STATUS (nvidia_stack_t *, nv_state_t *, nv_file_private_t *, NvU32, void *, NvU32)
 	void *cleanup_file_private;         // void (nvidia_stack_t *, nv_state_t *, nv_file_private_t *)
 	void *perform_version_check;        // NV_STATUS (nvidia_stack_t *, void *, NvU32)
+	void *get_gpu_numa_info;            // NV_STATUS (nvidia_stack_t *, nv_state_t *, nv_ioctl_numa_info_t *)
 };
 extern struct pdnv_rm_calls pdnv_rm;
 

@@ -19,6 +19,7 @@
 #include <nv.h>
 #include <nv-ioctl.h>
 #include <nv-ioctl-numbers.h>
+#include <nv-ioctl-numa.h>
 
 #include "pdnv_port.h"
 #include "pdnv_pci.h"
@@ -30,6 +31,7 @@ typedef NV_STATUS (*rm_ioctl_fn)(nvidia_stack_t *, nv_state_t *, nv_file_private
 typedef void (*rm_cleanup_fn)(nvidia_stack_t *, nv_state_t *, nv_file_private_t *);
 typedef NV_STATUS (*rm_version_fn)(nvidia_stack_t *, void *, NvU32);
 typedef NvBool (*rm_locks_fn)(nvidia_stack_t *, nv_state_t *);
+typedef NV_STATUS (*rm_numa_fn)(nvidia_stack_t *, nv_state_t *, nv_ioctl_numa_info_t *);
 
 // a clone minor is (open slot << 8) | node, node 255 is the control device and 0-7 are GPUs, as on Linux
 #define PDNV_CTL_NODE       255
@@ -269,6 +271,27 @@ dispatch(struct pdnv_file *f, NvU32 cmd, void *arg, NvU32 size)
 			error = EBUSY;
 		break;
 	}
+	case NV_ESC_NUMA_INFO: {
+		// the RM fills in the GPU side, the layer the system side: no coherent memory, NUMA disabled
+		nv_ioctl_numa_info_t *api = arg;
+
+		if (nv == &sCtl || size != sizeof(*api) || pdnv_rm.get_gpu_numa_info == NULL) {
+			error = EINVAL;
+			break;
+		}
+		if (((rm_numa_fn)pdnv_rm.get_gpu_numa_info)(sp, nv, api) != NV_OK) {
+			error = EBUSY;
+			break;
+		}
+		api->status = NV_IOCTL_NUMA_STATUS_DISABLED;
+		api->use_auto_online = 0;
+		api->memblock_size = sMemblockSize;
+		break;
+	}
+	case NV_ESC_SET_NUMA_STATUS:
+		// only coherent GPUs have memory to online, none here
+		error = nv == &sCtl ? EINVAL : ENOTSUP;
+		break;
 	default:
 		st = ((rm_ioctl_fn)pdnv_rm.ioctl)(sp, nv, &f->nvfp, cmd, arg, size);
 		error = st == NV_OK ? 0 : EINVAL;
