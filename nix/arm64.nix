@@ -90,28 +90,8 @@ let
     inherit (pkgs) at-spi2-core meson ninja python3;
   };
   autoconfArm64Build = pdArm64.autoconf;
-  automakeArm64Build = mkArm64Build ./pkgs/base/automake.nix {
-    automake = pkgs.automake;
-    # Host autoconf, not autoconfArm64Build: this only drives
-    # automake's own build/test-generation on the Linux builder
-    autoconf = pkgs.autoconf;
-  };
-  cairoArm64Build = mkArm64Build ./pkgs/gtk/cairo.nix {
-    nativeMesonTools = nativeMesonToolsDir;
-    inherit (pkgs) cairo xorgproto;
-    pixman = xvfbPixmanArm64Build;
-    zlib = xvfbZlibArm64Build;
-    libX11 = xlibArm64Build;
-    libXext = xvfbLibXextArm64Build;
-    libXrender = xvfbLibXrenderArm64Build;
-    libxcb = xcbArm64Build;
-    libXau = xvfbLibXauArm64Build;
-    libXdmcp = xvfbLibXdmcpArm64Build;
-    freetype = freetype2Arm64Build;
-    fontconfig = fontconfigArm64Build;
-    expat = expatArm64Build;
-    libpng = libpngArm64Build;
-  };
+  automakeArm64Build = pdArm64.automake;
+  cairoArm64Build = pdArm64.cairo;
   cairoGobjectArm64Build = pdArm64.cairoGobject;
   curlArm64Build = mkArm64Build ./pkgs/base/curl.nix {
     curl = pkgs.curl;
@@ -125,42 +105,8 @@ let
     libX11 = xlibArm64Build;
     inherit (pkgs) dbus meson ninja python3;
   };
-  dilloArm64Build = mkArm64Build ./pkgs/apps/dillo.nix {
-    inherit (pkgs) dillo util-macros;
-    # Without this it falls back to nixpkgs' libiconv, which on Linux is
-    # glibc-iconv - a host library with no arm64-darwin lib dir at all.
-    libiconv = libiconvArm64Build;
-    fltk = fltkArm64Build;
-    openssl = opensslArm64Build;
-    libX11 = xlibArm64Build;
-    libxcb = xcbArm64Build;
-    libXau = xvfbLibXauArm64Build;
-    libXdmcp = xvfbLibXdmcpArm64Build;
-    libXext = xvfbLibXextArm64Build;
-    libXrender = xvfbLibXrenderArm64Build;
-    libXfixes = xvfbLibXfixesArm64Build;
-    libXft = libXftArm64Build;
-    libxcbcursor = xcbCursorArm64Build;
-    libICE = xvfbLibICEArm64Build;
-    libSM = xvfbLibSMArm64Build;
-    fontconfig = fontconfigArm64Build;
-    freetype2 = freetype2Arm64Build;
-    expat = expatArm64Build;
-    inherit (pkgs) xorgproto;
-  };
-  dmenuArm64Build = mkArm64Build ./pkgs/x11/dmenu.nix {
-    inherit (pkgs) dmenu;
-    inherit (pkgs) xorgproto;
-    libX11 = xlibArm64Build;
-    libxcb = xcbArm64Build;
-    libXft = libXftArm64Build;
-    libXrender = xvfbLibXrenderArm64Build;
-    libXau = xvfbLibXauArm64Build;
-    libXdmcp = xvfbLibXdmcpArm64Build;
-    freetype2 = freetype2Arm64Build;
-    fontconfig = fontconfigArm64Build;
-    expat = expatArm64Build;
-  };
+  dilloArm64Build = pdArm64.dillo;
+  dmenuArm64Build = pdArm64.dmenu;
   fastfetchArm64Build = mkArm64Build ./pkgs/apps/fastfetch.nix {
     fastfetch = pkgs.fastfetch;
     corefoundation = coreFoundationArm64Build;
@@ -179,47 +125,10 @@ let
   # For boards with no GL stack (the Pi), so the image does not have to carry
   # OpenGL.framework and Mesa just to satisfy dyld at launch.
   fastfetchNoGLArm64Build = fastfetchArm64Build.override { withOpenGL = false; };
-  fltkArm64Build = mkArm64Build ./pkgs/apps/fltk.nix {
-    inherit (pkgs) fltk_1_3 util-macros;
-    libX11 = xlibArm64Build;
-    libxcb = xcbArm64Build;
-    libXau = xvfbLibXauArm64Build;
-    libXdmcp = xvfbLibXdmcpArm64Build;
-    libXext = xvfbLibXextArm64Build;
-    libXrender = xvfbLibXrenderArm64Build;
-    libXfixes = xvfbLibXfixesArm64Build;
-    libXft = libXftArm64Build;
-    libxcbcursor = xcbCursorArm64Build;
-    libICE = xvfbLibICEArm64Build;
-    libSM = xvfbLibSMArm64Build;
-    fontconfig = fontconfigArm64Build;
-    freetype2 = freetype2Arm64Build;
-    expat = expatArm64Build;
-    inherit (pkgs) xorgproto;
-  };
-  foundationArm64Build = mkArm64Build ./pkgs/apple/foundation.nix {
-    libobjc = libobjcArm64Build;
-    corefoundation = coreFoundationArm64Build;
-    libffi = libffiArm64Build;
-    libxml2 = libxml2Arm64Build;
-    # Headers only, so the same sources the x86 side uses.
-    dnssdInclude = ../src/Libraries/mDNSResponder/mDNSShared;
-    notifyInclude = ../src/Libraries/XPC/notify;
-    src = "${foundationSource}/src/Frameworks/Foundation";
-  };
-  fribidiArm64Build = mkArm64Build ./pkgs/gtk/fribidi.nix {
-    inherit (pkgs) fribidi;
-  };
-  gdkPixbufArm64Build = mkArm64Build ./pkgs/gtk/gdk-pixbuf.nix {
-    nativeMesonTools = nativeMesonToolsDir;
-    glib = glibArm64Build;
-    pcre2 = pcre2Arm64Build;
-    libffi = libffiArm64Build;
-    zlib = xvfbZlibArm64Build;
-    libiconv = libiconvArm64Build;
-    libpng = libpngArm64Build;
-    inherit (pkgs) gdk-pixbuf meson ninja python3;
-  };
+  fltkArm64Build = pdArm64.fltk;
+  foundationArm64Build = pdArm64.foundation;
+  fribidiArm64Build = pdArm64.fribidi;
+  gdkPixbufArm64Build = pdArm64.gdkPixbuf;
   gitArm64Build = mkArm64Build ./pkgs/base/git.nix {
     git = pkgs.git;
     zlib = xvfbZlibArm64Build;
@@ -268,63 +177,11 @@ let
     mesa = mesaArm64Build;
     inherit (pkgs) gtk3 xorgproto;
   };
-  harfbuzzArm64Build = mkArm64Build ./pkgs/gtk/harfbuzz.nix {
-    inherit (pkgs) harfbuzz;
-    freetype = freetype2Arm64Build;
-    icu = icuCoreArm64Build;
-    glib = glibArm64Build;
-    pcre2 = pcre2Arm64Build;
-    libffi = libffiArm64Build;
-    libiconv = libiconvArm64Build;
-    cairo = cairoArm64Build;
-    pixman = xvfbPixmanArm64Build;
-    libpng = libpngArm64Build;
-    zlib = xvfbZlibArm64Build;
-    expat = expatArm64Build;
-    fontconfig = fontconfigArm64Build;
-  };
-  i3Arm64Build = mkArm64Build ./pkgs/x11/i3.nix {
-    inherit (pkgs) i3;
-    inherit (pkgs) xorgproto;
-    startup-notification = startupNotificationArm64Build;
-    libX11 = xlibArm64Build;
-    libxcb = xcbArm64Build;
-    libxcb-util = xcbUtilArm64Build;
-    libxcb-keysyms = xcbKeysymsArm64Build;
-    libxcb-wm = xcbWmArm64Build;
-    libxcb-render-util = xcbRenderUtilArm64Build;
-    libxcb-image = xcbImageArm64Build;
-    libxcb-cursor = xcbCursorArm64Build;
-    xcb-util-xrm = xcbXrmArm64Build;
-    xkbcommon = xkbcommonArm64Build;
-    yajl = yajlArm64Build;
-    pcre2 = pcre2Arm64Build;
-    cairo = cairoArm64Build;
-    pango = pangoArm64Build;
-    glib = glibArm64Build;
-    fribidi = fribidiArm64Build;
-    harfbuzz = harfbuzzArm64Build;
-    libev = libevArm64Build;
-    libiconv = libiconvArm64Build;
-    zlib = xvfbZlibArm64Build;
-    libffi = libffiArm64Build;
-    pixman = xvfbPixmanArm64Build;
-    fontconfig = fontconfigArm64Build;
-    freetype = freetype2Arm64Build;
-    expat = expatArm64Build;
-    libXau = xvfbLibXauArm64Build;
-    libXdmcp = xvfbLibXdmcpArm64Build;
-    libpng = libpngArm64Build;
-    libXext = xvfbLibXextArm64Build;
-    libXrender = xvfbLibXrenderArm64Build;
-  };
+  harfbuzzArm64Build = pdArm64.harfbuzz;
+  i3Arm64Build = pdArm64.i3;
   ioregArm64Build = pdArm64.ioreg;
   libXftArm64Build = pdArm64.libXft;
-  libcssArm64Build = mkArm64Build ./pkgs/apps/libcss.nix {
-    libwapcaplet = libwapcapletArm64Build;
-    libparserutils = libparserutilsArm64Build;
-    inherit (pkgs) libcss perl python3;
-  };
+  libcssArm64Build = pdArm64.libcss;
   libcurlDylibArm64Build = mkArm64Build ./pkgs/base/libcurl-dylib.nix {
     zlib = xvfbZlibArm64Build;
     openssl = opensslArm64Build;
@@ -333,13 +190,7 @@ let
     inherit (pkgs) curl;
   };
   libcxxTestArm64Build = pdArm64.libcxxTest;
-  libdomArm64Build = mkArm64Build ./pkgs/apps/libdom.nix {
-    libwapcaplet = libwapcapletArm64Build;
-    libparserutils = libparserutilsArm64Build;
-    libhubbub = libhubbubArm64Build;
-    expat = expatArm64Build;
-    inherit (pkgs) libdom;
-  };
+  libdomArm64Build = pdArm64.libdom;
   libepoxyArm64Build = mkArm64Build ./pkgs/gtk/libepoxy.nix {
     nativeMesonTools = nativeMesonToolsDir;
     libX11 = xlibArm64Build;
@@ -347,51 +198,23 @@ let
     inherit (pkgs) libepoxy xorgproto meson ninja python3;
   };
   libfontencArm64Build = pdArm64.libfontenc;
-  libhubbubArm64Build = mkArm64Build ./pkgs/apps/libhubbub.nix {
-    libwapcaplet = libwapcapletArm64Build;
-    libparserutils = libparserutilsArm64Build;
-    inherit (pkgs) libhubbub perl gperf gnused;
-  };
-  libnsbmpArm64Build = mkArm64Build ./pkgs/apps/libnsbmp.nix {
-    inherit (pkgs) libnsbmp;
-  };
-  libnsgifArm64Build = mkArm64Build ./pkgs/apps/libnsgif.nix {
-    inherit (pkgs) libnsgif;
-  };
-  libnsutilsArm64Build = mkArm64Build ./pkgs/apps/libnsutils.nix {
-    inherit (pkgs) libnsutils;
-  };
-  libparserutilsArm64Build = mkArm64Build ./pkgs/apps/libparserutils.nix {
-    libiconv = libiconvArm64Build;
-    inherit (pkgs) libparserutils perl;
-  };
-  libutf8procArm64Build = mkArm64Build ./pkgs/base/libutf8proc.nix {
-    inherit (pkgs) libutf8proc;
-  };
-  libwapcapletArm64Build = mkArm64Build ./pkgs/apps/libwapcaplet.nix {
-    inherit (pkgs) libwapcaplet;
-  };
-  libzDylibArm64Build = mkArm64Build ./pkgs/base/libz-dylib.nix {
-    inherit (pkgs) zlib;
-  };
+  libhubbubArm64Build = pdArm64.libhubbub;
+  libnsbmpArm64Build = pdArm64.libnsbmp;
+  libnsgifArm64Build = pdArm64.libnsgif;
+  libnsutilsArm64Build = pdArm64.libnsutils;
+  libparserutilsArm64Build = pdArm64.libparserutils;
+  libutf8procArm64Build = pdArm64.libutf8proc;
+  libwapcapletArm64Build = pdArm64.libwapcaplet;
+  libzDylibArm64Build = pdArm64.libzDylib;
   libgbmArm64Build = pdArm64.libgbm;
   libdrmPdpvrArm64Build = mkArm64Build ./pkgs/gpu/libdrm-pdpvr.nix {
     corefoundation = coreFoundationArm64Build;
     iokit = iokitArm64Build;
     libdrmSrc = pkgs.libdrm.src;
   };
-  libdrmArm64Build = mkArm64Build ./pkgs/x11/libdrm.nix {
-    corefoundation = coreFoundationArm64Build;
-    iokit = iokitArm64Build;
-    puredarwinSource = ../src/Libraries/libdrm;
-    src = pkgs.libdrm.src;
-    inherit (pkgs) meson ninja pkg-config python3;
-  };
+  libdrmArm64Build = pdArm64.libdrm;
   xwaylandArm64Build = pdArm64.xwayland;
-  mesonArm64Build = mkArm64Build ./pkgs/base/meson.nix {
-    python = pythonArm64Build;
-    inherit (pkgs) meson;
-  };
+  mesonArm64Build = pdArm64.meson;
   cmakeArm64Build = mkArm64Build ./pkgs/base/cmake.nix {
     libcxxDylib = libcxxDylibArm64Build;
     libcxxabiDylib = libcxxabiDylibArm64Build;
@@ -399,11 +222,7 @@ let
     libcurlDylib = libcurlDylibArm64Build;
     inherit (pkgs) cmake ninja;
   };
-  ninjaArm64Build = mkArm64Build ./pkgs/base/ninja.nix {
-    libcxxDylib = libcxxDylibArm64Build;
-    libcxxabiDylib = libcxxabiDylibArm64Build;
-    inherit (pkgs) ninja;
-  };
+  ninjaArm64Build = pdArm64.ninja;
   clangCrossArm64Build = mkArm64Build ./pkgs/toolchain/clang-cross.nix {
     libcxxDylib = libcxxDylibArm64Build;
     libcxxabiDylib = libcxxabiDylibArm64Build;
@@ -459,16 +278,10 @@ let
     xkbcommon = xkbcommonArm64Build;
     libxml2 = libxml2Arm64Build;
   };
-  jsoncArm64Build = mkArm64Build ./pkgs/apps/json-c.nix {
-    src = pkgs.json_c.src;
-    inherit (pkgs) cmake ninja pkg-config;
-  };
+  jsoncArm64Build = pdArm64.jsonc;
   wlrootsArm64Build = pdArm64.wlroots;
   swayArm64Build = pdArm64.sway;
-  libdisplayInfoArm64Build = mkArm64Build ./pkgs/mesa/libdisplay-info.nix {
-    nativeMesonTools = nativeMesonToolsDir;
-    inherit (pkgs) libdisplay-info hwdata;
-  };
+  libdisplayInfoArm64Build = pdArm64.libdisplayInfo;
   gtkLayerShellArm64Build = mkArm64Build ./pkgs/wayland/gtk-layer-shell.nix {
     nativeMesonTools = nativeMesonToolsDir;
     glib = glibArm64Build;
@@ -549,13 +362,7 @@ let
   };
   xvfbLibXxf86vmArm64Build = pdArm64.xvfbLibXxf86vm;
   waylandArm64Build = pdArm64.wayland;
-  gluArm64Build = mkArm64Build ./pkgs/mesa/glu.nix {
-    nativeMesonTools = nativeMesonToolsDir;
-    libcxxDylib = libcxxDylibArm64Build;
-    libcxxabiDylib = libcxxabiDylibArm64Build;
-    mesa = mesaArm64Build;
-    inherit (pkgs) meson ninja pkg-config;
-  };
+  gluArm64Build = pdArm64.gluBuild;
   mesaArm64Build = mkArm64Build ./pkgs/mesa/mesa.nix {
     nativeMesonTools = nativeMesonToolsDir;
     libcxxDylib = libcxxDylibArm64Build;
@@ -1125,28 +932,7 @@ let
     src = ../src/Frameworks/OpenGL;
   };
   opensshArm64Build = pdArm64.openssh;
-  pangoArm64Build = mkArm64Build ./pkgs/gtk/pango.nix {
-    nativeMesonTools = nativeMesonToolsDir;
-    inherit (pkgs) pango;
-    glib = glibArm64Build;
-    fribidi = fribidiArm64Build;
-    harfbuzz = harfbuzzArm64Build;
-    cairo = cairoArm64Build;
-    pcre2 = pcre2Arm64Build;
-    libffi = libffiArm64Build;
-    zlib = xvfbZlibArm64Build;
-    libiconv = libiconvArm64Build;
-    pixman = xvfbPixmanArm64Build;
-    libxcb = xcbArm64Build;
-    fontconfig = fontconfigArm64Build;
-    freetype = freetype2Arm64Build;
-    expat = expatArm64Build;
-    libX11 = xlibArm64Build;
-    libXext = xvfbLibXextArm64Build;
-    libXrender = xvfbLibXrenderArm64Build;
-    inherit (pkgs) xorgproto;
-    libpng = libpngArm64Build;
-  };
+  pangoArm64Build = pdArm64.pango;
   pythonArm64Build = pdArm64.python;
   libcrocoArm64Build = mkSharedArm64XorgLib {
     pname = "puredarwin-libcroco";
@@ -1409,20 +1195,7 @@ let
     inherit arm64CrossToolchain;
   };
   startupNotificationArm64Build = pdArm64.startup-notification;
-  xcalcArm64Build = mkArm64Build ./pkgs/x11/xcalc.nix {
-    xcalc = pkgs.xcalc;
-    libX11 = xlibArm64Build;
-    libxcb = xcbArm64Build;
-    libXau = xvfbLibXauArm64Build;
-    libXdmcp = xvfbLibXdmcpArm64Build;
-    libXext = xvfbLibXextArm64Build;
-    libXmu = xvfbLibXmuArm64Build;
-    libXt = xvfbLibXtArm64Build;
-    libXaw = xvfbLibXawArm64Build;
-    libICE = xvfbLibICEArm64Build;
-    libSM = xvfbLibSMArm64Build;
-    inherit (pkgs) xorgproto;
-  };
+  xcalcArm64Build = pdArm64.xcalc;
   xcbArm64Build = pdArm64.libxcb;
   xcbCursorArm64Build = pdArm64.libxcbcursor;
   xcbImageArm64Build = pdArm64.libxcb-image;
@@ -1431,66 +1204,12 @@ let
   xcbUtilArm64Build = pdArm64.libxcb-util;
   xcbWmArm64Build = pdArm64.xcbWm;
   xcbXrmArm64Build = pdArm64.xcb-util-xrm;
-  xclockArm64Build = mkArm64Build ./pkgs/x11/xclock.nix {
-    xclock = pkgs.xclock;
-    libX11 = xlibArm64Build;
-    libxcb = xcbArm64Build;
-    libXau = xvfbLibXauArm64Build;
-    libXdmcp = xvfbLibXdmcpArm64Build;
-    libXext = xvfbLibXextArm64Build;
-    libXrender = xvfbLibXrenderArm64Build;
-    libXmu = xvfbLibXmuArm64Build;
-    libXt = xvfbLibXtArm64Build;
-    libXaw = xvfbLibXawArm64Build;
-    libXft = libXftArm64Build;
-    libxkbfile = xvfbLibXkbfileArm64Build;
-    freetype2 = freetype2Arm64Build;
-    fontconfig = fontconfigArm64Build;
-    expat = expatArm64Build;
-    libICE = xvfbLibICEArm64Build;
-    libSM = xvfbLibSMArm64Build;
-    inherit (pkgs) xorgproto;
-  };
-  xeyesArm64Build = mkArm64Build ./pkgs/x11/xeyes.nix {
-    xeyes = pkgs.xeyes;
-    libX11 = xlibArm64Build;
-    libxcb = xcbArm64Build;
-    libXau = xvfbLibXauArm64Build;
-    libXdmcp = xvfbLibXdmcpArm64Build;
-    libXext = xvfbLibXextArm64Build;
-    libXi = xvfbLibXiArm64Build;
-    libXrender = xvfbLibXrenderArm64Build;
-    libXfixes = xvfbLibXfixesArm64Build;
-    libXmu = xvfbLibXmuArm64Build;
-    libXt = xvfbLibXtArm64Build;
-    libICE = xvfbLibICEArm64Build;
-    libSM = xvfbLibSMArm64Build;
-    inherit (pkgs) xorgproto;
-  };
+  xclockArm64Build = pdArm64.xclock;
+  xeyesArm64Build = pdArm64.xeyes;
   xkbcommonArm64Build = pdArm64.xkbcommon;
-  xkbcompArm64Build = mkArm64Build ./pkgs/x11/xvfb-xkbcomp.nix {
-    inherit (pkgs) xkbcomp xorgproto;
-    libX11 = xlibArm64Build;
-    libxkbfile = xvfbLibXkbfileArm64Build;
-    libXau = xvfbLibXauArm64Build;
-    libXdmcp = xvfbLibXdmcpArm64Build;
-    libxcb = xcbArm64Build;
-  };
+  xkbcompArm64Build = pdArm64.xkbcomp;
   xlibArm64Build = pdArm64.libX11;
-  xmessageArm64Build = mkArm64Build ./pkgs/x11/xmessage.nix {
-    xmessage = pkgs.xmessage;
-    libX11 = xlibArm64Build;
-    libxcb = xcbArm64Build;
-    libXau = xvfbLibXauArm64Build;
-    libXdmcp = xvfbLibXdmcpArm64Build;
-    libXext = xvfbLibXextArm64Build;
-    libXmu = xvfbLibXmuArm64Build;
-    libXt = xvfbLibXtArm64Build;
-    libXaw = xvfbLibXawArm64Build;
-    libICE = xvfbLibICEArm64Build;
-    libSM = xvfbLibSMArm64Build;
-    inherit (pkgs) xorgproto;
-  };
+  xmessageArm64Build = pdArm64.xmessage;
   xorgArm64Build = mkArm64Build ./pkgs/x11/xorg.nix {
     xorg-server = pkgs.xorg-server;
     pixman = xvfbPixmanArm64Build;
@@ -1527,35 +1246,8 @@ let
     mesa = null;
     withGlx = false;
   };
-  xtermArm64Build = mkArm64Build ./pkgs/x11/xterm.nix {
-    xterm = pkgs.xterm;
-    libX11 = xlibArm64Build;
-    libxcb = xcbArm64Build;
-    libXau = xvfbLibXauArm64Build;
-    libXdmcp = xvfbLibXdmcpArm64Build;
-    libICE = xvfbLibICEArm64Build;
-    libSM = xvfbLibSMArm64Build;
-    libXt = xvfbLibXtArm64Build;
-    libXext = xvfbLibXextArm64Build;
-    libXmu = xvfbLibXmuArm64Build;
-    libXpm = xvfbLibXpmArm64Build;
-    libXaw = xvfbLibXawArm64Build;
-    inherit (pkgs) xorgproto;
-    ncurses = ncursesArm64Build;
-  };
-  xvfbArm64Build = mkArm64Build ./pkgs/x11/xvfb.nix {
-    xorg-server = pkgs.xorg-server;
-    pixman = xvfbPixmanArm64Build;
-    libXau = xvfbLibXauArm64Build;
-    libXfont2 = xvfbLibXfont2Arm64Build;
-    zlib = xvfbZlibArm64Build;
-    freetype2 = freetype2Arm64Build;
-    libfontenc = libfontencArm64Build;
-    xvfbZlib = xvfbZlibArm64Build;
-    inherit (pkgs) xorgproto xtrans;
-    libxkbfile = xvfbLibXkbfileArm64Build;
-    libXdmcp = pkgs.libxdmcp;
-  };
+  xtermArm64Build = pdArm64.xterm;
+  xvfbArm64Build = pdArm64.xvfb;
   xvfbLibICEArm64Build = pdArm64.libICE;
   xvfbLibSMArm64Build = pdArm64.libSM;
   xvfbLibXauArm64Build = pdArm64.libXau;
@@ -1609,12 +1301,8 @@ let
   xvfbLibXrandrArm64Build = pdArm64.libXrandr;
   xvfbLibXrenderArm64Build = pdArm64.libXrender;
   xvfbLibXtArm64Build = pdArm64.libXt;
-  xvfbLibxcvtArm64Build = mkArm64Build ./pkgs/x11/xvfb-libxcvt.nix {
-    inherit (pkgs) libxcvt;
-  };
-  xvfbPixmanArm64Build = mkArm64Build ./pkgs/x11/xvfb-pixman.nix {
-    inherit (pkgs) pixman;
-  };
+  xvfbLibxcvtArm64Build = pdArm64.libxcvt;
+  xvfbPixmanArm64Build = pdArm64.pixman;
   pdVirglShimArm64Build =
   (mkPureDarwinBuild {
       pname = "puredarwin-pd-virgl-shim-arm64";
@@ -1777,7 +1465,7 @@ let
     shared = true;
   } // args);
 
-  xvfbZlibArm64Build = mkArm64Build ./pkgs/x11/xvfb-zlib.nix { inherit (pkgs) zlib; };
+  xvfbZlibArm64Build = pdArm64.zlib;
   toyboxArm64Build = pdArm64.toybox;
   pdadbdArm64Build = mkArm64Build ./pkgs/apps/pdadbd.nix { };
   xzArm64Build = pdArm64.xz;
@@ -1796,72 +1484,13 @@ let
     '';
     configureFlags = [ "--disable-readline" "--disable-editline" ];
   };
-  libjpegArm64Build = mkArm64Build ./pkgs/base/libjpeg-turbo.nix {
-    inherit (pkgs) libjpeg_turbo cmake ninja;
-  };
-  libwebpArm64Build = mkArm64Build ./pkgs/base/libwebp.nix {
-    inherit (pkgs) libwebp cmake ninja;
-  };
-  libgpgErrorArm64Build = mkArm64Build ./pkgs/x11/xorg-cross-lib.nix {
-    pname = "puredarwin-libgpg-error";
-    inherit (pkgs.libgpg-error) version src;
-    # mkheader looks for syscfg/lock-obj-pub.<host_os>.h, i.e. darwin20.4, while
-    # the tree ships the generic x86_64-apple-darwin one. Same contents, and the
-    # lock object does not differ by CPU, so arm64 reuses it the same way.
-    postPatchExtra = ''
-      cp src/syscfg/lock-obj-pub.x86_64-apple-darwin.h \
-         src/syscfg/lock-obj-pub.darwin20.4.h
-    '';
-    # sysutils.c calls mkdir() without including <sys/stat.h>, which newer clang
-    # makes a hard error rather than an implicit decl.
-    preConfigureExtra = ''
-      export CFLAGS="$CFLAGS -include sys/stat.h"
-    '';
-    configureFlags = [
-      "--disable-nls"
-      "--disable-doc"
-      "--disable-tests"
-      "--disable-languages"
-    ];
-  };
-  libgcryptArm64Build = mkArm64Build ./pkgs/x11/xorg-cross-lib.nix {
-    pname = "puredarwin-libgcrypt";
-    inherit (pkgs.libgcrypt) version src;
-    deps = [ libgpgErrorArm64Build ];
-    configureFlags = [
-      "--disable-doc"
-      "--disable-tests"
-      "--disable-asm"
-      "--with-libgpg-error-prefix=${libgpgErrorArm64Build}"
-    ];
-  };
-  libtasn1Arm64Build = mkArm64Build ./pkgs/x11/xorg-cross-lib.nix {
-    pname = "puredarwin-libtasn1";
-    inherit (pkgs.libtasn1) version src;
-    configureFlags = [ "--disable-doc" "--disable-gtk-doc" ];
-  };
-  nghttp2Arm64Build = mkArm64Build ./pkgs/x11/xorg-cross-lib.nix {
-    pname = "puredarwin-nghttp2";
-    inherit (pkgs.nghttp2) version src;
-    # Only libnghttp2 is wanted, the apps are C++ and pull in
-    # libev/openssl/jansson that nothing here needs.
-    configureFlags = [ "--enable-lib-only" "--disable-python-bindings" ];
-  };
-  libpslArm64Build = mkArm64Build ./pkgs/x11/xorg-cross-lib.nix {
-    pname = "puredarwin-libpsl";
-    inherit (pkgs.libpsl) version;
-    # Upstream ships a .tar.lz, which the default unpacker cannot read.
-    src = pkgs.runCommand "libpsl-src-${pkgs.libpsl.version}" { nativeBuildInputs = [ pkgs.lzip ]; } ''
-      lzip -dc ${pkgs.libpsl.src} | tar -x
-      mkdir -p $out
-      cp -R libpsl-*/. $out/
-      chmod -R u+w $out
-    '';
-    # No libidn2/libunistring here, so IDNA is the builtin variant.
-    # python is a build-time tool: it generates the suffix tables.
-    nativeDeps = [ pkgs.python3 ];
-    configureFlags = [ "--disable-runtime" "--disable-builtin" "--disable-man" ];
-  };
+  libjpegArm64Build = pdArm64.libjpeg;
+  libwebpArm64Build = pdArm64.libwebp;
+  libgpgErrorArm64Build = pdArm64.libgpg-error;
+  libgcryptArm64Build = pdArm64.libgcrypt;
+  libtasn1Arm64Build = pdArm64.libtasn1;
+  nghttp2Arm64Build = pdArm64.nghttp2;
+  libpslArm64Build = pdArm64.libpsl;
   gettextArm64Build = mkSharedArm64XorgLib {
     pname = "puredarwin-gettext";
     inherit (pkgs.gettext) version src;
@@ -1892,33 +1521,7 @@ let
   xvfbLibXpresentArm64Build = pdArm64.xvfbLibXpresent;
   iceauthArm64Build = pdArm64.iceauth;
   xrandrArm64Build = pdArm64.xrandr;
-  xrdbArm64Build = mkArm64Build ./pkgs/x11/xorg-cross-lib.nix {
-    pname = "puredarwin-xrdb";
-    version = "1.2.3";
-    # release tarball: nixpkgs' src is a git checkout with no configure
-    src = pkgs.fetchurl {
-      url = "https://www.x.org/releases/individual/app/xrdb-1.2.3.tar.xz";
-      sha256 = "sha256-yI9WAkMnjIls5PySrlpForUFoxb/pCf+VbAuXVkUxOQ=";
-    };
-    deps = [
-      pkgs.xorgproto
-      xlibArm64Build
-      xvfbLibXmuArm64Build
-      xvfbLibXtArm64Build
-      xvfbLibXextArm64Build
-      xvfbLibSMArm64Build
-      xvfbLibICEArm64Build
-      xcbArm64Build
-      xvfbLibXauArm64Build
-      xvfbLibXdmcpArm64Build
-    ];
-    preConfigureExtra = ''
-      export LIBS="-lXmu -lXt -lXext -lX11 -lxcb -lXau -lXdmcp -lSM -lICE $LIBS"
-    '';
-    configureFlags = [
-      "--with-cpp=/usr/bin/cpp,/bin/cpp"
-    ];
-  };
+  xrdbArm64Build = pdArm64.xrdb;
   xinitArm64Build = pdArm64.xinit;
   # Wine links the X libraries dynamically, so it needs the shared, guest-prefixed
   # flavour rather than the static ones the rest of the tree uses.
@@ -2006,34 +1609,12 @@ let
   expatArm64Build = pdArm64.expat;
   pcre2Arm64Build = pdArm64.pcre2;
   libevArm64Build = pdArm64.libev;
-  libpngArm64Build = mkArm64Build ./pkgs/gtk/libpng.nix {
-    zlib = xvfbZlibArm64Build;
-    inherit (pkgs) libpng;
-  };
-  freetype2Arm64Build = mkArm64Build ./pkgs/x11/xvfb-freetype.nix {
-    nativeMesonTools = nativeMesonToolsDir;
-    inherit (pkgs) zlib freetype;
-  };
-  fontconfigArm64Build = mkArm64Build ./pkgs/x11/fontconfig.nix {
-    nativeMesonTools = nativeMesonToolsDir;
-    inherit (pkgs) fontconfig;
-    freetype = freetype2Arm64Build;
-    expat = expatArm64Build;
-  };
-  libxml2Arm64Build = mkArm64Build ./pkgs/base/libxml2.nix {
-    inherit (pkgs) libxml2 meson ninja python3 git;
-  };
-  yajlArm64Build = mkArm64Build ./pkgs/base/yajl.nix {
-    inherit (pkgs) yajl;
-  };
-  glibArm64Build = mkArm64Build ./pkgs/gtk/glib.nix {
-    nativeMesonTools = nativeMesonToolsDir;
-    inherit (pkgs) glib;
-    pcre2 = pcre2Arm64Build;
-    libffi = libffiArm64Build;
-    zlib = xvfbZlibArm64Build;
-    libiconv = libiconvArm64Build;
-  };
+  libpngArm64Build = pdArm64.libpng;
+  freetype2Arm64Build = pdArm64.freetype2;
+  fontconfigArm64Build = pdArm64.fontconfig;
+  libxml2Arm64Build = pdArm64.libxml2;
+  yajlArm64Build = pdArm64.yajl;
+  glibArm64Build = pdArm64.glib;
 
   # the arm64 PureDarwin package set, the same recipes as x86_64 (see nix/pd/scope.nix)
   pdArm64 = pdScope {
@@ -2042,77 +1623,79 @@ let
     inherit nativeLd;
     # the arm64 builds of the packages not yet in nix/pd/packages.nix, by their scope names
     bridge = {
-      cairo = cairoArm64Build;
       clang = clangCrossArm64Build;
       compilerRt = compilerRtArm64Build;
       darwinCrossToolchain = darwinCrossToolchain;
-      fontconfig = fontconfigArm64Build;
-      foundation = foundationArm64Build;
-      freetype2 = freetype2Arm64Build;
-      fribidi = fribidiArm64Build;
-      gdkPixbuf = gdkPixbufArm64Build;
-      glfw = throw "nix/pd: no arm64 build of glfw";
-      glib = glibArm64Build;
+      diskArbitration = diskArbitrationArm64Build;
       glu = throw "nix/pd: no arm64 build of glu";
-      gluBuild = gluArm64Build;
       gnutls = gnutlsSharedArm64Build;
-      harfbuzz = harfbuzzArm64Build;
       harfbuzzNoxBuild = throw "nix/pd: no arm64 build of harfbuzzNoxBuild";
+      hostOtool = hostOtoolArm64Build;
       iokitCFStatic = iokitCFStaticArm64Build;
-      jsonc = jsoncArm64Build;
       libSystem = libSystemArm64Build;
       libX11SharedBuild = libX11SharedArm64Build;
       libXauSharedBuild = libXauSharedArm64Build;
+      libXcursorSharedBuild = libXcursorSharedArm64Build;
       libXdmcpSharedBuild = libXdmcpSharedArm64Build;
       libXextSharedBuild = libXextSharedArm64Build;
-      libdrm = libdrmArm64Build;
-      libepoxy = libepoxyArm64Build;
-      libjpeg = libjpegArm64Build;
-      libpng = libpngArm64Build;
-      libutf8proc = libutf8procArm64Build;
+      libXfixesSharedBuild = libXfixesSharedArm64Build;
+      libXiSharedBuild = libXiSharedArm64Build;
+      libXrandrSharedBuild = libXrandrSharedArm64Build;
+      libXrenderSharedBuild = libXrenderSharedArm64Build;
+      libXxf86vm = throw "nix/pd: no arm64 build of libXxf86vm";
       libxcbSharedBuild = libxcbSharedArm64Build;
-      libxcvt = xvfbLibxcvtArm64Build;
-      libxml2 = libxml2Arm64Build;
       libxshmfence = libxshmfenceSharedArm64Build;
-      libz = libzDylibArm64Build;
+      linux614Src = throw "nix/pd: no arm64 build of linux614Src";
       llvm = llvmCrossArm64Build;
       mesa = throw "nix/pd: no arm64 build of mesa";
-      mesaBuild = mesaArm64Build;
       mesaDefaultBuild = throw "nix/pd: no arm64 build of mesaDefaultBuild";
+      metalObjcPdNoxBuild = throw "nix/pd: no arm64 build of metalObjcPdNoxBuild";
       metalPd = throw "nix/pd: no arm64 build of metalPd";
       nativeLd = nativeLd;
       openglFramework = throw "nix/pd: no arm64 build of openglFramework";
-      openglFrameworkBuild = openglFrameworkArm64Build;
       opensslThreadsBuild = opensslThreadsArm64Build;
-      pango = pangoArm64Build;
       pdVirglShim = pdVirglShimArm64Build;
-      pixman = xvfbPixmanArm64Build;
       securitySource = securitySource;
-      sqlite = sqliteArm64Build;
       systemConfiguration = systemConfigurationArm64Build;
-      vulkanLoader = vulkanLoaderArm64Build;
-      waylandScanner = waylandScannerBuild;
+      vteSrc = vteSrc;
       xkbcommonNoxBuild = throw "nix/pd: no arm64 build of xkbcommonNoxBuild";
-      xkbcomp = xkbcompArm64Build;
       xkeyboardConfig = xkeyboardConfigArm64Build;
-      zlib = xvfbZlibArm64Build;
     };
     # what arm64 builds differently from the shared definitions
     overrides = {
       asmjit-test = asmjitTestArm64Build;
+      atspi2Core = atspi2CoreArm64Build;
+      cmake = cmakeArm64Build;
       coretext = coretextArm64Build;
       curl = curlArm64Build;
+      dbus = dbusArm64Build;
       fastfetch = fastfetchArm64Build;
       fcft = fcftArm64Build;
       foot = footArm64Build;
       gettext = gettextArm64Build;
       git = gitArm64Build;
+      gtk3 = gtk3Arm64Build;
+      gtkLayerShell = gtkLayerShellArm64Build;
       i3statusShim = i3statusShimArm64Build;
       libXcursor = xvfbLibXcursorArm64Build;
       libXdmcp = xvfbLibXdmcpArm64Build;
       libcroco = libcrocoArm64Build;
+      libcurl = libcurlDylibArm64Build;
+      libepoxy = libepoxyArm64Build;
       librsvg = librsvgArm64Build;
+      libsoup = libsoupArm64Build;
+      libwnck = libwnckArm64Build;
+      mesaBuild = mesaArm64Build;
+      mesaDemos = mesaDemosArm64Build;
+      netsurf = netsurfArm64Build;
+      openglFrameworkBuild = openglFrameworkArm64Build;
       security = securityArm64Build;
+      sqlite = sqliteArm64Build;
+      vte = vteArm64Build;
+      vulkan-tools = vulkanToolsArm64Build;
+      vulkanLoader = vulkanLoaderArm64Build;
+      wine = wineArm64Build;
+      xorg = xorgArm64Build;
       xvfbFonts = xvfbFontsArm64Build;
     };
   };

@@ -137,6 +137,8 @@
     foundationSrc = "${self.foundationSource}/src/Frameworks/Foundation";
     appleSdk = pkgs.appleSdk;
     compilerRt = null;
+      cmake = pkgs.cmake;
+    ninja = pkgs.ninja;
   };
   coregraphics = callPackage ../pkgs/apple/coregraphics.nix {
     src = ../../src/Frameworks/CoreGraphics;
@@ -212,16 +214,22 @@
     libXdmcp = self.libXdmcpSharedBuild;
     mesa = self.mesaBuild;
     appleSdk = pkgs.appleSdk;
+      cmake = pkgs.cmake;
+    ninja = pkgs.ninja;
   };
   fcft = callPackage ../pkgs/wayland/fcft.nix {
     nativeMesonTools = self.nativeMesonToolsDir;
     freetype = self.freetype2;
     harfbuzz = self.harfbuzzNoxBuild;
     appleSdk = pkgs.appleSdk;
+      meson = pkgs.meson;
+    ninja = pkgs.ninja;
   };
   fex-wow64 = callPackage ../pkgs/apps/fex-wow64.nix {
     mingwAarch64Cc = self.mingwAarch64.cc;
     mingwAarch64Pthreads = self.mingwAarch64.pthreads;
+      cmake = pkgs.cmake;
+    ninja = pkgs.ninja;
   };
   file = callPackage ../pkgs/base/file.nix {
     file = pkgs.file;
@@ -245,6 +253,8 @@
     freetype = self.freetype2;
     harfbuzz = self.harfbuzzNoxBuild;
     appleSdk = pkgs.appleSdk;
+      meson = pkgs.meson;
+    ninja = pkgs.ninja;
   };
   framework-compat = callPackage ../pkgs/apple/framework-compat.nix { };
   frameworks-ff-tests = callPackage ../pkgs/apple/frameworks-ff-tests.nix {
@@ -283,6 +293,8 @@
     nativeMesonTools = self.nativeMesonToolsDir;
     glibNetworking = pkgs.glib-networking;
     appleSdk = pkgs.appleSdk;
+      meson = pkgs.meson;
+    ninja = pkgs.ninja;
   };
   gnum4 = callPackage ../pkgs/base/gnum4.nix {
     gnum4 = pkgs.gnum4;
@@ -614,7 +626,10 @@
     gnumake = pkgs.gnumake;
     perl = pkgs.perl;
   };
-  libapfsrw = callPackage ../pkgs/apple/libapfsrw.nix { };
+  libapfsrw = callPackage ../pkgs/apple/libapfsrw.nix {
+    cmake = pkgs.cmake;
+    ninja = pkgs.ninja;
+  };
   libcroco = callPackage ../pkgs/x11/xorg-cross-lib.nix {
     nativeMesonTools = self.nativeMesonToolsDir;
     guestPrefix = true;
@@ -866,10 +881,13 @@
     mesaNox = self.mesa;
     src = ../../src/ThirdParty/neuwld;
     appleSdk = pkgs.appleSdk;
+      meson = pkgs.meson;
+    ninja = pkgs.ninja;
   };
   nvidia580 = callPackage ../pkgs/gpu/nvidia-580.nix { };
   nvidiaLinuxRoot = callPackage ../pkgs/gpu/nvidia-linux-root.nix {
     libxcb = pkgs.libxcb;
+      vulkan-tools = pkgs.vulkan-tools;
   };
   objcTest = callPackage ../pkgs/apple/objc-test.nix {
     appleSdk = pkgs.appleSdk;
@@ -943,6 +961,7 @@
     appleSdk = pkgs.appleSdk;
     autoconf = pkgs.autoconf;
     gnumake = pkgs.gnumake;
+      automake = pkgs.automake;
   };
   protocolBuffer = callPackage ../pkgs/apple/protocolbuffer.nix {
     src = "${self.protocolBufferSource}/src/Libraries/ProtocolBuffer";
@@ -998,6 +1017,8 @@
     xcb = self.libxcb;
     src = ../../src/ThirdParty/sway;
     appleSdk = pkgs.appleSdk;
+      meson = pkgs.meson;
+    ninja = pkgs.ninja;
   };
   swiftRuntime = callPackage ../pkgs/apple/swift-runtime.nix {
     overlaySrc = ../../src/Libraries/SwiftOverlays;
@@ -1005,6 +1026,8 @@
     dispatchModulemap = ../../src/Libraries/libSystem/libdispatch/dispatch/darwin/module.modulemap;
     cfModulemap = ../../src/Frameworks/CoreFoundation/Base.subproj/module.modulemap;
     appleSdk = pkgs.appleSdk;
+      cmake = pkgs.cmake;
+    ninja = pkgs.ninja;
   };
   system-information = callPackage ../pkgs/apps/system-information.nix {
     src = ../../src/Userspace/SystemInformation;
@@ -1037,6 +1060,8 @@
   wayland = callPackage ../pkgs/wayland/wayland.nix {
     src = ../../src/ThirdParty/wayland;
     appleSdk = pkgs.appleSdk;
+      meson = pkgs.meson;
+    ninja = pkgs.ninja;
   };
   waylandProtocols = callPackage ../pkgs/wayland/wayland-protocols.nix {
     src = ../../src/ThirdParty/wayland-protocols;
@@ -1058,6 +1083,8 @@
     xcb = self.libxcb;
     src = ../../src/ThirdParty/wlroots;
     appleSdk = pkgs.appleSdk;
+      meson = pkgs.meson;
+    ninja = pkgs.ninja;
   };
   xcb-util-xrm = callPackage ../pkgs/x11/xorg-cross-lib.nix {
     pname = "puredarwin-xcb-util-xrm";
@@ -1117,6 +1144,8 @@
     xkeyboard-config = self.xkeyboardConfig;
     appleSdk = pkgs.appleSdk;
     bison = pkgs.bison;
+      meson = pkgs.meson;
+    ninja = pkgs.ninja;
   };
   xrandr = callPackage ../pkgs/x11/xorg-cross-lib.nix {
     pname = "puredarwin-xrandr";
@@ -1187,9 +1216,639 @@
     mesaGlHeaders = pkgs.mesa-gl-headers;
     mesa = self.mesaBuild;
     appleSdk = pkgs.appleSdk;
+      meson = pkgs.meson;
+    ninja = pkgs.ninja;
   };
   xz = callPackage ../pkgs/base/xz.nix {
     xz = pkgs.xz;
     appleSdk = pkgs.appleSdk;
+  };
+  atspi2Core = callPackage ../pkgs/gtk/at-spi2-core.nix {
+    nativeMesonTools = self.nativeMesonToolsDir;
+    inherit (pkgs) at-spi2-core meson ninja python3;
+    appleSdk = pkgs.appleSdk;
+  };
+  automake = callPackage ../pkgs/base/automake.nix {
+    automake = pkgs.automake;
+    autoconf = pkgs.autoconf;
+    perl = pkgs.perl;
+  };
+  cairo = callPackage ../pkgs/gtk/cairo.nix {
+    nativeMesonTools = self.nativeMesonToolsDir;
+    inherit (pkgs) cairo xorgproto;
+    freetype = self.freetype2;
+    appleSdk = pkgs.appleSdk;
+    meson = pkgs.meson;
+    ninja = pkgs.ninja;
+  };
+  cmake = callPackage ../pkgs/base/cmake.nix {
+    libcurlDylib = self.libcurl;
+    inherit (pkgs) cmake ninja;
+    appleSdk = pkgs.appleSdk;
+  };
+  cursorTheme = callPackage ../pkgs/x11/cursor-theme.nix {
+    inherit (pkgs) vanilla-dmz;
+  };
+  dbus = callPackage ../pkgs/gtk/dbus.nix {
+    inherit (pkgs) dbus meson ninja python3 xorgproto;
+    appleSdk = pkgs.appleSdk;
+  };
+  dillo = callPackage ../pkgs/apps/dillo.nix {
+    inherit (pkgs) dillo util-macros;
+    inherit (pkgs) xorgproto;
+    appleSdk = pkgs.appleSdk;
+    autoconf = pkgs.autoconf;
+    automake = pkgs.automake;
+    gettext = pkgs.gettext;
+    gnumake = pkgs.gnumake;
+  };
+  dmenu = callPackage ../pkgs/x11/dmenu.nix {
+    inherit (pkgs) dmenu;
+    inherit (pkgs) xorgproto;
+    appleSdk = pkgs.appleSdk;
+    gnumake = pkgs.gnumake;
+  };
+  dtbTegra210P2371_2180 = callPackage ../pkgs/boot/linux-dtb.nix {
+    linuxSrc = self.linux614Src;
+    dts = "nvidia/tegra210-p2371-2180.dts";
+    fixups = [ { node = "/gpu@57000000"; prop = "status"; value = "okay"; } ];
+    xz = pkgs.xz;
+  };
+  fltk = callPackage ../pkgs/apps/fltk.nix {
+    inherit (pkgs) fltk_1_3 util-macros;
+    inherit (pkgs) xorgproto;
+    appleSdk = pkgs.appleSdk;
+    autoconf = pkgs.autoconf;
+    automake = pkgs.automake;
+    gettext = pkgs.gettext;
+    gnumake = pkgs.gnumake;
+  };
+  fontconfig = callPackage ../pkgs/x11/fontconfig.nix {
+    inherit (pkgs) fontconfig;
+    nativeMesonTools = self.nativeMesonToolsDir;
+    freetype = self.freetype2;
+    appleSdk = pkgs.appleSdk;
+    meson = pkgs.meson;
+    ninja = pkgs.ninja;
+    perl = pkgs.perl;
+  };
+  foundation = callPackage ../pkgs/apple/foundation.nix {
+    dnssdInclude = ../../src/Libraries/mDNSResponder/mDNSShared;
+    notifyInclude = ../../src/Libraries/XPC/notify;
+    src = "${self.foundationSource}/src/Frameworks/Foundation";
+    appleSdk = pkgs.appleSdk;
+  };
+  freetype2 = callPackage ../pkgs/x11/xvfb-freetype.nix {
+    nativeMesonTools = self.nativeMesonToolsDir;
+    inherit (pkgs) zlib freetype;
+    appleSdk = pkgs.appleSdk;
+    cmake = pkgs.cmake;
+    ninja = pkgs.ninja;
+  };
+  fribidi = callPackage ../pkgs/gtk/fribidi.nix {
+    inherit (pkgs) fribidi;
+    appleSdk = pkgs.appleSdk;
+    meson = pkgs.meson;
+    ninja = pkgs.ninja;
+  };
+  gdkPixbuf = callPackage ../pkgs/gtk/gdk-pixbuf.nix {
+    nativeMesonTools = self.nativeMesonToolsDir;
+    inherit (pkgs) gdk-pixbuf meson ninja python3;
+    appleSdk = pkgs.appleSdk;
+  };
+  glfw = callPackage ../pkgs/gpu/glfw-pd.nix {
+    inherit (pkgs.glfw) src version;
+    xHeaders = [ self.libX11SharedBuild self.libXextSharedBuild self.libXrenderSharedBuild self.libXrandrSharedBuild
+                    self.libXfixesSharedBuild self.libXiSharedBuild self.libXcursorSharedBuild pkgs.libXinerama ];
+    compatInclude = ../../nix/pkgs/wayland/pd-compat-include;
+    inherit (pkgs) xorgproto;
+  };
+  glib = callPackage ../pkgs/gtk/glib.nix {
+    nativeMesonTools = self.nativeMesonToolsDir;
+    inherit (pkgs) glib;
+    appleSdk = pkgs.appleSdk;
+    meson = pkgs.meson;
+    ninja = pkgs.ninja;
+    perl = pkgs.perl;
+  };
+  gluBuild = callPackage ../pkgs/mesa/glu.nix {
+    nativeMesonTools = self.nativeMesonToolsDir;
+    mesa = self.mesaBuild;
+    inherit (pkgs) meson ninja pkg-config;
+    appleSdk = pkgs.appleSdk;
+  };
+  gtk3 = callPackage ../pkgs/gtk/gtk3.nix {
+    nativeMesonTools = self.nativeMesonToolsDir;
+    glibNative = pkgs.glib.dev;
+    mesa = self.mesaBuild;
+    inherit (pkgs) gtk3 xorgproto;
+    appleSdk = pkgs.appleSdk;
+    meson = pkgs.meson;
+    ninja = pkgs.ninja;
+  };
+  gtkLayerShell = callPackage ../pkgs/wayland/gtk-layer-shell.nix {
+    nativeMesonTools = self.nativeMesonToolsDir;
+    glibNative = pkgs.glib.dev;
+    mesa = self.mesaBuild;
+    inherit (pkgs) gtk-layer-shell xorgproto;
+    appleSdk = pkgs.appleSdk;
+    meson = pkgs.meson;
+    ninja = pkgs.ninja;
+  };
+  harfbuzz = callPackage ../pkgs/gtk/harfbuzz.nix {
+    inherit (pkgs) harfbuzz;
+    freetype = self.freetype2;
+    appleSdk = pkgs.appleSdk;
+    meson = pkgs.meson;
+    ninja = pkgs.ninja;
+  };
+  i3 = callPackage ../pkgs/x11/i3.nix {
+    inherit (pkgs) i3;
+    inherit (pkgs) xorgproto;
+    libxcb-wm = self.xcbWm;
+    libxcb-cursor = self.libxcbcursor;
+    freetype = self.freetype2;
+    appleSdk = pkgs.appleSdk;
+    bash = pkgs.bash;
+    meson = pkgs.meson;
+    ninja = pkgs.ninja;
+    perl = pkgs.perl;
+  };
+  jsonc = callPackage ../pkgs/apps/json-c.nix {
+    src = pkgs.json_c.src;
+    inherit (pkgs) cmake ninja pkg-config;
+    appleSdk = pkgs.appleSdk;
+  };
+  libcss = callPackage ../pkgs/apps/libcss.nix {
+    inherit (pkgs) libcss perl python3;
+    appleSdk = pkgs.appleSdk;
+  };
+  libcurl = callPackage ../pkgs/base/libcurl-dylib.nix {
+    inherit (pkgs) curl;
+    appleSdk = pkgs.appleSdk;
+    autoconf = pkgs.autoconf;
+    automake = pkgs.automake;
+    gnum4 = pkgs.gnum4;
+    gnumake = pkgs.gnumake;
+  };
+  libdisplayInfo = callPackage ../pkgs/mesa/libdisplay-info.nix {
+    nativeMesonTools = self.nativeMesonToolsDir;
+    inherit (pkgs) libdisplay-info hwdata;
+    appleSdk = pkgs.appleSdk;
+    meson = pkgs.meson;
+    ninja = pkgs.ninja;
+  };
+  libdom = callPackage ../pkgs/apps/libdom.nix {
+    inherit (pkgs) libdom;
+    appleSdk = pkgs.appleSdk;
+  };
+  libdrm = callPackage ../pkgs/x11/libdrm.nix {
+    puredarwinSource = ../../src/Libraries/libdrm;
+    src = pkgs.libdrm.src;
+    inherit (pkgs) meson ninja pkg-config python3;
+    appleSdk = pkgs.appleSdk;
+  };
+  libepoxy = callPackage ../pkgs/gtk/libepoxy.nix {
+    nativeMesonTools = self.nativeMesonToolsDir;
+    mesa = self.mesaBuild;
+    inherit (pkgs) libepoxy xorgproto meson ninja python3;
+    appleSdk = pkgs.appleSdk;
+  };
+  libgcrypt = callPackage ../pkgs/x11/xorg-cross-lib.nix {
+    pname = "puredarwin-libgcrypt";
+    inherit (pkgs.libgcrypt) version src;
+    deps = [ self.libgpg-error ];
+    configureFlags = [
+                    "--disable-doc"
+                    "--disable-tests"
+                    "--disable-asm"
+                    "--with-libgpg-error-prefix=${self.libgpg-error}"
+                  ];
+    appleSdk = pkgs.appleSdk;
+    gnumake = pkgs.gnumake;
+    perl = pkgs.perl;
+  };
+  libgpg-error = callPackage ../pkgs/x11/xorg-cross-lib.nix {
+    pname = "puredarwin-libgpg-error";
+    inherit (pkgs.libgpg-error) version src;
+    postPatchExtra = ''
+                    cp src/syscfg/lock-obj-pub.x86_64-apple-darwin.h \
+                       src/syscfg/lock-obj-pub.darwin20.4.h
+                  '';
+    preConfigureExtra = ''
+                    export CFLAGS="$CFLAGS -include sys/stat.h"
+                  '';
+    configureFlags = [
+                    "--disable-nls"
+                    "--disable-doc"
+                    "--disable-tests"
+                    "--disable-languages"
+                  ];
+    appleSdk = pkgs.appleSdk;
+    gnumake = pkgs.gnumake;
+    perl = pkgs.perl;
+  };
+  libhubbub = callPackage ../pkgs/apps/libhubbub.nix {
+    inherit (pkgs) libhubbub perl gperf gnused;
+    appleSdk = pkgs.appleSdk;
+  };
+  libjpeg = callPackage ../pkgs/base/libjpeg-turbo.nix {
+    inherit (pkgs) libjpeg_turbo cmake ninja;
+    appleSdk = pkgs.appleSdk;
+  };
+  libnsbmp = callPackage ../pkgs/apps/libnsbmp.nix {
+    inherit (pkgs) libnsbmp;
+    appleSdk = pkgs.appleSdk;
+  };
+  libnsgif = callPackage ../pkgs/apps/libnsgif.nix {
+    inherit (pkgs) libnsgif;
+    appleSdk = pkgs.appleSdk;
+  };
+  libnsutils = callPackage ../pkgs/apps/libnsutils.nix {
+    inherit (pkgs) libnsutils;
+    appleSdk = pkgs.appleSdk;
+  };
+  libparserutils = callPackage ../pkgs/apps/libparserutils.nix {
+    inherit (pkgs) libparserutils perl;
+    appleSdk = pkgs.appleSdk;
+  };
+  libpng = callPackage ../pkgs/gtk/libpng.nix {
+    inherit (pkgs) libpng;
+    appleSdk = pkgs.appleSdk;
+  };
+  libpsl = callPackage ../pkgs/x11/xorg-cross-lib.nix {
+    pname = "puredarwin-libpsl";
+    inherit (pkgs.libpsl) version;
+    src = pkgs.runCommand "libpsl-src-${pkgs.libpsl.version}" { nativeBuildInputs = [ pkgs.lzip ]; } ''
+                    lzip -dc ${pkgs.libpsl.src} | tar -x
+                    mkdir -p $out
+                    cp -R libpsl-*/. $out/
+                    chmod -R u+w $out
+                  '';
+    nativeDeps = [ pkgs.python3 ];
+    configureFlags = [ "--disable-runtime" "--disable-builtin" "--disable-man" ];
+    appleSdk = pkgs.appleSdk;
+    gnumake = pkgs.gnumake;
+    perl = pkgs.perl;
+  };
+  libsoup = callPackage ../pkgs/base/libsoup.nix {
+    nativeMesonTools = self.nativeMesonToolsDir;
+    glibNative = pkgs.glib.dev;
+    inherit (pkgs) meson ninja pkg-config python3;
+    libsoup = pkgs.libsoup_3;
+    appleSdk = pkgs.appleSdk;
+  };
+  libtasn1 = callPackage ../pkgs/x11/xorg-cross-lib.nix {
+    pname = "puredarwin-libtasn1";
+    inherit (pkgs.libtasn1) version src;
+    configureFlags = [ "--disable-doc" "--disable-gtk-doc" ];
+    appleSdk = pkgs.appleSdk;
+    gnumake = pkgs.gnumake;
+    perl = pkgs.perl;
+  };
+  libutf8proc = callPackage ../pkgs/base/libutf8proc.nix {
+    inherit (pkgs) libutf8proc;
+    appleSdk = pkgs.appleSdk;
+  };
+  libwapcaplet = callPackage ../pkgs/apps/libwapcaplet.nix {
+    inherit (pkgs) libwapcaplet;
+    appleSdk = pkgs.appleSdk;
+  };
+  libwebp = callPackage ../pkgs/base/libwebp.nix {
+    inherit (pkgs) libwebp cmake ninja;
+    appleSdk = pkgs.appleSdk;
+  };
+  libwnck = callPackage ../pkgs/xfce/libwnck.nix {
+    nativeMesonTools = self.nativeMesonToolsDir;
+    glibNative = pkgs.glib.dev;
+    startupNotification = self.startup-notification;
+    inherit (pkgs) libwnck xorgproto;
+    appleSdk = pkgs.appleSdk;
+    meson = pkgs.meson;
+    ninja = pkgs.ninja;
+  };
+  libxcvt = callPackage ../pkgs/x11/xvfb-libxcvt.nix {
+    inherit (pkgs) libxcvt;
+    appleSdk = pkgs.appleSdk;
+    meson = pkgs.meson;
+    ninja = pkgs.ninja;
+  };
+  libxml2 = callPackage ../pkgs/base/libxml2.nix {
+    inherit (pkgs) libxml2 meson ninja python3 git;
+    appleSdk = pkgs.appleSdk;
+  };
+  libzDylib = callPackage ../pkgs/base/libz-dylib.nix {
+    inherit (pkgs) zlib;
+    appleSdk = pkgs.appleSdk;
+  };
+  mesaBuild = callPackage ../pkgs/mesa/mesa.nix {
+    nativeMesonTools = self.nativeMesonToolsDir;
+    libX11 = self.libX11SharedBuild;
+    libXext = self.libXextSharedBuild;
+    libxcb = self.libxcbSharedBuild;
+    libXau = self.libXauSharedBuild;
+    libXdmcp = self.libXdmcpSharedBuild;
+    virglWinsysSrc = ../../nix/pkgs/mesa/virgl-puredarwin;
+    virglAbiHeader = ../../src/Kernel/Extensions/IOVirtIOGPU/IOVirtIOGPU3DShared.h;
+    inherit (pkgs) meson ninja pkg-config python3 bison flex xorgproto xtrans;
+    appleSdk = pkgs.appleSdk;
+    libelf = pkgs.libelf;
+  };
+  mesaDemos = callPackage ../pkgs/mesa/mesa-demos.nix {
+    nativeMesonTools = self.nativeMesonToolsDir;
+    mesa = self.mesaBuild;
+    openglFramework = self.openglFrameworkBuild;
+    inherit (pkgs) meson ninja pkg-config xorgproto xtrans;
+    appleSdk = pkgs.appleSdk;
+    wayland = pkgs.wayland;
+    waylandProtocols = null;
+    waylandScanner = null;
+    xkbcommon = null;
+  };
+  meson = callPackage ../pkgs/base/meson.nix {
+    inherit (pkgs) meson;
+  };
+  metal-pd = callPackage ../pkgs/gpu/metal-pd.nix {
+    vulkanHeaders = pkgs.vulkan-headers;
+    inherit (pkgs) spirv-headers glm stb xxd;
+  };
+  netsurf = callPackage ../pkgs/apps/netsurf.nix {
+    glibNative = pkgs.glib.dev;
+    gdkPixbufNative = pkgs.gdk-pixbuf.dev;
+    inherit (pkgs) inetutils;
+    xorgproto = pkgs.xorgproto;
+    inherit (pkgs) perl pkg-config nsgenbind;
+    appleSdk = pkgs.appleSdk;
+  };
+  neuswc = callPackage ../pkgs/wayland/neuswc.nix {
+    pdwmSource = ../../src/Userspace/pdwm/pdwm.c;
+    freetype = self.freetype2;
+    mesaNox = self.mesa;
+    xkbcommon = self.xkbcommonNoxBuild;
+    src = ../../src/ThirdParty/neuswc;
+    appleSdk = pkgs.appleSdk;
+    meson = pkgs.meson;
+    ninja = pkgs.ninja;
+  };
+  nghttp2 = callPackage ../pkgs/x11/xorg-cross-lib.nix {
+    pname = "puredarwin-nghttp2";
+    inherit (pkgs.nghttp2) version src;
+    configureFlags = [ "--enable-lib-only" "--disable-python-bindings" ];
+    appleSdk = pkgs.appleSdk;
+    gnumake = pkgs.gnumake;
+    perl = pkgs.perl;
+  };
+  ninja = callPackage ../pkgs/base/ninja.nix {
+    inherit (pkgs) ninja;
+    appleSdk = pkgs.appleSdk;
+  };
+  openglFrameworkBuild = callPackage ../pkgs/apple/opengl-framework.nix {
+    mesa = self.mesaBuild;
+    glu = self.gluBuild;
+    libX11 = self.libX11SharedBuild;
+    inherit (pkgs) xorgproto;
+    libXext = self.libXextSharedBuild;
+    libxcb = self.libxcbSharedBuild;
+    libXau = self.libXauSharedBuild;
+    libXdmcp = self.libXdmcpSharedBuild;
+    src = ../../src/Frameworks/OpenGL;
+    appleSdk = pkgs.appleSdk;
+  };
+  pango = callPackage ../pkgs/gtk/pango.nix {
+    nativeMesonTools = self.nativeMesonToolsDir;
+    inherit (pkgs) pango;
+    freetype = self.freetype2;
+    inherit (pkgs) xorgproto;
+    appleSdk = pkgs.appleSdk;
+    meson = pkgs.meson;
+    ninja = pkgs.ninja;
+    perl = pkgs.perl;
+  };
+  pixman = callPackage ../pkgs/x11/xvfb-pixman.nix {
+    inherit (pkgs) pixman;
+    appleSdk = pkgs.appleSdk;
+    meson = pkgs.meson;
+    ninja = pkgs.ninja;
+  };
+  sqlite = callPackage ../pkgs/x11/xorg-cross-lib.nix {
+    pname = "puredarwin-sqlite";
+    inherit (pkgs.sqlite) version;
+    src = pkgs.runCommand "sqlite-src-${pkgs.sqlite.version}" { nativeBuildInputs = [ pkgs.unzip ]; } ''
+                    unzip -q ${pkgs.sqlite.src}
+                    mkdir -p $out
+                    cp -R sqlite-src-*/. $out/
+                    chmod -R u+w $out
+                  '';
+    configureFlags = [ "--disable-readline" "--disable-editline" ];
+    deps = [ self.zlib ];
+    appleSdk = pkgs.appleSdk;
+    gnumake = pkgs.gnumake;
+    perl = pkgs.perl;
+  };
+  venus-tests = callPackage ../pkgs/gpu/venus-tests.nix {
+    vulkanHeaders = pkgs.vulkan-headers;
+    inherit (pkgs) glslang;
+  };
+  vte = callPackage ../pkgs/gtk/vte.nix {
+    nativeMesonTools = self.nativeMesonToolsDir;
+    version = "0.70.6";
+    src = self.vteSrc;
+    glibNative = pkgs.glib.dev;
+    inherit (pkgs) xorgproto;
+    appleSdk = pkgs.appleSdk;
+    meson = pkgs.meson;
+    ninja = pkgs.ninja;
+  };
+  vulkan-tools = callPackage ../pkgs/mesa/vulkan-tools.nix {
+    nativeMesonTools = self.nativeMesonToolsDir;
+    vulkanTools = pkgs.vulkan-tools;
+    vulkanHeaders = pkgs.vulkan-headers;
+    libX11 = self.libX11SharedBuild;
+    libXext = self.libXextSharedBuild;
+    libxcb = self.libxcbSharedBuild;
+    libXau = self.libXauSharedBuild;
+    libXdmcp = self.libXdmcpSharedBuild;
+    libXrandr = self.libXrandrSharedBuild;
+    inherit (pkgs) xorgproto;
+    appleSdk = pkgs.appleSdk;
+    cmake = pkgs.cmake;
+    ninja = pkgs.ninja;
+  };
+  vulkanLoader = callPackage ../pkgs/mesa/vulkan-loader.nix {
+    nativeMesonTools = self.nativeMesonToolsDir;
+    vulkanLoader = pkgs.vulkan-loader;
+    vulkanHeaders = pkgs.vulkan-headers;
+    libX11 = self.libX11SharedBuild;
+    libxcb = self.libxcbSharedBuild;
+    libXau = self.libXauSharedBuild;
+    libXdmcp = self.libXdmcpSharedBuild;
+    libXrandr = self.libXrandrSharedBuild;
+    libXrender = self.libXrenderSharedBuild;
+    inherit (pkgs) xorgproto;
+    appleSdk = pkgs.appleSdk;
+    cmake = pkgs.cmake;
+    ninja = pkgs.ninja;
+  };
+  waylandScanner = callPackage ../pkgs/wayland/wayland-scanner.nix {
+    src = ../../src/ThirdParty/wayland;
+    inherit (pkgs) expat libxml2;
+    meson = pkgs.meson;
+    ninja = pkgs.ninja;
+  };
+  webkitgtk = callPackage ../pkgs/apps/webkitgtk.nix {
+    nativeMesonTools = self.nativeMesonToolsDir;
+    glibNative = pkgs.glib.dev;
+    libxml2Native = pkgs.libxml2;
+    inherit (pkgs) cmake ninja pkg-config python3 perl ruby gperf unifdef;
+    webkitgtk = pkgs.webkitgtk_6_0;
+    mesa = self.mesaBuild;
+    deps = [
+                    self.glib self.pcre2 self.libffi self.zlib self.libiconv
+                    self.cairo self.cairoGobject self.pixman
+                    self.pango self.fribidi self.harfbuzz self.freetype2
+                    self.fontconfig self.expat
+                    self.gdkPixbuf self.libepoxy self.atspi2Core self.dbus self.libpng
+                    self.gtk3 self.icu self.libxml2
+                    self.libsoup self.sqlite self.libpsl self.nghttp2
+                    self.libgcrypt self.libgpg-error self.libtasn1 self.libjpeg self.libwebp
+                    self.wayland self.waylandProtocols self.xkbcommon self.mesaBuild
+                    self.libX11 self.libxcb self.libXau self.libXdmcp
+                    self.libXext self.libXrender self.libXfixes
+                    self.libXcomposite self.libXdamage
+                    pkgs.xorgproto
+                  ];
+    appleSdk = pkgs.appleSdk;
+  };
+  wine = callPackage ../pkgs/apps/wine.nix {
+    metalObjc = self.metalObjcPdNoxBuild;
+    inherit (pkgs) perl;
+    mingwGcc = pkgs.pkgsCross.mingwW64.buildPackages.gcc;
+    mingwBintools = pkgs.pkgsCross.mingwW64.buildPackages.bintools;
+    mingwGcc32 = pkgs.pkgsCross.mingw32.buildPackages.gcc;
+    mingwBintools32 = pkgs.pkgsCross.mingw32.buildPackages.bintools;
+    inherit (pkgs) python3;
+    wine = pkgs.wine64;
+    inherit (pkgs) xorgproto flex bison;
+    libX11 = self.libX11SharedBuild;
+    libxcb = self.libxcbSharedBuild;
+    libXau = self.libXauSharedBuild;
+    libXdmcp = self.libXdmcpSharedBuild;
+    libXext = self.libXextSharedBuild;
+    libXrender = self.libXrenderSharedBuild;
+    libXfixes = self.libXfixesSharedBuild;
+    libXi = self.libXiSharedBuild;
+    libXcursor = self.libXcursorSharedBuild;
+    libXrandr = self.libXrandrSharedBuild;
+    freetype = self.freetype2;
+    mesa = self.mesaBuild;
+    appleSdk = pkgs.appleSdk;
+    gnumake = pkgs.gnumake;
+  };
+  wineTools = callPackage ../pkgs/apps/wine-tools.nix {
+    wine = pkgs.wine64;
+    inherit (pkgs) flex bison freetype;
+    peCc = if pkgs.stdenv.buildPlatform.isAarch then self.mingwAarch64.cc else null;
+    gnumake = pkgs.gnumake;
+  };
+  xcalc = callPackage ../pkgs/x11/xcalc.nix {
+    xcalc = pkgs.xcalc;
+    inherit (pkgs) xorgproto;
+    appleSdk = pkgs.appleSdk;
+    gnumake = pkgs.gnumake;
+  };
+  xclock = callPackage ../pkgs/x11/xclock.nix {
+    xclock = pkgs.xclock;
+    inherit (pkgs) xorgproto;
+    appleSdk = pkgs.appleSdk;
+    autoconf = pkgs.autoconf;
+    automake = pkgs.automake;
+    gettext = pkgs.gettext;
+    gnumake = pkgs.gnumake;
+  };
+  xeyes = callPackage ../pkgs/x11/xeyes.nix {
+    xeyes = pkgs.xeyes;
+    inherit (pkgs) xorgproto;
+    appleSdk = pkgs.appleSdk;
+    gnumake = pkgs.gnumake;
+  };
+  xkbcomp = callPackage ../pkgs/x11/xvfb-xkbcomp.nix {
+    inherit (pkgs) xkbcomp xorgproto;
+    appleSdk = pkgs.appleSdk;
+    bison = pkgs.bison;
+    meson = pkgs.meson;
+    ninja = pkgs.ninja;
+  };
+  xmessage = callPackage ../pkgs/x11/xmessage.nix {
+    xmessage = pkgs.xmessage;
+    inherit (pkgs) xorgproto;
+    appleSdk = pkgs.appleSdk;
+    gnumake = pkgs.gnumake;
+  };
+  xorg = callPackage ../pkgs/x11/xorg.nix {
+    xorg-server = pkgs.xorg-server;
+    xvfbZlib = self.zlib;
+    inherit (pkgs) xorgproto xtrans;
+    libXdmcp = pkgs.libxdmcp;
+    mesa = self.mesaBuild;
+    mesaGlHeaders = pkgs.mesa-gl-headers;
+    glHeaders = pkgs.libglvnd.dev;
+    appleSdk = pkgs.appleSdk;
+    meson = pkgs.meson;
+    ninja = pkgs.ninja;
+  };
+  xrdb = callPackage ../pkgs/x11/xorg-cross-lib.nix {
+    pname = "puredarwin-xrdb";
+    version = "1.2.3";
+    src = pkgs.fetchurl {
+                    url = "https://www.x.org/releases/individual/app/xrdb-1.2.3.tar.xz";
+                    sha256 = "sha256-yI9WAkMnjIls5PySrlpForUFoxb/pCf+VbAuXVkUxOQ=";
+                  };
+    deps = [
+                    pkgs.xorgproto
+                    self.libX11
+                    self.libXmu
+                    self.libXt
+                    self.libXext
+                    self.libSM
+                    self.libICE
+                    self.libxcb
+                    self.libXau
+                    self.libXdmcp
+                  ];
+    preConfigureExtra = ''
+                    export LIBS="-lXmu -lXt -lXext -lX11 -lxcb -lXau -lXdmcp -lSM -lICE $LIBS"
+                  '';
+    configureFlags = [
+                    "--with-cpp=/usr/bin/cpp,/bin/cpp"
+                  ];
+    appleSdk = pkgs.appleSdk;
+    gnumake = pkgs.gnumake;
+    perl = pkgs.perl;
+  };
+  xterm = callPackage ../pkgs/x11/xterm.nix {
+    xterm = pkgs.xterm;
+    inherit (pkgs) xorgproto;
+    appleSdk = pkgs.appleSdk;
+    gnumake = pkgs.gnumake;
+  };
+  xvfb = callPackage ../pkgs/x11/xvfb.nix {
+    xorg-server = pkgs.xorg-server;
+    xvfbZlib = self.zlib;
+    inherit (pkgs) xorgproto xtrans;
+    libXdmcp = pkgs.libxdmcp;
+    appleSdk = pkgs.appleSdk;
+    meson = pkgs.meson;
+    ninja = pkgs.ninja;
+  };
+  yajl = callPackage ../pkgs/base/yajl.nix {
+    inherit (pkgs) yajl;
+    appleSdk = pkgs.appleSdk;
+    cmake = pkgs.cmake;
+  };
+  zlib = callPackage ../pkgs/x11/xvfb-zlib.nix {
+    inherit (pkgs) zlib;
+    appleSdk = pkgs.appleSdk;
+    cmake = pkgs.cmake;
+    ninja = pkgs.ninja;
   };
 }
