@@ -6,6 +6,8 @@
 # toolchain use .override on the x86 build rather than a second call.
 { lib
 , pkgs
+# the PureDarwin package set builder (nix/pd/scope.nix)
+, pdScope
 , isDarwin
 , arm64CrossToolchain
 , armv6CrossToolchain
@@ -2626,26 +2628,16 @@ let
     libiconv = libiconvArm64Build;
   };
 
-  libiconvArm64Build = libiconvBuild.override {
+  # the arm64 PureDarwin package set, the same recipes as x86_64 (see nix/pd/scope.nix)
+  pdArm64 = pdScope {
     darwinCrossToolchain = arm64CrossToolchain;
     targetTriple = "arm64-apple-darwin20.4";
-    libSystem = libSystemArm64Build;
+    inherit nativeLd;
+    bridge = { libSystem = libSystemArm64Build; };
   };
-  ncursesArm64Build = ncursesBuild.override {
-    darwinCrossToolchain = arm64CrossToolchain;
-    targetTriple = "arm64-apple-darwin20.4";
-    libSystem = libSystemArm64Build;
-  };
-  zshArm64Build = zshBuild.override {
-    darwinCrossToolchain = arm64CrossToolchain;
-    targetTriple = "arm64-apple-darwin20.4";
-    libSystem = libSystemArm64Build;
-    ncurses = ncursesArm64Build;
-    # Left at the default this is the x86_64 build, and -undefined
-    # dynamic_lookup lets the link succeed anyway - the miss only shows up as
-    # "Symbol not found: _libiconv_open" when zsh launches.
-    libiconv = libiconvArm64Build;
-  };
+  libiconvArm64Build = pdArm64.libiconv;
+  ncursesArm64Build = pdArm64.ncurses;
+  zshArm64Build = pdArm64.zsh;
   userlandArm64Sg2002Build = userlandBuild.override {
     pname = "puredarwin-userland-arm64-sg2002";
     puredarwinArch = "arm64";
