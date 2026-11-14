@@ -8,10 +8,12 @@
 , auxKexts ? [ ]
 # boot KC kexts left out, for images where an aux kext drives the same device
 , excludeKexts ? [ ]
+# boot KC kexts added after the shared list, for images that carry a driver the others do not
+, extraKexts ? [ ]
 }:
 
 let
-  kextList = lib.subtractLists excludeKexts (import ../../lib/kc-kexts.nix);
+  kextList = lib.subtractLists excludeKexts (import ../../lib/kc-kexts.nix) ++ extraKexts;
   darwinKernelVersion = "25.5.0";
   darwinKernelVersionShort = "25.5";
   # only the codeless System.kext plists, so kernel source edits leave this input alone
