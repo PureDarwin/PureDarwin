@@ -16,6 +16,7 @@
 , nativeLd
 , foundationSource
 , coreFoundationBuild
+, iokitCFStaticBuild
 , iokitBuild
 , launchdBuild
 , launchctlBuild
@@ -145,16 +146,17 @@ let
     notifyInclude = ../src/Libraries/XPC/notify;
     src = "${foundationSource}/src/Frameworks/Foundation";
   };
-  iokitRiscv64Build = iokitBuild.override {
+  # IOKit links IOKitCF statically, so it needs one built for riscv64 too
+  iokitCFStaticRiscv64Build = iokitCFStaticBuild.override {
     puredarwinArch = "riscv64";
     inherit riscv64CrossToolchain;
-    extraCmakeFlags = [
-      "-DPUREDARWIN_ENABLE_IOKIT=ON"
-      "-DPUREDARWIN_COREFOUNDATION_PREFIX=${coreFoundationRiscv64Build}"
-      "-DPUREDARWIN_LIBOBJC_PREFIX=${libobjcRiscv64Build}"
-      "-DPUREDARWIN_FOUNDATION_PREFIX=${foundationRiscv64Build}"
-    ];
   };
+  iokitRiscv64Build = iokitBuild.override (riscv64Userland // {
+    corefoundation = coreFoundationRiscv64Build;
+    iokitCFStatic = iokitCFStaticRiscv64Build;
+    libobjc = libobjcRiscv64Build;
+    foundation = foundationRiscv64Build;
+  });
   launchdRiscv64Build = launchdBuild.override (riscv64Userland // {
     corefoundation = coreFoundationRiscv64Build;
     iokit = iokitRiscv64Build;
