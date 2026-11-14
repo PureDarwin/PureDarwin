@@ -1,140 +1,25 @@
 # What actually goes into an image: the base system splits, the extra guest
 # package set layered on top, and the host-side (Linux) tooling used to build
 # and run them.
-{ atspi2CoreBuild
-, autoconfBuild
-, automakeBuild
-, bisonBuild
-, bmakeBuild
-, cairoBuild
-, cairoGobjectBuild
-, cctoolsBuild
-, coreFoundationBuild
-, curlBuild
+{
+# the x86_64 PureDarwin package set (nix/pd/scope.nix)
+  pd
 , darwinCrossToolchain
-, dbusBuild
-, dilloBuild
-, diskArbitrationBuild
-, dmenuBuild
 , exoBuild
-, expatBuild
-, fastfetchBuild
 , fastfetchNoGLArm64Build
 , vmprobeArm64Build
 , foundationArm64Build
-, fbdoomBuild
 , fbdoomExternalSrc
-, fileBuild
-, flexBuild
-, fontconfigBuild
-, foundationBuild
-, frameworkCompatBuild
-, swiftRuntimeBuild
-, cocoaBuild
-, appFrameworksBuild
-, frameworksFfTestsBuild
-, cgFfTestsBuild
-, mpsNoxBuild
-, audiotoolboxBuild
-, pcmplayBuild
 , utilityAppBuilds ? [ ]
-, pdMetalSurfaceBuild
-, coreaudiodBuild
-, carbonBuild
-, iosurfaceBuild
 , iosurfaceTestsBuild ? null
-, freetype2Build
-, fribidiBuild
 , garconBuild
-, gdkPixbufBuild
-, gitBuild
-, glibBuild
-, gnum4Build
-, gnumakeBuild
-, gtk3Build
-, gtkLayerShellBuild
-, gtk3NoxBuild
-, onyx2dBuild
-, coregraphicsBuild
-, coretextBuild
-, quartzcoreBuild
-, corevideoBuild
-, coredataBuild
-, cgScreenDemoBuild
-, pdresBuild
-, systemFontsBuild
-, sharedMimeInfoBuild
-, cairoNoxBuild
-, pdEpollShimBuild
-, tllistBuild
-, fcftBuild
-, footBuild
-, userlandNoxBuild
-, pangoNoxBuild
-, netsurfNoxBuild
-, libepoxyNoxBuild
-, fastfetchNoxBuild
-, harfbuzzNoxBuild
-, atspi2CoreNoxBuild
-, cairoGobjectNoxBuild
-, xkbcommonNoxBuild
-, dbusNoxBuild
-, mesaNoxBuild
-, gluNoxBuild
-, openglFrameworkNoxBuild
-, mesaDemosNoxBuild
-, librsvgNoxBuild
-, gtkLayerShellNoxBuild
-, harfbuzzBuild
-, i3Build
-, i3statusShimBuild
-, iceauthBuild
-, cursorThemeBuild
-, iconThemesBuild
-, icuCoreBuild
 , imageExtraPackagesArm64
 , imageExtraPackagesArm64Nox
 , imageExtraPackagesArm64Sg2002
 , splitBaseSystemArm64Sg2002
 , iographicsBuild
-, iokitBuild
-, coreServicesBuild
-, jsoncBuild
-, wineBuild
-, cabextractBuild
-, winetricksBuild
-, dxvkBuild
-, libX11SharedBuild
-, libxcbSharedBuild
-, libXauSharedBuild
-, libXdmcpSharedBuild
-, libXextSharedBuild
-, libXrenderSharedBuild
-, libXfixesSharedBuild
-, libXiSharedBuild
-, libXcursorSharedBuild
-, libXrandrSharedBuild
-, libXxf86vmSharedBuild
-, nettleSharedBuild
-, gnutlsSharedBuild
-, glibNetworkingBuild
 , llvmCrossBuild
-, vulkanLoaderBuild
-, vulkanToolsBuild
-, vulkanLoaderNoxBuild
-, vulkanToolsNoxBuild
 , mesaVenusWaylandBuild
-, venusTestsNoxBuild
-, libdrmVirtgpuBuild
-, glfwPdBuild
-, metalPdNoxBuild
-, metalObjcPdNoxBuild
-, metalAppleSamplesNoxBuild
-, mslcPdBuild
-, spirvCrossPdBuild
-, libxshmfenceSharedBuild
-, iomediacheckBuild
-, ioregBuild
 , isDarwin
 , kc-tools
 , kernelArm64Build
@@ -171,131 +56,24 @@
 , tx1GlRootArm64Bundle ? null
 , tx1DesktopArm64Bundle ? null
 , kextsBuild
-, launchctlBuild
-, launchdBuild
 , lib
 , nixPortPackages
-, libSystemBuild
-, libdrmBuild
-, pdsurfaceBuild
-, libgbmBuild
-, waylandBuild
-, waylandProtocolsBuild
-, neuwldBuild
-, neuswcBuild
-, appkitBuild
-, windowserverBuild
-, applicationservicesBuild
-, terminalBuild
-, menubarBuild
-, dockBuild
-, finderBuild
-, systemInformationBuild
-, calculatorBuild
-, installerBuild
-, pddecorBuild
-, loginwindowBuild
-, localeDataBuild
-, settingsBuild
-, waylandSessionBuild
-, wlrootsBuild
-, swayBuild
-, wlrootsNoxBuild
-, swayNoxBuild
-, xwaylandBuild
-, libXftBuild
-, libapfsrwBuild
-, libcrocoBuild
-, libcssBuild
-, libcurlDylibBuild
-, libcxxDylibBuild
-, libcxxTestBuild
-, libcxxabiDylibBuild
-, libdisplayInfoBuild
-, libdomBuild
-, libepoxyBuild
-, libevBuild
-, libffiBuild
-, libhubbubBuild
 , libiconvArm64Build
-, libiconvBuild
-, libnsbmpBuild
-, libnsgifBuild
-, libnsutilsBuild
-, libobjcBuild
-, libparserutilsBuild
-, libpngBuild
-, librsvgBuild
-, gettextBuild
-, webkitgtkBuild
-, libsoupBuild
-, sqliteBuild
-, libpslBuild
-, nghttp2Build
-, libgcryptBuild
-, libgpgErrorBuild
-, libtasn1Build
-, libjpegBuild
-, libwebpBuild
-, libutf8procBuild
-, libwapcapletBuild
-, libwnckBuild
 , libxfce4uiBuild
 , libxfce4utilBuild
 , libxfce4windowingBuild
-, libxml2Build
-, libzDylibBuild
-, mesaBuild
-, gluBuild
-, mesaDemosBuild
 , migcomDarwinBuild
 , mkPureDarwinBuild
-, nanoBuild
-, ninjaBuild
-, cmakeBuild
 , clangCrossBuild
 , dsymutilBuild
 , kcToolsGuestBuild
-, mesonBuild
 , nativeLd
-, ncursesBuild
-, netsurfBuild
-, objcTestBuild
-, openglFrameworkBuild
-, opensshBuild
-, opensslBuild
-, pangoBuild
-, pcre2Build
-, pdVirglShimBuild
-, pkgconfBuild
 , pkgs
-, pythonBuild
-, securityBuild
-, certificatesBundleBuild
-, symptomReporterBuild
 , splitBaseSystemArm64VirtMinimal
 , splitBaseSystemArm64VirtMinimalRelease
 , splitBaseSystemArm64VirtWayland
-, startupNotificationBuild
 , system
-, systemConfigurationBuild
-, systemStarterBuild
-, tccBuild
 , toyboxArm64Build
-, toyboxBuild
-, userlandBuild
-, vteBuild
-, xcalcBuild
-, xcbBuild
-, xcbCursorBuild
-, xcbImageBuild
-, xcbKeysymsBuild
-, xcbRenderUtilBuild
-, xcbUtilBuild
-, xcbWmBuild
-, xcbXrmBuild
-, xclockBuild
-, xeyesBuild
 , thunarBuild
 , xfce4AppfinderBuild
 , xfce4PanelBuild
@@ -305,60 +83,18 @@
 , xfconfBuild
 , xfdesktopBuild
 , xfwm4Build
-, xinitBuild
-, xkbcommonBuild
-, xvfbPixmanBuild
-, xkbcompBuild
-, xkeyboardConfigBuild
-, xlibBuild
-, xlibLocaleBuild
-, xmessageBuild
 , xnu-loader
 , xnuHeadersBuild
 , xnuHeadersArm64Build
-, xorgBuild
-, xrdbBuild
-, xrandrBuild
-, xtermBuild
-, xvfbBuild
-, xvfbFontsBuild
-, xvfbLibICEBuild
-, xvfbLibSMBuild
-, xvfbLibXauBuild
-, xvfbLibXcompositeBuild
-, xvfbLibXcursorBuild
-, xvfbLibXdamageBuild
-, xvfbLibXdmcpBuild
-, xvfbLibXextBuild
-, xvfbLibXfixesBuild
-, xvfbLibXineramaBuild
-, xvfbLibXkbfileBuild
-, xvfbLibXpresentBuild
-, xvfbLibXrandrBuild
-, xvfbLibXrenderBuild
-, xvfbLibXresBuild
-, xvfbLibxcvtBuild
-, xvfbZlibBuild
 , xxdBuild
-, xzBuild
-, e2fsprogsBuild
-, msdosCmdsBuild
-, pdblessBuild
-, unzipBuild
-, bzip2Build
-, yajlBuild
 , asmjitTestArm64Build
 , zshArm64Build
 , pdadbdArm64Build ? null
-, zshBuild
-, bashBuild
 # the drm drivers (amdgpu, i915) in the aux KC by default with their firmware, the GOP
 # framebuffer stays the fallback when none attaches
 , kcGpuBuild
 , gpuDefaultPackages
 , mesaDefaultBuild
-, libdrmAmdgpuBuild
-, libelfBuild
 }:
 
 let
@@ -384,19 +120,19 @@ let
     chmod -R u+w "$out"
     cp -a ${kextsBuild}/. "$out/"
     chmod -R u+w "$out"
-    cp -a ${libSystemBuild}/. "$out/"
+    cp -a ${pd.libSystem}/. "$out/"
     chmod -R u+w "$out"
-    cp -a ${userlandBuild}/. "$out/"
+    cp -a ${pd.userland}/. "$out/"
     chmod -R u+w "$out"
-    cp -a ${tccBuild}/. "$out/"
+    cp -a ${pd.tcc}/. "$out/"
     chmod -R u+w "$out"
-    cp -a ${cctoolsBuild}/. "$out/"
-  '' + lib.optionalString (launchdBuild != null) ''
+    cp -a ${pd.cctools}/. "$out/"
+  '' + lib.optionalString (pd.launchd != null) ''
     chmod -R u+w "$out"
-    cp -a ${launchdBuild}/. "$out/"
+    cp -a ${pd.launchd}/. "$out/"
     chmod -R u+w "$out"
-  '' + lib.optionalString (launchctlBuild != null) ''
-    cp -a ${launchctlBuild}/. "$out/"
+  '' + lib.optionalString (pd.launchctl != null) ''
+    cp -a ${pd.launchctl}/. "$out/"
     chmod -R u+w "$out"
     if [ -e "$out/pd-sbin/launchd" ]; then
       mkdir -p "$out/sbin"
@@ -406,17 +142,17 @@ let
   ''
   + ''
     chmod -R u+w "$out"
-    cp -a ${bmakeBuild}/. "$out/"
+    cp -a ${pd.bmake}/. "$out/"
     chmod -R u+w "$out"
-    cp -a ${xvfbBuild}/. "$out/"
+    cp -a ${pd.xvfb}/. "$out/"
     chmod -R u+w "$out"
-    cp -a ${xeyesBuild}/. "$out/"
+    cp -a ${pd.xeyes}/. "$out/"
     chmod -R u+w "$out"
-    cp -a ${xkbcompBuild}/. "$out/"
+    cp -a ${pd.xkbcomp}/. "$out/"
     chmod -R u+w "$out"
-    cp -a ${xkeyboardConfigBuild}/. "$out/"
+    cp -a ${pd.xkeyboardConfig}/. "$out/"
     chmod -R u+w "$out"
-    cp -a ${xvfbFontsBuild}/. "$out/"
+    cp -a ${pd.xvfbFonts}/. "$out/"
   '');
   # splitBaseSystem bakes Xvfb/xeyes/xkbcomp straight into the base, so the
   # Wayland-only image needs its own split. xkeyboard-config stays: libxkbcommon
@@ -427,19 +163,19 @@ let
     chmod -R u+w "$out"
     cp -a ${kextsBuild}/. "$out/"
     chmod -R u+w "$out"
-    cp -a ${libSystemBuild}/. "$out/"
+    cp -a ${pd.libSystem}/. "$out/"
     chmod -R u+w "$out"
-    cp -a ${userlandNoxBuild}/. "$out/"
+    cp -a ${pd.userlandNox}/. "$out/"
     chmod -R u+w "$out"
-    cp -a ${tccBuild}/. "$out/"
+    cp -a ${pd.tcc}/. "$out/"
     chmod -R u+w "$out"
-    cp -a ${cctoolsBuild}/. "$out/"
-  '' + lib.optionalString (launchdBuild != null) ''
+    cp -a ${pd.cctools}/. "$out/"
+  '' + lib.optionalString (pd.launchd != null) ''
     chmod -R u+w "$out"
-    cp -a ${launchdBuild}/. "$out/"
+    cp -a ${pd.launchd}/. "$out/"
     chmod -R u+w "$out"
-  '' + lib.optionalString (launchctlBuild != null) ''
-    cp -a ${launchctlBuild}/. "$out/"
+  '' + lib.optionalString (pd.launchctl != null) ''
+    cp -a ${pd.launchctl}/. "$out/"
     chmod -R u+w "$out"
     if [ -e "$out/pd-sbin/launchd" ]; then
       mkdir -p "$out/sbin"
@@ -448,11 +184,11 @@ let
     fi
   '' + ''
     chmod -R u+w "$out"
-    cp -a ${bmakeBuild}/. "$out/"
+    cp -a ${pd.bmake}/. "$out/"
     chmod -R u+w "$out"
-    cp -a ${xkeyboardConfigBuild}/. "$out/"
+    cp -a ${pd.xkeyboardConfig}/. "$out/"
     chmod -R u+w "$out"
-    cp -a ${xvfbFontsBuild}/. "$out/"
+    cp -a ${pd.xvfbFonts}/. "$out/"
     chmod -R u+w "$out"
     # startx builds as part of the userland, but there is no X server here.
     rm -f "$out/bin/startx" "$out/usr/bin/startx"
@@ -463,13 +199,13 @@ let
     chmod -R u+w "$out"
     cp -a ${kextsBuild}/. "$out/"
     chmod -R u+w "$out"
-    cp -a ${libSystemBuild}/. "$out/"
-  '' + lib.optionalString (launchdBuild != null) ''
+    cp -a ${pd.libSystem}/. "$out/"
+  '' + lib.optionalString (pd.launchd != null) ''
     chmod -R u+w "$out"
-    cp -a ${launchdBuild}/. "$out/"
+    cp -a ${pd.launchd}/. "$out/"
     chmod -R u+w "$out"
-  '' + lib.optionalString (launchctlBuild != null) ''
-    cp -a ${launchctlBuild}/. "$out/"
+  '' + lib.optionalString (pd.launchctl != null) ''
+    cp -a ${pd.launchctl}/. "$out/"
     chmod -R u+w "$out"
     if [ -e "$out/pd-sbin/launchd" ]; then
       mkdir -p "$out/sbin"
@@ -483,13 +219,13 @@ let
     chmod -R u+w "$out"
     cp -a ${kextsBuild}/. "$out/"
     chmod -R u+w "$out"
-    cp -a ${libSystemBuild}/. "$out/"
-  '' + lib.optionalString (launchdBuild != null) ''
+    cp -a ${pd.libSystem}/. "$out/"
+  '' + lib.optionalString (pd.launchd != null) ''
     chmod -R u+w "$out"
-    cp -a ${launchdBuild}/. "$out/"
+    cp -a ${pd.launchd}/. "$out/"
     chmod -R u+w "$out"
-  '' + lib.optionalString (launchctlBuild != null) ''
-    cp -a ${launchctlBuild}/. "$out/"
+  '' + lib.optionalString (pd.launchctl != null) ''
+    cp -a ${pd.launchctl}/. "$out/"
     chmod -R u+w "$out"
     if [ -e "$out/pd-sbin/launchd" ]; then
       mkdir -p "$out/sbin"
@@ -508,7 +244,7 @@ let
     mkdir -p "$out"
     cp -a ${splitBaseSystemStripped}/. "$out/"
     chmod -R u+w "$out"
-    cp -a ${userlandBuild}/. "$out/"
+    cp -a ${pd.userland}/. "$out/"
   '';
 
 
@@ -516,216 +252,216 @@ let
     mkdir -p "$out"
     cp -a ${splitBaseSystemStrippedDebug}/. "$out/"
     chmod -R u+w "$out"
-    cp -a ${userlandBuild}/. "$out/"
+    cp -a ${pd.userland}/. "$out/"
   '';
 
   imageExtraPackageSet = {
     # Multi-user Nix; image.nix adds its build users when this is present.
     nix = nixPortPackages.nix;
-    wine = wineBuild;
+    wine = pd.wine;
     # winetricks and the cabextract it unpacks Microsoft's redistributables with (corefonts and the like)
-    cabextract = cabextractBuild;
-    winetricks = winetricksBuild;
+    cabextract = pd.cabextract;
+    winetricks = pd.winetricks;
     # Direct3D over Vulkan for Wine prefixes, set up with pd-dxvk
-    dxvk = dxvkBuild;
-    libX11-shared = libX11SharedBuild;
-    libxcb-shared = libxcbSharedBuild;
-    libXau-shared = libXauSharedBuild;
-    libXdmcp-shared = libXdmcpSharedBuild;
-    libXext-shared = libXextSharedBuild;
-    libXrender-shared = libXrenderSharedBuild;
-    libXfixes-shared = libXfixesSharedBuild;
-    libXi-shared = libXiSharedBuild;
-    libXcursor-shared = libXcursorSharedBuild;
-    libXrandr-shared = libXrandrSharedBuild;
-    libXxf86vm-shared = libXxf86vmSharedBuild;
-    nettle = nettleSharedBuild;
-    gnutls = gnutlsSharedBuild;
-    glib-networking = glibNetworkingBuild;
+    dxvk = pd.dxvk;
+    libX11-shared = pd.libX11SharedBuild;
+    libxcb-shared = pd.libxcbSharedBuild;
+    libXau-shared = pd.libXauSharedBuild;
+    libXdmcp-shared = pd.libXdmcpSharedBuild;
+    libXext-shared = pd.libXextSharedBuild;
+    libXrender-shared = pd.libXrenderSharedBuild;
+    libXfixes-shared = pd.libXfixesSharedBuild;
+    libXi-shared = pd.libXiSharedBuild;
+    libXcursor-shared = pd.libXcursorSharedBuild;
+    libXrandr-shared = pd.libXrandrSharedBuild;
+    libXxf86vm-shared = pd.libXxf86vm;
+    nettle = pd."nettle-shared";
+    gnutls = pd.gnutls;
+    glib-networking = pd."glib-networking";
     # llvmpipe and lavapipe JIT through libLLVM at runtime.
     llvm = llvmCrossBuild;
-    vulkan-loader = vulkanLoaderBuild;
-    vulkan-tools = vulkanToolsBuild;
-    libxshmfence = libxshmfenceSharedBuild;
-    xvfb = xvfbBuild;
-    xorg = xorgBuild;
-    xwayland = xwaylandBuild;
-    wayland = waylandBuild;
-    wlroots = wlrootsBuild;
-    sway = swayBuild;
+    vulkan-loader = pd.vulkanLoader;
+    vulkan-tools = pd."vulkan-tools";
+    libxshmfence = pd.libxshmfence;
+    xvfb = pd.xvfb;
+    xorg = pd.xorg;
+    xwayland = pd.xwayland;
+    wayland = pd.wayland;
+    wlroots = pd.wlroots;
+    sway = pd.sway;
     # sway links libjson-c as a dylib, so it has to be on the image and not
     # only in the build closure.
-    json-c = jsoncBuild;
-    libdrm = libdrmBuild;
-    pdsurface = pdsurfaceBuild;
-    libgbm = libgbmBuild;
-    libxcvt = xvfbLibxcvtBuild;
-    xeyes = xeyesBuild;
-    xclock = xclockBuild;
-    xcalc = xcalcBuild;
-    xmessage = xmessageBuild;
-    dillo = dilloBuild;
-    libz-dylib = libzDylibBuild;
-    libcurl-dylib = libcurlDylibBuild;
-    dbus = dbusBuild;
-    libxml2 = libxml2Build;
-    at-spi2-core = atspi2CoreBuild;
-    libepoxy = libepoxyBuild;
-    gdk-pixbuf = gdkPixbufBuild;
-    cairo-gobject = cairoGobjectBuild;
-    libXrandr = xvfbLibXrandrBuild;
-    gtk3 = gtk3Build;
-    gtk-layer-shell = gtkLayerShellBuild;
-    libpng = libpngBuild;
-    libcroco = libcrocoBuild;
-    librsvg = librsvgBuild;
-    gettext = gettextBuild;
+    json-c = pd.jsonc;
+    libdrm = pd.libdrm;
+    pdsurface = pd.pdsurface;
+    libgbm = pd.libgbm;
+    libxcvt = pd.libxcvt;
+    xeyes = pd.xeyes;
+    xclock = pd.xclock;
+    xcalc = pd.xcalc;
+    xmessage = pd.xmessage;
+    dillo = pd.dillo;
+    libz-dylib = pd.libzDylib;
+    libcurl-dylib = pd.libcurl;
+    dbus = pd.dbus;
+    libxml2 = pd.libxml2;
+    at-spi2-core = pd.atspi2Core;
+    libepoxy = pd.libepoxy;
+    gdk-pixbuf = pd.gdkPixbuf;
+    cairo-gobject = pd.cairoGobject;
+    libXrandr = pd.libXrandr;
+    gtk3 = pd.gtk3;
+    gtk-layer-shell = pd.gtkLayerShell;
+    libpng = pd.libpng;
+    libcroco = pd.libcroco;
+    librsvg = pd.librsvg;
+    gettext = pd.gettext;
     #webkitgtk = webkitgtkBuild;
-    libsoup = libsoupBuild;
-    sqlite = sqliteBuild;
-    libpsl = libpslBuild;
-    nghttp2 = nghttp2Build;
-    libgcrypt = libgcryptBuild;
-    libgpg-error = libgpgErrorBuild;
-    libtasn1 = libtasn1Build;
-    libjpeg = libjpegBuild;
-    libwebp = libwebpBuild;
-    libwapcaplet = libwapcapletBuild;
-    libparserutils = libparserutilsBuild;
-    libnsutils = libnsutilsBuild;
-    libnsgif = libnsgifBuild;
-    libnsbmp = libnsbmpBuild;
-    libutf8proc = libutf8procBuild;
-    libhubbub = libhubbubBuild;
-    libcss = libcssBuild;
-    libdom = libdomBuild;
-    netsurf = netsurfBuild;
+    libsoup = pd.libsoup;
+    sqlite = pd.sqlite;
+    libpsl = pd.libpsl;
+    nghttp2 = pd.nghttp2;
+    libgcrypt = pd.libgcrypt;
+    libgpg-error = pd."libgpg-error";
+    libtasn1 = pd.libtasn1;
+    libjpeg = pd.libjpeg;
+    libwebp = pd.libwebp;
+    libwapcaplet = pd.libwapcaplet;
+    libparserutils = pd.libparserutils;
+    libnsutils = pd.libnsutils;
+    libnsgif = pd.libnsgif;
+    libnsbmp = pd.libnsbmp;
+    libutf8proc = pd.libutf8proc;
+    libhubbub = pd.libhubbub;
+    libcss = pd.libcss;
+    libdom = pd.libdom;
+    netsurf = pd.netsurf;
     xxd = xxdBuild;
-    xz = xzBuild;
-    unzip = unzipBuild;
-    bzip2 = bzip2Build;
-    xterm = xtermBuild;
-    xkbcomp = xkbcompBuild;
-    xkeyboard-config = xkeyboardConfigBuild;
-    libx11-locale = xlibLocaleBuild;
-    fonts = xvfbFontsBuild;
-    libiconv = libiconvBuild;
-    nano = nanoBuild;
-    bmake = bmakeBuild;
-    gnumake = gnumakeBuild;
-    ninja = ninjaBuild;
-    cmake = cmakeBuild;
+    xz = pd.xz;
+    unzip = pd.unzip;
+    bzip2 = pd.bzip2;
+    xterm = pd.xterm;
+    xkbcomp = pd.xkbcomp;
+    xkeyboard-config = pd.xkeyboardConfig;
+    libx11-locale = pd.xlibLocale;
+    fonts = pd.xvfbFonts;
+    libiconv = pd.libiconv;
+    nano = pd.nano;
+    bmake = pd.bmake;
+    gnumake = pd.gnumake;
+    ninja = pd.ninja;
+    cmake = pd.cmake;
     clang = clangCrossBuild;
     dsymutil = dsymutilBuild;
     kc-tools-guest = kcToolsGuestBuild;
-    meson = mesonBuild;
-    pkgconf = pkgconfBuild;
-    gnum4 = gnum4Build;
-    autoconf = autoconfBuild;
-    automake = automakeBuild;
-    bison = bisonBuild;
-    flex = flexBuild;
-    python = pythonBuild;
+    meson = pd.meson;
+    pkgconf = pd.pkgconf;
+    gnum4 = pd.gnum4;
+    autoconf = pd.autoconf;
+    automake = pd.automake;
+    bison = pd.bison;
+    flex = pd.flex;
+    python = pd.python;
     #perl = perlBuild;
-    zsh = zshBuild;
+    zsh = pd.zsh;
     # /bin/bash: Darwin software and Nix's sandbox profiles expect it.
-    bash = bashBuild;
-    toybox = toyboxBuild;
-    file = fileBuild;
-    openssl = opensslBuild;
-    curl = curlBuild;
-    openssh = opensshBuild;
-    git = gitBuild;
+    bash = pd.bash;
+    toybox = pd.toybox;
+    file = pd.file;
+    openssl = pd.openssl;
+    curl = pd.curl;
+    openssh = pd.openssh;
+    git = pd.git;
     migcomDarwin = migcomDarwinBuild;
-    ioreg = ioregBuild;
-    xkbcommon = xkbcommonBuild;
-    fastfetch = fastfetchBuild;
-    corefoundation = coreFoundationBuild;
-    onyx2d = onyx2dBuild;
-    coregraphics = coregraphicsBuild;
-    coretext = coretextBuild;
+    ioreg = pd.ioreg;
+    xkbcommon = pd.xkbcommon;
+    fastfetch = pd.fastfetch;
+    corefoundation = pd.corefoundation;
+    onyx2d = pd.onyx2d;
+    coregraphics = pd.coregraphics;
+    coretext = pd.coretext;
     # AppKit links both, without them no AppKit app loads
-    quartzcore = quartzcoreBuild;
-    corevideo = corevideoBuild;
-    coredata = coredataBuild;
-    cg-screen-demo = cgScreenDemoBuild;
-    pdres = pdresBuild;
-    system-fonts = systemFontsBuild;
-    shared-mime-info = sharedMimeInfoBuild;
-    icucore = icuCoreBuild;
-    libcxxabi-dylib = libcxxabiDylibBuild;
-    libcxx-dylib = libcxxDylibBuild;
-    libcxx-test = libcxxTestBuild;
-    mesa = mesaBuild;
-    glu = gluBuild;
-    mesa-demos = mesaDemosBuild;
-    pd-virgl-shim = pdVirglShimBuild;
-    libobjc = libobjcBuild;
-    foundation = foundationBuild;
-    framework-compat = frameworkCompatBuild;
-    swift-runtime = swiftRuntimeBuild;
-    cocoa = cocoaBuild;
-    app-frameworks = appFrameworksBuild;
-    audiotoolbox = audiotoolboxBuild;
-    pcmplay = pcmplayBuild;
-    coreaudiod = coreaudiodBuild;
-    carbon = carbonBuild;
-    iosurface = iosurfaceBuild;
-    iokit = iokitBuild;
-    coreServices = coreServicesBuild;
-    security = securityBuild;
-    certificates-bundle = certificatesBundleBuild;
-    symptomReporter = symptomReporterBuild;
-    systemConfiguration = systemConfigurationBuild;
-    diskArbitration = diskArbitrationBuild;
-    iomediacheck = iomediacheckBuild;
-    opengl-framework = openglFrameworkBuild;
-    i3 = i3Build;
-    i3status = i3statusShimBuild;
-    startup-notification = startupNotificationBuild;
-    libX11 = xlibBuild;
-    libxcb = xcbBuild;
-    libxcb-util = xcbUtilBuild;
-    libxcb-keysyms = xcbKeysymsBuild;
-    libxcb-wm = xcbWmBuild;
-    libxcb-render-util = xcbRenderUtilBuild;
-    libxcb-image = xcbImageBuild;
-    libxcb-cursor = xcbCursorBuild;
-    xcb-util-xrm = xcbXrmBuild;
-    libev = libevBuild;
-    pcre2 = pcre2Build;
-    yajl = yajlBuild;
-    cairo = cairoBuild;
-    libffi = libffiBuild;
-    glib = glibBuild;
-    fribidi = fribidiBuild;
-    harfbuzz = harfbuzzBuild;
-    expat = expatBuild;
-    fontconfig = fontconfigBuild;
-    freetype2 = freetype2Build;
-    pango = pangoBuild;
-    libXft = libXftBuild;
-    dmenu = dmenuBuild;
-    zlib = xvfbZlibBuild;
-    libXau = xvfbLibXauBuild;
-    libXdmcp = xvfbLibXdmcpBuild;
-    libXext = xvfbLibXextBuild;
-    libXrender = xvfbLibXrenderBuild;
-    libXfixes = xvfbLibXfixesBuild;
-    libXcursor = xvfbLibXcursorBuild;
-    libICE = xvfbLibICEBuild;
-    libSM = xvfbLibSMBuild;
-    libXinerama = xvfbLibXineramaBuild;
-    libXres = xvfbLibXresBuild;
-    libXcomposite = xvfbLibXcompositeBuild;
-    libXdamage = xvfbLibXdamageBuild;
-    libXpresent = xvfbLibXpresentBuild;
+    quartzcore = pd.quartzcore;
+    corevideo = pd.corevideo;
+    coredata = pd.coredata;
+    cg-screen-demo = pd."cg-screen-demo";
+    pdres = pd.pdres;
+    system-fonts = pd.systemFonts;
+    shared-mime-info = pd."shared-mime-info";
+    icucore = pd.icu;
+    libcxxabi-dylib = pd.libcxxabiDylib;
+    libcxx-dylib = pd.libcxxDylib;
+    libcxx-test = pd.libcxxTest;
+    mesa = pd.mesaBuild;
+    glu = pd.gluBuild;
+    mesa-demos = pd.mesaDemos;
+    pd-virgl-shim = pd.pdVirglShim;
+    libobjc = pd.libobjc;
+    foundation = pd.foundation;
+    framework-compat = pd."framework-compat";
+    swift-runtime = pd.swiftRuntime;
+    cocoa = pd.cocoa;
+    app-frameworks = pd.appFrameworks;
+    audiotoolbox = pd.audiotoolbox;
+    pcmplay = pd.pcmplay;
+    coreaudiod = pd.coreaudiod;
+    carbon = pd.carbon;
+    iosurface = pd.iosurface;
+    iokit = pd.iokit;
+    coreServices = pd.coreservices;
+    security = pd.security;
+    certificates-bundle = pd."certificates-bundle";
+    symptomReporter = pd.symptomReporter;
+    systemConfiguration = pd.systemConfiguration;
+    diskArbitration = pd.diskArbitration;
+    iomediacheck = pd.iomediacheck;
+    opengl-framework = pd.openglFrameworkBuild;
+    i3 = pd.i3;
+    i3status = pd.i3statusShim;
+    startup-notification = pd."startup-notification";
+    libX11 = pd.libX11;
+    libxcb = pd.libxcb;
+    libxcb-util = pd."libxcb-util";
+    libxcb-keysyms = pd."libxcb-keysyms";
+    libxcb-wm = pd.xcbWm;
+    libxcb-render-util = pd."libxcb-render-util";
+    libxcb-image = pd."libxcb-image";
+    libxcb-cursor = pd.libxcbcursor;
+    xcb-util-xrm = pd."xcb-util-xrm";
+    libev = pd.libev;
+    pcre2 = pd.pcre2;
+    yajl = pd.yajl;
+    cairo = pd.cairo;
+    libffi = pd.libffi;
+    glib = pd.glib;
+    fribidi = pd.fribidi;
+    harfbuzz = pd.harfbuzz;
+    expat = pd.expat;
+    fontconfig = pd.fontconfig;
+    freetype2 = pd.freetype2;
+    pango = pd.pango;
+    libXft = pd.libXft;
+    dmenu = pd.dmenu;
+    zlib = pd.zlib;
+    libXau = pd.libXau;
+    libXdmcp = pd.libXdmcp;
+    libXext = pd.libXext;
+    libXrender = pd.libXrender;
+    libXfixes = pd.libXfixes;
+    libXcursor = pd.libXcursor;
+    libICE = pd.libICE;
+    libSM = pd.libSM;
+    libXinerama = pd.xvfbLibXinerama;
+    libXres = pd.libXres;
+    libXcomposite = pd.libXcomposite;
+    libXdamage = pd.libXdamage;
+    libXpresent = pd.xvfbLibXpresent;
     libxfce4util = libxfce4utilBuild;
     xfconf = xfconfBuild;
-    libwnck = libwnckBuild;
+    libwnck = pd.libwnck;
     libxfce4ui = libxfce4uiBuild;
     xfwm4 = xfwm4Build;
-    libdisplay-info = libdisplayInfoBuild;
+    libdisplay-info = pd.libdisplayInfo;
     libxfce4windowing = libxfce4windowingBuild;
     garcon = garconBuild;
     exo = exoBuild;
@@ -734,34 +470,34 @@ let
     xfdesktop = xfdesktopBuild;
     xfce4-appfinder = xfce4AppfinderBuild;
     thunar = thunarBuild;
-    cursor-theme = cursorThemeBuild;
-    icon-themes = iconThemesBuild;
+    cursor-theme = pd.cursorTheme;
+    icon-themes = pd.iconThemes;
     xfce4-settings = xfce4SettingsBuild;
-    vte = vteBuild;
+    vte = pd.vte;
     xfce4-terminal = xfce4TerminalBuild;
-    iceauth = iceauthBuild;
-    xrdb = xrdbBuild;
-    xrandr = xrandrBuild;
-    xinit = xinitBuild;
+    iceauth = pd.iceauth;
+    xrdb = pd.xrdb;
+    xrandr = pd.xrandr;
+    xinit = pd.xinit;
   };
 
   commonPackages = {
     darwin-toolchain = darwinCrossToolchain;
-    launchd = launchdBuild;
-    launchctl = launchctlBuild;
-    corefoundation = coreFoundationBuild;
-    icucore = icuCoreBuild;
-    iokit = iokitBuild;
-    libobjc = libobjcBuild;
-    libcxx-dylib = libcxxDylibBuild;
-    libcxxabi-dylib = libcxxabiDylibBuild;
-    userland = userlandBuild;
-    userland-nox = userlandNoxBuild;
-    tcc = tccBuild;
-    cctools = cctoolsBuild;
-    libsystem = libSystemBuild;
-    libSystem = libSystemBuild;
-    libapfsrw = libapfsrwBuild;
+    launchd = pd.launchd;
+    launchctl = pd.launchctl;
+    corefoundation = pd.corefoundation;
+    icucore = pd.icu;
+    iokit = pd.iokit;
+    libobjc = pd.libobjc;
+    libcxx-dylib = pd.libcxxDylib;
+    libcxxabi-dylib = pd.libcxxabiDylib;
+    userland = pd.userland;
+    userland-nox = pd.userlandNox;
+    tcc = pd.tcc;
+    cctools = pd.cctools;
+    libsystem = pd.libSystem;
+    libSystem = pd.libSystem;
+    libapfsrw = pd.libapfsrw;
     xnu-headers = xnuHeadersBuild;
     xnu-headers-arm64 = xnuHeadersArm64Build;
     xnu = kernelBuild;
@@ -795,39 +531,39 @@ let
     # publish the attribute when it is set; otherwise the whole package set
     # fails to evaluate for everyone who has not opted in.
   } // lib.optionalAttrs (fbdoomExternalSrc != null) {
-    fbdoom = fbdoomBuild;
+    fbdoom = pd.fbdoom;
   } // imageExtraPackageSet // {
     # The Wayland stack is built only on Linux hosts; on Darwin these
     # evaluate to something that is not a derivation.
-    wayland = waylandBuild;
-    wayland-protocols = waylandProtocolsBuild;
-    neuwld = neuwldBuild;
-    neuswc = neuswcBuild;
-    wlroots = wlrootsBuild;
-    sway = swayBuild;
-    xwayland = xwaylandBuild;
-    libX11 = xlibBuild;
-    libxcb = xcbBuild;
-    freetype2 = freetype2Build;
-    ncurses = ncursesBuild;
-    libiconv = libiconvBuild;
-    libxkbfile = xvfbLibXkbfileBuild;
-    libxcb-util = xcbUtilBuild;
-    libxcb-keysyms = xcbKeysymsBuild;
-    libxcb-wm = xcbWmBuild;
-    libxcb-render-util = xcbRenderUtilBuild;
-    libxcb-image = xcbImageBuild;
-    libxcb-cursor = xcbCursorBuild;
-    xcb-util-xrm = xcbXrmBuild;
-    libev = libevBuild;
-    pcre2 = pcre2Build;
-    yajl = yajlBuild;
-    startup-notification = startupNotificationBuild;
+    wayland = pd.wayland;
+    wayland-protocols = pd.waylandProtocols;
+    neuwld = pd.neuwld;
+    neuswc = pd.neuswc;
+    wlroots = pd.wlroots;
+    sway = pd.sway;
+    xwayland = pd.xwayland;
+    libX11 = pd.libX11;
+    libxcb = pd.libxcb;
+    freetype2 = pd.freetype2;
+    ncurses = pd.ncurses;
+    libiconv = pd.libiconv;
+    libxkbfile = pd.libxkbfile;
+    libxcb-util = pd."libxcb-util";
+    libxcb-keysyms = pd."libxcb-keysyms";
+    libxcb-wm = pd.xcbWm;
+    libxcb-render-util = pd."libxcb-render-util";
+    libxcb-image = pd."libxcb-image";
+    libxcb-cursor = pd.libxcbcursor;
+    xcb-util-xrm = pd."xcb-util-xrm";
+    libev = pd.libev;
+    pcre2 = pd.pcre2;
+    yajl = pd.yajl;
+    startup-notification = pd."startup-notification";
     xfconf = xfconfBuild;
     libxfce4util = libxfce4utilBuild;
     libxfce4ui = libxfce4uiBuild;
     libxfce4windowing = libxfce4windowingBuild;
-    libwnck = libwnckBuild;
+    libwnck = pd.libwnck;
     garcon = garconBuild;
     exo = exoBuild;
     xfwm4 = xfwm4Build;
@@ -837,32 +573,32 @@ let
     xfce4-appfinder = xfce4AppfinderBuild;
     thunar = thunarBuild;
     xfce4-settings = xfce4SettingsBuild;
-    vte = vteBuild;
+    vte = pd.vte;
     xfce4-terminal = xfce4TerminalBuild;
-    cairo = cairoBuild;
-    libffi = libffiBuild;
-    glib = glibBuild;
-    fribidi = fribidiBuild;
-    harfbuzz = harfbuzzBuild;
-    expat = expatBuild;
-    fontconfig = fontconfigBuild;
-    pango = pangoBuild;
-    i3 = i3Build;
-    i3status = i3statusShimBuild;
-    openssh = opensshBuild;
-    gnumake = gnumakeBuild;
-    ninja = ninjaBuild;
-    cmake = cmakeBuild;
+    cairo = pd.cairo;
+    libffi = pd.libffi;
+    glib = pd.glib;
+    fribidi = pd.fribidi;
+    harfbuzz = pd.harfbuzz;
+    expat = pd.expat;
+    fontconfig = pd.fontconfig;
+    pango = pd.pango;
+    i3 = pd.i3;
+    i3status = pd.i3statusShim;
+    openssh = pd.openssh;
+    gnumake = pd.gnumake;
+    ninja = pd.ninja;
+    cmake = pd.cmake;
     clang = clangCrossBuild;
     kc-tools-guest = kcToolsGuestBuild;
-    meson = mesonBuild;
-    pkgconf = pkgconfBuild;
-    gnum4 = gnum4Build;
-    autoconf = autoconfBuild;
-    automake = automakeBuild;
-    bison = bisonBuild;
-    flex = flexBuild;
-    python = pythonBuild;
+    meson = pd.meson;
+    pkgconf = pd.pkgconf;
+    gnum4 = pd.gnum4;
+    autoconf = pd.autoconf;
+    automake = pd.automake;
+    bison = pd.bison;
+    flex = pd.flex;
+    python = pd.python;
     #perl = perlBuild;
   };
 
@@ -1079,7 +815,7 @@ let
           kcTools = kc-tools.packages.${system}.default;
         };
       imageExtraPackages = lib.attrValues imageExtraPackageSet
-        ++ lib.optional (fbdoomExternalSrc != null) fbdoomBuild;
+        ++ lib.optional (fbdoomExternalSrc != null) pd.fbdoom;
       # image-store-minimal plus Nix and a toolchain, a PD guest that builds natively
       builderPackageSet = {
         inherit (imageExtraPackageSet)
@@ -1087,7 +823,7 @@ let
           gnumake bmake ninja cmake clang meson pkgconf gnum4 autoconf automake bison flex
           python migcomDarwin dsymutil libcxx-dylib libcxxabi-dylib libiconv nano xxd kc-tools-guest
           corefoundation systemConfiguration icucore libobjc;
-        cctools = cctoolsBuild;
+        cctools = pd.cctools;
       };
       imageBuilderBuild = imageStoreMinimalBuild.override {
         extraPackages = strippedExtraPackages ++ lib.attrValues builderPackageSet;
@@ -1115,7 +851,7 @@ let
         kc = kcBuild;
         xnuLoader = xnuLoaderDefault;
         apfsprogs = pkgs.apfsprogs;
-        libapfsrw = libapfsrwBuild;
+        libapfsrw = pd.libapfsrw;
         rootFsType = "apfs";
         imageFileName = "puredarwin-apfs.img";
       };
@@ -1374,58 +1110,58 @@ let
       waylandOnlyExtraPackageSet =
         (removeAttrs imageExtraPackageSet waylandOnlyDroppedPackages)
         // {
-          wlroots = wlrootsNoxBuild;
-          iosurface-tests = iosurfaceTestsBuild;
-          sway = swayNoxBuild;
-          gtk3 = gtk3NoxBuild;
-          gtk-layer-shell = gtkLayerShellNoxBuild;
-          cairo = cairoNoxBuild;
-          pango = pangoNoxBuild;
-          netsurf = netsurfNoxBuild;
-          libepoxy = libepoxyNoxBuild;
-          fastfetch = fastfetchNoxBuild;
-          harfbuzz = harfbuzzNoxBuild;
-          at-spi2-core = atspi2CoreNoxBuild;
-          cairo-gobject = cairoGobjectNoxBuild;
-          xkbcommon = xkbcommonNoxBuild;
-          foot = footBuild;
-          fcft = fcftBuild;
-          tllist = tllistBuild;
-          pd-epoll-shim = pdEpollShimBuild;
-          dbus = dbusNoxBuild;
+          wlroots = pd.wlrootsNox;
+          iosurface-tests = pd."iosurface-tests";
+          sway = pd.swayNox;
+          gtk3 = pd.gtk3Nox;
+          gtk-layer-shell = pd.gtkLayerShellNox;
+          cairo = pd.cairoNox;
+          pango = pd.pangoNox;
+          netsurf = pd.netsurfNox;
+          libepoxy = pd.libepoxyNox;
+          fastfetch = pd.fastfetchNox;
+          harfbuzz = pd.harfbuzzNox;
+          at-spi2-core = pd.atspi2CoreNox;
+          cairo-gobject = pd.cairoGobjectNox;
+          xkbcommon = pd.xkbcommonNox;
+          foot = pd.foot;
+          fcft = pd.fcft;
+          tllist = pd.tllist;
+          pd-epoll-shim = pd.epollShim;
+          dbus = pd.dbusNox;
           # the one mesa with every gpu driver, the loader picks by render node, else virgl or llvmpipe
           mesa = mesaDefaultBuild;
-          libdrm-gpu = libdrmAmdgpuBuild;
-          libelf = libelfBuild;
-    glu = gluNoxBuild;
-          opengl-framework = openglFrameworkNoxBuild;
-          mesa-demos = mesaDemosNoxBuild;
-          librsvg = librsvgNoxBuild;
+          libdrm-gpu = pd.libdrmAmdgpu;
+          libelf = pd.libelf;
+    glu = pd.gluNox;
+          opengl-framework = pd.openglFrameworkNox;
+          mesa-demos = pd.mesaDemosNox;
+          librsvg = pd.librsvgNox;
         };
       # the desktop session: neuswc with pdwm, the AppKit apps and org.puredarwin.argon to start them
       waylandDesktopPackages = lib.filter lib.isDerivation ([
-          localeDataBuild foundationBuild freetype2Build fontconfigBuild libpngBuild libjpegBuild xvfbZlibBuild
-          xvfbFontsBuild pdsurfaceBuild onyx2dBuild coregraphicsBuild coretextBuild
-          waylandBuild xkbcommonNoxBuild xkeyboardConfigBuild neuswcBuild
-          quartzcoreBuild corevideoBuild applicationservicesBuild windowserverBuild appkitBuild coredataBuild cocoaBuild appFrameworksBuild carbonBuild mpsNoxBuild
-          openglFrameworkNoxBuild mesaDefaultBuild libdrmAmdgpuBuild libelfBuild gluNoxBuild llvmCrossBuild pdVirglShimBuild
-          terminalBuild menubarBuild pddecorBuild loginwindowBuild dockBuild finderBuild systemInformationBuild calculatorBuild settingsBuild waylandSessionBuild psOnlyBuild diagToolsBuild
+          pd.localeData pd.foundation pd.freetype2 pd.fontconfig pd.libpng pd.libjpeg pd.zlib
+          pd.xvfbFonts pd.pdsurface pd.onyx2d pd.coregraphics pd.coretext
+          pd.wayland pd.xkbcommonNox pd.xkeyboardConfig pd.neuswc
+          pd.quartzcore pd.corevideo pd.applicationservices pd.windowserver pd.appkit pd.coredata pd.cocoa pd.appFrameworks pd.carbon pd.mpsNox
+          pd.openglFrameworkNox mesaDefaultBuild pd.libdrmAmdgpu pd.libelf pd.gluNox llvmCrossBuild pd.pdVirglShim
+          pd.terminal pd.menubar pd.pddecor pd.loginwindow pd.dock pd.finder pd."system-information" pd.calculator pd.settings pd."argon-session" psOnlyBuild diagToolsBuild
           # the built-in utilities: text editor, activity, logs, image viewer, screenshot and disks
         ] ++ utilityAppBuilds ++ [
           # Inter and the other system faces the window chrome and menu bar are drawn in
-          systemFontsBuild
+          pd.systemFonts
           # the mime database glib reads, so gtk and webkit can tell what a file or response is
-          sharedMimeInfoBuild
+          pd."shared-mime-info"
           # something full-screen to run in it
-          ncursesBuild nanoBuild fastfetchNoxBuild
+          pd.ncurses pd.nano pd.fastfetchNox
           # vulkan on the host gpu with PUREDARWIN_VM_VENUS=1 (venus virtio-gpu)
-          vulkanLoaderNoxBuild mesaVenusWaylandBuild pdMetalSurfaceBuild libdrmVirtgpuBuild vulkanToolsNoxBuild venusTestsNoxBuild
+          pd.vulkanLoaderNox mesaVenusWaylandBuild pd."pd-metal-surface" pd.libdrmVirtgpu pd.vulkanToolsNox pd.venusTestsNox
           # the Metal demos: pdmtl and Indium tests (metal-pd), Metal.framework (metal-objc), Apple's samples
-          glfwPdBuild metalPdNoxBuild metalObjcPdNoxBuild metalAppleSamplesNoxBuild spirvCrossPdBuild
+          pd.glfw pd.metalPdNox pd.metalObjcPdNox pd.metalAppleSamplesNox pd.spirvCross
           # mslc compiles newLibraryWithSource: on a cache miss, through the image clang
-          mslcPdBuild
+          pd."mslc-pd"
           # eglinfo and peglgears, to tell a gpu GL apart from the compositor on testers machines
-          mesaDemosNoxBuild
+          pd.mesaDemosNox
       ]);
       imageWaylandBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemWayland;
@@ -1514,36 +1250,36 @@ let
           rtwnFirmwareBuild
           runFirmwareBuild
           qwxFirmwareBuild
-          localeDataBuild
-          coreFoundationBuild
-          icuCoreBuild
-          libcxxabiDylibBuild
-          libcxxDylibBuild
-          libobjcBuild
+          pd.localeData
+          pd.corefoundation
+          pd.icu
+          pd.libcxxabiDylib
+          pd.libcxxDylib
+          pd.libobjc
         ]
         ++ [
-          zshBuild
-          toyboxBuild
-          libiconvBuild
-          iokitBuild
-          coreServicesBuild
-          libcxxTestBuild
-          objcTestBuild
-          foundationBuild
+          pd.zsh
+          pd.toybox
+          pd.libiconv
+          pd.iokit
+          pd.coreservices
+          pd.libcxxTest
+          pd.objcTest
+          pd.foundation
           # x86 CoreFoundation.framework binary (Foundation + CF re-export) and Versions/C paths
-          frameworkCompatBuild
+          pd."framework-compat"
           # /usr/lib/swift, which framework-compat's Foundation re-exports from
-          swiftRuntimeBuild
-          audiotoolboxBuild
-          pcmplayBuild
-          coreaudiodBuild
-          carbonBuild
-          iosurfaceBuild
-          securityBuild
-          symptomReporterBuild
-          systemConfigurationBuild
-          diskArbitrationBuild
-          ioregBuild
+          pd.swiftRuntime
+          pd.audiotoolbox
+          pd.pcmplay
+          pd.coreaudiod
+          pd.carbon
+          pd.iosurface
+          pd.security
+          pd.symptomReporter
+          pd.systemConfiguration
+          pd.diskArbitration
+          pd.ioreg
         ]
       );
       minimalBootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
@@ -1564,24 +1300,24 @@ let
       # image-minimal with CoreGraphics and what it loads, for the CoreGraphics test run at boot
       imageCgTestBuild = imageMinimalBuild.override {
         extraPackages = lib.unique (strippedExtraPackages ++ [
-          freetype2Build fontconfigBuild libpngBuild libjpegBuild xvfbZlibBuild onyx2dBuild pdsurfaceBuild
-          coregraphicsBuild cgFfTestsBuild
+          pd.freetype2 pd.fontconfig pd.libpng pd.libjpeg pd.zlib pd.onyx2d pd.pdsurface
+          pd.coregraphics pd."cg-ff-tests"
         ]);
         imageFileName = "puredarwin-cg-test.img";
         rootMB = 512;
       };
       # image-minimal with the installer's disk tools and ssh, for testing them against a second disk
       imageToolsTestBuild = imageMinimalBuild.override {
-        extraPackages = strippedExtraPackages ++ [ e2fsprogsBuild msdosCmdsBuild pdblessBuild opensshBuild ];
+        extraPackages = strippedExtraPackages ++ [ pd.e2fsprogs pd.msdosCmds pd.pdbless pd.openssh ];
         imageFileName = "puredarwin-tools-test.img";
         rootMB = 512;
       };
       # image-tools-test with the media, audio and app frameworks and what they load, for the framework tests
       imageFrameworksTestBuild = imageMinimalBuild.override {
         extraPackages = lib.unique (strippedExtraPackages ++ [
-          opensshBuild freetype2Build fontconfigBuild libpngBuild libjpegBuild xvfbZlibBuild onyx2dBuild pdsurfaceBuild
-          coregraphicsBuild coretextBuild quartzcoreBuild corevideoBuild applicationservicesBuild openglFrameworkNoxBuild
-          mesaNoxBuild gluNoxBuild llvmCrossBuild pdVirglShimBuild waylandBuild appFrameworksBuild frameworksFfTestsBuild
+          pd.openssh pd.freetype2 pd.fontconfig pd.libpng pd.libjpeg pd.zlib pd.onyx2d pd.pdsurface
+          pd.coregraphics pd.coretext pd.quartzcore pd.corevideo pd.applicationservices pd.openglFrameworkNox
+          pd.mesaNox pd.gluNox llvmCrossBuild pd.pdVirglShim pd.wayland pd.appFrameworks pd."frameworks-ff-tests"
         ]);
         imageFileName = "puredarwin-frameworks-test.img";
         rootMB = 2048;
@@ -1620,22 +1356,22 @@ let
       # ps from PureDarwin's own userland, toybox's ps reads Linux /proc
       psOnlyBuild = pkgs.runCommand "puredarwin-ps" { } ''
         mkdir -p $out/bin
-        cp "$(find ${userlandNoxBuild} -path '*/bin/ps' | head -n 1)" $out/bin/ps
+        cp "$(find ${pd.userlandNox} -path '*/bin/ps' | head -n 1)" $out/bin/ps
       '';
       # the kernel log, the wifi tool with its autojoin job and the power daemon, for bringing drivers up in the minimal image
       diagToolsBuild = pkgs.runCommand "puredarwin-diag-tools" { } ''
         mkdir -p $out/bin $out/usr/sbin $out/System/Library/LaunchDaemons
-        cp "$(find ${userlandNoxBuild} -path '*/bin/dmesg' | head -n 1)" $out/bin/dmesg
-        cp "$(find ${userlandNoxBuild} -path '*/usr/sbin/wifiutil' | head -n 1)" $out/usr/sbin/wifiutil
-        cp "$(find ${userlandNoxBuild} -path '*/usr/sbin/pdpowerd' | head -n 1)" $out/usr/sbin/pdpowerd
+        cp "$(find ${pd.userlandNox} -path '*/bin/dmesg' | head -n 1)" $out/bin/dmesg
+        cp "$(find ${pd.userlandNox} -path '*/usr/sbin/wifiutil' | head -n 1)" $out/usr/sbin/wifiutil
+        cp "$(find ${pd.userlandNox} -path '*/usr/sbin/pdpowerd' | head -n 1)" $out/usr/sbin/pdpowerd
         mkdir -p $out/usr/libexec
-        cp "$(find ${userlandNoxBuild} -path '*/usr/libexec/pd-dmesg-save' | head -n 1)" $out/usr/libexec/pd-dmesg-save
-        cp "$(find ${userlandNoxBuild} -name org.puredarwin.pdpowerd.plist | head -n 1)" $out/System/Library/LaunchDaemons/
+        cp "$(find ${pd.userlandNox} -path '*/usr/libexec/pd-dmesg-save' | head -n 1)" $out/usr/libexec/pd-dmesg-save
+        cp "$(find ${pd.userlandNox} -name org.puredarwin.pdpowerd.plist | head -n 1)" $out/System/Library/LaunchDaemons/
         # the AppleDouble parser the kernel asks for xattrs on filesystems without native ones
-        cp "$(find ${userlandNoxBuild} -path '*/usr/libexec/doubleagentd' | head -n 1)" $out/usr/libexec/doubleagentd
-        cp "$(find ${userlandNoxBuild} -name com.apple.doubleagentd.plist | head -n 1)" $out/System/Library/LaunchDaemons/
+        cp "$(find ${pd.userlandNox} -path '*/usr/libexec/doubleagentd' | head -n 1)" $out/usr/libexec/doubleagentd
+        cp "$(find ${pd.userlandNox} -name com.apple.doubleagentd.plist | head -n 1)" $out/System/Library/LaunchDaemons/
         # joins a remembered network at boot
-        cp "$(find ${userlandNoxBuild} -name org.puredarwin.wifi-autojoin.plist | head -n 1)" $out/System/Library/LaunchDaemons/
+        cp "$(find ${pd.userlandNox} -name org.puredarwin.wifi-autojoin.plist | head -n 1)" $out/System/Library/LaunchDaemons/
       '';
       # the stripped base has zsh but no /bin/sh, which the session script and launchd jobs run under
       binShBuild = pkgs.runCommand "puredarwin-bin-sh" { } ''
@@ -1647,8 +1383,8 @@ let
       # pdkext alone from the userland, it loads the aux KC at boot for PDFBSDix and the drm kexts
       pdkextFiles = pkgs.runCommand "puredarwin-pdkext" { } ''
         mkdir -p $out/usr/sbin $out/System/Library/LaunchDaemons
-        cp ${userlandBuild}/usr/sbin/pdkext $out/usr/sbin/pdkext
-        cp ${userlandBuild}/System/Library/LaunchDaemons/org.puredarwin.pdkext.plist $out/System/Library/LaunchDaemons/
+        cp ${pd.userland}/usr/sbin/pdkext $out/usr/sbin/pdkext
+        cp ${pd.userland}/System/Library/LaunchDaemons/org.puredarwin.pdkext.plist $out/System/Library/LaunchDaemons/
       '';
       imageWaylandMinimalBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemStripped;
@@ -1666,15 +1402,15 @@ let
       };
       # the install and rescue drive: the desktop with the disk tools, pdinstall and Install PureDarwin
       imageInstallerBuild = imageWaylandMinimalBuild.override (old: {
-        extraPackages = old.extraPackages ++ [ e2fsprogsBuild msdosCmdsBuild pdblessBuild installerBuild
+        extraPackages = old.extraPackages ++ [ pd.e2fsprogs pd.msdosCmds pd.pdbless pd.installer
           # the stripped base system carries no userland, so the commands pdinstall runs come from it here
           (pkgs.runCommand "puredarwin-installer-commands" { } ''
             mkdir -p $out/sbin $out/usr/sbin
-            cp "$(find ${userlandNoxBuild} -path '*/sbin/pdinstall' | head -n 1)" $out/sbin/pdinstall
-            cp "$(find ${userlandNoxBuild} -path '*/sbin/gpt' | head -n 1)" $out/usr/sbin/gpt
+            cp "$(find ${pd.userlandNox} -path '*/sbin/pdinstall' | head -n 1)" $out/sbin/pdinstall
+            cp "$(find ${pd.userlandNox} -path '*/sbin/gpt' | head -n 1)" $out/usr/sbin/gpt
             mkdir -p $out/bin
-            for c in mount umount; do cp "$(find ${userlandNoxBuild} -path "*/sbin/$c" | head -n 1)" $out/sbin/$c; done
-            cp "$(find ${userlandNoxBuild} -path '*/bin/sync' | head -n 1)" $out/bin/sync
+            for c in mount umount; do cp "$(find ${pd.userlandNox} -path "*/sbin/$c" | head -n 1)" $out/sbin/$c; done
+            cp "$(find ${pd.userlandNox} -path '*/bin/sync' | head -n 1)" $out/bin/sync
           '')
           # the session opens Install PureDarwin on the drive that has this file, pdinstall leaves it behind
           (pkgs.runCommand "puredarwin-install-media-marker" { } "mkdir -p $out; echo 1 > $out/.pd-install-media")
@@ -2424,24 +2160,24 @@ EOF
       prelinked-arm32-bcm2835 = prelinkedArm32Bcm2835Build;
       prelinked-arm32-bcm2835-debug = prelinkedArm32Bcm2835DebugBuild;
       prelinked-arm32-bcm2835-dev = prelinkedArm32Bcm2835DevBuild;
-      corefoundation = coreFoundationBuild;
-      icucore = icuCoreBuild;
-      libcxxabi-dylib = libcxxabiDylibBuild;
-      libcxx-dylib = libcxxDylibBuild;
-      libcxx-test = libcxxTestBuild;
-      mesa = mesaBuild;
-      libobjc = libobjcBuild;
-      objc-test = objcTestBuild;
-      foundation = foundationBuild;
-      autoconf = autoconfBuild;
-      automake = automakeBuild;
-      iokit = iokitBuild;
-      coreServices = coreServicesBuild;
-      security = securityBuild;
-      symptomReporter = symptomReporterBuild;
-      systemstarter = systemStarterBuild;
-      launchd = launchdBuild;
-      launchctl = launchctlBuild;
+      corefoundation = pd.corefoundation;
+      icucore = pd.icu;
+      libcxxabi-dylib = pd.libcxxabiDylib;
+      libcxx-dylib = pd.libcxxDylib;
+      libcxx-test = pd.libcxxTest;
+      mesa = pd.mesaBuild;
+      libobjc = pd.libobjc;
+      objc-test = pd.objcTest;
+      foundation = pd.foundation;
+      autoconf = pd.autoconf;
+      automake = pd.automake;
+      iokit = pd.iokit;
+      coreServices = pd.coreservices;
+      security = pd.security;
+      symptomReporter = pd.symptomReporter;
+      systemstarter = pd.systemStarter;
+      launchd = pd.launchd;
+      launchctl = pd.launchctl;
       image-arm64-virt = imageArm64VirtBuild;
       image-arm64-virt-debug = imageArm64VirtDebugBuild;
       image-arm64-bcm2837 = imageArm64Bcm2837Build;
@@ -2454,19 +2190,19 @@ EOF
       image-hfs = imageHfsBuild;
       image-apfs = imageApfsBuild;
       image-debug = imageDebugBuild;
-      onyx2d = onyx2dBuild;
-      coregraphics = coregraphicsBuild;
-      coretext = coretextBuild;
-      coredata = coredataBuild;
-      pd-epoll-shim = pdEpollShimBuild;
-      tllist = tllistBuild;
-      fcft = fcftBuild;
-      foot = footBuild;
-      cairo-nox = cairoNoxBuild;
-      dbus-nox = dbusNoxBuild;
-      mesa-nox = mesaNoxBuild;
-      opengl-framework-nox = openglFrameworkNoxBuild;
-      mesa-demos-nox = mesaDemosNoxBuild;
+      onyx2d = pd.onyx2d;
+      coregraphics = pd.coregraphics;
+      coretext = pd.coretext;
+      coredata = pd.coredata;
+      pd-epoll-shim = pd.epollShim;
+      tllist = pd.tllist;
+      fcft = pd.fcft;
+      foot = pd.foot;
+      cairo-nox = pd.cairoNox;
+      dbus-nox = pd.dbusNox;
+      mesa-nox = pd.mesaNox;
+      opengl-framework-nox = pd.openglFrameworkNox;
+      mesa-demos-nox = pd.mesaDemosNox;
       image-wayland = imageWaylandBuild;
       # the same image under the desktop's name
       image-argon = imageWaylandBuild;
@@ -2477,23 +2213,23 @@ EOF
       image-wayland-minimal = imageWaylandMinimalBuild;
       image-installer = imageInstallerBuild;
       iso-installer = isoInstallerBuild;
-      wlroots-nox = wlrootsNoxBuild;
-      sway-nox = swayNoxBuild;
-      gtk3-nox = gtk3NoxBuild;
+      wlroots-nox = pd.wlrootsNox;
+      sway-nox = pd.swayNox;
+      gtk3-nox = pd.gtk3Nox;
       image-minimal = imageMinimalBuild;
-      e2fsprogs = e2fsprogsBuild;
+      e2fsprogs = pd.e2fsprogs;
       image-tools-test = imageToolsTestBuild;
       image-frameworks-test = imageFrameworksTestBuild;
       image-cg-test = imageCgTestBuild;
-      msdos-cmds = msdosCmdsBuild;
-      pdbless = pdblessBuild;
+      msdos-cmds = pd.msdosCmds;
+      pdbless = pd.pdbless;
       image-aux-test = imageAuxTestBuild;
       image-builder = imageBuilderBuild;
       # the 32-bit uefi loader, so other images can carry it next to BOOTX64.EFI
       xnu-loader-ia32 = xnuLoaderIa32;
-      xorg = xorgBuild;
-      libxcvt = xvfbLibxcvtBuild;
-      userland = userlandBuild;
+      xorg = pd.xorg;
+      libxcvt = pd.libxcvt;
+      userland = pd.userland;
       vm-runner = runVm;
       kvm-runner = runKvm;
       vm-ia32-runner = runVmIa32;

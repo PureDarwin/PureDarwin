@@ -1888,54 +1888,13 @@
           };
           # Image contents (see nix/image-contents.nix).
           imageContents = import ./nix/image-contents.nix {
-            inherit kcGpuBuild gpuDefaultPackages;
+            pd = pd.x86_64;
+            inherit
+              kcGpuBuild gpuDefaultPackages;
             tegra210Dtb = dtbTegra210P2371_2180;
             mesaDefaultBuild = mesaGpuBuild;
             inherit
-              utilityAppBuilds
-              appkitBuild windowserverBuild applicationservicesBuild terminalBuild menubarBuild dockBuild finderBuild systemInformationBuild calculatorBuild installerBuild pddecorBuild loginwindowBuild localeDataBuild settingsBuild waylandSessionBuild
-              nixPortPackages
-              atspi2CoreBuild autoconfBuild automakeBuild bisonBuild bmakeBuild cairoBuild
-              cairoGobjectBuild cctoolsBuild coreFoundationBuild curlBuild darwinCrossToolchain
-              coreServicesBuild dbusBuild dilloBuild diskArbitrationBuild wineBuild cabextractBuild winetricksBuild dxvkBuild dmenuBuild exoBuild expatBuild fastfetchBuild
-              libX11SharedBuild libxcbSharedBuild libXauSharedBuild libXdmcpSharedBuild
-              libXextSharedBuild libXrenderSharedBuild libXfixesSharedBuild libXiSharedBuild
-              libXcursorSharedBuild libXrandrSharedBuild libXxf86vmSharedBuild nettleSharedBuild gnutlsSharedBuild glibNetworkingBuild llvmCrossBuild vulkanLoaderBuild libxshmfenceSharedBuild vulkanToolsBuild vulkanLoaderNoxBuild vulkanToolsNoxBuild mesaVenusWaylandBuild venusTestsNoxBuild libdrmVirtgpuBuild glfwPdBuild metalPdNoxBuild metalObjcPdNoxBuild metalAppleSamplesNoxBuild spirvCrossPdBuild mslcPdBuild
-              fbdoomBuild fbdoomExternalSrc fileBuild flexBuild fontconfigBuild foundationBuild frameworkCompatBuild swiftRuntimeBuild cocoaBuild appFrameworksBuild cgFfTestsBuild frameworksFfTestsBuild mpsNoxBuild audiotoolboxBuild pcmplayBuild coreaudiodBuild pdMetalSurfaceBuild carbonBuild iosurfaceBuild iosurfaceTestsBuild
-              freetype2Build fribidiBuild garconBuild gdkPixbufBuild gitBuild glibBuild gnum4Build
-              gnumakeBuild gtk3Build gtkLayerShellBuild gtk3NoxBuild gtkLayerShellNoxBuild onyx2dBuild coregraphicsBuild coretextBuild quartzcoreBuild corevideoBuild coredataBuild cgScreenDemoBuild pdresBuild systemFontsBuild cairoNoxBuild dbusNoxBuild pdEpollShimBuild tllistBuild fcftBuild footBuild userlandNoxBuild pangoNoxBuild netsurfNoxBuild libepoxyNoxBuild fastfetchNoxBuild harfbuzzNoxBuild atspi2CoreNoxBuild cairoGobjectNoxBuild xkbcommonNoxBuild mesaNoxBuild openglFrameworkNoxBuild mesaDemosNoxBuild librsvgNoxBuild harfbuzzBuild i3Build i3statusShimBuild iceauthBuild
-              cursorThemeBuild iconThemesBuild icuCoreBuild imageExtraPackagesArm64 imageExtraPackagesArm64Nox imageExtraPackagesArm64Sg2002 splitBaseSystemArm64Sg2002 iographicsBuild iokitBuild asmjitTestArm64Build
-              iomediacheckBuild ioregBuild isDarwin jsoncBuild kc-tools kernelArm64Build kernelArm64VirtBuild
-              kernelArm64VirtDebugBuild kernelArm64VirtAmpBuild kernelArm64T8010Build kernelArm64T8010DebugBuild kernelArm64S8000Build kernelArm64S8000DebugBuild kernelArm64T8103Build kernelArm64T8103DebugBuild kernelArm64Bcm2837Build kernelArm64Bcm2837DebugBuild kernelArm64Sun50iBuild kernelArm64Sun50iDebugBuild kernelArm64Sc8280xpBuild kernelArm64Sc8280xpDebugBuild kernelArm64Virt4kDebugBuild kernelArm32Bcm2835Build kernelArm32Bcm2835DebugBuild kernelArm32Bcm2835DevBuild
-              kextsArm32Bcm2835Build compilerRtArmv6Build
-              kernelBuild kernelDebugBuild kernelSource kextsArm64Build drmMsmArm64Build kextsBuild drmNouveauArm64Build nouveauFirmwareGm20b tegra210XusbFirmware tx1GlRootArm64Bundle tx1DesktopArm64Bundle pdadbdArm64Build sharedMimeInfoBuild certificatesBundleBuild libdrmAmdgpuBuild libelfBuild
-              launchctlBuild launchdBuild lib libSystemBuild libdrmBuild libXftBuild libapfsrwBuild libcssBuild waylandBuild waylandProtocolsBuild neuwldBuild neuswcBuild wlrootsBuild swayBuild wlrootsNoxBuild swayNoxBuild
-              pdsurfaceBuild libgbmBuild libcurlDylibBuild libcxxDylibBuild libcxxTestBuild libcxxabiDylibBuild libdisplayInfoBuild
-              libdomBuild libepoxyBuild libevBuild libffiBuild libhubbubBuild libiconvArm64Build
-              libiconvBuild libnsbmpBuild libnsgifBuild libnsutilsBuild libobjcBuild libparserutilsBuild
-              libpngBuild libutf8procBuild libwapcapletBuild libwnckBuild libxfce4uiBuild
-              libxfce4utilBuild libxfce4windowingBuild libxml2Build libzDylibBuild mesaBuild gluBuild gluNoxBuild
-              mesaDemosBuild migcomDarwinBuild mkPureDarwinBuild clangCrossBuild dsymutilBuild cmakeBuild kcToolsGuestBuild mesonBuild nanoBuild nativeLd ncursesBuild ninjaBuild
-              netsurfBuild objcTestBuild openglFrameworkBuild opensshBuild opensslBuild
-              pangoBuild pcre2Build pdVirglShimBuild pkgconfBuild pkgs pythonBuild
-              securityBuild symptomReporterBuild splitBaseSystemArm64VirtMinimal splitBaseSystemArm64VirtMinimalRelease splitBaseSystemArm64VirtWayland
-              startupNotificationBuild system systemConfigurationBuild systemStarterBuild tccBuild
-              fastfetchNoGLArm64Build foundationArm64Build vmprobeArm64Build
-              toyboxArm64Build toyboxBuild userlandBuild vteBuild xcalcBuild xcbBuild xcbCursorBuild
-              xcbImageBuild xcbKeysymsBuild xcbRenderUtilBuild xcbUtilBuild xcbWmBuild xcbXrmBuild
-              xclockBuild xeyesBuild thunarBuild xfce4AppfinderBuild xfce4PanelBuild xfce4SessionBuild
-              xfce4SettingsBuild xfce4TerminalBuild xfconfBuild xfdesktopBuild xfwm4Build xinitBuild
-              xkbcommonBuild xkbcompBuild xkeyboardConfigBuild xlibBuild xlibLocaleBuild xmessageBuild
-              xnu-loader xnuHeadersBuild xnuHeadersArm64Build xorgBuild xwaylandBuild xrdbBuild xrandrBuild xtermBuild xvfbBuild xvfbFontsBuild xvfbPixmanBuild
-              xvfbLibICEBuild xvfbLibSMBuild xvfbLibXauBuild xvfbLibXcompositeBuild xvfbLibXcursorBuild
-              xvfbLibXdamageBuild xvfbLibXdmcpBuild xvfbLibXextBuild xvfbLibXfixesBuild
-              xvfbLibXineramaBuild xvfbLibXkbfileBuild xvfbLibXpresentBuild xvfbLibXrandrBuild
-              xvfbLibXrenderBuild xvfbLibXresBuild xvfbLibxcvtBuild xvfbZlibBuild xxdBuild xzBuild
-              unzipBuild bzip2Build e2fsprogsBuild msdosCmdsBuild pdblessBuild
-              yajlBuild zshArm64Build zshBuild bashBuild libcrocoBuild librsvgBuild gettextBuild
-              webkitgtkBuild libsoupBuild sqliteBuild libpslBuild nghttp2Build
-              libgcryptBuild libgpgErrorBuild libtasn1Build libjpegBuild libwebpBuild
-              ;
+              utilityAppBuilds nixPortPackages darwinCrossToolchain exoBuild llvmCrossBuild mesaVenusWaylandBuild fbdoomExternalSrc garconBuild imageExtraPackagesArm64 imageExtraPackagesArm64Nox imageExtraPackagesArm64Sg2002 splitBaseSystemArm64Sg2002 iographicsBuild asmjitTestArm64Build isDarwin kc-tools kernelArm64Build kernelArm64VirtBuild kernelArm64VirtDebugBuild kernelArm64VirtAmpBuild kernelArm64T8010Build kernelArm64T8010DebugBuild kernelArm64S8000Build kernelArm64S8000DebugBuild kernelArm64T8103Build kernelArm64T8103DebugBuild kernelArm64Bcm2837Build kernelArm64Bcm2837DebugBuild kernelArm64Sun50iBuild kernelArm64Sun50iDebugBuild kernelArm64Sc8280xpBuild kernelArm64Sc8280xpDebugBuild kernelArm64Virt4kDebugBuild kernelArm32Bcm2835Build kernelArm32Bcm2835DebugBuild kernelArm32Bcm2835DevBuild kextsArm32Bcm2835Build compilerRtArmv6Build kernelBuild kernelDebugBuild kernelSource kextsArm64Build drmMsmArm64Build kextsBuild drmNouveauArm64Build nouveauFirmwareGm20b tegra210XusbFirmware tx1GlRootArm64Bundle tx1DesktopArm64Bundle pdadbdArm64Build lib libiconvArm64Build libxfce4uiBuild libxfce4utilBuild libxfce4windowingBuild migcomDarwinBuild mkPureDarwinBuild clangCrossBuild dsymutilBuild kcToolsGuestBuild nativeLd pkgs splitBaseSystemArm64VirtMinimal splitBaseSystemArm64VirtMinimalRelease splitBaseSystemArm64VirtWayland system fastfetchNoGLArm64Build foundationArm64Build vmprobeArm64Build toyboxArm64Build thunarBuild xfce4AppfinderBuild xfce4PanelBuild xfce4SessionBuild xfce4SettingsBuild xfce4TerminalBuild xfconfBuild xfdesktopBuild xfwm4Build xnu-loader xnuHeadersBuild xnuHeadersArm64Build xxdBuild zshArm64Build;
           };
           inherit (imageContents)
             fullBuild
