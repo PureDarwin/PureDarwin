@@ -1135,7 +1135,7 @@ let
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-ia32-dual.img";
         espMB = 60;
-        rootMB = 260;
+        rootMB = 512;
       };
       imageHfsBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystem;
