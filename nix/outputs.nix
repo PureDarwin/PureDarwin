@@ -6,6 +6,18 @@ let
   has = lib.hasPrefix;
   ends = lib.hasSuffix;
   inGroup = pred: lib.filterAttrs (n: _: pred n) all;
+  # arm64 board builds go under arm64.<board>.release / .debug, from names <prefix><board>[-debug]
+  byBoard = prefix: set: let
+    flat = lib.filterAttrs (n: _: has prefix n) set;
+    board = n: lib.removeSuffix "-debug" (lib.removePrefix prefix n);
+    config = n: if ends "-debug" n then "debug" else "release";
+  in lib.filterAttrs (n: _: !(has prefix n)) set // {
+    arm64 = lib.genAttrs (lib.unique (map board (lib.attrNames flat))) (b:
+      lib.mapAttrs' (n: v: lib.nameValuePair (config n) v) (lib.filterAttrs (n: _: board n == b) flat));
+  };
+  # the arm64 collections named before the board table: virt's and the a733's (the virtamp board)
+  kcName = n: { kc = "default"; kc-arm64 = "arm64-virt"; kc-arm64-debug = "arm64-virt-debug"; kc-arm64-a733 = "arm64-virtamp"; }.${n}
+    or (lib.removePrefix "kc-" n);
   strip = suffix: set: lib.mapAttrs' (n: v: lib.nameValuePair (lib.removeSuffix suffix n) v) set;
 
   isImage = n: (has "image" n && n != "image-viewer") || has "ramdisk-" n || has "netboot-" n || n == "iso-installer";
@@ -38,8 +50,8 @@ in
       riscv64 = strip "-riscv64" (inGroup (n: lib.hasInfix "riscv64" n && !(isImage n) && !(isKc n) && !(isRunner n)));
       arm32 = inGroup (n: lib.hasInfix "-arm32-" n && !(isKernel n));
     };
-    kernel = inGroup (n: isKernel n && !(isImage n));
-    kc = lib.mapAttrs' (n: v: lib.nameValuePair (if n == "kc" then "default" else lib.removePrefix "kc-" n) v) (inGroup isKc);
+    kernel = byBoard "kernel-arm64-" (inGroup (n: isKernel n && !(isImage n)));
+    kc = byBoard "arm64-" (lib.mapAttrs' (n: v: lib.nameValuePair (kcName n) v) (inGroup isKc));
     firmware = inGroup isFirmware;
     toolchain = inGroup isToolchain;
     runners = inGroup isRunner;
