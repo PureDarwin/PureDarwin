@@ -239,99 +239,16 @@
             compilerRtRiscv64 = compilerRtRiscv64Build;
           } // args);
 
-          userlandBuild = (mkPureDarwinBuild {
-            pname = "puredarwin-userland";
-            src = userlandSource;
-            buildTargets = [ "sw_vers" "doubleagentd" "ps" "killall" "pkill" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" "pd-dmesg-save" "pdkext" "drmprobe" "sh" "gpt" ]
-              # shell_cmds (+ tsort/uuencode/uudecode)
-              ++ [ "basename" "chown" "dirname" "echo" "false" "getopt" "hostname" "jot" "kill" "logname" "mktemp" "nice" "nohup" "passwd" "printenv" "pwd" "renice" "seq" "shlock" "sleep" "tee" "test_cmd" "true" "tsort" "uname" "yes" "uuencode" "uudecode" ]
-              # text_cmds
-              ++ [ "banner" "cat" "colrm" "comm" "cut" "expand" "fold" "head" "lam" "look" "nl" "paste" "rev" "split" "tail" "tr" "unexpand" "uniq" "wc" ]
-              ++ [ "puredarwingop_drv" "puredarwininput_drv" ];
-            enableProjects = false;
-            enableKernel = false;
-            enableLibraries = false;
-            enableTools = false;
-            installUserland = true;
-            installKernel = false;
-            prebuiltLibSystem = libSystemBuild;
-            xorgDriverIncludes = [
-              "${xorgBuild}/usr/include/xorg"
-              "${xorgBuild}/usr/include"
-              "${lib.getDev pkgs.xorgproto}/include"
-              "${xvfbPixmanBuild}/include/pixman-1"
-            ];
-          }).overrideAttrs (old: {
-            # the kernel only takes an aux KC from a process holding this entitlement
-            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.ldid ];
-            postInstall = (old.postInstall or "") + ''
-              ldid -S${./src/Userspace/pdkext/pdkext.entitlements} "$out"/usr/sbin/pdkext
-            '';
-          });
+          userlandBuild = pd.x86_64.userland;
           # Wayland-only image: the same userland without the Xorg DDX drivers,
           # which are what drag the whole Xorg tree into the build graph.
           # startx stays in the target list - it is plain libSystem and only
           # execs Xorg at runtime, so it costs no dependency, and its install
           # rule is unconditional in CMake. It is removed from the image in
           # splitBaseSystemWayland instead.
-          userlandNoxBuild = mkPureDarwinBuild {
-            pname = "puredarwin-userland-nox";
-            src = userlandSource;
-            buildTargets = [ "sw_vers" "doubleagentd" "ps" "killall" "pkill" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "wifiutil" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" "pdpowerd" "pd-dmesg-save" "pdkext" "drmprobe" "sh" "gpt" ]
-              ++ [ "basename" "chown" "dirname" "echo" "false" "getopt" "hostname" "jot" "kill" "logname" "mktemp" "nice" "nohup" "passwd" "printenv" "pwd" "renice" "seq" "shlock" "sleep" "tee" "test_cmd" "true" "tsort" "uname" "yes" "uuencode" "uudecode" ]
-              ++ [ "banner" "cat" "colrm" "comm" "cut" "expand" "fold" "head" "lam" "look" "nl" "paste" "rev" "split" "tail" "tr" "unexpand" "uniq" "wc" ];
-            enableProjects = false;
-            enableKernel = false;
-            enableLibraries = false;
-            enableTools = false;
-            installUserland = true;
-            installKernel = false;
-            prebuiltLibSystem = libSystemBuild;
-          };
-          tccBuild = mkPureDarwinBuild {
-            pname = "puredarwin-tcc";
-            src = userlandSource;
-            buildTargets = [ "tcc" ];
-            enableProjects = false;
-            enableKernel = false;
-            enableLibraries = false;
-            enableTools = false;
-            enableTcc = true;
-            installUserland = true;
-            installKernel = false;
-            prebuiltLibSystem = libSystemBuild;
-          };
-          cctoolsBuild = mkPureDarwinBuild {
-            pname = "puredarwin-cctools";
-            src = cctoolsSource;
-            buildTargets = [
-              "lipo_selfhost" "size_selfhost" "strings_selfhost" "checksyms_selfhost"
-              "iig_selfhost" "ld64_selfhost"
-              "ar_selfhost" "nm_selfhost" "libtool_selfhost" "ranlib_selfhost"
-              "otool_selfhost"
-              "redo_prebinding_selfhost"
-              "seg_hack_selfhost" "install_name_tool_selfhost"
-              "indr_selfhost" "strip_selfhost" "segedit_selfhost" "pagestuff_selfhost"
-              "codesign_allocate_selfhost" "bitcode_strip_selfhost" "ctf_insert_selfhost"
-              "check_dylib_selfhost" "cmpdylib_selfhost" "inout_selfhost"
-              "nmedit_selfhost"
-            ];
-            enableProjects = false;
-            enableKernel = false;
-            enableLibraries = false;
-            enableUserspace = false;
-            enableTools = true;
-            installUserland = true;
-            installKernel = false;
-            prebuiltLibSystem = libSystemBuild;
-            extraCmakeFlags = [
-              "-DPUREDARWIN_ENABLE_SELFHOST_CCTOOLS=ON"
-              "-DPUREDARWIN_IIG_SOURCE=${iig-tools}"
-              # libc++ 21 keeps basic_string, to_string and operator new in the dylib
-              "-DPUREDARWIN_SELFHOST_LIBCXX_DIR=${libcxxDylibBuild}/usr/lib"
-              "-DPUREDARWIN_SELFHOST_LIBCXXABI_DIR=${libcxxabiDylibBuild}/usr/lib"
-            ];
-          };
+          userlandNoxBuild = pd.x86_64.userlandNox;
+          tccBuild = pd.x86_64.tcc;
+          cctoolsBuild = pd.x86_64.cctools;
           xvfbPixmanBuild = pd.x86_64.pixman;
           xvfbLibXauBuild = pd.x86_64.libXau;
           xvfbLibXdmcpBuild = pd.x86_64.libXdmcp;
@@ -374,25 +291,8 @@
           xvfbLibXkbfileBuild = pd.x86_64.libxkbfile;
           xkbcompBuild = pd.x86_64.xkbcomp;
           xvfbFontsBuild = pd.x86_64.xvfbFonts;
-          xkeyboardConfigBuild =
-            pkgs.runCommand "puredarwin-xkeyboard-config" { } ''
-              mkdir -p "$out/usr/share"
-              cp -a ${pkgs.xkeyboard_config}/share/X11 "$out/usr/share/X11"
-              chmod -R u+w "$out/usr/share/X11"
-              cp -a ${pkgs.xkeyboard_config}/share/xkeyboard-config-2 "$out/usr/share/xkeyboard-config-2"
-              chmod -R u+w "$out/usr/share/xkeyboard-config-2"
-              if [ -L "$out/usr/share/X11/xkb" ]; then
-                rm "$out/usr/share/X11/xkb"
-                cp -a "$out/usr/share/xkeyboard-config-2" "$out/usr/share/X11/xkb"
-                chmod -R u+w "$out/usr/share/X11/xkb"
-              fi
-            '';
-          xlibLocaleBuild =
-            pkgs.runCommand "puredarwin-libx11-locale" { } ''
-              mkdir -p "$out/usr/share/X11"
-              cp -a ${pkgs.libX11}/share/X11/locale "$out/usr/share/X11/locale"
-              chmod -R u+w "$out/usr/share/X11/locale"
-            '';
+          xkeyboardConfigBuild = pd.x86_64.xkeyboardConfig;
+          xlibLocaleBuild = pd.x86_64.xlibLocale;
           libzDylibBuild = pd.x86_64.libzDylib;
           libcurlDylibBuild = pd.x86_64.libcurl;
           dbusBuild = pd.x86_64.dbus;
@@ -409,36 +309,7 @@
           libdomBuild = pd.x86_64.libdom;
           netsurfBuild = pd.x86_64.netsurf;
           libepoxyBuild = pd.x86_64.libepoxy;
-          pdVirglShimBuild =
-            (mkPureDarwinBuild {
-              pname = "puredarwin-pd-virgl-shim";
-              src = userlandSource;
-              buildTargets = [ "pd_virgl_shim" ];
-              enableProjects = false;
-              enableKernel = false;
-              enableLibraries = false;
-              installUserland = false;
-              installKernel = false;
-              prebuiltLibSystem = libSystemBuild;
-            }).overrideAttrs (old: {
-              installPhase = ''
-                runHook preInstall
-                mkdir -p $out/usr/lib $out/include
-                ar=${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar
-                mkdir -p repack && ( cd repack && \
-                  "$ar" x ../build-nix/src/Userspace/pd-virgl-shim/libpd_virgl_shim.a )
-                ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang \
-                  -dynamiclib -fuse-ld=${nativeLd}/bin/ld -nostdlib \
-                  -L${libSystemBuild}/usr/lib \
-                  -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystemBuild}/usr/lib/system/libdyld.dylib \
-                  -Wl,-install_name,/usr/lib/libpd_virgl_shim.dylib \
-                  -Wl,-platform_version,macos,26.5,26.5 -Wl,-fixup_chains \
-                  repack/*.o -lSystem \
-                  -o $out/usr/lib/libpd_virgl_shim.dylib
-                cp src/Libraries/PDVirglShim/include/pd_virgl_shim.h $out/include/
-                runHook postInstall
-              '';
-            });
+          pdVirglShimBuild = pd.x86_64.pdVirglShim;
           mesaBuild = pd.x86_64.mesaBuild;
           gluBuild = pd.x86_64.gluBuild;
           gluNoxBuild = pd.x86_64.gluNox;
@@ -589,12 +460,12 @@
               mesa = mesaNoxBuild;
               src = ./src/Userspace;
             } // args);
-          textEditorBuild = utilityApp { appName = "Text Editor"; appDir = "TextEditor"; iconSvg = "texteditor.svg"; description = "PureDarwin Text Editor: plain text documents"; };
-          activityBuild = utilityApp { appName = "Activity"; appDir = "Activity"; installDir = "Applications/Utilities"; iconSvg = "activity.svg"; description = "PureDarwin Activity: processes, cores and memory"; };
-          logsBuild = utilityApp { appName = "Logs"; appDir = "Logs"; installDir = "Applications/Utilities"; iconSvg = "logs.svg"; description = "PureDarwin Logs: the kernel buffer and /var/log, followed live"; };
+          textEditorBuild = pd.x86_64.text-editor;
+          activityBuild = pd.x86_64.activity;
+          logsBuild = pd.x86_64.logs;
           imageViewerBuild = utilityApp { appName = "Image Viewer"; appDir = "ImageViewer"; iconSvg = "imageviewer.svg"; description = "PureDarwin Image Viewer: pictures and their folder"; };
-          screenshotBuild = utilityApp { appName = "Screenshot"; appDir = "Screenshot"; installDir = "Applications/Utilities"; iconSvg = "screenshot.svg"; description = "PureDarwin Screenshot: capture the screen or a selection"; };
-          disksBuild = utilityApp { appName = "Disks"; appDir = "Disks"; installDir = "Applications/Utilities"; iconSvg = "disks.svg"; description = "PureDarwin Disks: drives, partitions and volumes"; };
+          screenshotBuild = pd.x86_64.screenshot;
+          disksBuild = pd.x86_64.disks;
           utilityAppBuilds = [ textEditorBuild activityBuild logsBuild imageViewerBuild screenshotBuild disksBuild ];
           # PureDarwin's own system settings
           settingsBuild = pd.x86_64.settings;
@@ -607,15 +478,7 @@
           # the login screen and dsuser, local accounts kept in dslocal
           loginwindowBuild = pd.x86_64.loginwindow;
           # Argon, the desktop session: neuswc, the Dock, the menu bar and Terminal from launchd
-          waylandSessionBuild =
-            pkgs.runCommand "puredarwin-argon-session" { } ''
-              install -Dm755 ${./src/Userspace/argon-session/argon-session} \
-                $out/usr/libexec/argon-session
-              install -Dm644 ${./src/Userspace/argon-session/org.puredarwin.argon.plist} \
-                $out/System/Library/LaunchDaemons/org.puredarwin.argon.plist
-              install -Dm755 ${./src/Userspace/argon-session/pd-user-session} \
-                $out/usr/libexec/pd-user-session
-            '';
+          waylandSessionBuild = pd.x86_64.argon-session;
           systemFontsBuild = pd.x86_64.systemFonts;
           sharedMimeInfoBuild = pd.x86_64.shared-mime-info;
           minibrowserAppBuild = pd.x86_64.minibrowser-app;
@@ -829,13 +692,7 @@
             thunarBuild
             ;
           cursorThemeBuild = pd.x86_64.cursorTheme;
-          iconThemesBuild =
-            pkgs.runCommand "puredarwin-icon-themes" { } ''
-              mkdir -p "$out/share/icons"
-              cp -a ${pkgs.hicolor-icon-theme}/share/icons/hicolor "$out/share/icons/"
-              cp -a ${pkgs.adwaita-icon-theme}/share/icons/Adwaita "$out/share/icons/"
-              chmod -R u+w "$out/share/icons"
-            '';
+          iconThemesBuild = pd.x86_64.iconThemes;
           libdisplayInfoBuild = pd.x86_64.libdisplayInfo;
           glibNetworkingBuild = pd.x86_64.glib-networking;
 
@@ -865,67 +722,17 @@
             shared = true;
           } // args);
 
-          libXauSharedBuild = mkSharedXorgLib {
-            pname = "puredarwin-libXau";
-            inherit (pkgs.libXau) version src;
-            deps = [ pkgs.xorgproto ];
-          };
-          libXdmcpSharedBuild = mkSharedXorgLib {
-            pname = "puredarwin-libXdmcp";
-            inherit (pkgs.libXdmcp) version src;
-            deps = [ pkgs.xorgproto ];
-          };
-          libxcbSharedBuild = mkSharedXorgLib {
-            pname = "puredarwin-libxcb";
-            inherit (pkgs.libxcb) version src;
-            deps = [ pkgs.xorgproto libXauSharedBuild libXdmcpSharedBuild ];
-            nativeDeps = [ pkgs.python3 pkgs.xcb-proto ];
-            configureFlags = [ "--disable-devel-docs" ];
-            preConfigureExtra = ''
-              export PYTHONPATH="${pkgs.xcb-proto}/${pkgs.python3.sitePackages}:$PYTHONPATH"
-            '';
-          };
-          libX11SharedBuild = mkSharedXorgLib {
-            pname = "puredarwin-libX11";
-            inherit (pkgs.libX11) version src;
-            deps = [ pkgs.xorgproto pkgs.xtrans libxcbSharedBuild libXauSharedBuild libXdmcpSharedBuild ];
-            configureFlags = [ "--disable-specs" "--enable-xlocaledir" ];
-          };
-          libXextSharedBuild = mkSharedXorgLib {
-            pname = "puredarwin-libXext";
-            inherit (pkgs.libXext) version src;
-            deps = [ pkgs.xorgproto libX11SharedBuild libXauSharedBuild ];
-          };
-          libXrenderSharedBuild = mkSharedXorgLib {
-            pname = "puredarwin-libXrender";
-            inherit (pkgs.libXrender) version src;
-            deps = [ pkgs.xorgproto libX11SharedBuild ];
-          };
-          libXfixesSharedBuild = mkSharedXorgLib {
-            pname = "puredarwin-libXfixes";
-            inherit (pkgs.libXfixes) version src;
-            deps = [ pkgs.xorgproto libX11SharedBuild libXextSharedBuild ];
-          };
-          libXiSharedBuild = mkSharedXorgLib {
-            pname = "puredarwin-libXi";
-            inherit (pkgs.libXi) version src;
-            deps = [ pkgs.xorgproto libX11SharedBuild libXextSharedBuild libXfixesSharedBuild ];
-          };
-          libXrandrSharedBuild = mkSharedXorgLib {
-            pname = "puredarwin-libXrandr";
-            inherit (pkgs.libXrandr) version src;
-            deps = [ pkgs.xorgproto libX11SharedBuild libXextSharedBuild libXrenderSharedBuild ];
-          };
-          libXxf86vmSharedBuild = mkSharedXorgLib {
-            pname = "puredarwin-libXxf86vm";
-            inherit (pkgs.libXxf86vm) version src;
-            deps = [ pkgs.xorgproto libX11SharedBuild libXextSharedBuild ];
-          };
-          libXcursorSharedBuild = mkSharedXorgLib {
-            pname = "puredarwin-libXcursor";
-            inherit (pkgs.libXcursor) version src;
-            deps = [ pkgs.xorgproto libX11SharedBuild libXrenderSharedBuild libXfixesSharedBuild ];
-          };
+          libXauSharedBuild = pd.x86_64.libXauSharedBuild;
+          libXdmcpSharedBuild = pd.x86_64.libXdmcpSharedBuild;
+          libxcbSharedBuild = pd.x86_64.libxcbSharedBuild;
+          libX11SharedBuild = pd.x86_64.libX11SharedBuild;
+          libXextSharedBuild = pd.x86_64.libXextSharedBuild;
+          libXrenderSharedBuild = pd.x86_64.libXrenderSharedBuild;
+          libXfixesSharedBuild = pd.x86_64.libXfixesSharedBuild;
+          libXiSharedBuild = pd.x86_64.libXiSharedBuild;
+          libXrandrSharedBuild = pd.x86_64.libXrandrSharedBuild;
+          libXxf86vmSharedBuild = pd.x86_64.libXxf86vm;
+          libXcursorSharedBuild = pd.x86_64.libXcursorSharedBuild;
 
           # Wine's schannel/bcrypt TLS backend is GnuTLS-only
           vulkanToolsBuild = pd.x86_64.vulkan-tools;
@@ -1010,57 +817,9 @@
           mslcHostBuild = pd.x86_64.mslc;
           metalAppleSamplesBuild = pd.x86_64.metal-apple-samples;
           vulkanLoaderBuild = pd.x86_64.vulkanLoader;
-          libxshmfenceSharedBuild = mkSharedXorgLib {
-            pname = "puredarwin-libxshmfence";
-            inherit (pkgs.libxshmfence) version src;
-            deps = [ pkgs.xorgproto ];
-            configureFlags = [ "--with-shared-memory-dir=/tmp" ];
-          };
-          nettleSharedBuild = mkSharedXorgLib {
-            pname = "puredarwin-nettle";
-            inherit (pkgs.nettle) version src;
-            configureFlags = [
-              "--enable-mini-gmp"
-              "--disable-documentation"
-              "--disable-assembler"
-              "--disable-openssl"
-            ];
-          };
-          gnutlsSharedBuild = mkSharedXorgLib {
-            pname = "puredarwin-gnutls";
-            inherit (pkgs.gnutls) version src;
-            deps = [ nettleSharedBuild ];
-            postPatchExtra = ''
-              substituteInPlace configure lib/Makefile.in \
-                --replace ' -framework Security -framework CoreFoundation' ""
-              # The keychain trust store goes with those frameworks. The header
-              # is included whether or not that code path is compiled, and here
-              # it is not: DEFAULT_TRUST_STORE_FILE wins the #if chain.
-              substituteInPlace lib/system/certs.c \
-                --replace-fail '#ifdef __APPLE__' '#if 0'
-            '';
-            configureFlags = [
-              "--with-default-trust-store-file=/etc/ssl/cert.pem"
-              "--with-nettle-mini"
-              "--with-included-libtasn1"
-              "--with-included-unistring"
-              "--without-p11-kit"
-              "--without-idn"
-              "--without-tpm"
-              "--without-tpm2"
-              "--without-brotli"
-              "--without-zstd"
-              "--without-zlib"
-              "--disable-doc"
-              "--disable-tools"
-              "--disable-tests"
-              "--disable-cxx"
-              "--disable-nls"
-              "--disable-libdane"
-              "--disable-guile"
-              "--disable-hardware-acceleration"
-            ];
-          };
+          libxshmfenceSharedBuild = pd.x86_64.libxshmfence;
+          nettleSharedBuild = pd.x86_64.nettle-shared;
+          gnutlsSharedBuild = pd.x86_64.gnutls;
 
           wineToolsBuild = pd.x86_64.wineTools;
 
@@ -1086,6 +845,19 @@
               protocolBufferSource = protocolBufferSource;
               swiftToolchain = swiftToolchain;
               wirelessDiagnosticsSource = wirelessDiagnosticsSource;
+              cctoolsSource = cctoolsSource;
+              chocolateDoomPatchedSrc = chocolateDoomPatchedSrc;
+              diskArbitrationSource = diskArbitrationSource;
+              fbdoomExternalSrc = fbdoomExternalSrc;
+              fbdoomSource = fbdoomSource;
+              iokitCFSource = iokitCFSource;
+              linux614Src = linux614Src;
+              mkSharedXorgLib = mkSharedXorgLib;
+              mkSystemConfiguration = mkSystemConfigurationBuild;
+              securitySource = securitySource;
+              symptomReporterSource = symptomReporterSource;
+              userlandSource = userlandSource;
+              vteSrc = vteSrc;
             };
           };
           pd.x86_64 = pdScope {
@@ -1097,29 +869,13 @@
               clang = clangCrossBuild;
               compilerRt = compilerRtBuild;
               darwinCrossToolchain = darwinCrossToolchain;
-              diskArbitration = diskArbitrationBuild;
               glu = gluNoxBuild;
-              gnutls = gnutlsSharedBuild;
               gtk3NoxBuild = gtk3NoxBuild;
               harfbuzzNoxBuild = harfbuzzNoxBuild;
               hostOtool = hostOtoolBuild;
-              iokitCFStatic = iokitCFStaticBuild;
-              libSystem = libSystemBuild;
-              libX11SharedBuild = libX11SharedBuild;
-              libXauSharedBuild = libXauSharedBuild;
-              libXcursorSharedBuild = libXcursorSharedBuild;
-              libXdmcpSharedBuild = libXdmcpSharedBuild;
-              libXextSharedBuild = libXextSharedBuild;
-              libXfixesSharedBuild = libXfixesSharedBuild;
-              libXiSharedBuild = libXiSharedBuild;
-              libXrandrSharedBuild = libXrandrSharedBuild;
-              libXrenderSharedBuild = libXrenderSharedBuild;
-              libXxf86vm = libXxf86vmSharedBuild;
+              iig-tools = iig-tools;
               libepoxyNoxBuild = libepoxyNoxBuild;
-              libxcbSharedBuild = libxcbSharedBuild;
-              libxshmfence = libxshmfenceSharedBuild;
               libz = libzDylibBuild;
-              linux614Src = linux614Src;
               llvm = llvmCrossBuild;
               mesa = mesaNoxBuild;
               mesaDefaultBuild = mesaGpuBuild;
@@ -1129,12 +885,8 @@
               openglFramework = openglFrameworkNoxBuild;
               opensslThreadsBuild = opensslThreadsBuild;
               pangoNoxBuild = pangoNoxBuild;
-              pdVirglShim = pdVirglShimBuild;
-              securitySource = securitySource;
-              systemConfiguration = systemConfigurationBuild;
-              vteSrc = vteSrc;
+              utilityApp = utilityApp;
               xkbcommonNoxBuild = xkbcommonNoxBuild;
-              xkeyboardConfig = xkeyboardConfigBuild;
             };
           };
           ncursesBuild = pd.x86_64.ncurses;
@@ -1685,154 +1437,21 @@
             });
           # IOKitUser's CoreFoundation-based IOKitLib. Built apart from libSystem
           # because it links CoreFoundation, which itself links libSystem.
-          iokitCFStaticBuild =
-            (mkPureDarwinBuild {
-              pname = "puredarwin-iokitcf-static";
-              src = iokitCFSource;
-              buildTargets = [ "IOKitCF" ];
-              enableProjects = false;
-              enableKernel = false;
-              enableUserspace = false;
-              installUserland = false;
-              installKernel = false;
-              extraCmakeFlags = [
-                "-DPUREDARWIN_ENABLE_IOKITCF=ON"
-                "-DPUREDARWIN_COREFOUNDATION_PREFIX=${coreFoundationBuild}"
-                "-DPUREDARWIN_LIBOBJC_PREFIX=${libobjcBuild}"
-                "-DPUREDARWIN_FOUNDATION_PREFIX=${foundationBuild}"
-              ];
-            }).overrideAttrs (old: {
-              installPhase = ''
-                runHook preInstall
-                mkdir -p "$out/usr/lib/system"
-                cp build-nix/src/Libraries/IOKit/libIOKitCF.a "$out/usr/lib/system/"
-                mkdir -p "$out/include"
-                cp -a src/Libraries/IOKit/iokituser/include/IOKit "$out/include/"
-                runHook postInstall
-              '';
-            });
+          iokitCFStaticBuild = pd.x86_64.iokitCFStatic;
           # Diagnostic: replays diskarbitrationd's DADiskCreateFromIOMedia checks
           # against one IOMedia and names the failing one.
           iomediacheckBuild = pd.x86_64.iomediacheck;
           # Apple's SymptomReporter is a private framework with no source and
           # no SDK header; this is PureDarwin's own, recording symptoms through
           # os_log. bootp's IPConfiguration plugin is the consumer.
-          symptomReporterBuild =
-            (mkPureDarwinBuild {
-              pname = "puredarwin-symptomreporter";
-              src = symptomReporterSource;
-              buildTargets = [ "SymptomReporter" ];
-              enableProjects = false;
-              enableKernel = false;
-              enableUserspace = false;
-              installUserland = false;
-              installKernel = false;
-              extraCmakeFlags = [
-                "-DPUREDARWIN_ENABLE_SYMPTOMREPORTER=ON"
-              ];
-            }).overrideAttrs (old: {
-              installPhase = ''
-                runHook preInstall
-                fw="$out/System/Library/PrivateFrameworks/SymptomReporter.framework"
-                mkdir -p "$fw/Versions/A/Headers"
-                cp build-nix/src/Libraries/SymptomReporter/libSymptomReporter.dylib \
-                  "$fw/Versions/A/SymptomReporter"
-                cp -a src/Libraries/SymptomReporter/include/SymptomReporter/. \
-                  "$fw/Versions/A/Headers/"
-                ln -s A "$fw/Versions/Current"
-                ln -s Versions/Current/SymptomReporter "$fw/SymptomReporter"
-                ln -s Versions/Current/Headers "$fw/Headers"
-                mkdir -p "$out/include"
-                cp -a src/Libraries/SymptomReporter/include/SymptomReporter "$out/include/"
-                runHook postInstall
-              '';
-            });
-          diskArbitrationBuild =
-            (mkPureDarwinBuild {
-              pname = "puredarwin-diskarbitration";
-              src = diskArbitrationSource;
-              buildTargets = [ "DiskArbitration" "diskarbitrationd" ];
-              enableProjects = false;
-              enableKernel = false;
-              enableUserspace = false;
-              installUserland = false;
-              installKernel = false;
-              extraCmakeFlags = [
-                "-DPUREDARWIN_ENABLE_DISKARBITRATION=ON"
-                "-DPUREDARWIN_COREFOUNDATION_PREFIX=${coreFoundationBuild}"
-                "-DPUREDARWIN_IOKIT_PREFIX=${iokitBuild}"
-                "-DPUREDARWIN_SECURITY_PREFIX=${securityBuild}"
-                "-DPUREDARWIN_SYSTEMCONFIGURATION_PREFIX=${systemConfigurationBuild}"
-              ];
-            }).overrideAttrs (old: {
-              installPhase = ''
-                runHook preInstall
-                fw="$out/System/Library/Frameworks/DiskArbitration.framework"
-                mkdir -p "$fw/Versions/A/Headers"
-                cp build-nix/src/Libraries/DiskArbitration/libDiskArbitration.dylib \
-                  "$fw/Versions/A/DiskArbitration"
-                cp -a src/Libraries/DiskArbitration/include/DiskArbitration/. \
-                  "$fw/Versions/A/Headers/"
-                ln -s A "$fw/Versions/Current"
-                ln -s Versions/Current/DiskArbitration "$fw/DiskArbitration"
-                ln -s Versions/Current/Headers "$fw/Headers"
-                mkdir -p "$out/usr/lib"
-                ln -s "../../System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration" \
-                  "$out/usr/lib/libDiskArbitration.dylib"
-                mkdir -p "$out/include"
-                cp -a src/Libraries/DiskArbitration/include/DiskArbitration "$out/include/"
-                mkdir -p "$out/usr/libexec" "$out/System/Library/LaunchDaemons"
-                cp build-nix/src/Libraries/DiskArbitration/diskarbitrationd \
-                  "$out/usr/libexec/diskarbitrationd"
-                cp src/Libraries/DiskArbitration/diskarbitrationd/com.apple.diskarbitrationd.plist \
-                  "$out/System/Library/LaunchDaemons/"
-                runHook postInstall
-              '';
-            });
-          systemConfigurationBuild =
-            mkSystemConfigurationBuild {
-              corefoundation = coreFoundationBuild;
-              libobjc = libobjcBuild;
-              security = securityBuild;
-              iokit = iokitBuild;
-              symptomReporter = symptomReporterBuild;
-            };
+          symptomReporterBuild = pd.x86_64.symptomReporter;
+          diskArbitrationBuild = pd.x86_64.diskArbitration;
+          systemConfigurationBuild = pd.x86_64.systemConfiguration;
           systemStarterBuild = pd.x86_64.systemStarter;
           launchctlBuild = pd.x86_64.launchctl;
           launchdBuild = pd.x86_64.launchd;
-          libSystemBuild = mkPureDarwinBuild {
-            pname = "puredarwin-libsystem";
-            src = libSystemSource;
-            buildTargets = [ "libSystem_B_stub" "libDER_static" "dyld" "libsystem_kernel_static" "libdispatch_static" "XPC_libnv_static" "XPC_libinfo_static" "XPC_libxpc_static" "XPC_launchd_static" "XPC_launchd_mig_static" "XPC_notify_client_static" "notifyd" "logd" ];
-            enableUserspace = false;
-            enableKernel = false;
-            installUserland = false;
-            installKernel = false;
-            installLibSystem = true;
-          };
-          fbdoomBuild = (mkPureDarwinBuild {
-            pname = "puredarwin-fbdoom";
-            src = fbdoomSource;
-            buildTargets = [ "fbdoom" ];
-            enableProjects = false;
-            enableKernel = false;
-            installUserland = false;
-            installKernel = false;
-            extraCmakeFlags = [
-              "-DPUREDARWIN_ENABLE_FBDOOM=ON"
-              "-DPUREDARWIN_COREFOUNDATION_PREFIX=${coreFoundationBuild}"
-              "-DPUREDARWIN_FBDOOM_SOURCE=${fbdoomExternalSrc}"
-              "-DPUREDARWIN_AUDIOTOOLBOX_PREFIX=${audiotoolboxBuild}"
-              "-DPUREDARWIN_CHOCOLATE_DOOM_SOURCE=${chocolateDoomPatchedSrc}"
-            ];
-          }).overrideAttrs (old: {
-            installPhase = ''
-              runHook preInstall
-              mkdir -p $out/usr/bin
-              cp build-nix/src/Userspace/fbdoom/fbdoom $out/usr/bin/fbdoom
-              runHook postInstall
-            '';
-          });
+          libSystemBuild = pd.x86_64.libSystem;
+          fbdoomBuild = pd.x86_64.fbdoom;
           kernelBuild = mkPureDarwinBuild {
             pname = "puredarwin-kernel";
             src = kernelSource;
