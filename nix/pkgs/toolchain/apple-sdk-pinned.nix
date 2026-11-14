@@ -214,6 +214,7 @@ let
     [ "${root}/src/Libraries/libdarwin/pd-compat-include/bsm/libbsm.h" "usr/include/bsm/libbsm.h" ]
     [ "${root}/src/Libraries/libdarwin/pd-compat-include/mach-o/ldsyms.h" "usr/include/mach-o/ldsyms.h" ]
     [ "${root}/src/Libraries/libdarwin/pd-compat-include/mach-o/getsect.h" "usr/include/mach-o/getsect.h" ]
+    [ "${root}/src/Libraries/dyld/compat-include/System/sys/content_protection.h" "usr/include/System/sys/content_protection.h" ]
     # FreeBSD's fenv.h renamed; reaches these by angle bracket. Only these - e.g.
     # openlibm_complex.h defines a bare "I".
     [ "${root}/src/Libraries/libSystem/libc/libm/openlibm/include/openlibm_fenv.h" "usr/include/fenv.h" ]
