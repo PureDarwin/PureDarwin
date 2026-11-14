@@ -32,7 +32,7 @@ extern "C" {
 	X(os_map_kernel_space) X(os_unmap_kernel_space) X(nv_requires_dma_remap) X(nv_set_dma_address_size) \
 	X(nv_alloc_pages) X(nv_free_pages) X(nv_alloc_kernel_mapping) X(nv_free_kernel_mapping) X(nv_get_kern_phys_address) \
 	X(nv_get_dev_minor) X(nv_get_disp_smmu_stream_ids) X(nv_get_screen_info) X(os_disable_console_access) \
-	X(os_enable_console_access) X(nv_acpi_methods_init) X(nv_acpi_methods_uninit) X(nv_acpi_dsm_method) \
+	X(os_enable_console_access) X(nv_acpi_methods_init) X(nv_acpi_methods_uninit) X(nv_acpi_dsm_method) X(nv_audio_dynamic_power) \
 	X(nv_acpi_dod_method) X(nv_acpi_mux_method) X(nv_get_device_memory_config) X(os_pat_supported) \
 	X(nv_put_firmware) X(os_get_pid_info) X(os_put_pid_info) X(os_queue_work_item) X(os_flush_work_queue) X(nv_acpi_ddc_method) X(os_schedule) X(nv_start_rc_timer) X(nv_stop_rc_timer) X(nv_i2c_add_adapter) X(nv_i2c_del_adapter) \
 	X(nv_get_ctl_state) X(nv_get_file_private) X(nv_put_file_private) X(nv_is_gpu_accessible) X(os_memcpy_from_user) X(os_memcpy_to_user) \
