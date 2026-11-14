@@ -6,7 +6,8 @@
 
 # target: the cross toolchain and triple the set builds with, nativeLd, and (while the move is under way) the
 # packages not yet in packages.nix, by the names the recipes take them
-{ darwinCrossToolchain, targetTriple ? null, nativeLd, bridge ? { } }:
+# overrides: this target's own choice for a package the shared definitions would build otherwise (a stub, a variant)
+{ darwinCrossToolchain, targetTriple ? null, nativeLd, bridge ? { }, overrides ? { } }:
 
 lib.makeScope pkgs.newScope (self:
   shared // bridge // {
@@ -14,4 +15,5 @@ lib.makeScope pkgs.newScope (self:
   }
   # x86_64 recipes take their default triple, an explicit one here would still be the same value
   // lib.optionalAttrs (targetTriple != null) { inherit targetTriple; }
-  // import ./packages.nix { inherit pkgs lib self; inherit (self) callPackage; })
+  // import ./packages.nix { inherit pkgs lib self; inherit (self) callPackage; }
+  // overrides)
