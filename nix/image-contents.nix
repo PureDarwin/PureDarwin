@@ -1675,7 +1675,7 @@ let
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-legacy-minimal.img";
         espMB = 60;
-        rootMB = 260;
+        rootMB = 512;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
       };
       # BIOS boot through GRUB and xnu-loader's Multiboot2 ELF. UEFI still works
