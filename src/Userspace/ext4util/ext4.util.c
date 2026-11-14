@@ -14,6 +14,8 @@
  *     -q   report whether the volume is clean (does it need fsck)
  */
 
+#include <sys/disk.h>
+#include <sys/ioctl.h>
 #include <sys/loadable_fs.h>
 #include <sys/param.h>
 
@@ -113,14 +115,28 @@ read_superblock(const char *bsdname, struct ext4_super_block *sb)
 		}
 	}
 
-	// raw disk devices on macOS only take whole sectors, so read the full 1 KiB superblock
-	char block[1024];
+	// disk devices only take whole blocks, 4 KiB on Apple's NVMe: read whole blocks from the start of the
+	// volume until they cover the superblock
+	uint32_t bsize = 512;
+	char *block;
+	size_t len;
 
-	n = pread(fd, block, sizeof(block), EXT4_SUPERBLOCK_OFFSET);
-	close(fd);
-	if (n != (ssize_t)sizeof(block))
+	if (ioctl(fd, DKIOCGETBLOCKSIZE, &bsize) != 0 || bsize == 0 || bsize > 65536)
+		bsize = 512;
+	len = ((EXT4_SUPERBLOCK_OFFSET + sizeof(*sb) + bsize - 1) / bsize) * bsize;
+	block = malloc(len);
+	if (block == NULL) {
+		close(fd);
 		return -1;
-	memcpy(sb, block, sizeof(*sb));
+	}
+	n = pread(fd, block, len, 0);
+	close(fd);
+	if (n != (ssize_t)len) {
+		free(block);
+		return -1;
+	}
+	memcpy(sb, block + EXT4_SUPERBLOCK_OFFSET, sizeof(*sb));
+	free(block);
 	return 0;
 }
 
