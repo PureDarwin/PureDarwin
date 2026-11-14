@@ -1073,14 +1073,6 @@ let
         };
       imageExtraPackages = lib.attrValues imageExtraPackageSet
         ++ lib.optional (fbdoomExternalSrc != null) fbdoomBuild;
-      imageBuild = pkgs.callPackage ../image.nix {
-        baseSystem = splitBaseSystem;
-        extraPackages = imageExtraPackages;
-        kc = kcBuild;
-        xnuLoader = xnuLoaderDefault;
-        apfsprogs = pkgs.apfsprogs;
-        #testAudioFile = /home/vali/development/darwin/stillalive.pcm;
-      };
       # image-store-minimal plus Nix and a toolchain, a PD guest that builds natively
       builderPackageSet = {
         inherit (imageExtraPackageSet)
@@ -1097,45 +1089,6 @@ let
       };
       legacyBoot = xnu-loader.packages.${system}.legacy-boot.override {
         stage2Lba = 34;
-      };
-      imageLegacyBuild = pkgs.callPackage ../image.nix {
-        baseSystem = splitBaseSystem;
-        extraPackages = imageExtraPackages;
-        kc = kcBuild;
-        xnuLoader = xnuLoaderDefault;
-        inherit legacyBoot;
-        apfsprogs = pkgs.apfsprogs;
-        imageFileName = "puredarwin-legacy.img";
-        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 -noprogress gen9_debug=1 serial_video_mirror=1";
-      };
-      # Same system as .#image, booted by a 32-bit UEFI implementation. Only
-      # the loader and the ESP's fallback filename differ; the kernel, KC and
-      # every kext are the ordinary x86_64 ones.
-      imageIa32Build = pkgs.callPackage ../image.nix {
-        baseSystem = splitBaseSystem;
-        extraPackages = imageExtraPackages;
-        kc = kcBuild;
-        xnuLoader = xnuLoaderIa32;
-        efiBinary = "BOOTIA32.EFI";
-        apfsprogs = pkgs.apfsprogs;
-        imageFileName = "puredarwin-ia32.img";
-      };
-      # Both loaders on one ESP, for a machine whose firmware width is not
-      # established: UEFI takes the fallback name matching its own
-      # architecture, so whichever loader runs identifies the firmware.
-      imageIa32DualBuild = pkgs.callPackage ../image.nix {
-        baseSystem = splitBaseSystemMinimal;
-        extraPackages = strippedExtraPackages;
-        kc = kcBuild;
-        xnuLoader = xnuLoaderIa32;
-        efiBinary = "BOOTIA32.EFI";
-        extraLoaders = [
-          { loader = xnuLoaderDefault; efiBinary = "BOOTX64.EFI"; }
-        ];
-        apfsprogs = pkgs.apfsprogs;
-        imageFileName = "puredarwin-ia32-dual.img";
-        espMB = 60;
-        rootMB = 260;
       };
       imageHfsBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystem;
@@ -1586,14 +1539,6 @@ let
           ioregBuild
         ]
       );
-      imageStrippedBuild = pkgs.callPackage ../image.nix {
-        baseSystem = splitBaseSystemStripped;
-        extraPackages = strippedExtraPackages;
-        kc = kcBuild;
-        xnuLoader = xnuLoaderDefault;
-        apfsprogs = pkgs.apfsprogs;
-        imageFileName = "puredarwin-stripped.img";
-      };
       minimalBootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
       imageMinimalBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemMinimal;
@@ -1601,6 +1546,9 @@ let
         kc = kcBuild;
         xnuLoader = xnuLoaderDefault;
         apfsprogs = pkgs.apfsprogs;
+        # BIOS through the MBR stages, 64-bit and 32-bit UEFI from the ESP, as image does
+        inherit legacyBoot;
+        extraLoaders = [ { loader = xnuLoaderIa32; efiBinary = "BOOTIA32.EFI"; } ];
         imageFileName = "puredarwin-minimal.img";
         espMB = 60;
         rootMB = 320;
@@ -1644,61 +1592,8 @@ let
         imageFileName = "puredarwin-store-minimal.img";
         rootMB = 1024;
       };
-      # The minimal system on an APFS root. Same contents as image-minimal, so
-      # a boot failure here is the APFS path rather than anything in userland.
-      imageApfsMinimalBuild = pkgs.callPackage ../image.nix {
-        baseSystem = splitBaseSystemMinimal;
-        extraPackages = strippedExtraPackages;
-        kc = kcBuild;
-        xnuLoader = xnuLoaderDefault;
-        apfsprogs = pkgs.apfsprogs;
-        libapfsrw = libapfsrwBuild;
-        rootFsType = "apfs";
-        imageFileName = "puredarwin-apfs-minimal.img";
-        espMB = 60;
-        rootMB = 260;
-        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
-      };
-      # The minimal system booted by 32-bit UEFI. Same shape as
-      # image-minimal; only the loader and the ESP fallback name differ.
-      imageIa32MinimalBuild = pkgs.callPackage ../image.nix {
-        baseSystem = splitBaseSystemMinimal;
-        extraPackages = strippedExtraPackages;
-        kc = kcBuild;
-        xnuLoader = xnuLoaderIa32;
-        efiBinary = "BOOTIA32.EFI";
-        apfsprogs = pkgs.apfsprogs;
-        imageFileName = "puredarwin-ia32-minimal.img";
-        espMB = 60;
-        rootMB = 260;
-        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
-      };
-      imageLegacyMinimalBuild = pkgs.callPackage ../image.nix {
-        baseSystem = splitBaseSystemMinimal;
-        extraPackages = strippedExtraPackages;
-        kc = kcBuild;
-        xnuLoader = xnuLoaderDefault;
-        inherit legacyBoot;
-        apfsprogs = pkgs.apfsprogs;
-        imageFileName = "puredarwin-legacy-minimal.img";
-        espMB = 60;
-        rootMB = 260;
-        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
-      };
       # BIOS boot through GRUB and xnu-loader's Multiboot2 ELF. UEFI still works
       grubMultibootBoot = xnu-loader.packages.${system}.kernel-grub-bios;
-      imageMultibootMinimalBuild = pkgs.callPackage ../image.nix {
-        baseSystem = splitBaseSystemMinimal;
-        extraPackages = strippedExtraPackages;
-        kc = kcBuild;
-        xnuLoader = xnuLoaderDefault;
-        grubMultiboot = grubMultibootBoot;
-        apfsprogs = pkgs.apfsprogs;
-        imageFileName = "puredarwin-multiboot-minimal.img";
-        espMB = 60;
-        rootMB = 260;
-        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
-      };
       # GRUB (BIOS and UEFI) loading xnu-loader through the Linux boot protocol,
       # with the kernel collection and boot-args in a cpio initrd
       imageGrubLinuxMinimalBuild = pkgs.callPackage ../image.nix {
@@ -1714,55 +1609,6 @@ let
         espMB = 60;
         rootMB = 260;
         bootArgs = minimalBootArgs;
-      };
-      imageMinimalBuildDebug = pkgs.callPackage ../image.nix {
-        baseSystem = splitBaseSystemMinimalDebug;
-        extraPackages = strippedExtraPackages;
-        kc = kcDebugBuild;
-        xnuLoader = xnuLoaderDefault;
-        apfsprogs = pkgs.apfsprogs;
-        imageFileName = "puredarwin-minimal-debug.img";
-        espMB = 64;
-        rootMB = 384;
-        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1 serial_video_mirror=1 pdtrace=1";
-      };
-      # Small x86 diagnostic image: kernel/base plus only enough userland to
-      # get a shell. Keep this independent of X11, Wayland, Mesa, and LLVM.
-      imageShellBuild = pkgs.callPackage ../image.nix {
-        baseSystem = splitBaseSystemStripped;
-        # launchd links CoreFoundation (and its own runtime deps: ICU,
-        # libobjc, libc++) unconditionally, so this needs the same stack
-        # image-stripped/image-minimal already ship it with, not just a shell.
-        # Keep the Cocotron graphics layer together: CoreGraphics uses Onyx2D,
-        # and the screen demo uses PDSurface to present its bitmap context.
-        extraPackages = lib.unique (strippedExtraPackages ++ lib.filter lib.isDerivation [
-          foundationBuild
-          freetype2Build
-          fontconfigBuild
-          libpngBuild
-          libjpegBuild
-          xvfbZlibBuild
-          pdsurfaceBuild
-          onyx2dBuild
-          coregraphicsBuild
-          coretextBuild
-          cgScreenDemoBuild
-          pdresBuild
-          systemFontsBuild
-          waylandBuild
-          waylandProtocolsBuild
-          xkbcommonNoxBuild
-          xkeyboardConfigBuild
-          neuwldBuild
-          neuswcBuild
-        ]);
-        kc = kcBuild;
-        xnuLoader = xnuLoaderDefault;
-        apfsprogs = pkgs.apfsprogs;
-        imageFileName = "puredarwin-shell.img";
-        espMB = 60;
-        rootMB = 420;
-        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 serial_video_mirror=1 pd_fault_trace=1";
       };
       # ps from PureDarwin's own userland, toybox's ps reads Linux /proc
       psOnlyBuild = pkgs.runCommand "puredarwin-ps" { } ''
@@ -1858,18 +1704,6 @@ let
           -e boot/efi.img -no-emul-boot -isohybrid-gpt-basdat \
           iso
       '';
-      imageLegacyShellBuild = pkgs.callPackage ../image.nix {
-        baseSystem = splitBaseSystemStripped;
-        extraPackages = strippedExtraPackages;
-        kc = kcBuild;
-        xnuLoader = xnuLoaderDefault;
-        inherit legacyBoot;
-        apfsprogs = pkgs.apfsprogs;
-        imageFileName = "puredarwin-legacy-shell.img";
-        espMB = 60;
-        rootMB = 300;
-        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 serial_video_mirror=1";
-      };
       # One body for every UEFI runner. The differences between them are real
       # but small - firmware, accelerator, CPU, how the disk is attached - so
       # they are parameters rather than four near-copies that drift apart.
@@ -2601,7 +2435,6 @@ EOF
       systemstarter = systemStarterBuild;
       launchd = launchdBuild;
       launchctl = launchctlBuild;
-      image = imageBuild;
       image-arm64-virt = imageArm64VirtBuild;
       image-arm64-virt-debug = imageArm64VirtDebugBuild;
       image-arm64-bcm2837 = imageArm64Bcm2837Build;
@@ -2614,7 +2447,6 @@ EOF
       image-hfs = imageHfsBuild;
       image-apfs = imageApfsBuild;
       image-debug = imageDebugBuild;
-      image-stripped = imageStrippedBuild;
       onyx2d = onyx2dBuild;
       coregraphics = coregraphicsBuild;
       coretext = coretextBuild;
@@ -2649,21 +2481,9 @@ EOF
       msdos-cmds = msdosCmdsBuild;
       pdbless = pdblessBuild;
       image-aux-test = imageAuxTestBuild;
-      image-store-minimal = imageStoreMinimalBuild;
       image-builder = imageBuilderBuild;
-      image-apfs-minimal = imageApfsMinimalBuild;
-      image-legacy = imageLegacyBuild;
-      image-ia32 = imageIa32Build;
-      image-ia32-minimal = imageIa32MinimalBuild;
-      image-ia32-dual = imageIa32DualBuild;
       # the 32-bit uefi loader, so other images can carry it next to BOOTX64.EFI
       xnu-loader-ia32 = xnuLoaderIa32;
-      image-legacy-minimal = imageLegacyMinimalBuild;
-      image-multiboot-minimal = imageMultibootMinimalBuild;
-      image-grub-linux-minimal = imageGrubLinuxMinimalBuild;
-      image-minimal-debug = imageMinimalBuildDebug;
-      image-shell = imageShellBuild;
-      image-legacy-shell = imageLegacyShellBuild;
       xorg = xorgBuild;
       libxcvt = xvfbLibxcvtBuild;
       userland = userlandBuild;

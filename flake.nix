@@ -5776,23 +5776,6 @@
               echo "PureDarwin Nix kernel shell: cmake/nix-toolchain.cmake and cached native ld/migcom/unifdef are active."
             '';
           });
-          # the minimal image with amdgpu in the auxiliary KC and its firmware
-          # next to the kext, for the iGPU passthrough VMs
-          drmAmdgpuKexts = pkgs.symlinkJoin {
-            name = "puredarwin-kexts-amdgpu";
-            paths = [ kextsBuild drmAmdgpuBuild ];
-          };
-          kcAmdgpuBuild = pkgs.callPackage ./nix/pkgs/toolchain/kc.nix {
-            kernel = kernelBuild;
-            inherit kernelSource;
-            kexts = drmAmdgpuKexts;
-            kcTools = kc-tools.packages.${system}.default;
-            auxKexts = [ "PDDRMamdgpu.kext" ];
-          };
-          amdgpuAuxFiles = pkgs.runCommand "puredarwin-amdgpu-aux" { } ''
-            mkdir -p $out/Library/KernelCollections
-            cp ${kcAmdgpuBuild}/aux.kc $out/Library/KernelCollections/AuxiliaryKernelExtensions.kc
-          '';
           # amdgpu firmware from linux-firmware, per gpu family (the file prefixes
           # of its gc, psp, sdma, dcn and vcn ip versions), into
           # /Library/Firmware/amdgpu where the kext loads it by name. AMD's licence
@@ -5849,34 +5832,16 @@
             done
             cp ${pkgs.linux-firmware.src}/LICENSES/LICENSE.amdgpu $fw/LICENSE.amdgpu
           '';
+          # the test images, by their name in the tests set and their package name in image-contents.nix
+          testImageNames = {
+            cg = "image-cg-test";
+            frameworks = "image-frameworks-test";
+            tools = "image-tools-test";
+            aux = "image-aux-test";
+            login = "image-login-test";
+          };
           # the images built on image-wayland-minimal bring their own aux KC instead of the default one
           dropGpuDefaults = builtins.filter (p: !(builtins.elem p gpuDefaultPackages));
-          imageAmdgpuBuild = linuxPackages.image-wayland-minimal.override (old: {
-            kc = kcAmdgpuBuild;
-            # the default carries only the two APUs PD is tested on, see image-amdgpu-allfw
-            # userland brings pdkext, which loads the aux KC (the wayland base leaves it out)
-            extraPackages = dropGpuDefaults old.extraPackages ++ [ userlandBuild amdgpuAuxFiles
-              (mkAmdgpuFirmware [ "granite-ridge" "mendocino" "navi21" "navi22" "navi23" "navi24" "navi31" "navi32" "navi33" "raven" "renoir" "rembrandt" "kaveri" "kabini" "mullins" "polaris10" "polaris11" "polaris12" "vegam" ]) ];
-            imageFileName = "puredarwin-amdgpu.img";
-            # the aux KC is not SIP protected on ext4, allow unrestricted fs and untrusted kexts
-            bootArgs = old.bootArgs + " csr-active-config=0x3";
-          });
-          # radeon in the auxiliary KC on its own, for the turks bring-up
-          drmRadeonKexts = pkgs.symlinkJoin {
-            name = "puredarwin-kexts-radeon";
-            paths = [ kextsBuild drmRadeonBuild ];
-          };
-          kcRadeonBuild = pkgs.callPackage ./nix/pkgs/toolchain/kc.nix {
-            kernel = kernelBuild;
-            inherit kernelSource;
-            kexts = drmRadeonKexts;
-            kcTools = kc-tools.packages.${system}.default;
-            auxKexts = [ "PDDRMradeon.kext" ];
-          };
-          radeonAuxFiles = pkgs.runCommand "puredarwin-radeon-aux" { } ''
-            mkdir -p $out/Library/KernelCollections
-            cp ${kcRadeonBuild}/aux.kc $out/Library/KernelCollections/AuxiliaryKernelExtensions.kc
-          '';
           # the radeon microcode northern islands asks for (pfp, me, mc, smc, rlc and uvd), into
           # /Library/Firmware/radeon. AMD's licence allows redistribution, LICENSE.radeon goes along.
           radeonFirmware = pkgs.runCommand "puredarwin-radeon-firmware" { } ''
@@ -5896,30 +5861,6 @@
             done
             cp ${pkgs.linux-firmware.src}/LICENSES/LICENSE.radeon $fw/LICENSE.radeon 2>/dev/null || \
               cp ${pkgs.linux-firmware.src}/LICENSE.radeon $fw/LICENSE.radeon
-          '';
-          imageRadeonBuild = linuxPackages.image-wayland-minimal.override (old: {
-            kc = kcRadeonBuild;
-            extraPackages = dropGpuDefaults old.extraPackages ++ [ userlandBuild radeonAuxFiles radeonFirmware ];
-            imageFileName = "puredarwin-radeon.img";
-            # the aux KC is not SIP protected on ext4, allow unrestricted fs and untrusted kexts
-            bootArgs = old.bootArgs + " csr-active-config=0x3 fbsdkpi_debug=1";
-          });
-          # i915 in the auxiliary KC, the GOP framebuffer in the boot KC drives the display
-          # when it doesn't attach
-          drmI915Kexts = pkgs.symlinkJoin {
-            name = "puredarwin-kexts-i915";
-            paths = [ kextsBuild drmI915Build ];
-          };
-          kcI915Build = pkgs.callPackage ./nix/pkgs/toolchain/kc.nix {
-            kernel = kernelBuild;
-            inherit kernelSource;
-            kexts = drmI915Kexts;
-            kcTools = kc-tools.packages.${system}.default;
-            auxKexts = [ "PDDRMi915.kext" ];
-          };
-          i915AuxFiles = pkgs.runCommand "puredarwin-i915-aux" { } ''
-            mkdir -p $out/Library/KernelCollections
-            cp ${kcI915Build}/aux.kc $out/Library/KernelCollections/AuxiliaryKernelExtensions.kc
           '';
           # the display firmware (DMC) for gemini lake, tiger lake and rocket lake, i915 asks
           # for i915/<name> and the kext reads /Library/Firmware/i915/<name>
@@ -5957,22 +5898,6 @@
             EOF
             chmod +x $out/usr/bin/pd-gfxinfo
           '';
-          # verbose boot on the screen, i915 opted in, no serial console (the boxes have none),
-          # with the combined aux KC so pdnouveau=1 also brings up an optimus laptop's nvidia gpu
-          imageI915Build =linuxPackages.image-wayland-minimal.override (old: {
-            kc = kcGpuBuild;
-            extraPackages = dropGpuDefaults old.extraPackages ++ [ userlandBuild gpuAuxFiles i915Firmware gfxInfoTool
-              i915GlFiles i915GlNeuswcEnv pdgltriBuild libdrmAmdgpuBuild libelfBuild ];
-            imageFileName = "puredarwin-i915.img";
-            bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 gopconsole=1 -noprogress csr-active-config=0x3 fbsdkpi_debug=1 drm_debug=0x4 i915_enable_dc=0 i915_disable_power_well=0 i915_enable_fbc=0";
-          });
-          # the same with the BIOS loader in the MBR, for qemu's legacy IGD passthrough
-          # (i440fx and SeaBIOS give the guest real stolen memory)
-          imageI915LegacyBuild = imageI915Build.override (old: {
-            legacyBoot = xnu-loader.packages.${system}.legacy-boot.override { stage2Lba = 34; };
-            imageFileName = "puredarwin-i915-legacy.img";
-            bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=0 -noprogress csr-active-config=0x3 fbsdkpi_debug=1 drm_debug=0x4 i915_enable_dc=0 i915_disable_power_well=0 i915_enable_fbc=0";
-          });
           # neuswc composites with gles on crocus into the presenter's flip pair, argon_gfx=cpu
           # in the boot-args picks the cpu path for comparison, argon_trace=1 logs each present
           i915GlNeuswcEnv = pkgs.writeTextDir "etc/neuswc.env" ''
@@ -6015,14 +5940,15 @@
           # the drm kexts, PDDRMDri in the boot KC gives them one /dev/dri
           drmGpuKexts = pkgs.symlinkJoin {
             name = "puredarwin-kexts-gpu";
-            paths = [ kextsBuild drmAmdgpuBuild drmI915Build drmNouveauBuild ];
+            paths = [ kextsBuild drmAmdgpuBuild drmI915Build drmNouveauBuild drmRadeonBuild ];
           };
           kcGpuBuild = pkgs.callPackage ./nix/pkgs/toolchain/kc.nix {
             kernel = kernelBuild;
             inherit kernelSource;
             kexts = drmGpuKexts;
             kcTools = kc-tools.packages.${system}.default;
-            auxKexts = [ "PDDRMamdgpu.kext" "PDDRMi915.kext" "PDDRMnouveau.kext" "PDFBSDrtwn.kext" "PDFBSDrun.kext" "PDFBSDix.kext" "PDSerialHID.kext" ];
+            # radeon takes the pre-GCN parts it lists at a higher score than amdgpu's catch-all, amdgpu the rest
+            auxKexts = [ "PDDRMamdgpu.kext" "PDDRMi915.kext" "PDDRMnouveau.kext" "PDDRMradeon.kext" "PDFBSDiwlwifi.kext" "PDFBSDrtwn.kext" "PDFBSDrun.kext" "PDFBSDix.kext" "PDSerialHID.kext" ];
           };
           # what every desktop image carries for the drm drivers: the combined aux KC and firmware
           gpuDefaultPackages = [ gpuAuxFiles (mkAmdgpuFirmware [ "granite-ridge" "mendocino" "navi21" "navi22" "navi23" "navi24" "navi31" "navi32" "navi33" "raven" "renoir" "rembrandt" "kaveri" "kabini" "mullins" "polaris10" "polaris11" "polaris12" "vegam" ]) i915Firmware ];
@@ -6039,8 +5965,15 @@
             kc = kcGpuBuild;
             extraPackages = dropGpuDefaults old.extraPackages ++ [ userlandBuild gpuAuxFiles
               (mkAmdgpuFirmware [ "granite-ridge" "mendocino" "navi21" "navi22" "navi23" "navi24" "navi31" "navi32" "navi33" "raven" "renoir" "rembrandt" "kaveri" "kabini" "mullins" "polaris10" "polaris11" "polaris12" "vegam" ]) i915Firmware gfxInfoTool
-              radvFiles libdrmAmdgpuBuild vulkanLoaderNoxBuild vulkanToolsNoxBuild i915GlFiles i915GlNeuswcEnv pdgltriBuild libelfBuild nouveauFirmware ];
-            imageFileName = "puredarwin-gpu-nouveau.img";
+              radvFiles libdrmAmdgpuBuild vulkanLoaderNoxBuild vulkanToolsNoxBuild i915GlFiles i915GlNeuswcEnv pdgltriBuild libelfBuild nouveauFirmware
+              radeonFirmware iwlwifiFirmwareBuild ];
+            imageFileName = "puredarwin.img";
+            # one disk for every x86 firmware: BIOS through the MBR stages, 64-bit UEFI by BOOTX64.EFI and 32-bit
+            # UEFI by BOOTIA32.EFI on the same ESP, each picks its own; the kernel and KC are x86_64 either way
+            legacyBoot = xnu-loader.packages.${system}.legacy-boot.override { stage2Lba = 34; };
+            extraLoaders = (old.extraLoaders or [ ]) ++ [
+              { loader = linuxPackages.xnu-loader-ia32; efiBinary = "BOOTIA32.EFI"; }
+            ];
             # every drm firmware family no longer fits the wayland-minimal root
             rootMB = old.rootMB + 600;
             bootArgs = "-v debug=0x210 -nogzalloc_mode keepsyms=1 gopconsole=1 -noprogress csr-active-config=0x3 fbsdkpi_debug=1 pdnouveau=1";
@@ -6051,11 +5984,6 @@
           mkSecureBootImage = image: pkgs.callPackage ./nix/lib/secureboot.nix { shim = shimBuild; shimIa32 = shimIa32Build; } {
             inherit image;
             key = pd-sb-key;
-          };
-          # the combined gpu image with the BIOS loader in the MBR
-          imageGpuLegacyBuild = imageGpuBuild.override {
-            legacyBoot = xnu-loader.packages.${system}.legacy-boot.override { stage2Lba = 34; };
-            imageFileName = "puredarwin-gpu-legacy.img";
           };
           # iwlwifi asks for bare names, the kext also looks in /Library/Firmware/iwlwifi.
           # the newest three api versions of each family the matched cards use, plus pnvm
@@ -6077,67 +6005,12 @@
             done
             cp ${pkgs.linux-firmware.src}/LICENSES/LICENCE.iwlwifi_firmware $fw/LICENCE.iwlwifi_firmware
           '';
-          # intel wifi in the auxiliary KC, the boot KC has no room left under the loader's 64 MB
-          kcIwlwifiBuild = pkgs.callPackage ./nix/pkgs/toolchain/kc.nix {
-            kernel = kernelBuild;
-            inherit kernelSource;
-            kexts = kextsBuild;
-            kcTools = kc-tools.packages.${system}.default;
-            auxKexts = [ "PDFBSDiwlwifi.kext" ];
-          };
-          iwlwifiAuxFiles = pkgs.runCommand "puredarwin-iwlwifi-aux" { } ''
-            mkdir -p $out/Library/KernelCollections
-            cp ${kcIwlwifiBuild}/aux.kc $out/Library/KernelCollections/AuxiliaryKernelExtensions.kc
-          '';
-          # intel wifi bring-up: the wayland minimal desktop, pdkext loads the aux KC, driver logs on serial
-          imageIwlwifiBuild = linuxPackages.image-wayland-minimal.override (old: {
-            kc = kcIwlwifiBuild;
-            extraPackages = old.extraPackages ++ [ userlandBuild iwlwifiAuxFiles iwlwifiFirmwareBuild ];
-            imageFileName = "puredarwin-iwlwifi.img";
-            bootArgs = old.bootArgs + " csr-active-config=0x3 serial=3 fbsdkpi_debug=1";
-          });
-          # every amdgpu firmware file linux-firmware has
-          imageAmdgpuAllFwBuild = imageAmdgpuBuild.override (old: {
-            extraPackages = old.extraPackages ++ [ (mkAmdgpuFirmware "all") ];
-            imageFileName = "puredarwin-amdgpu-allfw.img";
-            rootMB = old.rootMB + 200;
-          });
-          # the desktop through PDDRMFramebuffer, with the kernel and driver logs on serial
-          # drmprobe exercises /dev/dri once at boot, its lines go to the console
-          drmprobeLaunchd = pkgs.runCommand "puredarwin-drmprobe-launchd" { } ''
-            mkdir -p $out/System/Library/LaunchDaemons
-            cat > $out/System/Library/LaunchDaemons/org.puredarwin.drmprobe.plist <<EOF
-            <?xml version="1.0" encoding="UTF-8"?>
-            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-            <plist version="1.0">
-            <dict>
-            	<key>Label</key><string>org.puredarwin.drmprobe</string>
-            	<key>ProgramArguments</key><array><string>/usr/sbin/drmprobe</string></array>
-            	<key>RunAtLoad</key><true/>
-            	<key>LaunchOnlyOnce</key><true/>
-            	<key>StandardOutPath</key><string>/dev/console</string>
-            	<key>StandardErrorPath</key><string>/dev/console</string>
-            </dict>
-            </plist>
-            EOF
-          '';
-          imageAmdgpuDebugBuild = imageAmdgpuBuild.override (old: {
-            extraPackages = old.extraPackages ++ [ drmprobeLaunchd ];
-            bootArgs = old.bootArgs + " -v fbsdkpi_debug=1";
-            imageFileName = "puredarwin-amdgpu-debug.img";
-          });
           # radv on /dev/dri and its icd, the same files the system mesa carries
           radvFiles = pkgs.runCommand "puredarwin-radv-files" { } ''
             mkdir -p $out/usr/lib $out/usr/share/vulkan/icd.d
             cp ${mesaGpuBuild}/usr/lib/libvulkan_radeon.dylib $out/usr/lib/
             cp ${mesaGpuBuild}/usr/share/vulkan/icd.d/radeon_icd.x86_64.json $out/usr/share/vulkan/icd.d/
           '';
-          amdcsBuild =
-            pkgs.callPackage ./nix/pkgs/gpu/amdcs.nix {
-              inherit darwinCrossToolchain nativeLd;
-              libSystem = libSystemBuild;
-              libdrmAmdgpu = libdrmAmdgpuBuild;
-            };
           pdnvprobeBuild =
             pkgs.callPackage ./nix/pkgs/gpu/pdnvprobe.nix {
               inherit darwinCrossToolchain nativeLd;
@@ -6160,7 +6033,7 @@
             kc = kcNvidiaBuild;
             extraPackages = builtins.filter (p: p != gpuAuxFiles) old.extraPackages
               ++ [ nvidiaAuxFiles elftransBuild nvidia580 nvidiaLinuxRoot pdnvprobeBuild ];
-            imageFileName = "puredarwin-gpu-nvidia.img";
+            imageFileName = "puredarwin-nvidia.img";
             rootMB = old.rootMB + 600;
             bootArgs = "-v debug=0x210 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 -noprogress csr-active-config=0x3 fbsdkpi_debug=1";
           });
@@ -6170,69 +6043,11 @@
               libSystem = libSystemBuild;
               mesa = mesaGpuBuild;
             };
-          # drmprobe, then vulkaninfo on radv, once at boot, to the console
-          gpuTestLaunchd = pkgs.runCommand "puredarwin-gpu-test-launchd" { } ''
-            mkdir -p $out/System/Library/LaunchDaemons $out/usr/sbin
-            cat > $out/usr/sbin/pd-gpu-test <<'EOF2'
-            #!/bin/zsh
-            /usr/sbin/drmprobe
-            echo "gputest: vulkaninfo on radv"
-            VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json \
-              /usr/bin/vulkaninfo --summary 2>&1 | sed 's/^/vulkaninfo: /'
-            echo "gputest: sdma submission"
-            /usr/sbin/amdcs 2>&1
-            echo "gputest: gles triangle on radeonsi"
-            /usr/sbin/pdgltri 2>&1
-            echo "gputest: done"
-            EOF2
-            chmod 755 $out/usr/sbin/pd-gpu-test
-            cat > $out/System/Library/LaunchDaemons/org.puredarwin.gputest.plist <<EOF
-            <?xml version="1.0" encoding="UTF-8"?>
-            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-            <plist version="1.0">
-            <dict>
-            	<key>Label</key><string>org.puredarwin.gputest</string>
-            	<key>ProgramArguments</key><array><string>/usr/sbin/pd-gpu-test</string></array>
-            	<key>RunAtLoad</key><true/>
-            	<key>LaunchOnlyOnce</key><true/>
-            	<key>StandardOutPath</key><string>/dev/console</string>
-            	<key>StandardErrorPath</key><string>/dev/console</string>
-            </dict>
-            </plist>
-            EOF
-          '';
-          imageAmdgpuMesaBuild = imageAmdgpuBuild.override (old: {
-            extraPackages = old.extraPackages ++ [ gpuTestLaunchd radvFiles libdrmAmdgpuBuild pdgltriBuild amdcsBuild libelfBuild
-              vulkanLoaderNoxBuild vulkanToolsNoxBuild ];
-            bootArgs = old.bootArgs + " -v fbsdkpi_debug=1";
-            imageFileName = "puredarwin-amdgpu-mesa.img";
-          });
           # neuswc composites with GL on radeonsi (gles) or with pixman (cpu)
           neuswcEnv = gfx: pkgs.writeTextDir "etc/neuswc.env" ''
             NEUSWC_ENV="ARGON_GFX=${gfx} SWC_WAIT_HW_FB=30"
             NEUSWC_LOG=/dev/console
           '';
-          # bare metal too: no boot-time gpu tests, and neuswc composites on the cpu when amdgpu does not come up
-          imageAmdgpuArgonBuild = gfx: imageAmdgpuBuild.override (old: {
-            extraPackages = old.extraPackages ++ [ radvFiles libdrmAmdgpuBuild libelfBuild vulkanLoaderNoxBuild
-              (neuswcEnv gfx) ];
-            imageFileName = "puredarwin-amdgpu-argon-${gfx}.img";
-          });
-          # mode tests: start at 1280x720, and start at the preferred mode then switch to 1280x720
-          imageAmdgpu720Build = imageAmdgpuDebugBuild.override (old: {
-            bootArgs = old.bootArgs + " pdfb_mode=12800720";
-            imageFileName = "puredarwin-amdgpu-720.img";
-          });
-          imageAmdgpuSwitchBuild = imageAmdgpuDebugBuild.override (old: {
-            bootArgs = old.bootArgs + " pdfb_switch=12800720";
-            imageFileName = "puredarwin-amdgpu-switch.img";
-          });
-          # the same with drm_testpattern=1: colour bars on every lit display
-          imageAmdgpuTestBuild = imageAmdgpuBuild.override (old: {
-            # -v and fbsdkpi_debug keep the kernel and driver logs on serial for the bring-up scripts
-            bootArgs = old.bootArgs + " -v fbsdkpi_debug=1 drm_testpattern=1";
-            imageFileName = "puredarwin-amdgpu-test.img";
-          });
         in {
           packages = {
             iovirtiogpu-kext = kextBuilds.IOVirtIOGPU;
@@ -6249,43 +6064,32 @@
             libelf = libelfBuild;
             mesa-amdgpu = mesaAmdgpuBuild;
             mesa-gpu = mesaGpuBuild;
-            image-amdgpu = imageAmdgpuBuild;
-            image-amdgpu-test = imageAmdgpuTestBuild;
-            image-amdgpu-debug = imageAmdgpuDebugBuild;
-            image-amdgpu-mesa = imageAmdgpuMesaBuild;
-            image-amdgpu-argon-gles = imageAmdgpuArgonBuild "gles";
-            image-amdgpu-argon-cpu = imageAmdgpuArgonBuild "cpu";
-            image-amdgpu-720 = imageAmdgpu720Build;
-            image-amdgpu-switch = imageAmdgpuSwitchBuild;
-            image-amdgpu-allfw = imageAmdgpuAllFwBuild;
             drm-kmod-radeon-src = drmKmodRadeonSrc;
             drm-radeon = drmRadeonBuild;
-            kc-radeon = kcRadeonBuild;
             radeon-firmware = radeonFirmware;
-            image-radeon = imageRadeonBuild;
             drm-kmod-i915-src = drmKmodI915Src;
             drm-i915 = drmI915Build;
             drm-kmod-nouveau-src = drmKmodNouveauSrc;
             drm-nouveau = drmNouveauBuild;
             nouveau-firmware = nouveauFirmware;
-            kc-i915 = kcI915Build;
             i915-firmware = i915Firmware;
-            image-i915 = imageI915Build;
-            image-iwlwifi = imageIwlwifiBuild;
-            image-i915-legacy = imageI915LegacyBuild;
             kc-gpu = kcGpuBuild;
             pdnvprobe = pdnvprobeBuild;
             nvidia-580 = nvidia580;
             pdnvvk = pdnvvkBuild;
             kc-nvidia = kcNvidiaBuild;
-            image-gpu-nvidia = imageNvidiaBuild;
-            image-gpu = imageGpuBuild;
-            image-gpu-sb = mkSecureBootImage imageGpuBuild;
-            image-gpu-legacy = imageGpuLegacyBuild;
             amdgpu-firmware-default = mkAmdgpuFirmware [ "granite-ridge" "mendocino" "navi21" "navi22" "navi23" "navi24" "renoir" "rembrandt" ];
             amdgpu-firmware-all = mkAmdgpuFirmware "all";
-          } // commonPackages // arm64Packages // probePackages // linuxPackages
+          } // commonPackages // arm64Packages // probePackages // removeAttrs linuxPackages (lib.attrValues testImageNames) // {
+            # the one x86 image: every gpu and wifi driver, BIOS, 64-bit and 32-bit UEFI on the same disk
+            image = imageGpuBuild;
+            image-sb = mkSecureBootImage imageGpuBuild;
+            # the same with NVIDIA's 580 driver for Maxwell to Volta
+            image-nvidia = imageNvidiaBuild;
+          }
             // lib.filterAttrs (_: lib.isDerivation) nixPortPackages;
+          # images that boot to run one test, apart from the shipped ones: nix build .#tests.cg
+          tests = lib.optionalAttrs (!isDarwin) (lib.mapAttrs (_: n: linuxPackages.${n}) testImageNames);
           apps = lib.optionalAttrs (!isDarwin) (linuxApps // {
             # metal shaders in a Linux window (pdmtl demo): nix run .#metal-window
             metal-window = {
@@ -6300,6 +6104,7 @@
         };
     in {
       packages = forAllSystems (system: (mkSystem system).packages);
+      legacyPackages = forAllSystems (system: { tests = (mkSystem system).tests; });
       apps = forAllSystems (system: (mkSystem system).apps);
       devShells = forAllSystems (system: (mkSystem system).devShells);
     };
