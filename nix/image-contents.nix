@@ -913,32 +913,8 @@ let
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 serial_video_mirror=1 no_interrupt_masked_debug=1 rd=md0";
       };
       # the same minimal root for Inferno's s8000, md0 from the initrd
-      ramdiskArm64S8000Build = pkgs.callPackage ../image.nix {
-        baseSystem = splitBaseSystemArm64VirtMinimal;
-        extraPackages = [ zshArm64Build libiconvArm64Build toyboxArm64Build ];
+      ramdiskArm64S8000Build = ramdiskArm64T8010Build.override {
         kc = kcArm64S8000DebugBuild;
-        xnuLoader = xnuLoaderArm64;
-        apfsprogs = pkgs.apfsprogs;
-        efiBinary = "BOOTAA64.EFI";
-        netbootOnly = true;
-        useRamdisk = true;
-        # the pruned tree is ~98MB, mostly libicudata for CoreFoundation, leaving ~55MB to write into
-        # pongoOS's 128MB upload cap and 64MB static-region cap were raised to carry it
-        ramdiskMB = 160;
-        # pongoOS chainloads the kernel, so the kernels and link archives go, with the headers and static
-        # libraries nothing on a first boot needs
-        ramdiskPrune = [
-          "System/Library/Kernels"
-          "include"
-          "usr/include"
-          "usr/local/include"
-          "pd-guest-headers"
-          "pd-xpc-dev"
-          "lib/pkgconfig"
-          "usr/lib/pkgconfig"
-          "applets.txt"
-        ];
-        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 serial_video_mirror=1 no_interrupt_masked_debug=1 rd=md0";
       };
       # same pruned ext4 root as T8010, for the Orange Pi Zero 3: xnu-loader carries it as ramdisk.img
       ramdiskArm64Sun50iBuild = ramdiskArm64T8010Build.override {
