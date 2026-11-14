@@ -1705,7 +1705,7 @@ let
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-grub-linux-minimal.img";
         espMB = 60;
-        rootMB = 260;
+        rootMB = 512;
         bootArgs = minimalBootArgs;
       };
       imageMinimalBuildDebug = pkgs.callPackage ../image.nix {
