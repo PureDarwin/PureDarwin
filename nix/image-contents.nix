@@ -1689,7 +1689,7 @@ let
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-multiboot-minimal.img";
         espMB = 60;
-        rootMB = 260;
+        rootMB = 512;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
       };
       # GRUB (BIOS and UEFI) loading xnu-loader through the Linux boot protocol,
