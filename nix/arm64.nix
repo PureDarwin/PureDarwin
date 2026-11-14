@@ -229,8 +229,6 @@ let
     zlib = xvfbZlibArm64Build;
     curl = curlArm64Build;
     openssl = opensslArm64Build;
-    corefoundation = coreFoundationArm64Build;
-    systemConfiguration = systemConfigurationArm64Build;
   };
   gtk3Arm64Build = mkArm64Build ./pkgs/gtk/gtk3.nix {
     nativeMesonTools = nativeMesonToolsDir;
