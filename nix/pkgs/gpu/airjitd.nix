@@ -44,7 +44,7 @@ stdenv.mkDerivation {
 
   installPhase = ''
     runHook preInstall
-    install -Dm755 airjitd $out/usr/libexec/ifcstart
+    install -Dm755 airjitd $out/usr/libexec/airjitd
     runHook postInstall
   '';
 
