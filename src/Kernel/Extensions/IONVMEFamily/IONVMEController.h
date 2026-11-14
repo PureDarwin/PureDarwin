@@ -60,6 +60,11 @@ private:
     } __attribute__((packed));
 
     IOPCIDevice *fProvider;
+    IOService *fANSProvider;    // apple ans2: a platform nub instead of a pci function
+    IOMemoryMap *fASCMap;       // its coprocessor's mailbox
+    volatile UInt8 *fASC;
+    IOBufferMemoryDescriptor *fAdminTCBMem;
+    IOBufferMemoryDescriptor *fIOTCBMem;
     IOMemoryMap *fRegMap;
     IOMemoryDescriptor *fRegDesc;
     volatile UInt8 *fRegs;
@@ -94,6 +99,11 @@ private:
     char fFirmware[9];
 
     bool mapRegisters(void);
+    bool mapANSRegisters(void);
+    bool bootANS(void);
+    bool ascSend(UInt64 msg, UInt8 ep);
+    bool ascRecv(UInt64 *msg, UInt8 *ep, UInt32 timeoutMs);
+    void ansSetTCB(bool admin, UInt16 tag, const NVMeCommand *cmd);
     bool allocQueues(void);
     void freeQueues(void);
     bool resetController(void);
