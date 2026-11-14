@@ -1553,6 +1553,7 @@
     inherit (pkgs) meson ninja pkg-config python3 bison flex xorgproto xtrans;
     appleSdk = pkgs.appleSdk;
     libelf = pkgs.libelf;
+      libdrmAmdgpu = null;
   };
   mesaDemos = callPackage ../pkgs/mesa/mesa-demos.nix {
     nativeMesonTools = self.nativeMesonToolsDir;
@@ -1851,4 +1852,174 @@
     cmake = pkgs.cmake;
     ninja = pkgs.ninja;
   };
+  atspi2CoreNox = self.atspi2Core.override { dbus = self.dbusNox; };
+  cairoGobjectNox = self.cairoGobject.override { cairo = self.cairoNox; };
+  cairoNox = self.cairo.override {
+                withX11 = false;
+                xorgproto = null; libX11 = null; libXext = null;
+                libXrender = null; libxcb = null; libXau = null; libXdmcp = null;
+              };
+  dbusNox = self.dbus.override {
+                withX11 = false;
+                libX11 = null; libxcb = null; libXau = null; libXdmcp = null;
+                xorgproto = null;
+              };
+  fastfetchNox = self.fastfetch.override {
+                withX11 = false;
+                mesa = self.mesaNox;
+                glu = self.gluNox;
+                openglFramework = self.openglFrameworkNox;
+                libX11 = null; libXext = null; libxcb = null;
+                libXau = null; libXdmcp = null;
+              };
+  gluNox = self.gluBuild.override { mesa = self.mesa; };
+  gtk3Nox = self.gtk3.override {
+                withX11 = false;
+                cairo = self.cairoNox;
+                cairoGobject = self.cairoGobjectNox;
+                pango = self.pangoNox;
+                harfbuzz = self.harfbuzzNox;
+                libepoxy = self.libepoxyNox;
+                mesa = self.mesaNox;
+                dbus = self.dbusNox;
+                atspi2Core = self.atspi2CoreNox;
+                xkbcommon = self.xkbcommonNox;
+                libX11 = null;
+                libxcb = null;
+                libXau = null;
+                libXdmcp = null;
+                libXext = null;
+                libXi = null;
+                libXrender = null;
+                libXrandr = null;
+                libXfixes = null;
+                libXcursor = null;
+                xorgproto = null;
+              };
+  gtkLayerShellNox = self.gtkLayerShell.override {
+                gtk3 = self.gtk3Nox;
+                withX11 = false;
+                atspi2Core = self.atspi2CoreNox;
+                xkbcommon = self.xkbcommonNox;
+                cairo = self.cairoNox;
+                cairoGobject = self.cairoGobjectNox;
+                pango = self.pangoNox;
+                harfbuzz = self.harfbuzzNox;
+                libepoxy = self.libepoxyNox;
+                dbus = self.dbusNox;
+                mesa = self.mesaNox;
+                libX11 = null; libxcb = null; libXau = null; libXdmcp = null;
+                libXext = null; libXi = null; libXrender = null; libXrandr = null;
+                libXfixes = null; libXcursor = null; xorgproto = null;
+              };
+  harfbuzzNox = self.harfbuzz.override { cairo = self.cairoNox; };
+  libdrmAmdgpu = self.libdrm.override { amdgpu = true; nouveau = true; };
+  libepoxyNox = self.libepoxy.override {
+                withX11 = false;
+                mesa = self.mesaNox;
+                libX11 = null; xorgproto = null;
+              };
+  librsvgNox = self.librsvg.override {
+                deps = [
+                  self.glib self.gdkPixbuf self.cairoNox self.cairoGobjectNoxBuild self.pangoNoxBuild
+                  self.libxml2 self.libcroco self.libpng self.freetype2 self.fontconfig
+                  self.fribidi self.harfbuzzNoxBuild self.expat self.pcre2 self.libffi
+                  self.libiconv self.zlib self.pixman
+                ];
+              };
+  mesaAmdgpu = self.mesaNox.override {
+                withAmdgpuDrm = true;
+                libdrmAmdgpu = self.libdrmAmdgpu;
+                libelf = self.libelf;
+              };
+  mesaDemosNox = self.mesaDemos.override {
+                withX11 = false;
+                mesa = self.mesaNox;
+                wayland = self.wayland;
+                xkbcommon = self.xkbcommonNoxBuild;
+                waylandScanner = self.waylandScanner;
+                waylandProtocols = self.waylandProtocols;
+                libX11 = null; libXext = null; libxcb = null; libXau = null;
+                libXdmcp = null; xorgproto = null; xtrans = null;
+              };
+  mesaGpu = self.mesaAmdgpu.override {
+              withIntelDrm = true;
+              withNouveauDrm = true;
+              withVirgl = true;
+              mesaClcTools = pkgs.mesa.cross_tools;
+            };
+  mesaNox = self.mesaBuild.override {
+                withX11 = false;
+                libX11 = null; libXext = null; libxcb = null; libXau = null;
+                libXdmcp = null; libXxf86vm = null; xorgproto = null; xtrans = null;
+              };
+  metalAppleSamplesNox = self.metal-apple-samples.override { metalObjc = self.metalObjcPdNox; };
+  metalObjcPdNox = self.metalObjc.override {
+                vulkanLoader = self.vulkanLoaderNox;
+                metalPd = self.metalPdNox;
+              };
+  metalPdNox = self.metal-pd.override { vulkanLoader = self.vulkanLoaderNox; };
+  mpsNox = self.mps.override { metalObjc = self.metalObjcPdNox; };
+  netsurfNox = self.netsurf.override {
+                withX11 = false;
+                gtk3 = self.gtk3NoxBuild;
+                cairo = self.cairoNox;
+                cairoGobject = self.cairoGobjectNoxBuild;
+                pango = self.pangoNoxBuild;
+                harfbuzz = self.harfbuzzNoxBuild;
+                libepoxy = self.libepoxyNoxBuild;
+                dbus = self.dbusNox;
+                atspi2Core = self.atspi2CoreNoxBuild;
+                libX11 = null; libxcb = null; libXau = null; libXdmcp = null;
+                libXext = null; libXi = null; libXrender = null; libXrandr = null;
+                libXfixes = null; libXcursor = null; xorgproto = null;
+              };
+  openglFrameworkNox = self.openglFrameworkBuild.override {
+                withX11 = false;
+                mesa = self.mesaNox;
+                glu = self.gluNox;
+                libX11 = null; xorgproto = null; libXext = null;
+                libxcb = null; libXau = null; libXdmcp = null;
+              };
+  opensslThreads = self.openssl.override { withThreads = true; };
+  pangoNox = self.pango.override {
+                withX11 = false;
+                cairo = self.cairoNox;
+                harfbuzz = self.harfbuzzNox;
+                libX11 = null; libxcb = null; libXext = null; libXrender = null;
+                xorgproto = null;
+              };
+  swayNox = self.sway.override {
+                withXwayland = false;
+                wlroots = self.wlrootsNox;
+                cairo = self.cairoNox;
+                xkbcommon = self.xkbcommonNox;
+                pango = self.pangoNox;
+                harfbuzz = self.harfbuzzNox;
+                xcb = null;
+                xcbWm = null;
+              };
+  venusTestsNox = self.venus-tests.override { vulkanLoader = self.vulkanLoaderNox; };
+  vulkanLoaderNox = self.vulkanLoader.override {
+                withX11 = false;
+                libX11 = null; libxcb = null; libXau = null; libXdmcp = null;
+                libXrandr = null; libXrender = null; xorgproto = null;
+              };
+  vulkanToolsNox = self.vulkan-tools.override {
+                withX11 = false;
+                vulkanLoader = self.vulkanLoaderNox;
+                libX11 = null; libXext = null; libxcb = null; libXau = null;
+                libXdmcp = null; libXrandr = null; xorgproto = null;
+              };
+  wlrootsNox = self.wlroots.override {
+                withXwayland = false;
+                xcb = null;
+                xcbWm = null;
+                xwayland = null;
+                xkbcommon = self.xkbcommonNox;
+              };
+  xkbcommonNox = self.xkbcommon.override {
+                withX11 = false;
+                libxcb = null; libXau = null; libXdmcp = null;
+              };
 }

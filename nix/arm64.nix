@@ -1623,12 +1623,15 @@ let
     inherit nativeLd;
     # the arm64 builds of the packages not yet in nix/pd/packages.nix, by their scope names
     bridge = {
+      atspi2CoreNoxBuild = throw "nix/pd: no arm64 build of atspi2CoreNoxBuild";
+      cairoGobjectNoxBuild = throw "nix/pd: no arm64 build of cairoGobjectNoxBuild";
       clang = clangCrossArm64Build;
       compilerRt = compilerRtArm64Build;
       darwinCrossToolchain = darwinCrossToolchain;
       diskArbitration = diskArbitrationArm64Build;
       glu = throw "nix/pd: no arm64 build of glu";
       gnutls = gnutlsSharedArm64Build;
+      gtk3NoxBuild = throw "nix/pd: no arm64 build of gtk3NoxBuild";
       harfbuzzNoxBuild = throw "nix/pd: no arm64 build of harfbuzzNoxBuild";
       hostOtool = hostOtoolArm64Build;
       iokitCFStatic = iokitCFStaticArm64Build;
@@ -1643,6 +1646,7 @@ let
       libXrandrSharedBuild = libXrandrSharedArm64Build;
       libXrenderSharedBuild = libXrenderSharedArm64Build;
       libXxf86vm = throw "nix/pd: no arm64 build of libXxf86vm";
+      libepoxyNoxBuild = throw "nix/pd: no arm64 build of libepoxyNoxBuild";
       libxcbSharedBuild = libxcbSharedArm64Build;
       libxshmfence = libxshmfenceSharedArm64Build;
       linux614Src = throw "nix/pd: no arm64 build of linux614Src";
@@ -1654,6 +1658,7 @@ let
       nativeLd = nativeLd;
       openglFramework = throw "nix/pd: no arm64 build of openglFramework";
       opensslThreadsBuild = opensslThreadsArm64Build;
+      pangoNoxBuild = throw "nix/pd: no arm64 build of pangoNoxBuild";
       pdVirglShim = pdVirglShimArm64Build;
       securitySource = securitySource;
       systemConfiguration = systemConfigurationArm64Build;

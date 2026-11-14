@@ -441,8 +441,7 @@
             });
           mesaBuild = pd.x86_64.mesaBuild;
           gluBuild = pd.x86_64.gluBuild;
-          gluNoxBuild =
-            gluBuild.override { mesa = mesaNoxBuild; };
+          gluNoxBuild = pd.x86_64.gluNox;
           mesaDemosBuild = pd.x86_64.mesaDemos;
           # A Mac already has cctools' otool/install_name_tool in nixpkgs.
           hostOtoolBuild =
@@ -622,157 +621,27 @@
           minibrowserAppBuild = pd.x86_64.minibrowser-app;
           # Wayland-only image: cairo/dbus/mesa each bake an libX11 path into
           # their output unless their X11 backends are configured out.
-          cairoNoxBuild =
-            cairoBuild.override {
-              withX11 = false;
-              xorgproto = null; libX11 = null; libXext = null;
-              libXrender = null; libxcb = null; libXau = null; libXdmcp = null;
-            };
-          dbusNoxBuild =
-            dbusBuild.override {
-              withX11 = false;
-              libX11 = null; libxcb = null; libXau = null; libXdmcp = null;
-              xorgproto = null;
-            };
-          mesaNoxBuild =
-            mesaBuild.override {
-              withX11 = false;
-              libX11 = null; libXext = null; libxcb = null; libXau = null;
-              libXdmcp = null; libXxf86vm = null; xorgproto = null; xtrans = null;
-            };
-          mesaAmdgpuBuild =
-            mesaNoxBuild.override {
-              withAmdgpuDrm = true;
-              libdrmAmdgpu = libdrmAmdgpuBuild;
-              libelf = libelfBuild;
-            };
+          cairoNoxBuild = pd.x86_64.cairoNox;
+          dbusNoxBuild = pd.x86_64.dbusNox;
+          mesaNoxBuild = pd.x86_64.mesaNox;
+          mesaAmdgpuBuild = pd.x86_64.mesaAmdgpu;
           # the system mesa: radeonsi, crocus, iris and nouveau by the drm device's pci id, else virgl or llvmpipe
-          mesaGpuBuild = mesaAmdgpuBuild.override {
-            withIntelDrm = true;
-            withNouveauDrm = true;
-            withVirgl = true;
-            mesaClcTools = pkgs.mesa.cross_tools;
-          };
-          openglFrameworkNoxBuild =
-            openglFrameworkBuild.override {
-              withX11 = false;
-              mesa = mesaNoxBuild;
-              glu = gluNoxBuild;
-              libX11 = null; xorgproto = null; libXext = null;
-              libxcb = null; libXau = null; libXdmcp = null;
-            };
-          mesaDemosNoxBuild =
-            mesaDemosBuild.override {
-              withX11 = false;
-              mesa = mesaNoxBuild;
-              wayland = waylandBuild;
-              xkbcommon = xkbcommonNoxBuild;
-              waylandScanner = waylandScannerBuild;
-              waylandProtocols = waylandProtocolsBuild;
-              libX11 = null; libXext = null; libxcb = null; libXau = null;
-              libXdmcp = null; xorgproto = null; xtrans = null;
-            };
+          mesaGpuBuild = pd.x86_64.mesaGpu;
+          openglFrameworkNoxBuild = pd.x86_64.openglFrameworkNox;
+          mesaDemosNoxBuild = pd.x86_64.mesaDemosNox;
           # librsvg takes an explicit deps list rather than a cairo argument, so
           # the nox cairo has to be substituted into it by hand.
-          librsvgNoxBuild =
-            librsvgBuild.override {
-              deps = [
-                glibBuild gdkPixbufBuild cairoNoxBuild cairoGobjectNoxBuild pangoNoxBuild
-                libxml2Build libcrocoBuild libpngBuild freetype2Build fontconfigBuild
-                fribidiBuild harfbuzzNoxBuild expatBuild pcre2Build libffiBuild
-                libiconvBuild xvfbZlibBuild xvfbPixmanBuild
-              ];
-            };
-          netsurfNoxBuild =
-            netsurfBuild.override {
-              withX11 = false;
-              gtk3 = gtk3NoxBuild;
-              cairo = cairoNoxBuild;
-              cairoGobject = cairoGobjectNoxBuild;
-              pango = pangoNoxBuild;
-              harfbuzz = harfbuzzNoxBuild;
-              libepoxy = libepoxyNoxBuild;
-              dbus = dbusNoxBuild;
-              atspi2Core = atspi2CoreNoxBuild;
-              libX11 = null; libxcb = null; libXau = null; libXdmcp = null;
-              libXext = null; libXi = null; libXrender = null; libXrandr = null;
-              libXfixes = null; libXcursor = null; xorgproto = null;
-            };
-          libepoxyNoxBuild =
-            libepoxyBuild.override {
-              withX11 = false;
-              mesa = mesaNoxBuild;
-              libX11 = null; xorgproto = null;
-            };
-          fastfetchNoxBuild =
-            fastfetchBuild.override {
-              withX11 = false;
-              mesa = mesaNoxBuild;
-              glu = gluNoxBuild;
-              openglFramework = openglFrameworkNoxBuild;
-              libX11 = null; libXext = null; libxcb = null;
-              libXau = null; libXdmcp = null;
-            };
-          harfbuzzNoxBuild =
-            harfbuzzBuild.override { cairo = cairoNoxBuild; };
-          atspi2CoreNoxBuild =
-            atspi2CoreBuild.override { dbus = dbusNoxBuild; };
-          cairoGobjectNoxBuild =
-            cairoGobjectBuild.override { cairo = cairoNoxBuild; };
-          xkbcommonNoxBuild =
-            xkbcommonBuild.override {
-              withX11 = false;
-              libxcb = null; libXau = null; libXdmcp = null;
-            };
-          pangoNoxBuild =
-            pangoBuild.override {
-              withX11 = false;
-              cairo = cairoNoxBuild;
-              harfbuzz = harfbuzzNoxBuild;
-              libX11 = null; libxcb = null; libXext = null; libXrender = null;
-              xorgproto = null;
-            };
-          gtk3NoxBuild =
-            gtk3Build.override {
-              withX11 = false;
-              cairo = cairoNoxBuild;
-              cairoGobject = cairoGobjectNoxBuild;
-              pango = pangoNoxBuild;
-              harfbuzz = harfbuzzNoxBuild;
-              libepoxy = libepoxyNoxBuild;
-              mesa = mesaNoxBuild;
-              dbus = dbusNoxBuild;
-              atspi2Core = atspi2CoreNoxBuild;
-              xkbcommon = xkbcommonNoxBuild;
-              libX11 = null;
-              libxcb = null;
-              libXau = null;
-              libXdmcp = null;
-              libXext = null;
-              libXi = null;
-              libXrender = null;
-              libXrandr = null;
-              libXfixes = null;
-              libXcursor = null;
-              xorgproto = null;
-            };
-          gtkLayerShellNoxBuild =
-            gtkLayerShellBuild.override {
-              gtk3 = gtk3NoxBuild;
-              withX11 = false;
-              atspi2Core = atspi2CoreNoxBuild;
-              xkbcommon = xkbcommonNoxBuild;
-              cairo = cairoNoxBuild;
-              cairoGobject = cairoGobjectNoxBuild;
-              pango = pangoNoxBuild;
-              harfbuzz = harfbuzzNoxBuild;
-              libepoxy = libepoxyNoxBuild;
-              dbus = dbusNoxBuild;
-              mesa = mesaNoxBuild;
-              libX11 = null; libxcb = null; libXau = null; libXdmcp = null;
-              libXext = null; libXi = null; libXrender = null; libXrandr = null;
-              libXfixes = null; libXcursor = null; xorgproto = null;
-            };
+          librsvgNoxBuild = pd.x86_64.librsvgNox;
+          netsurfNoxBuild = pd.x86_64.netsurfNox;
+          libepoxyNoxBuild = pd.x86_64.libepoxyNox;
+          fastfetchNoxBuild = pd.x86_64.fastfetchNox;
+          harfbuzzNoxBuild = pd.x86_64.harfbuzzNox;
+          atspi2CoreNoxBuild = pd.x86_64.atspi2CoreNox;
+          cairoGobjectNoxBuild = pd.x86_64.cairoGobjectNox;
+          xkbcommonNoxBuild = pd.x86_64.xkbcommonNox;
+          pangoNoxBuild = pd.x86_64.pangoNox;
+          gtk3NoxBuild = pd.x86_64.gtk3Nox;
+          gtkLayerShellNoxBuild = pd.x86_64.gtkLayerShellNox;
           libwnckBuild = pd.x86_64.libwnck;
           gtkLayerShellBuild = pd.x86_64.gtkLayerShell;
           xvfbBuild = pd.x86_64.xvfb;
@@ -781,7 +650,7 @@
           pdsurfaceBuild = pd.x86_64.pdsurface;
           libgbmBuild = pd.x86_64.libgbm;
           libdrmBuild = pd.x86_64.libdrm;
-          libdrmAmdgpuBuild = libdrmBuild.override { amdgpu = true; nouveau = true; };
+          libdrmAmdgpuBuild = pd.x86_64.libdrmAmdgpu;
           libelfBuild = pd.x86_64.libelf;
           jsoncBuild = pd.x86_64.jsonc;
           xwaylandBuild = pd.x86_64.xwayland;
@@ -1094,19 +963,8 @@
               inherit (pkgs) xorgproto;
             };
           # the wayland-only vulkan stack for image-wayland-minimal, so it carries no x11 client libraries
-          vulkanLoaderNoxBuild =
-            vulkanLoaderBuild.override {
-              withX11 = false;
-              libX11 = null; libxcb = null; libXau = null; libXdmcp = null;
-              libXrandr = null; libXrender = null; xorgproto = null;
-            };
-          vulkanToolsNoxBuild =
-            vulkanToolsBuild.override {
-              withX11 = false;
-              vulkanLoader = vulkanLoaderNoxBuild;
-              libX11 = null; libXext = null; libxcb = null; libXau = null;
-              libXdmcp = null; libXrandr = null; xorgproto = null;
-            };
+          vulkanLoaderNoxBuild = pd.x86_64.vulkanLoaderNox;
+          vulkanToolsNoxBuild = pd.x86_64.vulkanToolsNox;
           mesaVenusWaylandBuild =
             mesaVenusBuild.override {
               withWayland = true;
@@ -1114,18 +972,11 @@
               waylandProtocols = waylandProtocolsBuild;
               waylandScanner = waylandScannerBuild;
             };
-          venusTestsNoxBuild =
-            venusTestsBuild.override { vulkanLoader = vulkanLoaderNoxBuild; };
+          venusTestsNoxBuild = pd.x86_64.venusTestsNox;
           # the Metal demos on the same loader, GLFW dlopens its window system, so Wayland needs no x11 libraries
-          metalPdNoxBuild =
-            metalPdBuild.override { vulkanLoader = vulkanLoaderNoxBuild; };
-          metalObjcPdNoxBuild =
-            metalObjcPdBuild.override {
-              vulkanLoader = vulkanLoaderNoxBuild;
-              metalPd = metalPdNoxBuild;
-            };
-          metalAppleSamplesNoxBuild =
-            metalAppleSamplesBuild.override { metalObjc = metalObjcPdNoxBuild; };
+          metalPdNoxBuild = pd.x86_64.metalPdNox;
+          metalObjcPdNoxBuild = pd.x86_64.metalObjcPdNox;
+          metalAppleSamplesNoxBuild = pd.x86_64.metalAppleSamplesNox;
           glfwPdBuild = pd.x86_64.glfw;
           spirvCrossPdBuild = pd.x86_64.spirvCross;
           metalPdBuild = pd.x86_64.metal-pd;
@@ -1134,7 +985,7 @@
           metalObjcPdBuild = pd.x86_64.metalObjc;
           # MetalPerformanceShaders' image kernels on PD's Metal
           mpsBuild = pd.x86_64.mps;
-          mpsNoxBuild = mpsBuild.override { metalObjc = metalObjcPdNoxBuild; };
+          mpsNoxBuild = pd.x86_64.mpsNox;
           iosurfaceBuild = pd.x86_64.iosurface;
           akffTestBuild = pd.x86_64.akff-test;
           argonGfxTestBuild = pd.x86_64.argon-gfx-test;
@@ -1241,12 +1092,15 @@
             inherit darwinCrossToolchain nativeLd;
             # the packages not yet in nix/pd/packages.nix, by their scope names
             bridge = {
+              atspi2CoreNoxBuild = atspi2CoreNoxBuild;
+              cairoGobjectNoxBuild = cairoGobjectNoxBuild;
               clang = clangCrossBuild;
               compilerRt = compilerRtBuild;
               darwinCrossToolchain = darwinCrossToolchain;
               diskArbitration = diskArbitrationBuild;
               glu = gluNoxBuild;
               gnutls = gnutlsSharedBuild;
+              gtk3NoxBuild = gtk3NoxBuild;
               harfbuzzNoxBuild = harfbuzzNoxBuild;
               hostOtool = hostOtoolBuild;
               iokitCFStatic = iokitCFStaticBuild;
@@ -1261,6 +1115,7 @@
               libXrandrSharedBuild = libXrandrSharedBuild;
               libXrenderSharedBuild = libXrenderSharedBuild;
               libXxf86vm = libXxf86vmSharedBuild;
+              libepoxyNoxBuild = libepoxyNoxBuild;
               libxcbSharedBuild = libxcbSharedBuild;
               libxshmfence = libxshmfenceSharedBuild;
               libz = libzDylibBuild;
@@ -1273,6 +1128,7 @@
               nativeLd = nativeLd;
               openglFramework = openglFrameworkNoxBuild;
               opensslThreadsBuild = opensslThreadsBuild;
+              pangoNoxBuild = pangoNoxBuild;
               pdVirglShim = pdVirglShimBuild;
               securitySource = securitySource;
               systemConfiguration = systemConfigurationBuild;
@@ -1350,25 +1206,8 @@
           swayBuild = pd.x86_64.sway;
           # Wayland-only image: wlroots/sway rebuilt without the Xwayland
           # backend so nothing on the image links libxcb.
-          wlrootsNoxBuild =
-            wlrootsBuild.override {
-              withXwayland = false;
-              xcb = null;
-              xcbWm = null;
-              xwayland = null;
-              xkbcommon = xkbcommonNoxBuild;
-            };
-          swayNoxBuild =
-            swayBuild.override {
-              withXwayland = false;
-              wlroots = wlrootsNoxBuild;
-              cairo = cairoNoxBuild;
-              xkbcommon = xkbcommonNoxBuild;
-              pango = pangoNoxBuild;
-              harfbuzz = harfbuzzNoxBuild;
-              xcb = null;
-              xcbWm = null;
-            };
+          wlrootsNoxBuild = pd.x86_64.wlrootsNox;
+          swayNoxBuild = pd.x86_64.swayNox;
           tllistBuild = pd.x86_64.tllist;
           fcftBuild = pd.x86_64.fcft;
           footBuild = pd.x86_64.foot;
@@ -1759,7 +1598,7 @@
             swiftRuntimeArm64Build frameworkCompatArm64Build
           ];
           certificatesBundleBuild = pd.x86_64.certificates-bundle;
-          opensslThreadsBuild = opensslBuild.override { withThreads = true; };
+          opensslThreadsBuild = pd.x86_64.opensslThreads;
           securityBuild = pd.x86_64.security;
           mkSystemConfigurationBuild = { corefoundation, libobjc, security, iokit, symptomReporter }:
             (mkPureDarwinBuild {
