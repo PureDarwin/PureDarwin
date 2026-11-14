@@ -2573,6 +2573,8 @@ let
   imageExtraPackagesArm64 = lib.attrValues imageExtraPackageSetArm64;
 in
 {
+  # the arm64 PureDarwin package set itself
+  inherit pdArm64;
   inherit
     atspi2CoreArm64Build
     autoconfArm64Build

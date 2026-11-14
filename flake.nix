@@ -858,6 +858,7 @@
               symptomReporterSource = symptomReporterSource;
               userlandSource = userlandSource;
               vteSrc = vteSrc;
+              iig-tools = iig-tools;
             };
           };
           pd.x86_64 = pdScope {
@@ -873,7 +874,6 @@
               gtk3NoxBuild = gtk3NoxBuild;
               harfbuzzNoxBuild = harfbuzzNoxBuild;
               hostOtool = hostOtoolBuild;
-              iig-tools = iig-tools;
               libepoxyNoxBuild = libepoxyNoxBuild;
               libz = libzDylibBuild;
               llvm = llvmCrossBuild;
@@ -2635,8 +2635,9 @@
             NEUSWC_ENV="ARGON_GFX=${gfx} SWC_WAIT_HW_FB=30"
             NEUSWC_LOG=/dev/console
           '';
-        in {
-          packages = {
+        in rec {
+          # everything the flake builds, sorted into the outputs by nix/outputs.nix
+          all = {
             iovirtiogpu-kext = kextBuilds.IOVirtIOGPU;
             apple-sdk = appleSdk;
             cg-screen-demo = cgScreenDemoBuild;
@@ -2675,6 +2676,13 @@
             image-nvidia = imageNvidiaBuild;
           }
             // lib.filterAttrs (_: lib.isDerivation) nixPortPackages;
+          # every package by target and scope name: nix build .#pd.x86_64.zsh, .#pd.arm64.zsh
+          outputs = import ./nix/outputs.nix {
+            inherit lib all tests;
+            pd = pd.x86_64;
+            pdArm64 = arm64.pdArm64 or { };
+          };
+          inherit (outputs) packages legacyPackages;
           # images that boot to run one test, apart from the shipped ones: nix build .#tests.cg
           tests = lib.optionalAttrs (!isDarwin) (lib.mapAttrs (_: n: linuxPackages.${n}) testImageNames);
           apps = lib.optionalAttrs (!isDarwin) (linuxApps // {
@@ -2691,7 +2699,7 @@
         };
     in {
       packages = forAllSystems (system: (mkSystem system).packages);
-      legacyPackages = forAllSystems (system: { tests = (mkSystem system).tests; });
+      legacyPackages = forAllSystems (system: (mkSystem system).legacyPackages);
       apps = forAllSystems (system: (mkSystem system).apps);
       devShells = forAllSystems (system: (mkSystem system).devShells);
     };
