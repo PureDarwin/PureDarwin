@@ -30,12 +30,14 @@
             <string>org.puredarwin.driver.PDNVLoader</string>
             <key>IOClass</key>
             <string>PDNVGPU</string>
+            <key>IOMatchCategory</key>
+            <string>PDDRMDevice</string>
             <key>IOPCIClassMatch</key>
             <string>0x03000000&amp;0xff000000</string>
             <key>IOPCIMatch</key>
             <string>0x000010de&amp;0x0000ffff</string>
             <key>IOProbeScore</key>
-            <integer>5000</integer>
+            <integer>7000</integer>
             <key>IOProviderClass</key>
             <string>IOPCIDevice</string>
         </dict>

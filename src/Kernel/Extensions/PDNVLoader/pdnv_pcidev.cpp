@@ -7,6 +7,7 @@
 #include <IOKit/IOFilterInterruptEventSource.h>
 #include <IOKit/IOWorkLoop.h>
 #include <IOKit/pci/IOPCIDevice.h>
+#include <pexpert/pexpert.h>
 
 #include "pdnv_pci.h"
 
@@ -162,6 +163,7 @@ class PDNVGPU : public IOService {
 	OSDeclareDefaultStructors(PDNVGPU);
 
 public:
+	IOService *probe(IOService *provider, SInt32 *score) override;
 	bool start(IOService *provider) override;
 
 private:
@@ -205,6 +207,48 @@ sizeBar(IOPCIDevice *dev, uint32_t reg, uint32_t raw, struct pdnv_pci_bar *bar)
 	bar->cpu_address = addr;
 	bar->size = ~mask + 1;
 	return true;
+}
+
+// the GPU's architecture from PMC_BOOT_0 in BAR 0, 0 if the registers cannot be read
+static uint32_t
+gpu_arch(IOPCIDevice *dev)
+{
+	IOMemoryMap *map;
+	uint16_t cmd;
+	uint32_t boot0 = 0;
+
+	cmd = dev->configRead16(kIOPCIConfigCommand);
+	dev->configWrite16(kIOPCIConfigCommand, cmd | kIOPCICommandMemorySpace);
+	map = dev->mapDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0);
+	if (map != NULL) {
+		boot0 = *(volatile uint32_t *)map->getVirtualAddress();
+		map->release();
+	}
+	dev->configWrite16(kIOPCIConfigCommand, cmd);
+	if (boot0 == 0 || boot0 == 0xffffffff)
+		return 0;
+	return (boot0 >> 20) & 0x1f0;
+}
+
+// Maxwell, Pascal and Volta only: 580 has no Kepler, and Turing on runs GSP firmware, nouveau's.
+// pdnv=0 leaves every card to nouveau
+IOService *
+PDNVGPU::probe(IOService *provider, SInt32 *score)
+{
+	IOPCIDevice *dev = OSDynamicCast(IOPCIDevice, provider);
+	uint32_t arch;
+	int on = 1;
+
+	PE_parse_boot_argn("pdnv", &on, sizeof(on));
+	if (dev == NULL || on == 0)
+		return NULL;
+	arch = gpu_arch(dev);
+	if (arch < 0x110 || arch > 0x140) {
+		IOLog("PDNVGPU: %02x:%02x.%x architecture 0x%x is not one 580 drives without GSP, leaving it\n",
+		    dev->getBusNumber(), dev->getDeviceNumber(), dev->getFunctionNumber(), arch);
+		return NULL;
+	}
+	return IOService::probe(provider, score);
 }
 
 bool
