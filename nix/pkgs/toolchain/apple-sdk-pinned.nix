@@ -57,7 +57,7 @@ let
       /src/Libraries/XPC/notify/notify_keys.h
       /src/Libraries/libsandbox/include/sandbox.h
       /src/Libraries/dyld/upstream/include
-      /src/Libraries/dyld/compat-include/
+      /src/Libraries/dyld/compat-include/System/sys/content_protection.h
       /src/Libraries/libSystem/libc
       /src/Libraries/libSystem/libdispatch/dispatch
       /src/Libraries/libSystem/libdispatch/os
