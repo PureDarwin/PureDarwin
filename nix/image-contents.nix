@@ -364,7 +364,14 @@
 let
   fullBuild = mkPureDarwinBuild {
     pname = "puredarwin";
-    src = ../.;
+    # the whole tree for the one-shot CMake build, without the Nix files it never reads, so editing them doesn't
+    # change this build
+    src = lib.cleanSourceWith {
+      src = ../.;
+      filter = path: type:
+        let rel = lib.removePrefix "${toString ../.}/" (toString path); in
+        !(rel == "flake.nix" || rel == "flake.lock" || rel == "nix" || lib.hasPrefix "nix/" rel);
+    };
     buildTargets = [ "xnu" "kexts" "libsystem_kernel" ];
     installUserland = false;
     installKernel = false;

@@ -20,6 +20,9 @@
       lib = nixpkgs.lib;
       systems = [ "x86_64-linux" "x86_64-darwin" "aarch64-linux" "aarch64-darwin" ];
       forAllSystems = lib.genAttrs systems;
+      # a path: input inside this repository is a subpath of the whole flake source, so any edit anywhere would
+      # change its hash and rebuild everything built on it; a copy of the tree alone is hashed by its own files
+      corecryptoSrc = builtins.path { path = corecrypto-src; name = "corecrypto-src"; };
 
       mkSystem = system:
         let
@@ -108,7 +111,7 @@
             pkgs.callPackage ./nix/pkgs/toolchain/native-ld.nix {
               darwinCrossToolchain = bootstrapCrossToolchain;
               inherit libtapi iig;
-              corecryptoSrc = corecrypto-src;
+              inherit corecryptoSrc;
             };
           # Not actually a *cross* toolchain on Darwin - the wrappers pin the
           # target triple, the pinned SDK and the linker, which is what every
@@ -230,7 +233,7 @@
             inherit appleSdk darwinCrossToolchain nativeLd nativeUnifdef nativeMigcom iig;
             # the kernel proper never builds corecrypto, keep its hash independent of it
             corecryptoSrc = if lib.hasPrefix "puredarwin-kernel" (args.pname or "") || lib.hasPrefix "puredarwin-xnu-headers" (args.pname or "")
-              then null else corecrypto-src;
+              then null else corecryptoSrc;
             compilerRt = compilerRtBuild;
             compilerRtArm64 = arm64.compilerRtArm64Build or null;
             compilerRtRiscv64 = compilerRtRiscv64Build;
@@ -5983,7 +5986,7 @@
           shimIa32Build = pkgs.callPackage ./nix/pkgs/boot/shim-ia32.nix { };
           mkSecureBootImage = image: pkgs.callPackage ./nix/lib/secureboot.nix { shim = shimBuild; shimIa32 = shimIa32Build; } {
             inherit image;
-            key = pd-sb-key;
+            key = builtins.path { path = pd-sb-key; name = "pd-sb-key"; };
           };
           # iwlwifi asks for bare names, the kext also looks in /Library/Firmware/iwlwifi.
           # the newest three api versions of each family the matched cards use, plus pnvm
