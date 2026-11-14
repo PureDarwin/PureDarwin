@@ -628,6 +628,13 @@ nv_acpi_methods_uninit(void)
 {
 }
 
+// the modeset path wakes the GPU's HDMI audio function for runtime power management, nothing drives it here
+void NV_API_CALL
+nv_audio_dynamic_power(nv_state_t *nv)
+{
+	(void)nv;
+}
+
 NV_STATUS NV_API_CALL
 nv_acpi_dsm_method(nv_state_t *nv, NvU8 *pAcpiDsmGuid, NvU32 acpiDsmRev, NvBool acpiNvpcfDsmFunction,
     NvU32 acpiDsmSubFunction, void *pInParams, NvU16 inParamSize, NvU32 *outStatus, void *pOutData,
