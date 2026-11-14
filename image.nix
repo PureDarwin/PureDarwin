@@ -46,6 +46,8 @@
 # a device tree for xnu-loader to use in place of the firmware's, installed as EFI/BOOT/board.dtb
 , boardDtb ? null
 , python3 ? null
+# 4096 for disks read in 4 KiB blocks, Apple's NVMe: the GPT is rewritten for them once the image is written
+, gptBlockSize ? 512
 # put the system tree in /nix/store and reach the Apple paths through /run/current-system
 , nixStore ? false
 # public keys for root's ssh login, to drive a guest without a password
@@ -1191,6 +1193,9 @@ ${lib.optionalString (boardDtb != null) ''
     cp -r ${boardDtb}/SOURCE ${boardDtb}/licenses $out/board-dtb/
 ''}''}
 ${lib.optionalString (!netbootOnly) ''
+${lib.optionalString (gptBlockSize == 4096) ''
+    ${python3}/bin/python3 ${./nix/lib/gpt4k.py} puredarwin.img
+''}
     cp --sparse=always puredarwin.img $out/${imageFileName}
 ''}
 ${lib.optionalString rootfsTarball ''

@@ -1200,6 +1200,13 @@ let
         efiBinary = "BOOTAA64.EFI";
         imageFileName = "puredarwin-wayland-arm64-virt.img";
       };
+      # Apple M1 (t8103): the KC goes to the boot loader on its own, the disk is for Apple's NVMe and its 4 KiB blocks
+      imageArm64T8103Build = imageArm64VirtWaylandBuild.override {
+        kc = kcArm64T8103DebugBuild;
+        gptBlockSize = 4096;
+        python3 = pkgs.python3;
+        imageFileName = "puredarwin-arm64-t8103.img";
+      };
       imageArm64VirtWaylandDebugBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemArm64VirtWayland;
         extraPackages = imageExtraPackagesArm64Nox;
@@ -2553,6 +2560,7 @@ EOF
       kc-arm64-t8010-debug = kcArm64T8010DebugBuild;
       kc-arm64-s8000-debug = kcArm64S8000DebugBuild;
       kc-arm64-t8103-debug = kcArm64T8103DebugBuild;
+      image-arm64-t8103 = imageArm64T8103Build;
       ramdisk-arm64-t8010 = ramdiskArm64T8010Build;
       ramdisk-arm64-s8000 = ramdiskArm64S8000Build;
       ramdisk-arm64-sun50i = ramdiskArm64Sun50iBuild;
