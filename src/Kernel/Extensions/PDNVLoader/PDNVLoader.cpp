@@ -10,11 +10,13 @@
 #include <pexpert/pexpert.h>
 #include <sys/fcntl.h>
 #include <sys/vnode.h>
+#include <string.h>
 
 extern "C" {
 #include "pd_elf_rel.h"
 #include "pdnv_port.h"
 #include "pdnv_pci.h"
+#include "pdnv_kms.h"
 
 struct nvidia_stack_s;
 int pdnv_stack_alloc(struct nvidia_stack_s **sp);
@@ -28,6 +30,7 @@ ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
 }
 
 #define PDNV_DEFAULT_BLOB   "/usr/share/nvidia/580.196.07/nv-kernel.o_binary"
+#define PDNV_DEFAULT_KMS    "/usr/share/nvidia/580.196.07/nv-modeset-kernel.o_binary"
 #define PDNV_WAIT_SECONDS   120
 #define PDNV_READ_CHUNK     (1024 * 1024)
 
@@ -48,7 +51,10 @@ public:
 private:
 	static void loadThread(void *arg, wait_result_t wr);
 	void load();
-	void initRM(struct pdelf_obj *obj);
+	int linkObject(const char *path, int (*resolve)(void *, const char *, struct pdelf_target *),
+	    struct pdelf_obj *obj, uint64_t *base_out);
+	bool initRM(struct pdelf_obj *obj);
+	void initKMS(struct pdelf_obj *obj);
 
 	thread_t fThread;
 };
@@ -122,6 +128,11 @@ alias_range(void *c, uint64_t off, uint64_t size, int writable, int executable)
 	for (uint64_t p = off; p < off + size && !a->failed; p += PAGE_SIZE) {
 		ppnum_t pn = pmap_find_phys(kernel_pmap, (addr64_t)(uintptr_t)(a->backing + p));
 
+		// each page here is a second mapping, which takes a pv entry from the kernel pmap's small reserve; a
+		// pause now and then lets the replenish thread refill it, tens of thousands in a row run it dry
+		if ((p / PAGE_SIZE) % 128 == 127)
+			IOSleep(1);
+
 		if (pn == 0 || pmap_enter(kernel_pmap, a->va + p, pn, prot, VM_PROT_NONE, 0, TRUE, 0) != KERN_SUCCESS) {
 			IOLog("PDNVLoader: cannot alias the page at offset 0x%llx (page %u)\n", (unsigned long long)p, pn);
 			a->failed = 1;
@@ -167,14 +178,15 @@ PDNVLoader::loadThread(void *arg, wait_result_t wr)
 	thread_terminate(current_thread());
 }
 
-void
-PDNVLoader::load()
+// a relocatable object at a free window of the top 2 GB, linked with resolve, its pages aliased there. The
+// object stays open for its exports, the caller closes it
+int
+PDNVLoader::linkObject(const char *path, int (*resolve)(void *, const char *, struct pdelf_target *),
+    struct pdelf_obj *obj, uint64_t *base_out)
 {
 	static const struct pdelf_env env = { NULL, file_read, kalloc_env, kfree_env, log_env };
-	char path[256] = PDNV_DEFAULT_BLOB;
 	struct pdnv_file file = { NULL, NULL };
 	struct pdelf_env fenv = env;
-	struct pdelf_obj obj;
 	struct pdnv_alias alias = { NULL, 0, 0 };
 	uint64_t t0 = 0, base = 0;
 	int error = -1, waited;
@@ -188,7 +200,6 @@ PDNVLoader::load()
 		    (unsigned long long)(ns / 1000000));
 	};
 
-	PE_parse_boot_argn("pdnvblob", path, sizeof(path));
 	file.ctx = vfs_context_create(NULL);
 
 	// path lookup is only safe once there is a root filesystem, then the file may still be on its way
@@ -207,76 +218,104 @@ PDNVLoader::load()
 	if (file.vp == NULL) {
 		IOLog("PDNVLoader: no %s after %d s\n", path, PDNV_WAIT_SECONDS);
 		vfs_context_rele(file.ctx);
-		return;
+		return -1;
 	}
 
 	fenv.ctx = &file;
 	t0 = mach_absolute_time();
 	step("opened", path, 0);
-	pdnv_trap_set_trace(PE_parse_boot_argn("pdnvtrace", &waited, sizeof(waited)) && waited != 0);
-	if (pdelf_open(&obj, &fenv, PAGE_SIZE, pdnv_resolve, NULL, (uint64_t)&pdnv_unported_import) != 0) {
+	if (pdelf_open(obj, &fenv, PAGE_SIZE, resolve, NULL, (uint64_t)&pdnv_unported_import) != 0) {
 		IOLog("PDNVLoader: %s is not a loadable object\n", path);
-		goto close;
+		goto out;
 	}
-	step("tables read, image bytes", "", obj.image_size);
+	step("tables read, image bytes", "", obj->image_size);
 
 	// the image in wired memory, then a free window of the top 2 GB for it to run at
-	alias.backing = (uint8_t *)IOMallocAligned(obj.image_size, PAGE_SIZE);
+	alias.backing = (uint8_t *)IOMallocAligned(obj->image_size, PAGE_SIZE);
 	if (alias.backing == NULL) {
-		IOLog("PDNVLoader: no 0x%llx bytes for the image\n", (unsigned long long)obj.image_size);
+		IOLog("PDNVLoader: no 0x%llx bytes for the image\n", (unsigned long long)obj->image_size);
 		goto close;
 	}
-	for (uint64_t try_base = sBottom; obj.image_size <= sTop - sBottom && try_base <= sTop - obj.image_size;
+	for (uint64_t try_base = sBottom; obj->image_size <= sTop - sBottom && try_base <= sTop - obj->image_size;
 	    try_base += sStep) {
-		if (window_free(try_base, obj.image_size)) {
+		if (window_free(try_base, obj->image_size)) {
 			base = try_base;
 			break;
 		}
 	}
 	if (base == 0) {
-		IOLog("PDNVLoader: no free 0x%llx bytes in the top 2 GB\n", (unsigned long long)obj.image_size);
+		IOLog("PDNVLoader: no free 0x%llx bytes in the top 2 GB\n", (unsigned long long)obj->image_size);
 		goto release;
 	}
 	step("window in the top 2 GB at offset", "", base - sBottom);
 
-	if (pdelf_load(&obj, alias.backing, base) != 0) {
+	if (pdelf_load(obj, alias.backing, base) != 0) {
 		IOLog("PDNVLoader: linking %s failed\n", path);
 		goto release;
 	}
-	step("linked", "imports", obj.nimports);
+	step("linked", "imports", obj->nimports);
 
 	alias.va = base;
-	pdelf_ranges(&obj, alias_range, &alias);
+	pdelf_ranges(obj, alias_range, &alias);
 	if (alias.failed)
 		goto unmap;
 	step("aliased", "", 0);
 
-	IOLog("PDNVLoader: %s linked at 0x%llx, 0x%llx bytes, %u imports (%u unresolved), rm_init_rm 0x%llx, "
-	    "nvidia_caps_root cell 0x%llx\n", path, (unsigned long long)base, (unsigned long long)obj.image_size,
-	    obj.nimports, obj.unresolved, (unsigned long long)pdelf_export(&obj, "rm_init_rm"),
-	    (unsigned long long)pdelf_import_slot(&obj, "nvidia_caps_root", 1));
+	IOLog("PDNVLoader: %s linked at 0x%llx, 0x%llx bytes, %u imports (%u unresolved)\n", path,
+	    (unsigned long long)base, (unsigned long long)obj->image_size, obj->nimports, obj->unresolved);
+	*base_out = base;
+	// the object outlives this frame: from here its env is one with no file behind it, enough to free tables
+	obj->env = &env;
 	error = 0;
-	pdnv_image_base = (uintptr_t)base;
-	initRM(&obj);
-	goto close;
+	goto out;
 
 unmap:
-	pmap_remove(kernel_pmap, base, base + obj.image_size);
+	pmap_remove(kernel_pmap, base, base + obj->image_size);
 release:
-	IOFreeAligned(alias.backing, obj.image_size);
+	IOFreeAligned(alias.backing, obj->image_size);
 close:
-	pdelf_close(&obj);
+	pdelf_close(obj);
 out:
 	vnode_close(file.vp, FREAD, file.ctx);
 	vfs_context_rele(file.ctx);
 	if (error != 0)
 		IOLog("PDNVLoader: %s not loaded\n", path);
+	return error;
+}
+
+// the resource manager, then the modeset core on top of it, as nvidia.ko and nvidia-modeset.ko load
+void
+PDNVLoader::load()
+{
+	char path[256] = PDNV_DEFAULT_BLOB, kms[256] = PDNV_DEFAULT_KMS;
+	struct pdelf_obj obj, kobj;
+	uint64_t base = 0, kbase = 0;
+	int flag;
+	bool ok;
+
+	PE_parse_boot_argn("pdnvblob", path, sizeof(path));
+	PE_parse_boot_argn("pdnvkms", kms, sizeof(kms));
+	pdnv_trap_set_trace(PE_parse_boot_argn("pdnvtrace", &flag, sizeof(flag)) && flag != 0);
+
+	if (linkObject(path, pdnv_resolve, &obj, &base) != 0)
+		return;
+	pdnv_image_base = (uintptr_t)base;
+	ok = initRM(&obj);
+	pdelf_close(&obj);
+	if (!ok)
+		return;
+
+	// pdnvkms=none leaves the modeset core out
+	if (strcmp(kms, "none") == 0 || linkObject(kms, pdnvkms_resolve, &kobj, &kbase) != 0)
+		return;
+	initKMS(&kobj);
+	pdelf_close(&kobj);
 }
 
 typedef unsigned char (*rm_init_fn)(struct nvidia_stack_s *);
 
 // the resource manager's own start, as nv_module_init makes it once the interface layer is up
-void
+bool
 PDNVLoader::initRM(struct pdelf_obj *obj)
 {
 	struct nvidia_stack_s *sp = NULL;
@@ -298,16 +337,17 @@ PDNVLoader::initRM(struct pdelf_obj *obj)
 	pdnv_rm.cleanup_file_private = (void *)pdelf_export(obj, "rm_cleanup_file_private");
 	pdnv_rm.perform_version_check = (void *)pdelf_export(obj, "rm_perform_version_check");
 	pdnv_rm.get_gpu_numa_info = (void *)pdelf_export(obj, "rm_get_gpu_numa_info");
+	pdnvkms.rm_kernel_rmapi_op = (void *)pdelf_export(obj, "rm_kernel_rmapi_op");
 	pdnv_pci_init();
 	pdnv_work_init();
 	if (init == NULL || pdnv_rm.is_altstack_in_use == NULL) {
 		IOLog("PDNVLoader: the object has no rm_init_rm or rm_is_altstack_in_use\n");
-		return;
+		return false;
 	}
 
 	if (pdnv_stack_alloc(&sp) != 0) {
 		IOLog("PDNVLoader: no memory for the resource manager's stack\n");
-		return;
+		return false;
 	}
 	IOLog("PDNVLoader: rm_init_rm, %s stack\n", sp != NULL ? "its own" : "this thread's");
 	bool ok = init(sp);
@@ -318,4 +358,23 @@ PDNVLoader::initRM(struct pdelf_obj *obj)
 		IOLog("PDNVLoader: no /dev/nvidiactl\n");
 	if (ok)
 		publishResource(PDNV_RM_RESOURCE, this);
+	return ok;
+}
+
+// the modeset core's entry points, then its module load and /dev/nvidia-modeset, as nvkms_init
+void
+PDNVLoader::initKMS(struct pdelf_obj *obj)
+{
+	pdnvkms.nvKmsModuleLoad = (void *)pdelf_export(obj, "nvKmsModuleLoad");
+	pdnvkms.nvKmsOpen = (void *)pdelf_export(obj, "nvKmsOpen");
+	pdnvkms.nvKmsClose = (void *)pdelf_export(obj, "nvKmsClose");
+	pdnvkms.nvKmsIoctl = (void *)pdelf_export(obj, "nvKmsIoctl");
+	pdnvkms.nvKmsKapiHandleEventQueueChange = (void *)pdelf_export(obj, "nvKmsKapiHandleEventQueueChange");
+	if (pdnvkms_init() != 0) {
+		IOLog("PDNVLoader: nvKmsModuleLoad failed\n");
+		return;
+	}
+	IOLog("PDNVLoader: modeset core loaded\n");
+	if (pdnv_dev_kms_node() != 0)
+		IOLog("PDNVLoader: no /dev/nvidia-modeset\n");
 }

@@ -37,6 +37,19 @@
             <key>IOProviderClass</key>
             <string>IOPCIDevice</string>
         </dict>
+        <key>Apple ANS2 NVMe Controller</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>com.apple.iokit.IONVMEFamily</string>
+            <key>IOClass</key>
+            <string>IONVMEController</string>
+            <key>IONameMatch</key>
+            <string>ans</string>
+            <key>IOProbeScore</key>
+            <integer>4500</integer>
+            <key>IOProviderClass</key>
+            <string>IOService</string>
+        </dict>
     </dict>
     <key>OSBundleLibraries</key>
     <dict>

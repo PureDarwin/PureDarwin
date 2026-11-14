@@ -28,6 +28,7 @@
 #include <sched.h>
 #include <unistd.h>
 #include <mach/mach.h>
+#include <mach/mach_vm.h>
 #include <mach-o/dyld.h>
 #include <mach/exception_types.h>
 #include <mach/thread_status.h>
@@ -51,6 +52,13 @@ static __thread int guest_tid;
 static __thread int *guest_clear_tid;
 static __thread LinuxRobustHead *guest_robust_head;
 static __thread uint64_t guest_fs_base;
+
+// the calling thread's guest FS base, for crash_dump
+uint64_t
+elftrans_guest_fs_base(void)
+{
+    return guest_fs_base;
+}
 static mach_port_t syscall_port;
 // this executable, for an exec of another Linux program
 static char elftrans_self[PATH_MAX];
@@ -474,6 +482,16 @@ wake_futex_locked(int *address, int limit, uint32_t bitset)
     return woken;
 }
 
+// whether anyone still sleeps on address, futex_lock held
+static int
+futex_waiters_on(int *address)
+{
+    for (FutexWaiter *w = futex_waiters; w; w = w->next)
+        if (w->address == address && !w->notified)
+            return 1;
+    return 0;
+}
+
 static void
 release_robust_node(uintptr_t node, long offset, int tid)
 {
@@ -504,12 +522,142 @@ release_robust_list(void)
     pthread_mutex_unlock(&futex_lock);
 }
 
+// FUTEX_WAKE_OP's operation on the second word and its comparison of the old value, as Linux encodes them
+static int
+futex_wake_op(int *address2, uint32_t encoded, int *old_out)
+{
+    int op = (encoded >> 28) & 7, cmp = (encoded >> 24) & 15;
+    int oparg = (int)((encoded << 8) >> 20), cmparg = (int)((encoded << 20) >> 20);
+    int old, updated;
+
+    if ((encoded >> 31) & 1)
+        oparg = oparg < 0 || oparg > 31 ? 0 : 1 << oparg;
+    old = __atomic_load_n(address2, __ATOMIC_SEQ_CST);
+    do {
+        switch (op) {
+        case 0: updated = oparg; break;
+        case 1: updated = old + oparg; break;
+        case 2: updated = old | oparg; break;
+        case 3: updated = old & ~oparg; break;
+        case 4: updated = old ^ oparg; break;
+        default: return -38;
+        }
+    } while (!__atomic_compare_exchange_n(address2, &old, updated, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST));
+    *old_out = old;
+    switch (cmp) {
+    case 0: return old == cmparg;
+    case 1: return old != cmparg;
+    case 2: return old < cmparg;
+    case 3: return old <= cmparg;
+    case 4: return old > cmparg;
+    case 5: return old >= cmparg;
+    default: return -38;
+    }
+}
+
 static long
 linux_futex(int *address, int operation, int value,
-    const struct timespec *timeout, uint32_t bitset)
+    const struct timespec *timeout, uint32_t bitset, int *address2)
 {
     int command = operation & 0x7f;
     if (operation & ~(0x7f | 0x80 | 0x100)) return -38;
+    // the priority-inheritance locks glibc's PTHREAD_PRIO_INHERIT mutexes use: the word holds the owner's tid,
+    // FUTEX_WAITERS (bit 31) while others sleep on it. No priority boosting, only the ownership protocol
+    if (command == 6 || command == 7 || command == 8) {
+        const uint32_t waiters_bit = 0x80000000u, tid_mask = 0x3fffffffu;
+        uint32_t *word = (uint32_t *)address;
+        uint32_t tid;
+
+        if (!guest_tid) guest_tid = getpid();
+        tid = (uint32_t)guest_tid;
+        pthread_mutex_lock(&futex_lock);
+        if (command == 7) {
+            uint32_t now = __atomic_load_n(word, __ATOMIC_SEQ_CST);
+
+            if ((now & tid_mask) != tid) {
+                pthread_mutex_unlock(&futex_lock);
+                return -1;
+            }
+            __atomic_store_n(word, 0, __ATOMIC_SEQ_CST);
+            wake_futex_locked(address, 1, UINT32_MAX);
+            pthread_mutex_unlock(&futex_lock);
+            return 0;
+        }
+        for (;;) {
+            uint32_t now = __atomic_load_n(word, __ATOMIC_SEQ_CST);
+
+            if ((now & tid_mask) == tid) {
+                pthread_mutex_unlock(&futex_lock);
+                return -35;
+            }
+            if ((now & tid_mask) == 0) {
+                // free, the owner-died bit kept; a lock that had waiters keeps the bit for the next unlock
+                uint32_t taken = tid | (now & 0x40000000u) | (futex_waiters_on(address) ? waiters_bit : 0);
+
+                if (__atomic_compare_exchange_n(word, &now, taken, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+                    pthread_mutex_unlock(&futex_lock);
+                    return 0;
+                }
+                continue;
+            }
+            if (command == 8) {
+                pthread_mutex_unlock(&futex_lock);
+                return -11;
+            }
+            if (!(now & waiters_bit) &&
+                !__atomic_compare_exchange_n(word, &now, now | waiters_bit, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
+                continue;
+
+            FutexWaiter waiter = {.address = address, .bitset = UINT32_MAX};
+            pthread_cond_init(&waiter.changed, NULL);
+            waiter.next = futex_waiters;
+            futex_waiters = &waiter;
+            while (!waiter.notified)
+                pthread_cond_wait(&waiter.changed, &futex_lock);
+            FutexWaiter **link = &futex_waiters;
+            while (*link != &waiter) link = &(*link)->next;
+            *link = waiter.next;
+            pthread_cond_destroy(&waiter.changed);
+        }
+    }
+    // REQUEUE and CMP_REQUEUE: wake value waiters, move up to val2 (the timeout argument) to the second
+    // address, CMP_REQUEUE only while the word still holds val3 (the bitset argument)
+    if (command == 3 || command == 4) {
+        int moved_max = (int)(intptr_t)timeout, woken = 0, moved = 0;
+
+        if (value < 0 || moved_max < 0) return -22;
+        pthread_mutex_lock(&futex_lock);
+        if (command == 4 && *address != (int)bitset) {
+            pthread_mutex_unlock(&futex_lock);
+            return -11;
+        }
+        woken = wake_futex_locked(address, value, UINT32_MAX);
+        for (FutexWaiter *w = futex_waiters; w && moved < moved_max; w = w->next) {
+            if (w->address == address && !w->notified) {
+                w->address = address2;
+                moved++;
+            }
+        }
+        pthread_mutex_unlock(&futex_lock);
+        return woken + moved;
+    }
+    // WAKE_OP: the second word changes, value waiters on the first wake, val2 on the second if the old
+    // value passes the comparison
+    if (command == 5) {
+        int old, pass, woken;
+
+        pthread_mutex_lock(&futex_lock);
+        pass = futex_wake_op(address2, bitset, &old);
+        if (pass < 0) {
+            pthread_mutex_unlock(&futex_lock);
+            return pass;
+        }
+        woken = wake_futex_locked(address, value, UINT32_MAX);
+        if (pass)
+            woken += wake_futex_locked(address2, (int)(intptr_t)timeout, UINT32_MAX);
+        pthread_mutex_unlock(&futex_lock);
+        return woken;
+    }
     if (command == 1 || command == 10) {
         if (command == 1) bitset = UINT32_MAX;
         if (!bitset) return -22;
@@ -1250,7 +1398,7 @@ sys_futex(GuestRegs *r)
     return linux_futex((int *)(uintptr_t)r->rdi,
         (int)r->rsi, (int)r->rdx,
         (const struct timespec *)(uintptr_t)r->r10,
-        (uint32_t)r->r9);
+        (uint32_t)r->r9, (int *)(uintptr_t)r->r8);
 }
 
 
@@ -1602,6 +1750,28 @@ sys_mmap(GuestRegs *r)
     long result = -38;
     unsigned long linux_flags = (unsigned long)r->r10;
     int flags = 0;
+    // MAP_32BIT (0x40): an anonymous mapping in the first 2 GB, as JITs ask for code within rel32 reach
+    if ((linux_flags & 0x40) && (linux_flags & 0x20) && !(linux_flags & 0x10) &&
+        !(linux_flags & ~(0x20873UL | LINUX_MAP_NORESERVE)) && (linux_flags & 3) == 2) {
+        size_t length = round_up((size_t)r->rsi);
+
+        if (!length)
+            return -22;
+        for (mach_vm_address_t at = 0x10000000; at + length <= 0x80000000; at += 0x1000000) {
+            mach_vm_address_t want = at;
+
+            if (mach_vm_allocate(mach_task_self(), &want, length, VM_FLAGS_FIXED) != KERN_SUCCESS)
+                continue;
+            if (mprotect((void *)(uintptr_t)want, length, (int)r->rdx)) {
+                long error = -linux_error(errno);
+
+                mach_vm_deallocate(mach_task_self(), want, length);
+                return error;
+            }
+            return (long)want;
+        }
+        return -12;
+    }
     if (!(linux_flags & ~(0x20833UL | LINUX_MAP_NORESERVE)) &&
         ((linux_flags & 3) == 1 || (linux_flags & 3) == 2)) {
         flags |= (linux_flags & 3) == 1 ? MAP_SHARED : MAP_PRIVATE;
@@ -1665,6 +1835,87 @@ sys_munmap(GuestRegs *r)
         result = -22;
     pthread_mutex_unlock(&sites_lock);
     return result;
+}
+
+// mremap: shrinking trims the tail, growing takes the pages after the mapping when they are free, else
+// MREMAP_MAYMOVE (1) moves it to a fresh anonymous mapping with its contents and protection. A moved file or
+// shared mapping becomes private, MREMAP_FIXED (2) is not taken
+static long
+sys_mremap(GuestRegs *r)
+{
+    uintptr_t old = (uintptr_t)r->rdi;
+    size_t old_size = round_up((size_t)r->rsi), new_size = round_up((size_t)r->rdx);
+    int flags = (int)r->r10;
+    long result;
+
+    if ((old & (PAGE - 1)) || !new_size || !old_size || (flags & ~3) || (flags & 2) ||
+        old > UINTPTR_MAX - old_size || old > UINTPTR_MAX - new_size)
+        return -22;
+    pthread_mutex_lock(&sites_lock);
+    if (new_size <= old_size) {
+        result = (long)old;
+        if (new_size < old_size) {
+            if (publish_sites(old + new_size, old + old_size, NULL, 0))
+                result = -22;
+            else if (munmap((void *)(old + new_size), old_size - new_size))
+                result = -linux_error(errno);
+        }
+        goto done;
+    }
+
+    // the protection the mapping has now, for the pages it gains
+    mach_vm_address_t region = old;
+    mach_vm_size_t region_size = 0;
+    vm_region_basic_info_data_64_t info;
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object = MACH_PORT_NULL;
+    int prot = PROT_READ | PROT_WRITE;
+    if (mach_vm_region(mach_task_self(), &region, &region_size, VM_REGION_BASIC_INFO_64,
+            (vm_region_info_t)&info, &count, &object) == KERN_SUCCESS && region <= old)
+        prot = (info.protection & VM_PROT_READ ? PROT_READ : 0) | (info.protection & VM_PROT_WRITE ? PROT_WRITE : 0) |
+            (info.protection & VM_PROT_EXECUTE ? PROT_EXEC : 0);
+    if (object != MACH_PORT_NULL)
+        mach_port_deallocate(mach_task_self(), object);
+
+    mach_vm_address_t tail = old + old_size;
+    if (mach_vm_allocate(mach_task_self(), &tail, new_size - old_size, VM_FLAGS_FIXED) == KERN_SUCCESS) {
+        mprotect((void *)(uintptr_t)tail, new_size - old_size, prot);
+        result = (long)old;
+        goto done;
+    }
+    if (!(flags & 1)) {
+        result = -12;
+        goto done;
+    }
+    void *moved = mmap(NULL, new_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (moved == MAP_FAILED) {
+        result = -12;
+        goto done;
+    }
+    memcpy(moved, (void *)old, old_size);
+    mprotect(moved, new_size, prot);
+    if (publish_sites(old, old + old_size, NULL, 0) || munmap((void *)old, old_size)) {
+        munmap(moved, new_size);
+        result = -22;
+        goto done;
+    }
+    result = (long)(uintptr_t)moved;
+done:
+    pthread_mutex_unlock(&sites_lock);
+    return result;
+}
+
+// Linux's ranges: SCHED_FIFO and SCHED_RR 1 to 99, SCHED_OTHER, SCHED_BATCH and SCHED_IDLE only 0
+static long
+sys_sched_priority_range(GuestRegs *r)
+{
+    long policy = (long)r->rdi, max = r->rax == 146;
+
+    if (policy == 1 || policy == 2)
+        return max ? 99 : 1;
+    if (policy == 0 || policy == 3 || policy == 5)
+        return 0;
+    return -22;
 }
 
 static long
@@ -2215,6 +2466,9 @@ static long (*const syscalls[NSYSCALLS])(GuestRegs *) = {
     [9] = sys_mmap,
     [10] = sys_mprotect,
     [11] = sys_munmap,
+    [25] = sys_mremap,
+    [146] = sys_sched_priority_range,
+    [147] = sys_sched_priority_range,
     [12] = sys_brk,
     [17] = sys_pread64,
     [20] = sys_writev,
@@ -2327,7 +2581,11 @@ elftrans_dispatch(GuestRegs *r)
         if (result == -38 || trace_index < trace_limit) {
             char line[384];
             const char *path = trace_path(nr, r);
-            int size = nr == 16 ?
+            int size = nr == 9 || nr == 10 || nr == 25 || nr == 72 || nr == 202 ?
+                snprintf(line, sizeof(line), "elftrans: syscall %ld (0x%lx, 0x%lx, 0x%lx, 0x%lx, 0x%lx) -> %ld\n", nr,
+                    (unsigned long)r->rdi, (unsigned long)r->rsi, (unsigned long)r->rdx, (unsigned long)r->r10,
+                    (unsigned long)r->r8, result) :
+                nr == 16 ?
                 snprintf(line, sizeof(line), "elftrans: syscall 16 (fd %d, 0x%lx) -> %ld\n", (int)r->rdi,
                     (unsigned long)r->rsi, result) :
                 path ? snprintf(line, sizeof(line), "elftrans: syscall %ld (%.256s) -> %ld\n", nr, path, result) :
@@ -2446,6 +2704,12 @@ catch_mach_exception_raise_state(mach_port_t port, exception_type_t exception, c
     GuestRegs g;
 
     (void)port, (void)code, (void)code_count;
+    if (exception == EXC_BAD_ACCESS && *flavor == x86_THREAD_STATE64 && old_count >= x86_THREAD_STATE64_COUNT) {
+        // ELFTRANS_CRASHDUMP: the faulting thread's state, then the kernel's own delivery goes on
+        crash_dump(EXC_BAD_ACCESS, code_count > 1 ? (void *)(uintptr_t)code[1] : NULL,
+            (const x86_thread_state64_t *)old_state);
+        return KERN_FAILURE;
+    }
     if (exception != EXC_SYSCALL || *flavor != x86_THREAD_STATE64 || old_count < x86_THREAD_STATE64_COUNT)
         return KERN_FAILURE;
     memcpy(&s, old_state, sizeof(s));
@@ -2592,5 +2856,8 @@ syscall_port_start(void)
         pthread_create(&server, NULL, syscall_server, NULL))
         return -1;
     pthread_detach(server);
+    if (getenv("ELFTRANS_CRASHDUMP"))
+        task_set_exception_ports(self, EXC_MASK_BAD_ACCESS, syscall_port, EXCEPTION_STATE | MACH_EXCEPTION_CODES,
+            x86_THREAD_STATE64);
     return 0;
 }

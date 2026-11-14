@@ -88,3 +88,38 @@ pdnv_resolve(void *ctx, const char *name, struct pdelf_target *t)
 	*t = (struct pdelf_target){ (uint64_t)(uintptr_t)trap, 0, 0, NULL };
 	return 0;
 }
+
+// the modeset core's imports: the ported nvkms_* functions, anything else a named trap as for the RM
+#include "pdnv_kms.h"
+
+#define PDNVKMS_DECLARE(name) extern void name(void);
+PDNVKMS_PORTED(PDNVKMS_DECLARE)
+#undef PDNVKMS_DECLARE
+
+static const struct {
+	const char *name;
+	void (*fn)(void);
+} sKmsPorted[] = {
+#define PDNVKMS_ENTRY(name) { #name, name },
+	PDNVKMS_PORTED(PDNVKMS_ENTRY)
+#undef PDNVKMS_ENTRY
+};
+
+int
+pdnvkms_resolve(void *ctx, const char *name, struct pdelf_target *t)
+{
+	void *trap;
+
+	(void)ctx;
+	for (unsigned i = 0; i < sizeof(sKmsPorted) / sizeof(sKmsPorted[0]); i++) {
+		if (strcmp(name, sKmsPorted[i].name) == 0) {
+			*t = (struct pdelf_target){ (uint64_t)(uintptr_t)sKmsPorted[i].fn, 0, 0, NULL };
+			return 0;
+		}
+	}
+	trap = pdnv_trap_slot(name);
+	if (trap == NULL)
+		return -1;
+	*t = (struct pdelf_target){ (uint64_t)(uintptr_t)trap, 0, 0, NULL };
+	return 0;
+}

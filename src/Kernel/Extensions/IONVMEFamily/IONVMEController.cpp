@@ -2,6 +2,7 @@
 #include "IONVMEDisk.h"
 
 #include <IOKit/IOLib.h>
+#include <IOKit/IODeviceTreeSupport.h>
 #include <IOKit/storage/IOStorage.h>
 #include <pexpert/pexpert.h>
 
@@ -150,9 +151,60 @@ mapBARFromAssignedAddresses(IOPCIDevice *pci, UInt8 reg,
     return false;
 }
 
+/*
+ * Apple ANS2 (t8103): NVMe behind an RTKit coprocessor. The coprocessor is woken
+ * through its mailbox, then the controller runs linear submission queues: a command
+ * sits in the slot named by its tag, the doorbell takes the tag, and an NVMMU TCB per
+ * slot repeats the command's DMA. After AsahiLinux's nvme-apple and m1n1's nvme.c.
+ */
+#define ANS_ASC_CPU_CTRL        0x44
+#define ANS_ASC_CPU_RUN         (1U << 4)
+#define ANS_MBOX_A2I_SEND0      0x8800
+#define ANS_MBOX_A2I_SEND1      0x8808
+#define ANS_MBOX_I2A_CTRL       0x8114
+#define ANS_MBOX_I2A_RECV0      0x8830
+#define ANS_MBOX_I2A_RECV1      0x8838
+#define ANS_MBOX_EMPTY          (1U << 17)
+#define ANS_BOOT_STATUS         0x1300
+#define ANS_BOOT_STATUS_OK      0xde71ce55U
+#define ANS_MAX_PEND_CMDS       0x1210
+#define ANS_LINEAR_SQ_CTRL      0x24908
+#define ANS_LINEAR_ASQ_DB       0x2490c
+#define ANS_LINEAR_IOSQ_DB      0x24910
+#define ANS_NVMMU_NUM_TCBS      0x28100
+#define ANS_NVMMU_ASQ_TCB_BASE  0x28108
+#define ANS_NVMMU_IOSQ_TCB_BASE 0x28110
+#define ANS_NVMMU_TCB_INVAL     0x28118
+#define ANS_TCB_SIZE            128
+#define RTK_MGMT(t)             ((UInt64)(t) << 52)
+#define RTK_MGMT_TYPE(m)        (((m) >> 52) & 0xff)
+
+static bool
+ansSocPhys(UInt64 *socPhys)
+{
+    IORegistryEntry *armio = IORegistryEntry::fromPath("/arm-io", gIODTPlane);
+    OSData *ranges = armio ? OSDynamicCast(OSData, armio->getProperty("ranges")) : NULL;
+    bool ok = ranges != NULL && ranges->getLength() >= 16;
+    if (ok) *socPhys = ((const UInt64 *)ranges->getBytesNoCopy())[1];
+    OSSafeReleaseNULL(armio);
+    return ok;
+}
+
+static bool
+ansIsProvider(IOService *provider)
+{
+    OSData *type = OSDynamicCast(OSData, provider->getProperty("device_type"));
+    return type != NULL && strncmp((const char *)type->getBytesNoCopy(), "ans",
+                                   type->getLength()) == 0;
+}
+
 IOService *
 IONVMEController::probe(IOService *provider, SInt32 *score)
 {
+    if (ansIsProvider(provider)) {
+        if (score) *score = 4500;
+        return super::probe(provider, score);
+    }
     IOPCIDevice *pci = OSDynamicCast(IOPCIDevice, provider);
     if (!pci) return NULL;
 
@@ -175,10 +227,16 @@ IONVMEController::start(IOService *provider)
     if (!super::start(provider)) return false;
 
     fProvider = OSDynamicCast(IOPCIDevice, provider);
-    if (!fProvider) return false;
-    fProvider->retain();
-    fProvider->setMemoryEnable(true);
-    fProvider->setBusMasterEnable(true);
+    if (fProvider) {
+        fProvider->retain();
+        fProvider->setMemoryEnable(true);
+        fProvider->setBusMasterEnable(true);
+    } else if (ansIsProvider(provider)) {
+        fANSProvider = provider;
+        fANSProvider->retain();
+    } else {
+        return false;
+    }
 
     fQueueDepth = 16;
     fNamespaceID = 1;
@@ -188,7 +246,8 @@ IONVMEController::start(IOService *provider)
     fCommandLock = IOLockAlloc();
     if (!fCommandLock) return false;
 
-    if (!mapRegisters() || !allocQueues() || !resetController() ||
+    if (!(fANSProvider ? mapANSRegisters() && bootANS() : mapRegisters()) ||
+        !allocQueues() || !resetController() ||
         !enableController() || !identifyController() ||
         !createIOQueues() || !identifyNamespace(fNamespaceID)) {
         NVMELog("controller bring-up failed");
@@ -240,6 +299,15 @@ IONVMEController::stop(IOService *provider)
         fProvider->release();
         fProvider = NULL;
     }
+    if (fASCMap) {
+        fASCMap->release();
+        fASCMap = NULL;
+        fASC = NULL;
+    }
+    if (fANSProvider) {
+        fANSProvider->release();
+        fANSProvider = NULL;
+    }
     super::stop(provider);
 }
 
@@ -253,6 +321,10 @@ IONVMEController::free()
     fCommandLock = NULL;
     fDisk = NULL;
     fAdminSQMem = fAdminCQMem = fIOSQMem = fIOCQMem = fDMAMem = NULL;
+    fAdminTCBMem = fIOTCBMem = NULL;
+    fANSProvider = NULL;
+    fASCMap = NULL;
+    fASC = NULL;
     super::free();
 }
 
@@ -289,6 +361,111 @@ IONVMEController::mapRegisters(void)
     NVMELog("CAP=%016llx VS=%08x doorbellStride=%u",
             cap, regRead32(NVME_REG_VS), fDoorbellStride);
     return true;
+}
+
+// reg[0] is the coprocessor (its mailbox at +0x8000), reg[3] the nvme block; both are
+// offsets into the arm-io range
+bool
+IONVMEController::mapANSRegisters(void)
+{
+    OSData *reg = OSDynamicCast(OSData, fANSProvider->getProperty("reg"));
+    UInt64 soc = 0;
+    if (reg == NULL || reg->getLength() < 4 * 16 || !ansSocPhys(&soc)) {
+        NVMELog("ans: no usable reg / arm-io ranges");
+        return false;
+    }
+    const UInt64 *r = (const UInt64 *)reg->getBytesNoCopy();
+    IOMemoryDescriptor *asc = IOMemoryDescriptor::withPhysicalAddress(
+        (IOPhysicalAddress)(soc + r[0]), 0x10000, kIODirectionNone | kIOMemoryMapperNone);
+    fRegDesc = IOMemoryDescriptor::withPhysicalAddress(
+        (IOPhysicalAddress)(soc + r[6]), (IOByteCount)r[7], kIODirectionNone | kIOMemoryMapperNone);
+    if (asc) fASCMap = asc->map(kIOMapAnywhere | kIOMapInhibitCache);
+    if (fRegDesc) fRegMap = fRegDesc->map(kIOMapAnywhere | kIOMapInhibitCache);
+    OSSafeReleaseNULL(asc);
+    if (!fASCMap || !fRegMap) {
+        NVMELog("ans: failed to map registers");
+        return false;
+    }
+    fASC = (volatile UInt8 *)fASCMap->getVirtualAddress();
+    fRegs = (volatile UInt8 *)fRegMap->getVirtualAddress();
+    fDoorbellStride = 4;
+    NVMELog("ans: nvme at 0x%llx, coprocessor at 0x%llx", soc + r[6], soc + r[0]);
+    return true;
+}
+
+bool
+IONVMEController::ascSend(UInt64 msg, UInt8 ep)
+{
+    *(volatile UInt64 *)(fASC + ANS_MBOX_A2I_SEND0) = msg;
+    *(volatile UInt64 *)(fASC + ANS_MBOX_A2I_SEND1) = ep;
+    return true;
+}
+
+bool
+IONVMEController::ascRecv(UInt64 *msg, UInt8 *ep, UInt32 timeoutMs)
+{
+    for (UInt32 i = 0; i <= timeoutMs; i++) {
+        if (!(*(volatile UInt32 *)(fASC + ANS_MBOX_I2A_CTRL) & ANS_MBOX_EMPTY)) {
+            *msg = *(volatile UInt64 *)(fASC + ANS_MBOX_I2A_RECV0);
+            *ep = (UInt8)*(volatile UInt64 *)(fASC + ANS_MBOX_I2A_RECV1);
+            return true;
+        }
+        IOSleep(1);
+    }
+    return false;
+}
+
+// rtkit: power the iop up, answer hello and the endpoint map, wait for power on
+bool
+IONVMEController::bootANS(void)
+{
+    UInt64 m;
+    UInt8 ep;
+
+    *(volatile UInt32 *)(fASC + ANS_ASC_CPU_CTRL) |= ANS_ASC_CPU_RUN;
+    ascSend(RTK_MGMT(6) | 0x220, 0);
+    if (!ascRecv(&m, &ep, 1000) || RTK_MGMT_TYPE(m) != 1) {
+        NVMELog("ans: no rtkit hello");
+        return false;
+    }
+    UInt64 ver = (m >> 16) & 0xffff;
+    if (ver > 12) ver = 12;
+    ascSend(RTK_MGMT(2) | (ver << 16) | ver, 0);
+    for (UInt32 n = 0; n < 64; n++) {
+        if (!ascRecv(&m, &ep, 1000)) {
+            NVMELog("ans: rtkit stalled during boot");
+            return false;
+        }
+        if (ep != 0) continue;
+        if (RTK_MGMT_TYPE(m) == 8) {           // endpoint map: acknowledge each page
+            bool last = (m >> 51) & 1;
+            ascSend(RTK_MGMT(8) | (m & (7ULL << 32)) | (last ? (1ULL << 51) : 1), 0);
+        } else if (RTK_MGMT_TYPE(m) == 7 && (m & 0xffff) == 0x20) {
+            break;                              // iop power on
+        }
+    }
+    for (UInt32 i = 0; i < 1000; i++) {
+        if (regRead32(ANS_BOOT_STATUS) == ANS_BOOT_STATUS_OK) {
+            NVMELog("ans: coprocessor booted");
+            return true;
+        }
+        IOSleep(1);
+    }
+    NVMELog("ans: boot status 0x%x", regRead32(ANS_BOOT_STATUS));
+    return false;
+}
+
+void
+IONVMEController::ansSetTCB(bool admin, UInt16 tag, const NVMeCommand *cmd)
+{
+    IOBufferMemoryDescriptor *mem = admin ? fAdminTCBMem : fIOTCBMem;
+    UInt8 *t = (UInt8 *)mem->getBytesNoCopy() + tag * ANS_TCB_SIZE;
+    bzero(t, ANS_TCB_SIZE);
+    t[1] = cmd->prp1 == 0 ? 0 : (cmd->opc & 1) ? 2 : 1;   // dma to / from the device
+    t[2] = (UInt8)tag;
+    *(UInt32 *)(t + 4) = cmd->cdw12;
+    *(UInt64 *)(t + 24) = cmd->prp1;
+    *(UInt64 *)(t + 32) = cmd->prp2;
 }
 
 bool
@@ -329,6 +506,17 @@ IONVMEController::allocQueues(void)
     bzero(fDMABuffer, 4096);
     fAdminCQPhase = true;
     fIOCQPhase = true;
+    if (fANSProvider) {
+        fAdminTCBMem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+            kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut,
+            fQueueDepth * ANS_TCB_SIZE, mask);
+        fIOTCBMem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+            kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut,
+            fQueueDepth * ANS_TCB_SIZE, mask);
+        if (!fAdminTCBMem || !fIOTCBMem) return false;
+        bzero(fAdminTCBMem->getBytesNoCopy(), fQueueDepth * ANS_TCB_SIZE);
+        bzero(fIOTCBMem->getBytesNoCopy(), fQueueDepth * ANS_TCB_SIZE);
+    }
     return true;
 }
 
@@ -340,6 +528,8 @@ IONVMEController::freeQueues(void)
     if (fIOSQMem) { fIOSQMem->release(); fIOSQMem = NULL; }
     if (fIOCQMem) { fIOCQMem->release(); fIOCQMem = NULL; }
     if (fDMAMem) { fDMAMem->release(); fDMAMem = NULL; }
+    if (fAdminTCBMem) { fAdminTCBMem->release(); fAdminTCBMem = NULL; }
+    if (fIOTCBMem) { fIOTCBMem->release(); fIOTCBMem = NULL; }
     fAdminSQ = NULL; fAdminCQ = NULL; fIOSQ = NULL; fIOCQ = NULL;
     fDMABuffer = NULL; fDMAPhys = 0;
 }
@@ -363,6 +553,13 @@ IONVMEController::resetController(void)
 bool
 IONVMEController::enableController(void)
 {
+    if (fANSProvider) {
+        regWrite32(ANS_LINEAR_SQ_CTRL, 1);
+        regWrite32(ANS_MAX_PEND_CMDS, fQueueDepth | (fQueueDepth << 16));
+        regWrite32(ANS_NVMMU_NUM_TCBS, fQueueDepth - 1);
+        regWrite64(ANS_NVMMU_ASQ_TCB_BASE, fAdminTCBMem->getPhysicalAddress());
+        regWrite64(ANS_NVMMU_IOSQ_TCB_BASE, fIOTCBMem->getPhysicalAddress());
+    }
     regWrite32(NVME_REG_AQA, (fQueueDepth - 1) | ((fQueueDepth - 1) << 16));
     regWrite64(NVME_REG_ASQ, fAdminSQMem->getPhysicalAddress());
     regWrite64(NVME_REG_ACQ, fAdminCQMem->getPhysicalAddress());
@@ -456,11 +653,19 @@ IONVMEController::createIOQueues(void)
 IOReturn
 IONVMEController::submitAdmin(NVMeCommand *cmd, UInt32 timeoutMs, UInt32 *resultOut)
 {
-    UInt16 cid = fNextCID++;
+    // ans completes by tag, the slot the command sits in
+    UInt16 tag = fAdminSQTail;
+    UInt16 cid = fANSProvider ? tag : fNextCID++;
     cmd->cid = cid;
     bcopy(cmd, (void *)&fAdminSQ[fAdminSQTail], sizeof(*cmd));
     fAdminSQTail = (fAdminSQTail + 1) % fQueueDepth;
-    ringAdminDoorbell();
+    if (fANSProvider) {
+        ansSetTCB(true, tag, cmd);
+        OSSynchronizeIO();
+        regWrite32(ANS_LINEAR_ASQ_DB, tag);
+    } else {
+        ringAdminDoorbell();
+    }
 
     for (UInt32 i = 0; i < timeoutMs; i++) {
         volatile NVMeCompletion *cqe = &fAdminCQ[fAdminCQHead];
@@ -470,6 +675,7 @@ IONVMEController::submitAdmin(NVMeCommand *cmd, UInt32 timeoutMs, UInt32 *result
             if (resultOut) *resultOut = cqe->result;
             fAdminCQHead = (fAdminCQHead + 1) % fQueueDepth;
             if (fAdminCQHead == 0) fAdminCQPhase = !fAdminCQPhase;
+            if (fANSProvider) regWrite32(ANS_NVMMU_TCB_INVAL, cqe->cid);
             regWrite32(NVME_REG_DB + fDoorbellStride, fAdminCQHead);
             if (cqe->cid != cid)
                 NVMELog("admin completion cid mismatch got=%u want=%u", cqe->cid, cid);
@@ -486,11 +692,18 @@ IONVMEController::submitAdmin(NVMeCommand *cmd, UInt32 timeoutMs, UInt32 *result
 IOReturn
 IONVMEController::submitIO(NVMeCommand *cmd, UInt32 timeoutMs)
 {
-    UInt16 cid = fNextCID++;
+    UInt16 tag = fIOSQTail;
+    UInt16 cid = fANSProvider ? tag : fNextCID++;
     cmd->cid = cid;
     bcopy(cmd, (void *)&fIOSQ[fIOSQTail], sizeof(*cmd));
     fIOSQTail = (fIOSQTail + 1) % fQueueDepth;
-    ringIODoorbell();
+    if (fANSProvider) {
+        ansSetTCB(false, tag, cmd);
+        OSSynchronizeIO();
+        regWrite32(ANS_LINEAR_IOSQ_DB, tag);
+    } else {
+        ringIODoorbell();
+    }
 
     for (UInt32 i = 0; i < timeoutMs; i++) {
         volatile NVMeCompletion *cqe = &fIOCQ[fIOCQHead];
@@ -499,6 +712,7 @@ IONVMEController::submitIO(NVMeCommand *cmd, UInt32 timeoutMs)
             UInt16 status = (cqe->status >> 1) & 0x7fff;
             fIOCQHead = (fIOCQHead + 1) % fQueueDepth;
             if (fIOCQHead == 0) fIOCQPhase = !fIOCQPhase;
+            if (fANSProvider) regWrite32(ANS_NVMMU_TCB_INVAL, cqe->cid);
             regWrite32(NVME_REG_DB + (3 * fDoorbellStride), fIOCQHead);
             if (cqe->cid != cid)
                 NVMELog("io completion cid mismatch got=%u want=%u", cqe->cid, cid);

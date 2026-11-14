@@ -10,6 +10,7 @@ target_sources(PDNVLoader.kext PRIVATE
     pdnv_os.c
     pdnv_pci.c
     pdnv_dev.c
+    pdnvkms.c
     pdnv_pcidev.cpp
     pdnv_fmt.c
     pdnv_reg.c
@@ -17,7 +18,7 @@ target_sources(PDNVLoader.kext PRIVATE
 )
 
 # the port compiles against NVIDIA's MIT interface headers as shipped, with the defines its Kbuild passes
-set_source_files_properties(pdnv_os.c pdnv_pci.c pdnv_dev.c pdnv_reg.c PROPERTIES
+set_source_files_properties(pdnv_os.c pdnv_pci.c pdnv_dev.c pdnvkms.c pdnv_reg.c PROPERTIES
     INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/nvidia/inc"
     COMPILE_DEFINITIONS "NVRM;NV_KERNEL_INTERFACE_LAYER;NV_VERSION_STRING=\"580.196.07\"")
 

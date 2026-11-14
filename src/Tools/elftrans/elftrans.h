@@ -110,6 +110,7 @@ int publish_sites(uintptr_t remove_lo, uintptr_t remove_hi, const uintptr_t *add
 int is_syscall_site(uintptr_t site);
 int register_mapped_aot(int fd, off_t offset, uintptr_t address, size_t length);
 int prepare_aot(const char *source, char *out, size_t capacity);
+const char *elftrans_source_of(const char *path);
 int is_elf_path(const char *path);
 int aot_open(int fd);
 int in_guest_space(uintptr_t lo, uintptr_t hi);
@@ -176,5 +177,10 @@ long sys_sigaltstack(GuestRegs *r);
 long sys_kill(GuestRegs *r);
 long sys_tkill(GuestRegs *r);
 long sys_tgkill(GuestRegs *r);
+
+
+// signals.c: ELFTRANS_CRASHDUMP's register and stack dump
+struct __darwin_x86_thread_state64;
+void crash_dump(int code, void *address, const struct __darwin_x86_thread_state64 *s);
 
 #endif
