@@ -2263,22 +2263,36 @@
               inherit (pkgs) xorgproto;
             };
           # the PureDarwin package sets, one per target (see nix/pd/scope.nix)
-          pdScope = import ./nix/pd/scope.nix { inherit lib pkgs; };
+          pdScope = import ./nix/pd/scope.nix {
+            inherit lib pkgs;
+            shared = {
+              appleSdk = appleSdk;
+              asmjitSrc = asmjitSrc;
+              coreFoundationSource = coreFoundationSource;
+              coreServicesSource = coreServicesSource;
+              foundationSource = foundationSource;
+              libSystemSource = libSystemSource;
+              libcxxDylibSource = libcxxDylibSource;
+              mingwAarch64 = mingwAarch64;
+              mkPureDarwin = mkPureDarwinBuild;
+              nativeMesonToolsDir = nativeMesonToolsDir;
+              nativeMigcom = nativeMigcom;
+              objcSource = objcSource;
+              protocolBufferSource = protocolBufferSource;
+              swiftToolchain = swiftToolchain;
+              wirelessDiagnosticsSource = wirelessDiagnosticsSource;
+            };
+          };
           pd.x86_64 = pdScope {
             inherit darwinCrossToolchain nativeLd;
             # the packages not yet in nix/pd/packages.nix, by their scope names
             bridge = {
-              appleSdk = appleSdk;
-              asmjitSrc = asmjitSrc;
               cairo = cairoBuild;
               clang = clangCrossBuild;
               compilerRt = compilerRtBuild;
-              coreFoundationSource = coreFoundationSource;
-              coreServicesSource = coreServicesSource;
               darwinCrossToolchain = darwinCrossToolchain;
               fontconfig = fontconfigBuild;
               foundation = foundationBuild;
-              foundationSource = foundationSource;
               freetype2 = freetype2Build;
               fribidi = fribidiBuild;
               gdkPixbuf = gdkPixbufBuild;
@@ -2292,12 +2306,10 @@
               iokitCFStatic = iokitCFStaticBuild;
               jsonc = jsoncBuild;
               libSystem = libSystemBuild;
-              libSystemSource = libSystemSource;
               libX11SharedBuild = libX11SharedBuild;
               libXauSharedBuild = libXauSharedBuild;
               libXdmcpSharedBuild = libXdmcpSharedBuild;
               libXextSharedBuild = libXextSharedBuild;
-              libcxxDylibSource = libcxxDylibSource;
               libdrm = libdrmBuild;
               libepoxy = libepoxyBuild;
               libjpeg = libjpegBuild;
@@ -2313,26 +2325,18 @@
               mesaBuild = mesaBuild;
               mesaDefaultBuild = mesaGpuBuild;
               metalPd = metalPdBuild;
-              mingwAarch64 = mingwAarch64;
-              mkPureDarwin = mkPureDarwinBuild;
               nativeLd = nativeLd;
-              nativeMesonToolsDir = nativeMesonToolsDir;
-              nativeMigcom = nativeMigcom;
-              objcSource = objcSource;
               openglFramework = openglFrameworkNoxBuild;
               openglFrameworkBuild = openglFrameworkBuild;
               opensslThreadsBuild = opensslThreadsBuild;
               pango = pangoBuild;
               pdVirglShim = pdVirglShimBuild;
               pixman = xvfbPixmanBuild;
-              protocolBufferSource = protocolBufferSource;
               securitySource = securitySource;
               sqlite = sqliteBuild;
-              swiftToolchain = swiftToolchain;
               systemConfiguration = systemConfigurationBuild;
               vulkanLoader = vulkanLoaderBuild;
               waylandScanner = waylandScannerBuild;
-              wirelessDiagnosticsSource = wirelessDiagnosticsSource;
               xkbcommonNoxBuild = xkbcommonNoxBuild;
               xkbcomp = xkbcompBuild;
               xkeyboardConfig = xkeyboardConfigBuild;
