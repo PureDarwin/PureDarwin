@@ -1649,7 +1649,7 @@ let
         rootFsType = "apfs";
         imageFileName = "puredarwin-apfs-minimal.img";
         espMB = 60;
-        rootMB = 260;
+        rootMB = 512;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
       };
       # The minimal system booted by 32-bit UEFI. Same shape as
