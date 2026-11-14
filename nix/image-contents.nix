@@ -663,90 +663,37 @@ let
         kexts = kextsBuild;
         kcTools = kc-tools.packages.${system}.default;
       };
-      kcArm64DebugBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
-        kernel = kernelArm64VirtDebugBuild;
-        inherit kernelSource;
-        kexts = kextsArm64Build;
-        kcTools = kc-tools.packages.${system}.default;
-      };
-      kcArm64ReleaseBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
-        kernel = kernelArm64VirtBuild;
-        inherit kernelSource;
-        kexts = kextsArm64Build;
-        kcTools = kc-tools.packages.${system}.default;
-      };
+      # an arm64 collection from the board table: the board's recipe and kcBase, extra on top
+      boardKc = board: kernel: extra: let b = (import ./boards.nix).boards.${board}; in
+        pkgs.callPackage ./pkgs/toolchain/${b.kc}.nix ({
+          inherit kernel;
+          kexts = kextsArm64Build;
+          kcTools = kc-tools.packages.${system}.default;
+        } // lib.optionalAttrs (b.kc != "kc-arm64-bcm2837") { inherit kernelSource; }
+          // lib.optionalAttrs (b ? kcBase) { inherit (b) kcBase; } // extra);
+      kcArm64DebugBuild = boardKc "virt" kernelArm64VirtDebugBuild { };
+      kcArm64ReleaseBuild = boardKc "virt" kernelArm64VirtBuild { };
       # the A733 kernel: VIRT with an E and a P cluster for the AMP (Edge) scheduler
-      kcArm64A733ReleaseBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
-        kernel = kernelArm64VirtAmpBuild;
-        inherit kernelSource;
-        kexts = kextsArm64Build;
-        kcTools = kc-tools.packages.${system}.default;
-      };
+      kcArm64A733ReleaseBuild = boardKc "virtamp" kernelArm64VirtAmpBuild { };
       # M1 for darwin-vm: the virt collection's kexts over the T8103 kernel, same large-memory base
-      kcArm64T8103DebugBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
-        kernel = kernelArm64T8103DebugBuild;
-        inherit kernelSource;
-        kexts = kextsArm64Build;
-        kcTools = kc-tools.packages.${system}.default;
-      };
-      kcArm64T8010DebugBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64-t8010.nix {
-        kernel = kernelArm64T8010DebugBuild;
-        inherit kernelSource;
-        kexts = kextsArm64Build;
-        kcTools = kc-tools.packages.${system}.default;
-      };
+      kcArm64T8103DebugBuild = boardKc "t8103" kernelArm64T8103DebugBuild { };
+      kcArm64T8010DebugBuild = boardKc "t8010" kernelArm64T8010DebugBuild { };
       # the A9 (S8000) collection for Inferno's s8000 machine, the same kext set as T8010
-      kcArm64S8000DebugBuild = (pkgs.callPackage ./pkgs/toolchain/kc-arm64-t8010.nix {
-        kernel = kernelArm64S8000DebugBuild;
-        inherit kernelSource;
-        kexts = kextsArm64Build;
+      kcArm64S8000DebugBuild = (boardKc "s8000" kernelArm64S8000DebugBuild {
         # Inferno patches the apfs kext and needs it present
         extraKexts = [ "pthread" "Sandbox" "amfi" "apfs" "PDStubAppleMobileFileIntegrity" "PDStubAppleImage4" "PDStubImage4"
           "PDStubAppleFirmwareUpdateKext" "PDStubAppleS5L8960XWatchDogTimer" ];
-        # Apple's arm64 layout: collection header at ARM64_KC_BASE, then the kexts, then the kernel
-        kcBase = "fffffff006000000";
-        kcTools = kc-tools.packages.${system}.default;
       }).overrideAttrs { pname = "puredarwin-kc-arm64-s8000"; };
-      kcArm64T8010ReleaseBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64-t8010.nix {
-        kernel = kernelArm64T8010Build;
-        inherit kernelSource;
-        kexts = kextsArm64Build;
-        kcTools = kc-tools.packages.${system}.default;
-      };
-      kcArm64Bcm2837ReleaseBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64-bcm2837.nix {
-        kernel = kernelArm64Bcm2837Build;
-        kexts = kextsArm64Build;
-        kcTools = kc-tools.packages.${system}.default;
-      };
-      kcArm64Bcm2837DebugBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64-bcm2837.nix {
-        kernel = kernelArm64Bcm2837DebugBuild;
-        kexts = kextsArm64Build;
-        kcTools = kc-tools.packages.${system}.default;
-      };
+      kcArm64T8010ReleaseBuild = boardKc "t8010" kernelArm64T8010Build { };
+      kcArm64Bcm2837ReleaseBuild = boardKc "bcm2837" kernelArm64Bcm2837Build { };
+      kcArm64Bcm2837DebugBuild = boardKc "bcm2837" kernelArm64Bcm2837DebugBuild { };
       # 4KB-page VIRT: the collection header sits at the classic ARM64_KC_BASE
-      kcArm64Virt4kDebugBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
-        kernel = kernelArm64Virt4kDebugBuild;
-        inherit kernelSource;
-        kexts = kextsArm64Build;
-        kcTools = kc-tools.packages.${system}.default;
-        kcBase = "fffffff006000000";
-      };
+      kcArm64Virt4kDebugBuild = boardKc "virt4k" kernelArm64Virt4kDebugBuild { };
       # Same collection as VIRT4K (classic geometry, kcBase = ARM64_KC_BASE); the
       # board differs from QEMU only in the platform expert's peripherals
-      kcArm64Sun50iReleaseBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
-        kernel = kernelArm64Sun50iBuild;
-        inherit kernelSource;
-        kexts = kextsArm64Build;
-        kcTools = kc-tools.packages.${system}.default;
-        kcBase = "fffffff006000000";
-      };
+      kcArm64Sun50iReleaseBuild = boardKc "sun50i" kernelArm64Sun50iBuild { };
       # the sun50i collection plus the drm layer and the adreno driver, for the msm8916 stick
-      kcArm64Msm8916Build = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
-        kernel = kernelArm64Sun50iBuild;
-        inherit kernelSource;
-        kexts = kextsArm64Build;
-        kcTools = kc-tools.packages.${system}.default;
-        kcBase = "fffffff006000000";
+      kcArm64Msm8916Build = boardKc "sun50i" kernelArm64Sun50iBuild {
         extraKexts = [
           "${drmMsmArm64Build}/System/Library/Extensions/PDDRMDri.kext"
           "${drmMsmArm64Build}/System/Library/Extensions/PDDRMmsm.kext"
@@ -755,12 +702,7 @@ let
         ];
       };
       # the sun50i collection plus the drm layer and nouveau, for the jetson tx1's gm20b
-      kcArm64Tegra210Build = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
-        kernel = kernelArm64Sun50iBuild;
-        inherit kernelSource;
-        kexts = kextsArm64Build;
-        kcTools = kc-tools.packages.${system}.default;
-        kcBase = "fffffff006000000";
+      kcArm64Tegra210Build = boardKc "sun50i" kernelArm64Sun50iBuild {
         extraKexts = [
           "${drmNouveauArm64Build}/System/Library/Extensions/PDDRMDri.kext"
           "${drmNouveauArm64Build}/System/Library/Extensions/PDDRMnouveau.kext"
@@ -777,25 +719,9 @@ let
           "PDFBSDem" "PDKeyStore"
         ];
       };
-      kcArm64Sun50iDebugBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
-        kernel = kernelArm64Sun50iDebugBuild;
-        inherit kernelSource;
-        kexts = kextsArm64Build;
-        kcTools = kc-tools.packages.${system}.default;
-        kcBase = "fffffff006000000";
-      };
-      kcArm64Sc8280xpReleaseBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
-        kernel = kernelArm64Sc8280xpBuild;
-        inherit kernelSource;
-        kexts = kextsArm64Build;
-        kcTools = kc-tools.packages.${system}.default;
-      };
-      kcArm64Sc8280xpDebugBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
-        kernel = kernelArm64Sc8280xpDebugBuild;
-        inherit kernelSource;
-        kexts = kextsArm64Build;
-        kcTools = kc-tools.packages.${system}.default;
-      };
+      kcArm64Sun50iDebugBuild = boardKc "sun50i" kernelArm64Sun50iDebugBuild { };
+      kcArm64Sc8280xpReleaseBuild = boardKc "sc8280xp" kernelArm64Sc8280xpBuild { };
+      kcArm64Sc8280xpDebugBuild = boardKc "sc8280xp" kernelArm64Sc8280xpDebugBuild { };
       prelinkedArm32Bcm2835Build =
         pkgs.callPackage ./pkgs/toolchain/prelinked-arm32-bcm2835.nix {
           kernel = kernelArm32Bcm2835Build;

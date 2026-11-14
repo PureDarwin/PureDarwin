@@ -1617,7 +1617,7 @@ let
   glibArm64Build = pdArm64.glib;
 
   # the boards and their kernels (see nix/boards.nix)
-  boardKernels = (import ./boards.nix { inherit lib mkPureDarwinBuild kernelSource arm64CrossToolchain; }).kernels;
+  boardKernels = (import ./boards.nix).kernels { inherit lib mkPureDarwinBuild kernelSource arm64CrossToolchain; };
   # the arm64 PureDarwin package set, the same recipes as x86_64 (see nix/pd/scope.nix)
   pdArm64 = pdScope {
     darwinCrossToolchain = arm64CrossToolchain;
