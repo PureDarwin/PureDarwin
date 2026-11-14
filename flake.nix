@@ -6143,6 +6143,27 @@
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
             };
+          # NVIDIA's 580 driver on PDNVLoader: the unmodified package, the Linux programs elftrans runs it with,
+          # and the image that carries them
+          nvidia580 = pkgs.callPackage ./nix/pkgs/gpu/nvidia-580.nix { };
+          pdnvvkBuild = pkgs.callPackage ./nix/pkgs/gpu/pdnvvk.nix { };
+          nvidiaLinuxRoot = pkgs.callPackage ./nix/pkgs/gpu/nvidia-linux-root.nix {
+            pdnvvk = pdnvvkBuild;
+          };
+          kcNvidiaBuild = kcGpuBuild.override { extraKexts = [ "PDNVLoader.kext" ]; };
+          # the aux KC is linked against its boot KC, the kernel refuses image-gpu's on this one
+          nvidiaAuxFiles = pkgs.runCommand "puredarwin-nvidia-aux" { } ''
+            mkdir -p $out/Library/KernelCollections
+            cp ${kcNvidiaBuild}/aux.kc $out/Library/KernelCollections/AuxiliaryKernelExtensions.kc
+          '';
+          imageNvidiaBuild = imageGpuBuild.override (old: {
+            kc = kcNvidiaBuild;
+            extraPackages = builtins.filter (p: p != gpuAuxFiles) old.extraPackages
+              ++ [ nvidiaAuxFiles elftransBuild nvidia580 nvidiaLinuxRoot pdnvprobeBuild ];
+            imageFileName = "puredarwin-gpu-nvidia.img";
+            rootMB = old.rootMB + 600;
+            bootArgs = "-v debug=0x210 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 -noprogress csr-active-config=0x3 fbsdkpi_debug=1";
+          });
           pdgltriBuild =
             pkgs.callPackage ./nix/pkgs/gpu/pdgltri.nix {
               inherit darwinCrossToolchain nativeLd;
@@ -6254,6 +6275,10 @@
             image-i915-legacy = imageI915LegacyBuild;
             kc-gpu = kcGpuBuild;
             pdnvprobe = pdnvprobeBuild;
+            nvidia-580 = nvidia580;
+            pdnvvk = pdnvvkBuild;
+            kc-nvidia = kcNvidiaBuild;
+            image-gpu-nvidia = imageNvidiaBuild;
             image-gpu = imageGpuBuild;
             image-gpu-sb = mkSecureBootImage imageGpuBuild;
             image-gpu-legacy = imageGpuLegacyBuild;
