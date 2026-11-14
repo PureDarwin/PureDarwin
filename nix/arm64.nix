@@ -1616,6 +1616,8 @@ let
   yajlArm64Build = pdArm64.yajl;
   glibArm64Build = pdArm64.glib;
 
+  # the boards and their kernels (see nix/boards.nix)
+  boardKernels = (import ./boards.nix { inherit lib mkPureDarwinBuild kernelSource arm64CrossToolchain; }).kernels;
   # the arm64 PureDarwin package set, the same recipes as x86_64 (see nix/pd/scope.nix)
   pdArm64 = pdScope {
     darwinCrossToolchain = arm64CrossToolchain;
@@ -1940,207 +1942,31 @@ let
     puredarwinArch = "arm64";
     inherit arm64CrossToolchain;
   };
-  kernelArm64VirtBuild = mkPureDarwinBuild {
-    pname = "puredarwin-kernel-arm64-virt";
-    src = kernelSource;
-    buildTargets = [ "xnu" ];
-    enableUserspace = false;
-    installUserland = false;
-    installKernel = true;
-    xnuKernelConfig = "RELEASE";
-    puredarwinArch = "arm64";
-    inherit arm64CrossToolchain;
-    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=VIRT" ];
-  };
-  kernelArm64VirtDebugBuild = mkPureDarwinBuild {
-    pname = "puredarwin-kernel-arm64-virt-debug";
-    src = kernelSource;
-    buildTargets = [ "xnu" ];
-    enableUserspace = false;
-    installUserland = false;
-    installKernel = true;
-    xnuKernelConfig = "DEBUG";
-    puredarwinArch = "arm64";
-    inherit arm64CrossToolchain;
-    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=VIRT" ];
-  };
+  kernelArm64VirtBuild = boardKernels.virt.release;
+  kernelArm64VirtDebugBuild = boardKernels.virt.debug;
   # VIRT with mixed core types (Orange Pi Zero 4 A733: A55 E cluster, A76 P cluster), AMP scheduling
-  kernelArm64VirtAmpBuild = mkPureDarwinBuild {
-    pname = "puredarwin-kernel-arm64-virtamp";
-    src = kernelSource;
-    buildTargets = [ "xnu" ];
-    enableUserspace = false;
-    installUserland = false;
-    installKernel = true;
-    xnuKernelConfig = "RELEASE";
-    puredarwinArch = "arm64";
-    inherit arm64CrossToolchain;
-    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=VIRTAMP" ];
-  };
-  kernelArm64Bcm2837Build = mkPureDarwinBuild {
-    pname = "puredarwin-kernel-arm64-bcm2837";
-    src = kernelSource;
-    buildTargets = [ "xnu" ];
-    enableUserspace = false;
-    installUserland = false;
-    installKernel = true;
-    xnuKernelConfig = "RELEASE";
-    puredarwinArch = "arm64";
-    inherit arm64CrossToolchain;
-    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=BCM2837" ];
-  };
-  kernelArm64Bcm2837DebugBuild = mkPureDarwinBuild {
-    pname = "puredarwin-kernel-arm64-bcm2837-debug";
-    src = kernelSource;
-    buildTargets = [ "xnu" ];
-    enableUserspace = false;
-    installUserland = false;
-    installKernel = true;
-    xnuKernelConfig = "DEBUG";
-    puredarwinArch = "arm64";
-    inherit arm64CrossToolchain;
-    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=BCM2837" ];
-  };
+  kernelArm64VirtAmpBuild = boardKernels.virtamp.release;
+  kernelArm64Bcm2837Build = boardKernels.bcm2837.release;
+  kernelArm64Bcm2837DebugBuild = boardKernels.bcm2837.debug;
   # VIRT with 4KB pages on a Cortex-A53 model (see MakeInc VIRT4K), the SUN50I
   # page-table geometry where QEMU can single-step it
-  kernelArm64Virt4kDebugBuild = mkPureDarwinBuild {
-    pname = "puredarwin-kernel-arm64-virt4k-debug";
-    src = kernelSource;
-    buildTargets = [ "xnu" ];
-    enableUserspace = false;
-    installUserland = false;
-    installKernel = true;
-    xnuKernelConfig = "DEBUG";
-    puredarwinArch = "arm64";
-    inherit arm64CrossToolchain;
-    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=VIRT4K" ];
-  };
-  kernelArm64Sun50iBuild = mkPureDarwinBuild {
-    pname = "puredarwin-kernel-arm64-sun50i";
-    src = kernelSource;
-    buildTargets = [ "xnu" ];
-    enableUserspace = false;
-    installUserland = false;
-    installKernel = true;
-    xnuKernelConfig = "RELEASE";
-    puredarwinArch = "arm64";
-    inherit arm64CrossToolchain;
-    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=SUN50I" ];
-  };
-  kernelArm64Sun50iDebugBuild = mkPureDarwinBuild {
-    pname = "puredarwin-kernel-arm64-sun50i-debug";
-    src = kernelSource;
-    buildTargets = [ "xnu" ];
-    enableUserspace = false;
-    installUserland = false;
-    installKernel = true;
-    xnuKernelConfig = "DEBUG";
-    puredarwinArch = "arm64";
-    inherit arm64CrossToolchain;
-    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=SUN50I" ];
-  };
+  kernelArm64Virt4kDebugBuild = boardKernels.virt4k.debug;
+  kernelArm64Sun50iBuild = boardKernels.sun50i.release;
+  kernelArm64Sun50iDebugBuild = boardKernels.sun50i.debug;
   # Apple A10 (T8010) - iPad 6th gen / iPhone 7, booted by pongoOS over
   # checkm8 rather than by xnu-loader. The board config, AIC and the s5l
   # and dockchannel UARTs are Apple's own in-tree code, only the machine
   # config selection differs from the QEMU virt kernel.
-  kernelArm64T8010Build = mkPureDarwinBuild {
-    pname = "puredarwin-kernel-arm64-t8010";
-    src = kernelSource;
-    buildTargets = [ "xnu" ];
-    enableUserspace = false;
-    installUserland = false;
-    installKernel = true;
-    xnuKernelConfig = "RELEASE";
-    puredarwinArch = "arm64";
-    inherit arm64CrossToolchain;
-    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=T8010" ];
-  };
-  kernelArm64T8010DebugBuild = mkPureDarwinBuild {
-    pname = "puredarwin-kernel-arm64-t8010-debug";
-    src = kernelSource;
-    buildTargets = [ "xnu" ];
-    enableUserspace = false;
-    installUserland = false;
-    installKernel = true;
-    xnuKernelConfig = "DEBUG";
-    puredarwinArch = "arm64";
-    inherit arm64CrossToolchain;
-    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=T8010" ];
-  };
+  kernelArm64T8010Build = boardKernels.t8010.release;
+  kernelArm64T8010DebugBuild = boardKernels.t8010.debug;
   # Apple A9 (S8000) - iPhone 6s, for the Inferno emulator's s8000 machine
-  kernelArm64S8000Build = mkPureDarwinBuild {
-    pname = "puredarwin-kernel-arm64-s8000";
-    src = kernelSource;
-    buildTargets = [ "xnu" ];
-    enableUserspace = false;
-    installUserland = false;
-    installKernel = true;
-    xnuKernelConfig = "RELEASE";
-    puredarwinArch = "arm64";
-    inherit arm64CrossToolchain;
-    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=S8000" ];
-  };
-  kernelArm64S8000DebugBuild = mkPureDarwinBuild {
-    pname = "puredarwin-kernel-arm64-s8000-debug";
-    src = kernelSource;
-    buildTargets = [ "xnu" ];
-    enableUserspace = false;
-    installUserland = false;
-    installKernel = true;
-    xnuKernelConfig = "DEBUG";
-    puredarwinArch = "arm64";
-    inherit arm64CrossToolchain;
-    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=S8000" ];
-  };
+  kernelArm64S8000Build = boardKernels.s8000.release;
+  kernelArm64S8000DebugBuild = boardKernels.s8000.debug;
   # Apple M1 (T8103) - Mac mini, for darwin-vm's qemu
-  kernelArm64T8103Build = mkPureDarwinBuild {
-    pname = "puredarwin-kernel-arm64-t8103";
-    src = kernelSource;
-    buildTargets = [ "xnu" ];
-    enableUserspace = false;
-    installUserland = false;
-    installKernel = true;
-    xnuKernelConfig = "RELEASE";
-    puredarwinArch = "arm64";
-    inherit arm64CrossToolchain;
-    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=T8103" ];
-  };
-  kernelArm64T8103DebugBuild = mkPureDarwinBuild {
-    pname = "puredarwin-kernel-arm64-t8103-debug";
-    src = kernelSource;
-    buildTargets = [ "xnu" ];
-    enableUserspace = false;
-    installUserland = false;
-    installKernel = true;
-    xnuKernelConfig = "DEBUG";
-    puredarwinArch = "arm64";
-    inherit arm64CrossToolchain;
-    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=T8103" ];
-  };
-  kernelArm64Sc8280xpBuild = mkPureDarwinBuild {
-    pname = "puredarwin-kernel-arm64-sc8280xp";
-    src = kernelSource;
-    buildTargets = [ "xnu" ];
-    enableUserspace = false;
-    installUserland = false;
-    installKernel = true;
-    xnuKernelConfig = "RELEASE";
-    puredarwinArch = "arm64";
-    inherit arm64CrossToolchain;
-    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=SC8280XP" ];
-  };
-  kernelArm64Sc8280xpDebugBuild = mkPureDarwinBuild {
-    pname = "puredarwin-kernel-arm64-sc8280xp-debug";
-    src = kernelSource;
-    buildTargets = [ "xnu" ];
-    enableUserspace = false;
-    installUserland = false;
-    installKernel = true;
-    xnuKernelConfig = "DEBUG";
-    puredarwinArch = "arm64";
-    inherit arm64CrossToolchain;
-    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=SC8280XP" ];
-  };
+  kernelArm64T8103Build = boardKernels.t8103.release;
+  kernelArm64T8103DebugBuild = boardKernels.t8103.debug;
+  kernelArm64Sc8280xpBuild = boardKernels.sc8280xp.release;
+  kernelArm64Sc8280xpDebugBuild = boardKernels.sc8280xp.debug;
   kernelArm32Bcm2835Build = mkPureDarwinBuild {
     pname = "puredarwin-kernel-arm32-bcm2835";
     src = kernelSource;
