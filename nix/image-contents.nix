@@ -2226,7 +2226,7 @@ let
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-wsl-root.img";
         espMB = 60;
-        rootMB = 260;
+        rootMB = 512;
         bootArgs = minimalBootArgs;
         rootfsTarball = true;
       };
