@@ -1152,7 +1152,7 @@ let
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-ia32-dual.img";
         espMB = 60;
-        rootMB = 260;
+        rootMB = 512;
       };
       imageHfsBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystem;
@@ -1701,7 +1701,7 @@ let
         rootFsType = "apfs";
         imageFileName = "puredarwin-apfs-minimal.img";
         espMB = 60;
-        rootMB = 260;
+        rootMB = 512;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
       };
       # The minimal system booted by 32-bit UEFI. Same shape as
@@ -1715,7 +1715,7 @@ let
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-ia32-minimal.img";
         espMB = 60;
-        rootMB = 260;
+        rootMB = 512;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
       };
       imageLegacyMinimalBuild = pkgs.callPackage ../image.nix {
@@ -1727,7 +1727,7 @@ let
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-legacy-minimal.img";
         espMB = 60;
-        rootMB = 260;
+        rootMB = 512;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
       };
       # BIOS boot through GRUB and xnu-loader's Multiboot2 ELF. UEFI still works
@@ -1741,7 +1741,7 @@ let
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-multiboot-minimal.img";
         espMB = 60;
-        rootMB = 260;
+        rootMB = 512;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
       };
       # GRUB (BIOS and UEFI) loading xnu-loader through the Linux boot protocol,
@@ -1757,7 +1757,7 @@ let
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-grub-linux-minimal.img";
         espMB = 60;
-        rootMB = 260;
+        rootMB = 512;
         bootArgs = minimalBootArgs;
       };
       imageMinimalBuildDebug = pkgs.callPackage ../image.nix {
@@ -2278,7 +2278,7 @@ let
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-wsl-root.img";
         espMB = 60;
-        rootMB = 260;
+        rootMB = 512;
         bootArgs = minimalBootArgs;
         rootfsTarball = true;
       };
