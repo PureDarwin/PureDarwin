@@ -97,7 +97,7 @@ jobs:
                   "image-amdgpu", "image-amdgpu-test", "image-amdgpu-debug", "image-amdgpu-mesa",
                   "image-amdgpu-argon-gles", "image-amdgpu-argon-cpu", "image-amdgpu-720", "image-amdgpu-switch",
                   "image-amdgpu-allfw", "image-radeon", "image-i915", "image-i915-legacy",
-                  "image-gpu", "image-gpu-legacy", "image-gpu-sb", "image-iwlwifi"
+                  "image-gpu", "image-gpu-legacy", "image-gpu-sb", "image-iwlwifi","image-gpu-nvidia"
                 ]' ;;
               cross)
                 json='[
@@ -114,7 +114,7 @@ jobs:
                   "image-ia32", "image-ia32-minimal", "image-ia32-dual", "image-multiboot-minimal",
                   "image-grub-linux-minimal", "image-tools-test", "image-frameworks-test", "image-cg-test",
                   "image-amdgpu", "image-amdgpu-test", "image-amdgpu-debug", "image-amdgpu-mesa",
-                  "image-amdgpu-argon-gles", "image-amdgpu-argon-cpu", "image-amdgpu-720", "image-amdgpu-switch",
+                  "image-amdgpu-argon-gles", "image-amdgpu-argon-cpu", "image-amdgpu-720", "image-gpu-nvidia", "image-amdgpu-switch",
                   "image-amdgpu-allfw", "image-radeon", "image-i915", "image-i915-legacy",
                   "image-gpu", "image-gpu-legacy", "image-gpu-sb", "image-iwlwifi",
                   "image-arm64-virt", "image-arm64-virt-debug", "image-arm64-virt-minimal", "image-arm64-virt-minimal-release",
