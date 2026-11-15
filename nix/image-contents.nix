@@ -515,6 +515,12 @@ let
     kernel-arm64-t8010-debug = kernelArm64T8010DebugBuild;
     kernel-arm64-bcm2837 = kernelArm64Bcm2837Build;
     kernel-arm64-bcm2837-debug = kernelArm64Bcm2837DebugBuild;
+    kernel-arm64-sun50i = kernelArm64Sun50iBuild;
+    kernel-arm64-sun50i-debug = kernelArm64Sun50iDebugBuild;
+    kernel-arm64-sc8280xp = kernelArm64Sc8280xpBuild;
+    kernel-arm64-sc8280xp-debug = kernelArm64Sc8280xpDebugBuild;
+    kernel-arm64-virt4k-debug = kernelArm64Virt4kDebugBuild;
+    kernel-arm64-virtamp = kernelArm64VirtAmpBuild;
     kernel-arm32-bcm2835 = kernelArm32Bcm2835Build;
     kernel-arm32-bcm2835-debug = kernelArm32Bcm2835DebugBuild;
     kernel-arm32-bcm2835-dev = kernelArm32Bcm2835DevBuild;
