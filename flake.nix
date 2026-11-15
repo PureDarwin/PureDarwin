@@ -661,7 +661,8 @@
             xvfbLibXresBuild = xvfbLibXresArm64Build;
             xvfbPixmanBuild = xvfbPixmanArm64Build;
             xvfbZlibBuild = xvfbZlibArm64Build;
-          };          xfconfArm64 = xfceDesktopArm64.xfconfBuild;
+          };
+          xfconfArm64 = xfceDesktopArm64.xfconfBuild;
           libxfce4utilArm64 = xfceDesktopArm64.libxfce4utilBuild;
           libxfce4uiArm64 = xfceDesktopArm64.libxfce4uiBuild;
           xfwm4Arm64 = xfceDesktopArm64.xfwm4Build;
