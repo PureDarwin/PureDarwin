@@ -210,12 +210,18 @@ stdenv.mkDerivation {
     # OpenGL.framework re-exports libGL and libGLU by their /usr/lib install names, which ld has to find,
     # and Carbon re-exports its HIToolbox subframework the same way
     hitoolbox=/System/Library/Frameworks/Carbon.framework/Versions/A/Frameworks/HIToolbox.framework/Versions/A/HIToolbox
+    # the frameworks re-export CoreFoundation by /usr/lib/libCoreFoundation.dylib where it is built that way (arm64),
+    # which the SDK sysroot doesn't have
+    cfReexport=""
+    if [ -e ${corefoundation}/usr/lib/libCoreFoundation.dylib ]; then
+      cfReexport="-Wl,-dylib_file,/usr/lib/libCoreFoundation.dylib:${corefoundation}/usr/lib/libCoreFoundation.dylib"
+    fi
     glReexports="${lib.optionalString enableMac "-Wl,-dylib_file,/usr/lib/libGL.1.dylib:${mesa}/usr/lib/libGL.1.dylib -Wl,-dylib_file,/usr/lib/libGLU.1.dylib:${glu}/usr/lib/libGLU.1.dylib -Wl,-dylib_file,$hitoolbox:${carbon}$hitoolbox"}"
     # clang adds -lobjc for Objective-C links by itself, -nostdlib takes that away
     # and the SDK's tbds don't record that Carbon re-exports ApplicationServices and CoreServices re-exports
     # CoreFoundation, so ld can't follow them the way it does against Apple's SDK
     objcLib="${lib.optionalString enableMac "-L${libobjc}/usr/lib -lobjc -framework ApplicationServices -framework CoreFoundation"}"
-    export LDFLAGS="$glReexports $objcLib -F$pdfw -isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${mesa}/usr/lib ${lib.concatMapStringsSep " " (dep: "-L${dep}/lib") (xDeps ++ waylandDeps)} -Wl,-platform_version,macos,${if stockMac then "13.0" else "26.5"},26.5${lib.optionalString stockMac " -Wl,-headerpad_max_install_names"} -F${coreservices}/System/Library/Frameworks -framework CoreServices -F${security}/System/Library/Frameworks -framework Security -F${diskArbitration}/System/Library/Frameworks -framework DiskArbitration -F${systemConfiguration}/System/Library/Frameworks -framework SystemConfiguration -F${iokit}/System/Library/Frameworks -F${corefoundation}/System/Library/Frameworks -lSystem"
+    export LDFLAGS="$glReexports $cfReexport $objcLib -F$pdfw -isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${mesa}/usr/lib ${lib.concatMapStringsSep " " (dep: "-L${dep}/lib") (xDeps ++ waylandDeps)} -Wl,-platform_version,macos,${if stockMac then "13.0" else "26.5"},26.5${lib.optionalString stockMac " -Wl,-headerpad_max_install_names"} -F${coreservices}/System/Library/Frameworks -framework CoreServices -F${security}/System/Library/Frameworks -framework Security -F${diskArbitration}/System/Library/Frameworks -framework DiskArbitration -F${systemConfiguration}/System/Library/Frameworks -framework SystemConfiguration -F${iokit}/System/Library/Frameworks -F${corefoundation}/System/Library/Frameworks -lSystem"
 
     # The cross build invokes widl for IDLs that import stdole2.tlb. The
     # native-tools derivation deliberately builds only the host tools, so its
