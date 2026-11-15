@@ -801,6 +801,28 @@ pdnv_dev_gpu_present(uint32_t gpu_id)
 	return 0;
 }
 
+// the OS device the modeset core hands its clients: the IOPCIDevice, or the linux device PDDRMnvidia sets for it
+static void *sOSDevice[PDNV_MAX_GPUS];
+
+uint32_t
+pdnv_gpu_count(void)
+{
+	return sNumGPUs;
+}
+
+void *
+pdnv_gpu_pci_device(uint32_t i)
+{
+	return i < sNumGPUs ? sGPUs[i]->handle : NULL;
+}
+
+void
+pdnv_gpu_set_os_device(uint32_t i, void *os_device)
+{
+	if (i < sNumGPUs)
+		sOSDevice[i] = os_device;
+}
+
 // as nvidia_modeset_enumerate_gpus: no NUMA to set up, the IOPCIDevice as the OS device
 uint32_t
 pdnv_dev_enumerate_gpus(void *out)
@@ -817,7 +839,7 @@ pdnv_dev_enumerate_gpus(void *out)
 		gpu_info[i].pci_info.slot = nv->pci_info.slot;
 		gpu_info[i].pci_info.function = nv->pci_info.function;
 		gpu_info[i].needs_numa_setup = NV_FALSE;
-		gpu_info[i].os_device_ptr = nv->handle;
+		gpu_info[i].os_device_ptr = sOSDevice[i] != NULL ? sOSDevice[i] : nv->handle;
 	}
 	return sNumGPUs;
 }

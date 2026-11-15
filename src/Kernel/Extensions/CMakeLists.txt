@@ -91,6 +91,10 @@ if(PUREDARWIN_ARCH STREQUAL "x86_64")
         if(EXISTS "${PD_DRMKMOD_DIR}/drivers/gpu/drm/nouveau")
             add_subdirectory(PDDRMnouveau)
         endif()
+        # nvidia-drm over PDNVLoader's modeset core, when nix hands over NVIDIA's package sources
+        if(PD_NVIDIA_DRM_DIR)
+            add_subdirectory(PDDRMnvidia)
+        endif()
         # radeon for terascale and gcn 1 and 2, from the drm-kmod tree that kept it
         if(EXISTS "${PD_DRMKMOD_DIR}/drivers/gpu/drm/radeon")
             add_subdirectory(PDDRMradeon)

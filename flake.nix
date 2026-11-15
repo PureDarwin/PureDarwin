@@ -1756,6 +1756,18 @@
             extraCmakeFlags = [ "-DPD_DRMKMOD_DIR=${drmKmodNouveauSrc}" ];
             ninjaFlags = [ "-k" "0" ];
           };
+          # nvidia-drm from NVIDIA's 580 package over PDNVLoader's modeset core, for the cards the blob drives
+          drmNvidiaBuild = mkDrmKext [ "PDDRMnvidia" ] {
+            pname = "puredarwin-drm-nvidia";
+            buildTargets = [ "PDDRMnvidia.kext" ];
+            enableUserspace = false;
+            installUserland = false;
+            installKernel = false;
+            installKexts = true;
+            installKextNames = [ "PDDRMnvidia.kext" ];
+            extraCmakeFlags = [ "-DPD_DRMKMOD_DIR=${drmKmodSrc}" "-DPD_NVIDIA_DRM_DIR=${pd.x86_64.nvidiaDrmSrc}" ];
+            ninjaFlags = [ "-k" "0" ];
+          };
           # gsp firmware for turing (tu1xx), ampere ga10x (ga107 is the rtx 2050) and ada ad10x, only
           # the 535.113.01 release linux 6.14's nouveau asks for. fermi needs none.
           nouveauFirmware = pkgs.runCommand "puredarwin-nouveau-firmware" { } ''
@@ -2616,7 +2628,12 @@
           nvidia580 = pd.x86_64.nvidia580;
           pdnvvkBuild = pd.x86_64.pdnvvk;
           nvidiaLinuxRoot = pd.x86_64.nvidiaLinuxRoot;
-          kcNvidiaBuild = kcGpuBuild.override { extraKexts = [ "PDNVLoader.kext" ]; };
+          # PDNVLoader in the boot collection, nvidia-drm over it in the auxiliary one with the other drm drivers
+          kcNvidiaBuild = kcGpuBuild.override (old: {
+            extraKexts = [ "PDNVLoader.kext" ];
+            kexts = pkgs.symlinkJoin { name = "puredarwin-kexts-nvidia"; paths = [ drmGpuKexts drmNvidiaBuild ]; };
+            auxKexts = old.auxKexts ++ [ "PDDRMnvidia.kext" ];
+          });
           # the aux KC is linked against its boot KC, the kernel refuses image-gpu's on this one
           nvidiaAuxFiles = pkgs.runCommand "puredarwin-nvidia-aux" { } ''
             mkdir -p $out/Library/KernelCollections
@@ -2660,6 +2677,7 @@
             drm-i915 = drmI915Build;
             drm-kmod-nouveau-src = drmKmodNouveauSrc;
             drm-nouveau = drmNouveauBuild;
+            drm-nvidia = drmNvidiaBuild;
             nouveau-firmware = nouveauFirmware;
             i915-firmware = i915Firmware;
             kc-gpu = kcGpuBuild;

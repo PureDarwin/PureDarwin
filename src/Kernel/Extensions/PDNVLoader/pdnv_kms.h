@@ -17,11 +17,22 @@ struct pdnvkms_calls {
 	void *nvKmsIoctl;                       // NvBool (void *, NvU32, NvU64, size_t)
 	void *nvKmsKapiHandleEventQueueChange;  // void (struct NvKmsKapiDevice *)
 	void *rm_kernel_rmapi_op;               // void (nvidia_stack_t *, void *)
+	// the kernel API nvidia-drm uses, its table and the float helpers, plus the per-GPU probe
+	void *nvKmsKapiProbe;                   // void (const nv_gpu_info_t *)
+	void *nvKmsKapiGetFunctionsTableInternal;
+	void *nvKmsKapiF16ToF32Internal;
+	void *nvKmsKapiF32ToF16Internal;
+	void *nvKmsKapiF32MulInternal;
+	void *nvKmsKapiF32DivInternal;
+	void *nvKmsKapiF32AddInternal;
+	void *nvKmsKapiF32ToUI32RMinMagInternal;
+	void *nvKmsKapiUI32ToF32Internal;
 };
 extern struct pdnvkms_calls pdnvkms;
 
 // pdnvkms.c
 int pdnvkms_init(void);
+void pdnvkms_kapi_probe(void);
 void *pdnvkms_open(void);
 void pdnvkms_close(void *popen);
 int pdnvkms_ioctl(void *popen, uint32_t cmd, uint64_t address, uint32_t size);
@@ -53,6 +64,10 @@ uint32_t pdnv_dev_enumerate_gpus(void *gpu_info);     // nv_gpu_info_t[NV_MAX_GP
 int pdnv_dev_fd_is_nvidia(int fd);
 void *pdnv_dev_kms_per_open(int fd);                  // the nvkms_per_open behind a /dev/nvidia-modeset fd
 int pdnv_dev_kms_node(void);                          // /dev/nvidia-modeset, after pdnvkms_init
+// for PDDRMnvidia: the GPUs, each one's IOPCIDevice, and the linux device nvidia-drm is to see in its place
+uint32_t pdnv_gpu_count(void);
+void *pdnv_gpu_pci_device(uint32_t i);
+void pdnv_gpu_set_os_device(uint32_t i, void *os_device);
 
 #ifdef __cplusplus
 }

@@ -885,6 +885,7 @@
     ninja = pkgs.ninja;
   };
   nvidia580 = callPackage ../pkgs/gpu/nvidia-580.nix { };
+  nvidiaDrmSrc = callPackage ../pkgs/gpu/nvidia-drm-src.nix { };
   nvidiaLinuxRoot = callPackage ../pkgs/gpu/nvidia-linux-root.nix {
     libxcb = pkgs.libxcb;
       vulkan-tools = pkgs.vulkan-tools;

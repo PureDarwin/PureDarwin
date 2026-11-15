@@ -370,11 +370,17 @@ PDNVLoader::initKMS(struct pdelf_obj *obj)
 	pdnvkms.nvKmsClose = (void *)pdelf_export(obj, "nvKmsClose");
 	pdnvkms.nvKmsIoctl = (void *)pdelf_export(obj, "nvKmsIoctl");
 	pdnvkms.nvKmsKapiHandleEventQueueChange = (void *)pdelf_export(obj, "nvKmsKapiHandleEventQueueChange");
+#define PDNV_KAPI(name) pdnvkms.name = (void *)pdelf_export(obj, #name);
+	PDNV_KAPI(nvKmsKapiProbe) PDNV_KAPI(nvKmsKapiGetFunctionsTableInternal) PDNV_KAPI(nvKmsKapiF16ToF32Internal)
+	PDNV_KAPI(nvKmsKapiF32ToF16Internal) PDNV_KAPI(nvKmsKapiF32MulInternal) PDNV_KAPI(nvKmsKapiF32DivInternal)
+	PDNV_KAPI(nvKmsKapiF32AddInternal) PDNV_KAPI(nvKmsKapiF32ToUI32RMinMagInternal) PDNV_KAPI(nvKmsKapiUI32ToF32Internal)
+#undef PDNV_KAPI
 	if (pdnvkms_init() != 0) {
 		IOLog("PDNVLoader: nvKmsModuleLoad failed\n");
 		return;
 	}
 	IOLog("PDNVLoader: modeset core loaded\n");
+	pdnvkms_kapi_probe();
 	if (pdnv_dev_kms_node() != 0)
 		IOLog("PDNVLoader: no /dev/nvidia-modeset\n");
 }

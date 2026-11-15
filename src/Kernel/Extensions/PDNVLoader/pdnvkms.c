@@ -27,6 +27,7 @@
 // the core and the resource manager are called through pointers into the linked objects, its work runs on one
 // thread as nv_kthread_q does, timers are thread calls, /dev/nvidia-modeset is pdnv_dev.c's node 254
 #include <IOKit/IOLib.h>
+#include <pexpert/pexpert.h>
 #include <kern/thread.h>
 #include <kern/thread_call.h>
 #include <libkern/OSAtomic.h>
@@ -66,7 +67,14 @@ NvBool nvkms_vblank_sem_control(void) { return sVblankSemControl; }
 NvBool nvkms_opportunistic_display_sync(void) { return sOpportunisticDisplaySync; }
 enum NvKmsDebugForceColorSpace nvkms_debug_force_color_space(void) { return NVKMS_DEBUG_FORCE_COLOR_SPACE_NONE; }
 NvBool nvkms_enable_overlay_layers(void) { return sEnableOverlayLayers; }
-NvBool nvkms_debug_logging(void) { return NV_FALSE; }
+// boot-arg nvkms_debug=1, as the debug_logging module parameter: the core's reasons for refusing a mode
+NvBool
+nvkms_debug_logging(void)
+{
+	int on = 0;
+
+	return PE_parse_boot_argn("nvkms_debug", &on, sizeof(on)) && on != 0 ? NV_TRUE : NV_FALSE;
+}
 
 // no Tegra host1x here
 NvBool nvkms_kernel_supports_syncpts(void) { return NV_FALSE; }
@@ -616,7 +624,11 @@ nvkms_close_from_kapi(struct nvkms_per_open *popen)
 NvBool
 nvkms_ioctl_from_kapi(struct nvkms_per_open *popen, NvU32 cmd, void *params_address, const size_t params_size)
 {
-	return ioctl_common(popen, cmd, (NvU64)(uintptr_t)params_address, params_size) == 0;
+	int ret = ioctl_common(popen, cmd, (NvU64)(uintptr_t)params_address, params_size);
+
+	if (ret != 0 && nvkms_debug_logging())
+		IOLog("nvidia-modeset: kapi ioctl %u (%lu bytes) refused\n", cmd, (unsigned long)params_size);
+	return ret == 0;
 }
 
 // no suspend here, the power-management lock never refuses
@@ -699,3 +711,37 @@ pdnvkms_init(void)
 	IOLockUnlock(sLock);
 	return ok ? 0 : -1;
 }
+
+// the kernel API: each GPU probed in as the GPU driver's probe callback does, then the entry points nvidia-drm links
+void
+pdnvkms_kapi_probe(void)
+{
+	static nv_gpu_info_t gpus[NV_MAX_GPUS];
+	NvU32 n, i;
+
+	if (pdnvkms.nvKmsKapiProbe == NULL)
+		return;
+	n = nvkms_enumerate_gpus(gpus);
+	for (i = 0; i < n; i++)
+		((void (*)(const nv_gpu_info_t *))pdnvkms.nvKmsKapiProbe)(&gpus[i]);
+}
+
+NvBool
+nvKmsKapiGetFunctionsTable(struct NvKmsKapiFunctionsTable *funcsTable)
+{
+	if (pdnvkms.nvKmsKapiGetFunctionsTableInternal == NULL)
+		return NV_FALSE;
+	return ((NvBool (*)(struct NvKmsKapiFunctionsTable *))pdnvkms.nvKmsKapiGetFunctionsTableInternal)(funcsTable);
+}
+
+NvU32 nvKmsKapiF16ToF32(NvU16 a) { return ((NvU32 (*)(NvU16))pdnvkms.nvKmsKapiF16ToF32Internal)(a); }
+NvU16 nvKmsKapiF32ToF16(NvU32 a) { return ((NvU16 (*)(NvU32))pdnvkms.nvKmsKapiF32ToF16Internal)(a); }
+NvU32 nvKmsKapiF32Mul(NvU32 a, NvU32 b) { return ((NvU32 (*)(NvU32, NvU32))pdnvkms.nvKmsKapiF32MulInternal)(a, b); }
+NvU32 nvKmsKapiF32Div(NvU32 a, NvU32 b) { return ((NvU32 (*)(NvU32, NvU32))pdnvkms.nvKmsKapiF32DivInternal)(a, b); }
+NvU32 nvKmsKapiF32Add(NvU32 a, NvU32 b) { return ((NvU32 (*)(NvU32, NvU32))pdnvkms.nvKmsKapiF32AddInternal)(a, b); }
+NvU32
+nvKmsKapiF32ToUI32RMinMag(NvU32 a, NvBool exact)
+{
+	return ((NvU32 (*)(NvU32, NvBool))pdnvkms.nvKmsKapiF32ToUI32RMinMagInternal)(a, exact);
+}
+NvU32 nvKmsKapiUI32ToF32(NvU32 a) { return ((NvU32 (*)(NvU32))pdnvkms.nvKmsKapiUI32ToF32Internal)(a); }
