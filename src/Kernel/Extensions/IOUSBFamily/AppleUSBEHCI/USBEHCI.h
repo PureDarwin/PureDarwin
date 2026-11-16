@@ -80,7 +80,12 @@ enum {
 };
 
 enum {
+    kEHCIQHEndpointSpeedFull = 0U << 12,
+    kEHCIQHEndpointSpeedLow = 1U << 12,
     kEHCIQHEndpointSpeedHigh = 2U << 12,
+    kEHCIQHControlEndpoint = 1U << 27,
+    kEHCIQHHubAddrShift = 16,
+    kEHCIQHPortShift = 23,
     kEHCIQHDTC = 1U << 14,
     kEHCIQHHead = 1U << 15,
     kEHCIQHMaxPacketShift = 16,

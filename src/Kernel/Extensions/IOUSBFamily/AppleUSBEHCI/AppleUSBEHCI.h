@@ -144,6 +144,11 @@ protected:
     USBPhysicalAddress32 _intrTDPoolPhys;
     IOUSBDevice *_portDevices[16];
     UInt8 _addrMaxPacket[128];
+    // per address: kUSBDeviceSpeed*, and for a full- or low-speed device the high-speed hub whose
+    // transaction translator carries its split transactions. Address 0 holds the device being addressed
+    UInt8 _addrSpeed[128];
+    UInt8 _addrTTHub[128];
+    UInt8 _addrTTPort[128];
     UInt8 _intrDataToggle[128][16];
     // Bulk IN and OUT with the same endpoint number are distinct endpoints with
     // independent toggles, so the direction is part of the key.
@@ -194,6 +199,8 @@ protected:
     IOUSBDevice *addressAndPublishDevice(const char *where, UInt32 port,
                                          UInt8 *outDeviceClass);
     void enumerateHub(USBDeviceAddress hubAddr);
+    UInt32 qhSpeedCaps(USBDeviceAddress address, bool control);
+    UInt32 qhSplitCaps(USBDeviceAddress address, bool periodic);
     UInt32 portRead32(UInt32 port);
     void portWrite32(UInt32 port, UInt32 value);
     void releaseAsyncSchedule(void);

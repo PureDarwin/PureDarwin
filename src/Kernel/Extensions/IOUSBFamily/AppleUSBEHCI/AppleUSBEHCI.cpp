@@ -691,6 +691,32 @@ IOReturn AppleUSBEHCI::waitForQTD(EHCIGeneralTransferDescriptorSharedPtr qtd,
     return kIOReturnTimeout;
 }
 
+// the speed bits for a queue head, and the control-endpoint flag a full- or low-speed control endpoint needs
+UInt32 AppleUSBEHCI::qhSpeedCaps(USBDeviceAddress address, bool control)
+{
+    switch (_addrSpeed[address & 0x7fU]) {
+    case kUSBDeviceSpeedLow:
+        return kEHCIQHEndpointSpeedLow | (control ? kEHCIQHControlEndpoint : 0);
+    case kUSBDeviceSpeedFull:
+        return kEHCIQHEndpointSpeedFull | (control ? kEHCIQHControlEndpoint : 0);
+    default:
+        return kEHCIQHEndpointSpeedHigh;
+    }
+}
+
+// mult, and for a split device its translator; a periodic split starts in microframe 0, completes in 2-4
+UInt32 AppleUSBEHCI::qhSplitCaps(USBDeviceAddress address, bool periodic)
+{
+    UInt32 caps = 1U << kEHCIQHMultShift;
+    UInt8 a = address & 0x7fU;
+    if (_addrSpeed[a] == kUSBDeviceSpeedLow || _addrSpeed[a] == kUSBDeviceSpeedFull) {
+        caps |= ((UInt32)_addrTTHub[a] << kEHCIQHHubAddrShift) | ((UInt32)_addrTTPort[a] << kEHCIQHPortShift);
+        if (periodic)
+            caps |= 0x01U | (0x1cU << kEHCIQHCMaskShift);
+    }
+    return caps;
+}
+
 IOReturn AppleUSBEHCI::controlTransfer(USBDeviceAddress address,
                                        IOUSBDevRequest *request)
 {
@@ -761,17 +787,18 @@ IOReturn AppleUSBEHCI::controlTransfer(USBDeviceAddress address,
     }
     fillQTD(statusTD, 0, dataIn ? kEHCIqTDPIDOut : kEHCIqTDPIDIn, 1, 0, 0, true);
 
+    UInt32 maxPacket0 = _addrMaxPacket[address & 0x7fU] ? _addrMaxPacket[address & 0x7fU] : 64U;
     _asyncQH->endpointCaps = HostToUSBLong(kEHCIQHHead | kEHCIQHDTC |
-                                           kEHCIQHEndpointSpeedHigh |
+                                           qhSpeedCaps(address, true) |
                                            ((UInt32)address & 0x7fU) |
-                                           (64U << kEHCIQHMaxPacketShift));
+                                           (maxPacket0 << kEHCIQHMaxPacketShift));
     /*
      * Mult must be non-zero: EHCI 3.6.2 defines a value of zero as "do not
      * execute transactions for this queue head", so leaving it clear lets the
      * controller retire whatever qTD is already in the overlay and then stall
      * before it ever advances to the next one.
      */
-    _asyncQH->endpointSplitCaps = HostToUSBLong(1U << kEHCIQHMultShift);
+    _asyncQH->endpointSplitCaps = HostToUSBLong(qhSplitCaps(address, false));
     _asyncQH->currentqTDPtr = 0;
     _asyncQH->nextqTDPtr = HostToUSBLong(setupTDPhys);
     _asyncQH->altqTDPtr = HostToUSBLong(kEHCIqTDTerminate);
@@ -870,10 +897,10 @@ IOReturn AppleUSBEHCI::interruptTransfer(IOMemoryDescriptor *buffer,
 
     _intrQH->endpointCaps = HostToUSBLong(((UInt32)address & 0x7fU) |
                                           ((UInt32)epNum << 8) |
-                                          kEHCIQHEndpointSpeedHigh |
+                                          qhSpeedCaps(address, false) |
                                           ((UInt32)(endpoint->maxPacketSize ? endpoint->maxPacketSize : 8)
                                            << kEHCIQHMaxPacketShift));
-    _intrQH->endpointSplitCaps = HostToUSBLong(1U << kEHCIQHMultShift);
+    _intrQH->endpointSplitCaps = HostToUSBLong(qhSplitCaps(address, true));
     _intrQH->currentqTDPtr = 0;
     _intrQH->nextqTDPtr = HostToUSBLong(tdPhys);
     _intrQH->altqTDPtr = HostToUSBLong(kEHCIqTDTerminate);
@@ -1159,11 +1186,11 @@ IOReturn AppleUSBEHCI::bulkTransfer(IOMemoryDescriptor *buffer, USBDeviceAddress
      * controller will not issue any transactions for the queue head.
      */
     _asyncQH->endpointCaps = HostToUSBLong(kEHCIQHHead |
-                                           kEHCIQHEndpointSpeedHigh |
+                                           qhSpeedCaps(address, false) |
                                            ((UInt32)address & 0x7fU) |
                                            ((UInt32)epNum << 8) |
                                            (maxPacket << kEHCIQHMaxPacketShift));
-    _asyncQH->endpointSplitCaps = HostToUSBLong(1U << kEHCIQHMultShift);
+    _asyncQH->endpointSplitCaps = HostToUSBLong(qhSplitCaps(address, false));
     _asyncQH->currentqTDPtr = 0;
     _asyncQH->nextqTDPtr = HostToUSBLong(qTDPhys(0));
     _asyncQH->altqTDPtr = HostToUSBLong(kEHCIqTDTerminate);
@@ -1259,6 +1286,7 @@ enum {
 
     kUSBHubPortStatusConnection   = 0x0001,
     kUSBHubPortStatusEnable       = 0x0002,
+    kUSBHubPortStatusLowSpeed     = 0x0200,
     kUSBHubPortStatusHighSpeed    = 0x0400,
 };
 
@@ -1317,6 +1345,9 @@ void AppleUSBEHCI::enumeratePort(UInt32 port)
         return;
     }
 
+    _addrSpeed[0] = kUSBDeviceSpeedHigh;
+    _addrTTHub[0] = 0;
+    _addrTTPort[0] = 0;
     UInt8 devClass = 0;
     IOUSBDevice *dev = addressAndPublishDevice("port", port, &devClass);
     if (!dev)
@@ -1428,10 +1459,19 @@ void AppleUSBEHCI::enumerateHub(USBDeviceAddress hubAddr)
                      hubAddr, p, portStatus);
             continue;
         }
-        if (!(portStatus & kUSBHubPortStatusHighSpeed)) {
-            EHCI_Log("hub %u port %u is not high-speed (status=%04x), skipping: "
-                     "split transactions are not implemented", hubAddr, p, portStatus);
-            continue;
+        // a full- or low-speed device talks through the nearest high-speed hub's transaction translator
+        UInt8 h = hubAddr & 0x7fU;
+        if (portStatus & kUSBHubPortStatusHighSpeed) {
+            _addrSpeed[0] = kUSBDeviceSpeedHigh;
+            _addrTTHub[0] = 0;
+            _addrTTPort[0] = 0;
+        } else {
+            _addrSpeed[0] = (portStatus & kUSBHubPortStatusLowSpeed) ? kUSBDeviceSpeedLow : kUSBDeviceSpeedFull;
+            bool hubIsHigh = _addrSpeed[h] == kUSBDeviceSpeedHigh;
+            _addrTTHub[0] = hubIsHigh ? h : _addrTTHub[h];
+            _addrTTPort[0] = hubIsHigh ? (UInt8)p : _addrTTPort[h];
+            EHCI_Log("hub %u port %u %s-speed, split through hub %u port %u", hubAddr, p,
+                     _addrSpeed[0] == kUSBDeviceSpeedLow ? "low" : "full", _addrTTHub[0], _addrTTPort[0]);
         }
 
         UInt8 devClass = 0;
@@ -1449,7 +1489,7 @@ void AppleUSBEHCI::enumerateHub(USBDeviceAddress hubAddr)
 IOUSBDevice *AppleUSBEHCI::addressAndPublishDevice(const char *where, UInt32 port,
                                                    UInt8 *outDeviceClass)
 {
-    _addrMaxPacket[0] = 64;
+    _addrMaxPacket[0] = _addrSpeed[0] == kUSBDeviceSpeedLow ? 8 : 64;
     IOUSBDeviceDescriptor devdesc;
     bzero(&devdesc, sizeof(devdesc));
     IOUSBDevRequest req;
@@ -1481,7 +1521,10 @@ IOUSBDevice *AppleUSBEHCI::addressAndPublishDevice(const char *where, UInt32 por
     IOSleep(2);
 
     _addrMaxPacket[newAddr] = maxPkt0;
-    IOUSBDevice *dev = CreateAndConfigureDevice(newAddr, kUSBDeviceSpeedHigh, maxPkt0);
+    _addrSpeed[newAddr] = _addrSpeed[0];
+    _addrTTHub[newAddr] = _addrTTHub[0];
+    _addrTTPort[newAddr] = _addrTTPort[0];
+    IOUSBDevice *dev = CreateAndConfigureDevice(newAddr, _addrSpeed[0], maxPkt0);
     if (!dev) {
         EHCI_Log("%s %u CreateAndConfigureDevice failed", where, port);
         return NULL;
