@@ -708,8 +708,6 @@ sysdir_get_next_search_path_enumeration(sysdir_search_path_enumeration_state sta
     return 0;
 }
 
-vm_size_t vm_page_size = 4096;
-
 int
 OSAtomicCompareAndSwapPtrBarrier(void *oldValue, void *newValue, void * volatile *theValue)
 {
