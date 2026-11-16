@@ -1,0 +1,1558 @@
+.\" CDDL HEADER START
+.\"
+.\" The contents of this file are subject to the terms of the
+.\" Common Development and Distribution License (the "License").
+.\" You may not use this file except in compliance with the License.
+.\"
+.\" You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
+.\" or http://www.opensolaris.org/os/licensing.
+.\" See the License for the specific language governing permissions
+.\" and limitations under the License.
+.\"
+.\" When distributing Covered Code, include this CDDL HEADER in each
+.\" file and include the License file at usr/src/OPENSOLARIS.LICENSE.
+.\" If applicable, add the following below this CDDL HEADER, with the
+.\" fields enclosed by brackets "[]" replaced with your own identifying
+.\" information: Portions Copyright [yyyy] [name of copyright owner]
+.\"
+.\" CDDL HEADER END
+.\" Copyright (c) 2006, Sun Microsystems, Inc. All Rights Reserved.
+.\" Portions Copyright (c) 2006-2010, 2013-2017, Apple, Inc.
+.\" All Rights Reserved.
+.\"
+.Dd August 17, 2017
+.Dt DTRACE 1
+.Os Darwin
+.Sh NAME
+.Nm dtrace
+.Nd dynamic tracing compiler and tracing utility
+.Sh SYNOPSIS
+.Nm
+.Op Fl aACeFhHlqSvVwZ
+.Op Fl b Ar bufsz
+.Op Fl c Ar cmd
+.Op Fl D Ar name Op Ns = Ns value
+.Op Fl I Ar path
+.Op Fl L Ar path
+.Op Fl o Ar output
+.Op Fl s Ar script
+.Op Fl U Ar name
+.Op Fl x Ar arg Ns Op Ns = Ns value
+.Op Fl p Ar pid
+.Op Fl P Ar provider Oo Oo Ar predicate Oc Ar action Oc
+.Op Fl m Oo Ar provider : Oc Ar module Oo Oo Ar predicate Oc Ar action Oc
+.Op Fl f Oo Oo Ar provider : Oc Ar module : Oc Ar function Oo Oo Ar predicate \
+    Oc Ar action Oc
+.Op Fl n Oo Oo Oo Ar provider : Oc Ar module : Oc Ar function : Oc Ar name \
+    Oo Oo Ar predicate Oc Ar action Oc
+.Op Fl i Ar probe-id Oo Oo Ar predicate Oc Ar action Oc
+.Op Fl W Ar pname
+.Sh DESCRIPTION
+DTrace is a comprehensive dynamic tracing framework ported from Solaris.
+DTrace provides a powerful infrastructure that permits administrators,
+developers, and service personnel to concisely answer arbitrary questions about
+the behavior of the operating system and user programs.
+.Pp
+The
+.Nm
+command provides a generic interface to the essential services provided by the
+DTrace facility, including:
+.Bl -bullet -offset indent
+.It
+Options that list the set of probes and providers currently published by DTrace
+.It
+Options that enable probes directly using any of the probe description
+specifiers (provider, module, function, name)
+.It
+Options that run the D compiler and compile one or more D program files or
+programs written directly on the command line
+.It
+Options that generate anonymous tracing programs
+.It
+Options that generate program stability reports
+.It
+Options that modify DTrace tracing and buffering behavior and enable
+additional D compiler features
+.El
+.Pp
+You can use
+.Nm
+to create D scripts by using it in a shebang declaration to create an
+interpreter file.
+You can also use
+.Nm
+to attempt to compile D programs and determine their properties without
+actually enabling traces using the
+.Fl e
+option.
+.Sh OPTIONS
+The arguments accepted by the
+.Fl P ,
+.Fl m ,
+.Fl f ,
+.Fl n ,
+and
+.Fl i
+options can include an optional D language
+.Ar predicate
+enclosed in slashes and an optional D language
+.Ar action
+statement list enclosed in braces.
+D program code specified on the command line must be appropriately quoted to
+avoid interpretation of meta-characters by the shell.
+.Pp
+The following options are supported:
+.Bl -tag
+.It Fl arch Ns = Ns Ar value
+Set
+.Nm
+target data model.  See
+.Xr arch 1
+for a list of currently supported architectures.
+.It Fl a
+Claim anonymous tracing state and display the traced data.
+You can combine the
+.Fl a
+option with the
+.Fl e
+option to force
+.Nm
+to exit immediately after consuming the anonymous tracing state rather than
+continuing to wait for new data.
+.It Fl A
+Generate directives for anonymous (at boot) tracing and store them to NVRAM.
+This option constructs a set of dtrace configuration file directives
+to enable the specified probes for anonymous tracing and then exits.
+See also
+.Fl a
+.It Fl b Ar bufsz
+Set the principal trace buffer size to
+.Ar bufsz .
+The trace buffer size can include any of the size suffixes k, m, g, or t.
+If the buffer space cannot be allocated,
+.Nm
+attempts to reduce the buffer size or exit depending on the setting of the
+bufresize property.
+.It Fl c Ar cmd
+Run the specified command
+.Ar cmd
+and exit upon its completion.
+If more than one
+.Fl c
+option is present on the command line,
+.Nm
+exits when all commands have exited, reporting the exit status for each child
+process as it terminates.
+The process ID of the first command is made available to any D programs
+specified on the command line or using the
+.Fl s
+option through the
+.Li $target
+macro variable.
+.It Fl C
+Run the C preprocessor in
+.Xr clang 1
+over D programs before compiling them.  You can pass options to the C
+preprocessor using the
+.Fl D ,
+.Fl U ,
+.Fl I ,
+and
+.Fl H
+options.
+.It Fl D Ar name Op Ns = Ns Ar value
+Define
+.Ar name
+when invoking
+.Xr clang 1
+.Po enabled using the
+.Fl C
+option
+.Pc .
+If you specify an additional
+.Ar value ,
+the name is assigned the corresponding value.  This option passes the
+.Fl D
+option to each
+.Xr clang 1
+invocation.
+.It Fl e
+Exit after compiling any requests and consuming anonymous tracing state
+.Po Fl a
+option
+.Pc
+but prior to enabling any probes.  You can combine this option with the
+.Fl a
+option to print anonymous tracing data and exit.  You can also combine this
+option with D compiler options.  This combination verifies that the programs
+compile without actually executing them and enabling the corresponding
+instrumentation.
+.It Fl f Oo Oo Ar provider : Oc Ar module : Oc Ar function Oo Oo Ar predicate \
+    Oc Ar action Oc
+Specify function name to trace or list
+.Fl ( l
+option).
+The corresponding argument can include any of the probe description forms
+.Ar provider:module:function ,
+.Ar module:function ,
+or
+.Ar function .
+Unspecified probe description fields are left blank and match any probes
+regardless of the values in those fields.
+If no qualifiers other than
+.Ar function
+are specified in the description, all probes with the corresponding
+.Ar function
+are matched.
+The
+.Fl f
+argument can be suffixed with an optional D probe clause.
+You can specify more than one
+.Fl f
+option on the command line at a time.
+.It Fl F
+Coalesce trace output by identifying function entry and return.
+Function entry probe reports are indented and their output is prefixed with
+.Ql -> .
+Function return probe reports are unindented and their output is prefixed with
+.Ql <- .
+System call entry probe reports are indented and their output is prefixed with
+.Ql => .
+System call return probe reports are unindented and their output is prefixed
+with
+.Ql <= .
+.It Fl h
+Generate a header file containing macros that correspond to probes in the
+specified provider definitions.  If the
+.Fl o
+option is present, the header file is saved using the pathname specified as the
+argument for that option.  If the
+.Fl o
+option is not present and the DTrace program is contained within a file whose
+name is
+.Ar filename.d ,
+then the header file is saved using the name
+.Ar filename.h .
+.It Fl H
+Print the pathnames of included files when invoking
+.Xr clang 1
+.Po enabled using the
+.Fl C
+option
+.Pc .
+This option passes the
+.Fl H
+option to each
+.Xr clang 1
+invocation, causing it to display the list of pathnames, one for each line, to
+standard error.
+.It Fl i Ar probe-id Op Oo Ar predicate Oc Ar action
+Specify probe identifier
+.Ar ( probe-id )
+to trace or list
+.Ar ( l
+option).
+You can specify probe IDs using decimal integers as shown by `dtrace -l`.
+The
+.Fl i
+argument can be suffixed with an optional D probe clause.
+You can specify more than one
+.Fl i
+option at a time.
+.It Fl I Ar path
+Add the specified directory
+.Ar path
+to the search path for
+.Li #include
+files when invoking
+.Xr clang 1
+(enabled using the
+.Fl C
+option).  This option passes the
+.Fl I
+option to each
+.Xr clang 1
+invocation.  The specified
+.Ar path
+is inserted into the search path ahead of the default directory list.
+.It Fl l
+List probes instead of enabling them.
+If the
+.Fl l
+option is specified,
+.Nm
+produces a report of the probes matching the descriptions given using the
+.Fl P , m , f , n , i ,
+and
+.Fl s
+options.
+If none of these options are specified, this option lists all probes.
+.It Fl L Ar path
+Add the specified directory
+.Ar path
+to the search path for DTrace libraries.
+DTrace libraries are used to contain common definitions that can be used when
+writing D programs.
+The specified
+.Ar path
+is added after the default library search path.
+.It Fl m Oo Ar provider : Oc Ar module Oo Oo Ar predicate Oc Ar action Oc
+Specify module name to trace or list
+.Fl ( l
+option).
+The corresponding argument can include any of the probe description forms
+.Ar provider:module
+or
+.Ar module .
+Unspecified probe description fields are left blank and match any probes
+regardless of the values in those fields.
+If no qualifiers other than
+.Ar module
+are specified in the description, all probes with a corresponding
+.Ar module
+are matched.
+The
+.Fl m
+argument can be suffixed with an optional D probe clause.
+More than one
+.Fl m
+option can be specified on the command line at a time.
+.It Fl n Oo Oo Oo Ar provider : Oc Ar module : Oc Ar function : Oc Ar name \
+    Oo Oo Ar predicate Oc Ar action Oc
+Specify probe name to trace or list
+.Fl ( l
+option).
+The corresponding argument can include any of the probe description forms
+.Ar provider:module:function:name , module:function:name , function:name ,
+or
+.Ar name .
+Unspecified probe description fields are left blank and match any probes
+regardless of the values in those fields.
+If no qualifiers other than
+.Ar name
+are specified in the description, all probes with a corresponding
+.Ar name
+are matched.
+The
+.Fl n
+argument can be suffixed with an optional D probe clause.
+More than one
+.Fl n
+option can be specified on the command line at a time.
+.It Fl o Ar output
+Specify the
+.Ar output
+file for the
+.Fl l
+options, or for the traced data itself.
+The default output file is
+.Ar d.out .
+.It Fl p Ar pid
+Grab the specified process-ID
+.Ar pid ,
+cache its symbol tables, and exit upon its completion.
+If more than one
+.Fl p
+option is present on the command line,
+.Nm
+exits when all commands have exited, reporting the exit status for each process
+as it terminates.
+The first process-ID is made available to any D programs specified on the
+command line or using the
+.Fl s
+option through the
+.Li $target
+macro variable.
+.It Fl P Ar provider Oo Oo Ar predicate Oc Ar action Oc
+Specify provider name to trace or list
+.Fl ( l
+option).
+The remaining probe description fields module, function, and name are left
+blank and match any probes regardless of the values in those fields.
+The
+.Fl P
+argument can be suffixed with an optional D probe clause.
+You can specify more than one
+.Fl P
+option on the command line at a time.
+.It Fl q
+Set quiet mode.
+.Nm
+suppresses messages such as the number of probes matched by the specified
+options and D programs and does not print column headers, the CPU ID, the probe
+ID, or insert newlines into the output.
+Only data traced and formatted by D program statements such as
+.Ql dtrace()
+and
+.Ql printf()
+is displayed to standard output.
+.It Fl s Ar script
+Compile the specified D program source file.
+If the
+.Fl e
+option is present, the program is compiled but instrumentation is not enabled.
+If the
+.Fl l
+option is present, the program is compiled and the set of probes matched by it
+is listed, but instrumentation is not enabled.
+.Pp
+If none of
+.Fl e , l
+or
+.Fl A
+are present, the instrumentation specified by the D program is enabled and
+tracing begins.
+.It Fl S
+Show D compiler intermediate code.
+The D compiler produces a report of the intermediate code generated for each D
+program to standard error.
+.It Fl U Ar name
+Undefine the specified
+.Ar name
+when invoking
+.Xr clang 1
+.Po enabled using the
+.Fl C
+option
+.Pc .
+This option passes the
+.Fl U
+option to each
+.Xr clang 1
+invocation.
+.It Fl v
+Print an interface stability report for a specified D program or
+listed probes.  If probes are being listed with
+.Fl l ,
+report on each probe's description, arguments, and argument types
+.Pq if available .
+.It Fl V
+Report the highest D programming interface version supported by
+.Nm Ns .
+The version information is printed to standard output and the
+.Nm
+command exits.
+.It Fl w
+Permit destructive actions in D programs.
+Without
+.Fl w ,
+.Nm
+will not permit the compilation or enabling of a D program that contains
+destructive actions.  Even with
+.Fl w ,
+destructive actions are not allowed if System Integrity Protection is
+enabled.  See
+.Xr csrutil 8 .
+.It Fl W Ar pname
+Wait for the process named
+.Ar pname
+to launch.  Once it has launched, compile and enable the provided
+D script.  Upon exit of the process,
+.Nm
+exits.  If more than one
+.Fl W
+option is present on the command line,
+.Nm
+will stop each process immediately after it launches, start tracing
+when all processes have launched, and exit after all processes have
+exited.  Only the first-specified process's PID will be available to
+D programs through the
+.Li $target
+macro variable.  Using this option automatically activates the
+.Fl Z
+option.
+.It Fl x Ar arg Ns Op Ns = Ns Ar value
+Enable or modify a DTrace runtime option or D compiler option.
+Boolean options are enabled by specifying their name.  Options with
+values are set by separating the option name and value with an
+equals sign
+.Pq = .
+See
+.Sx EXTRA OPTIONS
+for the exhaustive list of options.
+.It Fl Z
+Permit probe descriptions that match zero probes.  If the
+.Fl Z
+option is not specified,
+.Nm
+reports an error and exits if any probe descriptions specified in D program
+files
+.Fl ( s
+option) or on the command line
+.Fl ( P , m , f , n ,
+or
+.Fl i
+options) contain descriptions that do not match any known probes.
+.El
+.Sh OPERANDS
+Zero or more additional arguments may be specified on the
+.Nm
+command line to define a set of macro variables
+.Pq Li $1 , Li $2 , and so on
+to be used in any D programs specified using the
+.Fl s
+option or on the command-line.
+.Sh C++ MANGLED NAMES
+By default,
+.Nm
+uses the demangled names of C++ symbols. You can tell
+.Nm
+to use the mangled symbol names by passing
+.Fl xmangled
+to the command.
+.Sh OBJECTIVE-C PROVIDER
+The Objective-C provider is similar to the pid provider, and allows
+instrumentation of Objective-C classes and methods.  Objective-C probe
+specifiers use the following format:
+.Pp
+.Cm objc Ns Ar pid : Ns Oo Ar class-name Ns Oo Po Ar category-name Pc Oc Oc Ns \
+    : Ns Oo Oo +|- Oc Ns Ar method-name Oc : Ns Oo Ar name Oc
+.Bl -tag
+.It pid
+The id number of the process.
+.It class-name
+The name of the Objective-C class.
+.It category-name
+The name of the category within the Objective-C class.
+.It method-name
+The name of the Objective-C method.
+.It name
+The name of the probe,
+.Sq entry ,
+.Sq return ,
+or an integer instruction offset within the method.
+.El
+.Sh OBJECTIVE-C PROVIDER EXAMPLES
+.Bl -tag
+.It objc123:NSString:-*:entry
+Every instance method of class NSString in process 123.
+.It objc123:NSString(*)::entry
+Every method on every category of class NSString in process 123.
+.It objc123:NSString(foo):+*:entry
+Every class method in NSString's foo category in process 123.
+.It objc123::-*:entry
+Every instance method in every class and category in process 123.
+.It objc123:NSString(foo):-dealloc:entry
+The dealloc method in the foo category of class NSString in process 123.
+.It objc123::method?with?many?colons?:entry
+The method method:with:many:colons: in every class in process 123.
+.Po A
+.Li ?
+wildcard must be used to match colon characters inside of Objective-C method
+names, as they would otherwise be parsed as the provider field separators.
+.Pc
+.El
+.Sh BUILDING CODE CONTAINING USDT PROBES
+The process of adding USDT probes to code is slightly different than documented
+in the
+.Rs
+.%T Solaris Dynamic Tracing Guide
+.Re
+The steps for adding probes are as follows:
+.Bl -enum
+.It
+Name the provider and specify its probes, using the following form:
+.Bd -literal
+provider Example {
+	probe increment(int);
+};
+.Ed
+.Pp
+This defines the
+.Li Example
+provider with one probe,
+.Li increment ,
+that takes a single int argument.  Providers can define multiple probes and
+probes can take multiple arguments.
+.It
+Process the provider description into a header file.
+.Pp
+The provider description must be converted into a form usable by ObjC/C/C++
+code.
+The dtrace command should be invoked with the
+.Fl h
+option to do this.
+.Pp
+.Nm Fl h Fl s Ar exampleProvider.d
+.Pp
+This will generate a header file named
+.Ar exampleProvider.h
+.It
+Add probe invocations to the application.
+.Pp
+For each probe defined in the provider, the
+.Pa provider.h
+file will contain two macros.  The naming is as follows:
+.Pp
+.Bd -literal
+PROVIDER_PROBENAME()
+PROVIDER_PROBENAME_ENABLED()
+.Ed
+.Pp
+In the Example provider, the increment probe becomes:
+.Pp
+.Bd -literal
+EXAMPLE_INCREMENT()
+EXAMPLE_INCREMENT_ENABLED()
+.Ed
+.Pp
+Place a macro invocation in the code at each site to be traced.  If the
+arguments passed to a probe are expensive to calculate, you may guard the probe
+placement like this:
+.Pp
+.Bd -literal
+if (EXAMPLE_INCREMENT_ENABLED()) {
+	argument = /* Expensive argument calculation code here */;
+	EXAMPLE_INCREMENT(argument);
+};
+.Ed
+.Pp
+The if test will only succeed when the increment probe is active.
+.It
+Compile and link your program normally.  No additional compiler or linker flags
+are required.
+.El
+.Sh EXTRA OPTIONS
+These options can be set by either passing them to
+.Fl x
+or be set in
+.Nm
+scripts using
+.Sy #pragma D
+.Ar option Ns = Ns Ar value Ns .
+.Ss Compile-time options
+.Bl -tag
+.It amin Ns = Ns Ar attributes
+Set the values for the minimum stability attributes for D program execution.
+.Ar attributes
+is a tuple of the form
+.Ar name-stability Ns / Ns Ar data-stability Ns / Ns Ar dependency-class .
+Valid interface and data stability attribute values are:
+.Bl -bullet -offset indent
+.It
+Internal: interfaces to
+.Nm
+implementation details.  These interfaces might change between minor releases.
+.It
+Private: interfaces to undocumented operating system implementation details.
+Might change between minor releases.
+.It
+Obsolete: interfaces to currently-supported features which are scheduled to be
+removed in a future release.
+.It
+External: interfaces to features not controlled by the operating system vendor.
+.It
+Unstable: interfaces which may change without warning.
+.It
+Evolving: may become Standard or Stable but may still change in a future
+major release.
+.It
+Stable: Mature interface which should not change.
+.It
+Standard: Complies with an industry standard and will not change.
+.El
+.It arch Ns = Ns Ar value
+Set the target data model.  See
+.Xr arch 1
+for a list of currently supported architectures.
+Has the same effect as the
+.Fl arch
+option.
+.It argref
+Ignore additional positional command-line arguments instead of reporting an error.
+.It core
+After execution is complete, cause dtrace to call
+.Xr abort 3
+instead of
+.Xr exit 3 Ns .
+On some systems, this will create a core dump.
+.It cpp
+Run the C preprocessor in
+.Xr clang 1
+over D programs before compiling them.
+Has the same effect as the
+.Fl C
+option.
+.It cpphdrs
+Specify the
+.Fl H
+option to
+.Xr clang 1
+to print the name of each header file used.
+.It cpppath Ns = Ns Ar path
+Sets the path of the
+.Xr clang 1
+preprocessor
+.It ctypes Ns = Ns Ar path
+Write out CTF definitions of all C types used in all programs at the end of a D
+compilation run in
+.Ar path Ns .
+.It debug
+Enable DTrace debug messages.
+.It defaultargs
+Allow references to unspecified macro arguments.
+Use 0 as the value for an unspecified argument.
+.It define
+Adds an implicit #define into the predefines buffer of the preprocessor.
+Has the same effect as the
+.Fl D
+option.
+.It disallow_dsym
+Do not use dSYM files for userspace symbolication.
+.It droptags
+Prints drop tags, [DTRACE_DROP_$TYPE] values describing drop types, to the
+drop tags handler (by default, to stderr).
+.It empty
+Allow compilation of empty D files.
+.It encoding Ns = Ns Op ascii|utf8
+Sets the encoding used for output.
+utf8 will show Unicode block elements for histograms.
+.It errtags
+Prefix default error message with error tags.
+.It evaltime Ns = Ns Op preinit|postinit
+Control when DTrace starts instrumenting a new process, before or after library
+initializers have run.
+.It incdir Ns = Ns Ar value
+Add the specified directory to the search path for includes files in the
+preprocessor.
+.It iregs Ns = Ns Ar value
+Size of the DIF (DTrace Intermediate Format) integer register set.
+The default value is 8.
+.It late Ns = Ns Op dynamic|static
+Sets whether references to dynamic translators are allowed.
+.It libdir Ns = Ns path
+Add a library directory in the library search path.
+.It mangled
+Show mangled symbols for C++/Swift probes instead of demangled symbols.
+.It nolibs
+Do not include D system libraries. Prevents access to
+.Nm
+system library identifiers but speeds up DTrace launch.
+.It nojtanalysis
+Disable jump table analysis.  The default behavior of the
+.Sy pid
+provider is to not provide
+.Sq return
+or offset probes for functions which appear to contain jump tables.
+.Qq Jump tables are often generated for switch statements.
+Disabling jump table analysis can lead to inappropriately placed probes,
+data corruption, or even crashes in the target process.
+.It noerror
+Do not show error messages.
+.It pgmax Ns = Ns Ar value
+Sets the maximum number of processes DTrace can grab at the same time.
+Default value is 8.
+.It preallocate Ns = Ns Ar value Ns Op k|m
+Preallocate memory in dtrace before running the script.
+.It pspec
+Interpret ambiguous specifiers as probe names.
+.It setenv Ns = Ns Ar name Ns = Ns value
+Adds the variable
+.Sy name
+to the environment of launched processes, if
+.Sy name
+does not already exists. If
+.Sy name
+does exist in the environment, then its value is set to
+.Sy value
+.
+.It strip
+Strip non-loadable sections from the D program.
+.It tree Ns = Ns Ar value
+Bitmap to show the
+.Nm
+compiler parse tree at different stages (1|2|4).
+.It tregs Ns = Ns Ar value
+Size of the DIF tuple register set.
+This controls the number of arguments that can be passed to functions.
+Default value is 8.
+.It undef Ns = Ns Ar value
+Adds an implicit
+.Li #undef Ar value
+into the predefines buffer of the preprocessor.
+.It unsetenv Ns = Ns Ar name
+Delete the variable
+.Sy name
+from the environment of launched processes if it exists.
+.It verbose
+Show D compiler intermediate code (DIFO).
+The D compiler will produce a report of the intermediate code generated
+for each D program to
+.Xr stderr 4
+Has the same effect as the
+.Fl S
+option.
+.It version
+Request a specific version of the DTrace scripting language.
+This will disable all identifiers / translators / functions
+that are from a newer version than the specified version.
+.It zdefs
+Permit probe descriptions that match zero probes.
+Has the same effect as the
+.Fl Z
+option.
+.El
+.Pp
+.Ss Run-time Options
+.Bl -tag
+.It aggsize Ns = Ns Ar value Op m|k
+Sets the aggregation buffer size in bytes, kibi or mebibytes.
+.It bufsize Ns = Ns Ar value Ns Op m|k
+Sets the principal trace buffer size.
+Has the same effect as the
+.Fl b
+option.
+.It buflimit Ns = Ns Ar 1-99
+Threshold percentage of buffer size at which early buffer switches will be
+done.
+75% is the default.
+.It bufpolicy Ns = Ns Op ring|fill|switch
+Sets the buffer policy. The default buffer policy is switch.
+.It bufresize Ns = Ns Op auto|manual
+Sets whether the per-CPU buffer size can be halved when the kernel cannot
+allocate enough memory.
+Auto is the default value.
+.It cleanrate Ns = Ns Ar value Ns Op ns|us|ms|s|m|h|d|hz
+Cleaning rate for speculative buffers.
+.It cpu Ns = Ns Ar value
+CPU on which to enable tracing.
+.It destructive
+Allow destructive actions.
+Has the same effect as the
+.Fl w
+option.
+.It dynvarsize Ns = Ns Ar value
+Dynamic variable space size.
+.It grabanon
+Claim anonymous tracing state and display the trace data.
+Has the same effect as the
+.Fl a
+option.
+.It nspec Ns = Ns Ar value
+Number of speculative buffers.
+.It specsize Ns = Ns Ar value Ns Op k|m
+Speculation buffer size.
+.It stackframes Ns = Ns Ar value
+Number of stack frames shown for kernel backtraces.
+.It statusrate Ns = Ns Ar value Ns Op ns|us|ms|s|m|h|d|hz
+Rate at which user space
+.Nm
+will poll the kernel for status.
+.It strsize Ns = Ns Ar maxStringSize
+Maximum string size.
+.It temporal Ns = Ns Op true|false
+Sort events so that output is in time order. Defaults to true.
+.It ustackframes Ns = Ns Ar frameCount
+Number of stack frames shown for userspace backtraces.
+.El
+.Pp
+.Ss Dynamic Run-time Options
+.Bl -tag
+.It agghist Ns = Ns Ar Op true|false
+Shows a histogram for all aggregations.
+.It aggpack
+Pack aggregations together, only showing one line per aggregation.
+.It aggrate Ns = Ns Ar value Ns Op us|ms|s|m|h|d|hz
+Sets the aggregation buffer retrieval rate.
+.It aggsortkey
+Sort aggregation by key order with ties broken by value.
+.It aggsortkeypos Ns = Ns Ar value
+Position of the aggregate key on which the output is sorted.
+.It aggsortpos Ns = Ns Ar value
+Position in the argument in the aggregate function on which the output is
+sorted.
+.It aggsortrev
+Sort aggregations in reverse order.
+.It aggzoom
+Scales the height of bars in histograms in proportion of the bucket of greatest
+value instead of the full height of the histogram.
+.It flowindent
+Indent function entry/returns with -> / <-. Has the same effect as the
+.Fl F
+option.
+.It quiet
+Output only explicitly traced data. Has the same effect as the
+.Fl q
+option.
+.It rawbytes
+Always print tracemem output in hexadecimal.
+.It stackindent
+Number of white space characters to use when indenting
+.Fn stack
+or
+.Fn ustack
+output.
+.It stacksymbols Ns = Ns Ar frameCount Ns Op true|false
+Whether stack symbols are symbolicated or not. Defaults to true.
+.It switchrate Ns = Ns Ar value Ns Op ns|us|ms|s|m|h|d|hz
+Rate of principal buffer switching.
+.El
+.Sh SUPPORTED BUILT-IN VARIABLES
+.Nm
+supplies the following built-in, read-only variables.
+.Bl -tag -width 12
+.It Vt uint64_t Va arg0-arg9
+Arguments of the current probe invocation represented as unsigned 64-bit
+integers.  In the
+.Sq entry
+probe actions of the
+.Sy syscall Ns ,
+.Sy mach_trap Ns ,
+.Sy fbt Ns ,
+and
+.Sy pid
+providers, these variables contain the traced function's arguments.  In
+the
+.Sq return
+probe actions of the
+.Sy fbt
+and
+.Sy pid
+providers,
+.Va arg0
+contains the instruction offset (into the function) from which the function
+returned and
+.Va arg1
+contains the function's return value.  In the
+.Sq return
+probe actions of the
+.Sy syscall
+and
+.Sy mach_trap
+providers, both
+.Va arg0
+and
+.Va arg1
+are set to the function's return value.  The
+.Sy profile
+and
+.Sy tick
+providers set
+.Va arg1
+to the address of the instruction that was running when the action fired.
+.It Va args[]
+Typed arguments of the current probe, if available.  See
+.Fl v .
+.It Vt uint64_t Va caller
+The kernel address of the instruction that called the current function.
+As DTrace actions are always called from kernel context, this variable
+is non-zero even when probes are triggered from user space.
+.It Vt processorid_t Va cpu
+Integer identifier of the logical CPU on which this probe action triggered.
+.It Vt uint64_t Va cpucycles Po Darwin-specific Pc
+Number of CPU cycles elapsed on the current CPU.  See also
+.Va vcycles .
+.It Vt uint64_t Va cpuinstrs Po Darwin-specific Pc
+Number of instructions
+.Qq retired
+by the current logical CPU, if available.  This count excludes instructions
+speculatively issued by the processor which didn't actually need to be
+executed.  See also
+.Va vinstrs .
+.It Vt thread_t Va curthread
+Address of the OS thread structure corresponding to the thread which
+triggered the current probe action.
+.It Vt user_addr_t Va dispatchqaddr Po Darwin-specific Pc
+If the probe action was triggered from a user space context which
+included a dispatch queue, the address of that queue.
+.It Vt uint_t Va id
+The current probe's unique identifier within the currently running OS,
+as shown with
+.Fl l .
+.It Vt uint_t Va epid
+A unique identifier representing the current probe action's enablement
+within the current D program.  An action can match multiple probes.
+.It Vt int Va errno
+Error value returned by the last system call performed on the current
+thread.
+.It Vt string Va execname
+Current process name.
+.It Vt gid_t Va gid
+Primary group ID of the current process.
+.It Vt uint_t Va ipl
+Current interrupt level.  On Darwin, either 0 or 1.
+.It Vt uint64_t Va machtimestamp Po Darwin-specific Pc
+Current
+.Fn mach_absolute_time
+timestamp.
+.It Vt uint64_t Va machctimestamp Po Darwin-specific Pc
+Current
+.Fn mach_continuous_time
+timestamp.
+.It Vt pid_t Va pid
+Process ID of the current process.
+.It Vt pid_t Va ppid
+Parent process ID of the current process.
+.It Vt string Va probeprov , Va probemod , Va probefunc , Va probename
+Respectively, the names of the current probe's provider, module, function,
+and name.  See
+.Fl n .
+.It Vt uint32_t Va stackdepth
+Number of kernel-mode stack frames on the current thread.
+.It Vt id_t Va tid
+Thread ID of the current thread.
+.It Vt uint64_t Va timestamp
+Current value in nanoseconds from some system-wide fixed point in the past.
+.It Vt uid_t Va uid
+User ID of the current process.
+.It Vt uint64_t Va ucaller
+The user space address from which the currently-running function was called,
+or zero if the function was called from the kernel.
+.It Vt uint32_t Va ustackdepth
+Number of user space stack frames on the current thread.
+.It Vt uint64_t Va uregs[]
+The current thread's register values immediately prior to the last
+transition from user to kernel execution.
+.Pa /usr/lib/dtrace/regs*
+provides constants for the indices of each register's value in the array.
+.It Vt uint64_t Va vmregs[]
+The current virtual machine registers if available.
+.It Vt uint64_t Va vcycles Po Darwin-specific Pc
+Number of CPU cycles elapsed while running the current thread.  This value
+includes cycles elapsed while processing interrupts with this thread.  See
+also
+.Va cpucycles .
+.It Vt uint64_t Va vinstrs Po Darwin-specific Pc
+Number of instructions retired by the current thread, if available.
+This value includes instructions retired while processing interrupts with
+this thread.
+See also
+.Va cpuinstrs .
+.It Vt uint64_t Va vtimestamp
+Time in nanoseconds that the current thread has spent running on any CPU.
+.It Vt uint64_t Va walltimestamp
+Current number of nanoseconds since the Unix Epoch (00:00 UTC January
+1st, 1970).
+.El
+.Sh SUPPORTED SUBROUTINES
+D subroutines can only effect internal D program state.  Many D subroutines
+have no effects outside the current D program clause.
+.Pp
+.Vt const char*
+arguments accept either D
+.Vt string
+objects or pointers to C strings.  C strings are assumed to be terminated
+with a NUL (0) byte.
+DTrace pointers refer to kernel virtual address space unless otherwise
+indicated.
+.Pp
+A number of DTrace's subroutines return scratch objects.  These scratch
+objects are only valid for the current invocation of the
+immediately-enclosing D program clause.
+.Bl -tag -width 12
+.It Ft void* Fn alloca "size_t* nbytes"
+Create a new
+.Fa nbytes Ns -sized
+scratch buffer.
+.It Ft string Fn basename "const char* pathstr"
+Copy the last
+.So / Sc Ns -delimited
+component of
+.Fa pathstr
+into a new scratch string.
+.It Ft void Fn bcopy "void* src, void* scratch, size_t size"
+Copy
+.Fa size
+bytes from address
+.Fa src
+to the existing scratch buffer
+.Fa scratch .
+.It Ft string Fn cleanpath "const char* pathstr"
+Copy a canonical representation of
+.Fa pathstr
+into a new scratch string.  The resulting string will not contain any
+unnecessary or redundant
+.Ql ./
+or
+.Ql ../
+substrings.
+.It Ft void* Fn copyin "user_addr_t src, size_t size"
+Copy
+.Fa size
+bytes from the current user space address
+.Fa src
+to a new scratch buffer.
+.It Ft string Fn copyinstr "user_addr_t src, [size_t maxchars]"
+Copy a NUL-terminated C string from the current user space address
+.Fa src
+into a new scratch string. If
+.Fa maxchars
+is specified, it will limit the total number of characters that can
+be copied.  If it is not specified, the run-time option
+.Ar strsize
+will limit the maximum number of characters copied.
+.It Ft void Fn copyinto "user_addr_t src, size_t size, void *scratch"
+Copy
+.Fa size
+bytes from the current user space address
+.Fa src
+to the existing scratch buffer
+.Fa scratch .
+.It Ft string Fn dirname "const char *pathstr"
+Copy all but the last
+.So / Sc Ns -delimited
+component of
+.Fa pathstr
+into a new scratch string.
+.It Ft major_t Fn getmajor "dev_t dev"
+Extract the major device number for
+.Fa dev .
+.It Ft minor_t Fn getminor "dev_t dev"
+Extract the minor device number for
+.Fa dev .
+.It Ft uint32_t Fn htonl "uint32_t hostlong"
+Convert
+.Fa hostlong
+from host byte order to network byte order.
+.It Ft uint64_t Fn htonll "uint64_t hostlonglong"
+Convert
+.Fa hostlonglong
+from host byte order to network byte order.
+.It Ft uint16_t Fn htons "uint16_t hostshort"
+Convert
+.Fa hostshort
+from host byte order to network byte order.
+.It Ft int Fn index "const char* str, const char* searchstr, [int start]"
+Return the character offset of the first occurrence of
+.Fa searchstr
+within
+.Fa str ,
+optionally starting the search at character offset
+.Fa start .
+.It Ft int Fn rindex "const char* str, const char* searchstr, [int start]"
+Return the character offset of the last occurrence of the C string
+.Fa searchstr
+within
+.Fa str ,
+optionally starting the reverse-search at character offset
+.Fa start .
+.It Ft string Fn inet_ntoa "uint32_t* addr"
+Create a scratch string representing the IPv4 address pointed to by
+.Fa addr
+in dotted-decimal notation.
+.It Ft string Fn inet_ntoa6 "struct in6_addr* addr"
+Create a scratch string representing the IPv6 address pointed to by
+.Fa addr
+in zero-compressed double-colon hexadecimal notation
+.Pq specifically RFC 1884 convention 2 .
+.It Ft string Fn inet_ntop "int addrfamily, void *addr"
+Create a scratch string representing the IP address of type
+.Fa addrfamily
+pointed to by
+.Fa addr .
+Valid values for
+.Fa addrfamily
+are
+.Dv AF_INET
+and
+.Dv AF_INET6 .
+.It Ft string Fn json "string payload, string selector"
+Extract a single value represented by
+.Fa selector
+from a JSON object stored in
+.Fa payload .
+Element selectors support:
+.Bl -bullet -offset indent
+.It
+Simple strings for keys, for example
+.Fa key
+.It
+dot-separated keys for nested objects, for example
+.Fa object.key
+.It
+Array indexing, for example
+.Fa object.key[2].anotherkey
+.El
+.It Ft string Fn lltostr "int64_t val, [int baseN]"
+Create a scratch string representing
+.Fa val
+in base
+.Fa baseN
+notation.
+.It Ft uint32_t Fn ntohl "uint32_t netlong"
+Convert
+.Fa netlong
+from network byte order to host byte order.
+.It Ft uint64_t Fn ntohll "uint64_t netlonglong"
+Convert
+.Fa netlonglong
+from network byte order to host byte order.
+.It Ft uint16_t Fn ntohs "uint16_t netshort"
+Convert
+.Fa netshort
+from network byte order to host byte order.
+.It Ft int Fn progenyof "pid_t pid"
+Return non-zero if the calling process has a chain of parent processes
+leading to
+.Fa pid .
+.It Ft int Fn rand
+Return a positive pseudo-random number.  It is easy to predict these
+numbers so they should not be used for cryptographic purposes.
+.It Ft int Fn speculation
+Create a speculative buffer for use with
+.Fn speculate ,
+returning the buffer's identifier.  See also
+.Fn commit .
+.It Ft string Fn strchr "const char* str, char c"
+If
+.Fa str
+contains
+.Fa c ,
+copy the characters starting at the first occurrence of
+.Fa c
+and ending at the end of
+.Fa str
+into a new scratch string.
+If
+.Fa c
+is not present, return NULL.
+.It Ft void* Fn strip "void *ptr, uint8_t key"
+On platforms that support encoded pointers, strips the pointer
+authentication bits from
+.Fa ptr
+to produce a valid pointer. Valid values for
+.Fa key
+can be found in
+.Ar ptrauth.h .
+.It Ft string Fn strrchr "const char* str, char c"
+Like
+.Fn strchr ,
+but start from the last occurrence of
+.Fa c .
+.It Ft size_t Fn strlen "const char* str"
+Calculate the length of
+.Fa str
+in bytes.
+.It Ft string Fn strjoin "const char* str1, const char* str2"
+Concatenate
+.Fa str1
+and
+.Fa str2
+into a new scratch string.
+.It Ft int64_t Fn strtoll "const char *str, [int base]"
+Converts
+.Fa str
+into a signed integer, interpreted as base
+.Fa base
+if provided, at base 10 otherwise.
+.It Ft string Fn strstr "const char* str, const char* prefix"
+If
+.Fa str
+contains
+.Fa prefix ,
+copy the characters from
+.Fa prefix
+to the end of the string into a new scratch string.
+If
+.Fa prefix
+is not present, return NULL.
+.It Ft string Fn strtok "const char* str, const char *delimchars"
+Like
+.Xr strtok(3) ,
+split
+.Fa str
+into multiple substrings, splitting on any of the characters in
+.Fa delimchars .
+If the
+.Fa str
+is non-NULL, return the first token.  If
+.Fa str
+is non-NULL, return the next token from the most recently provided string.
+.Fa delimchars
+can be changed in subsequent calls.  If no characters from
+.Fa delimchars
+are present whatever portion of
+.Fa str
+has not yet been tokenized, return NULL.
+.It Ft string Fn substr "const char* str, int start, [int length]"
+Copy the characters in
+.Fa str
+from character offset
+.Fa start
+through the end of the string into a new scratch string.
+.Fa length
+can be used to limit the number of characters copied to the new string.
+.It Ft string Fn tolower "const char *str"
+Copy
+.Fa str
+into a new scratch string, replacing all uppercase letters with their
+lowercase equivalents.
+.It Ft uint64_t Fn mtons "uint64_t time" Po Darwin-specific Pc
+Convert
+.Fa time
+from either machtimestamp or machctimestamp, into nanoseconds.
+.It Ft string Fn toupper "const char* str"
+Copy
+.Fa str
+into a new scratch string, replacing all lowercase letters with their
+uppercase equivalents.
+.It Ft void* Fn vm_kernel_addrperm "void* addr" Po Darwin-specific Pc
+Calculate the unpermuted
+.Pq or Qq unslid
+address corresponding to the raw kernel address
+.Fa addr .
+By default, DTrace uses, traces, and prints raw kernel addresses.
+Unpermuted addresses will correspond with other user-visible addresses
+such as those shown in
+.Xr kextstat 8 .
+With default System Integrity Protection settings, D programs are not
+permitted to access kernel address values or kernel memory contents.
+.Xr csrutil 8
+can be used to change the settings.
+.El
+.Sh SUPPORTED ACTIONS
+DTrace actions allow a D program to interact with the running system.
+The most benign actions record data to a DTrace buffer.  Destructive
+actions have effects on the system and must be enabled with
+.Fl w .
+.Pp
+.Ft void*
+pointers may refer to either D scratch buffers or kernel virtual addresses.
+.Bl -tag -width 12
+.It Ft void Fn breakpoint Po destructive Pc
+Stop the kernel and wait for a debugger.
+.It Ft void Fn chill "int nsecs" Po destructive Pc
+Spin inside DTrace for the specified number of nanoseconds.  If this
+action is asked to spin for more than 500ms out of every second of wall
+clock time, an error will be reported.
+.It Ft void Fn clear "@aggr"
+.\" why is this an action vs. a subroutine?
+Clear all values in
+.Fa @aggr .
+The keys are retained.  See also
+.Fn trunc .
+.\" TODO: add an AGGREGATIONS section and refer to it here
+.It Ft void Fn commit "int specid"
+Copy the contents of the speculative buffer
+.Fa specid
+to the main tracing buffer.
+.\" TODO: add an SPECULATION section and refer to it here
+.It Ft void Fn copyout "void *src, user_addr_t *dst, size_t size" Po destructive Pc
+Copy
+.Fa size
+bytes from the buffer
+.Fa src
+into the current address space address
+.Fa dst .
+.It Ft void Fn copyoutstr "void *src, user_addr_t *dst, size_t maxbytes" Po destructive Pc
+Copy a NUL-terminated C string from
+.Fa src
+to the current user address space address
+.Fa dst ,
+copying no more than
+.Fa maxbytes .
+.It Ft void Fn discard "int specid"
+Discard the speculative buffer
+.Fa specid .
+.It Ft void Fn exit "int status"
+Stop tracing, cause
+.Nm
+to print any final results, and exit with
+.Fa status .
+.It Ft void Fn freopen "const char* path" Po destructive Pc
+Open
+.Fa path
+and associate it with
+.Nm Ns 's
+standard output (closing any previously-associated file).
+.It Ft void Fn ftruncate
+Truncate
+.Nm Ns 's
+.Li stdout .
+.It Ft void Fn kdebug_trace "uint32_t debugid, [uint64_t arg1], [uint64_t arg2], [uint64_t arg3], [uint64_t arg4]"
+.Pq destructive ,  Darwin-specific
+.br
+Emit an event to kdebug trace; arguments are optional and default to zero.
+.Fa debugid
+is a four-part bit field definied in
+.Pa sys/kdebug.h .
+.It Ft void Fn kdebug_trace_string "uint32_t debugid, uint64_t str_id, const char* str"
+.Pq destructive, Darwin-specific
+.br
+Emit a string identified with
+.Fa str_id
+to kdebug trace.
+.Fa debugid
+is the same as for
+.Fn kdebug_trace .
+.It Ft _symaddr Fn func "user_addr_t addr"
+Print the symbol name corresponding to the kernel address
+.Fa addr .
+.It Ft _symaddr Fn mod "user_addr_t addr"
+Print the module name corresponding to the kernel address
+.Fa addr .
+.It Ft void Fn normalize "@aggr, int factor"
+.\" why is this an action vs. subroutine?  Are aggregations external to
+.\" the D program?
+When
+.Fa @aggr
+is traced, all of its values will be divided by
+.Fa factor.
+.It Ft void Fn denormalize "@aggr"
+Remove any normalization factor from
+.Fa @aggr .
+Tracing this aggregation will return the total counts.
+.It Ft void Fn panic Po destructive Pc
+Panic the kernel with a generic message.
+.It Ft void Fn print "expression"
+Pretty-print
+.Fa expression
+inculding types and internal data structure.  A newline will be included.
+.It Ft void Fn printa "[Ft string format], @aggr"
+Pretty-print
+.Fa @aggr .
+.Fa format
+can refer to the aggregation's keys in order.  The aggregation's value
+can be accessed with the flag
+.Sq @ .
+For example, to print just aggregations values, one per line
+.Dl printa("%@u\en", @a);
+.It Ft void Fn printf "string format, ..."
+Print a custom-formatted string like
+.Xr printf 3 .
+.It Ft void Fn raise "int signum" Po destructive Pc
+Send
+.Fa signum
+to the current process.
+.It Ft void Fn setopt "const char* option, [const char* value]"
+Set a dynamic run-time option.  See
+.Sx Dynamic Run-time Options Ns .
+.It Ft void Fn speculate "int specid"
+Set the speculative buffer
+.Fa specid
+as the destination for all further tracing in the current D program clause.
+.It Ft stack Fn stack "[int nframes]"
+Record a kernel stack trace up to
+.Fa nframes
+deep.  If
+.Fa nframes
+is not specified, record up to
+.Ar stackframes
+frames.  See also
+.Sx Run-time Options .
+.It Ft void Fn stop Po destructive Pc
+Stop the current user process.
+.It Ft void Fn pidresume "pid_t pid" Po destructive, Darwin-specific Pc
+Resume the process specified by
+.Fa pid .
+See also
+.Fn stop
+and
+.Fn raise .
+.It Ft _symaddr Fn sym "user_addr_t addr"
+Print the symbol name for the kernel address
+.Fa addr .
+.It Ft void Fn system "string program, ..." Po destructive Pc
+Spawn
+.Fa program
+with any provided arguments in the same environment as
+.Nm Ns .
+.It Ft void Fn trace "expression"
+Print
+.Fa expression .
+No newline is emitted.
+.It Ft void Fn tracemem "addr, size_t nbytes"
+Print a hexidecimal representation of
+.Fa nbytes
+starting at the kernel address
+.Fa addr .
+.It Ft void Fn trunc "@aggr, [topn]"
+Discard keys and their corresponding values from
+.Fa @aggr ,
+optionally preserving the
+.Fa topn
+values and their corresponding keys.
+.It Ft _usymaddr Fn uaddr "user_addr_t addr"
+If available, pretty-print symbol information about the current user space
+address
+.Fa addr .
+This information will include applicable module, function, and symbol
+names, as well as offsets into functions for code. If not available or
+applicable, just print
+.Fa addr .
+.It Ft _usymaddr Fn usym "user_addr_t addr"
+If available, print the name of the symbol representing
+.Fa addr
+in the current process's user address space.  Otherwise, print
+.Fa addr .
+.It Ft _usymaddr Fn ufunc "user_addr_t addr"
+If
+.Fa addr
+is within the boundaries of a known function in the current user space
+process, print the name of the function.  Otherwise, print
+.Fa addr .
+.It Ft _usymaddr Fn umod "user_addr_t addr"
+If
+.Fa addr
+is within the boundaries of a known module in the current user space
+process, print the name of the module.
+Otherwise, print
+.Fa addr .
+.It Ft stack Fn ustack "[int nframes]"
+Record a user stack trace up to
+.Fa nframes
+deep.  If
+.Fa nframes
+isn't specified, record up to
+.Ar ustackframes
+frames.  See also
+.Sx Run-time Options .
+.El
+.Sh EXIT STATUS
+The following exit statuses are returned:
+.Bl -tag
+.It 0
+Successful completion.
+.Pp
+For D program requests, an exit status of 0 indicates that programs were
+successfully compiled, probes were successfully enabled, or anonymous state
+was successfully retrieved.
+.Nm
+returns 0 even if the specified tracing requests encountered errors or drops.
+.It 1
+An error occurred.
+.Pp
+For D program requests, an exit status of 1 indicates that program compilation
+failed or that the specified request could not be satisfied.
+.It 2
+Invalid command line options or arguments were specified.
+.El
+.Sh SEE ALSO
+.Xr clang 1 ,
+.Xr bitesize.d 1m ,
+.Xr cpuwalk.d 1m ,
+.Xr csrutil 8 ,
+.Xr diskhits 1m ,
+.Xr dtruss 1m ,
+.Xr errinfo 1m ,
+.Xr execsnoop 1m ,
+.Xr iofile.d 1m ,
+.Xr iofileb.d 1m ,
+.Xr iopattern.d 1m ,
+.Xr iopending.d 1m ,
+.Xr iosnoop 1m ,
+.Xr iotop 1m ,
+.Xr kill.d 1m ,
+.Xr lastwords 1m ,
+.Xr newproc.d 1m ,
+.Xr opensnoop 1m
+.\" What are the criteria for being included?  Should weblatency.d be here?
+.\" Others?
+.\" The following are commented out because they aren't present on Darwin.
+.\" .Xr pathopens 1m ,
+.\" .Xr rwsnoop.d 1m ,
+.\" .Xr rwtop.d 1m ,
+.\" .Xr topsyscall.d 1m ,
+.\" .Xr topsysproc.d 1m
+.Rs
+.%T How to Use Oracle Solaris DTrace from Oracle Solaris and OpenSolaris System
+.%Q Oracle Corporation
+.%D 2010
+.%O http://www.oracle.com/technetwork/server-storage/solaris10/solaris-dtrace-wp-167895.pdf
+.Re
+.Rs
+.%T Solaris Dynamic Tracing Guide
+.%Q Oracle Corporation
+.%D 2010
+.%O http://docs.oracle.com/cd/E19253-01/817-6223/
+.Re

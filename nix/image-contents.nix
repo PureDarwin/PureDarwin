@@ -374,6 +374,7 @@ let
     git = pd.git;
     migcomDarwin = migcomDarwinBuild;
     ioreg = pd.ioreg;
+    dtrace = pd.dtrace;
     xkbcommon = pd.xkbcommon;
     fastfetch = pd.fastfetch;
     corefoundation = pd.corefoundation;
@@ -1080,7 +1081,7 @@ let
         xnuLoader = xnuLoaderDefault;
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-wayland.img";
-        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1 ahci_debug=1 csr-active-config=0x3";
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1 ahci_debug=1 csr-active-config=0x23";
       };
       # wifi firmware the drivers load from /Library/Firmware/<driver>, kept out
       # of the kernel collection and the kext bundles
@@ -1188,6 +1189,8 @@ let
           pd.systemConfiguration
           pd.diskArbitration
           pd.ioreg
+          pd.dtrace
+          pd.libzDylib
         ]
       );
       minimalBootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
@@ -1305,8 +1308,8 @@ let
         espMB = 60;
         rootMB = 1200;
         # a graphical boot: the progress bar instead of the verbose log, which -v brings back
-        # csr-active-config=0x3 lets the unprotected aux KC load
-        bootArgs = "debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopprogress=1 csr-active-config=0x3";
+        # csr-active-config=0x23 lets the unprotected aux KC load (0x3) and opens DTrace up to fbt/sdt (0x20)
+        bootArgs = "debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopprogress=1 csr-active-config=0x23";
       };
       # the install and rescue drive: the desktop with the disk tools, pdinstall and Install PureDarwin
       imageInstallerBuild = imageWaylandMinimalBuild.override (old: {

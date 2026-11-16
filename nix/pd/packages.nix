@@ -334,6 +334,13 @@
   iomediacheck = callPackage ../pkgs/apple/iomediacheck.nix {
     appleSdk = pkgs.appleSdk;
   };
+  dtrace = callPackage ../pkgs/apple/dtrace.nix {
+    appleSdk = pkgs.appleSdk;
+    libcxxDylib = self.libcxxDylib;
+    libzDylib = self.libzDylib;
+    bison = pkgs.bison;
+    flex = pkgs.flex;
+  };
   ioreg = callPackage ../pkgs/apple/ioreg.nix {
     appleSdk = pkgs.appleSdk;
   };
