@@ -1487,6 +1487,11 @@ let
               )
               disk_iothread=",iothread=io0"
             fi
+            # PUREDARWIN_VM_DISPLAY outside venus too, e.g. none for a headless run
+            display_args=()
+            if [ -z "''${PUREDARWIN_VM_VENUS:-}" ] && [ -n "''${PUREDARWIN_VM_DISPLAY:-}" ]; then
+              display_args=(-display "$PUREDARWIN_VM_DISPLAY")
+            fi
 
             ${if diskStyle == "switch" then ''
             case "''${PUREDARWIN_VM_DISK:-ahci}" in
@@ -1517,6 +1522,7 @@ let
             )
             qemu_args+=("''${disk_args[@]}")
             qemu_args+=("''${venus_args[@]}")
+            qemu_args+=("''${display_args[@]}")
 
             # Zero-or-one argument, so it cannot be an array element: an unset
             # variable would contribute an empty argv entry.
@@ -1985,6 +1991,11 @@ EOF
             )
             disk_iothread=",iothread=io0"
           fi
+          # PUREDARWIN_VM_DISPLAY outside venus too, e.g. none for a headless run
+          display_args=()
+          if [ -z "''${PUREDARWIN_VM_VENUS:-}" ] && [ -n "''${PUREDARWIN_VM_DISPLAY:-}" ]; then
+            display_args=(-display "$PUREDARWIN_VM_DISPLAY")
+          fi
 
           if [ -z "$image" ]; then
             if [ -e "$PWD/puredarwin-arm64-virt.img" ]; then
@@ -2023,6 +2034,7 @@ EOF
             -device "virtio-blk-pci,drive=system,bootindex=1$disk_iothread" \
             "''${vga_args[@]}" \
             "''${venus_args[@]}" \
+            "''${display_args[@]}" \
             -device virtio-net-pci,netdev=net0 \
             -netdev user,id=net0,hostfwd=tcp::2223-:22 \
             -device qemu-xhci,id=xhci \
