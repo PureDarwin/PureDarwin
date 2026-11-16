@@ -137,6 +137,7 @@ in
   { name = "PDLifs.kext"; dir = "PDLifs"; arches = x86arm; }
   { name = "PDSerialHID.kext"; dir = "PDSerialHID"; headers = [ "IOHIDFamily" ]; arches = x86arm; }
   { name = "PDKeyStore.kext"; dir = "PDKeyStore"; arches = x86arm; }
+  { name = "PDEventFD.kext"; dir = "PDEventFD"; arches = x86arm; kc = x86; }
   { name = "PDIOSurface.kext"; dir = "PDIOSurface"; headers = [ "IOGraphicsFamily" "PDSun60iDisplay" ];
     arches = all; plistOnly = x86; }
   { name = "PDVirtualFramebuffer.kext"; dir = "PDVirtualFramebuffer"; headers = [ "IOGraphicsFamily" "IOHIDFamily" ];

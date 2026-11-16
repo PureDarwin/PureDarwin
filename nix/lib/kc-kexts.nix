@@ -65,4 +65,5 @@
     "PDUSBNCM.kext"
     "IOAudioFamily.kext"
     "RavynHDAudio.kext"
+    "PDEventFD.kext"
 ]

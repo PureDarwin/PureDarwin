@@ -11,11 +11,19 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/event.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 #include "elftrans.h"
+
+// PDEventFD's setup ioctl, matching src/Kernel/Extensions/PDEventFD/PDEventFD.h
+typedef struct {
+    uint64_t initial;
+    uint32_t flags, pad;
+} PDEventFDSetup;
+#define PD_EVENTFD_SETUP _IOW('E', 1, PDEventFDSetup)
 
 #define EPOLLIN 0x001u
 #define EPOLLPRI 0x002u
@@ -117,10 +125,18 @@ counted_new(int kind, int flags, uint64_t initial)
 long
 events_eventfd(unsigned initial, int flags)
 {
+    PDEventFDSetup setup = { initial, flags & 1, 0 };
     long fd;
 
     if (flags & ~(1 | 0x800 | 0x80000))
         return -22;
+    // PDEventFD's device is a real kernel fd, so it survives SCM_RIGHTS; the socket pair is the fallback
+    fd = open("/dev/eventfd", O_RDWR | (flags & 0x800 ? O_NONBLOCK : 0) | (flags & 0x80000 ? O_CLOEXEC : 0));
+    if (fd >= 0) {
+        if (ioctl((int)fd, PD_EVENTFD_SETUP, &setup) == 0)
+            return fd;
+        close((int)fd);
+    }
     fd = counted_new(SPECIAL_EVENT, flags, initial);
     if (fd >= 0)
         specials[fd]->semaphore = flags & 1;
