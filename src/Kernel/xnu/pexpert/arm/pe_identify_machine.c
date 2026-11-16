@@ -42,7 +42,9 @@ pe_identify_machine(boot_args * bootArgs)
 
 	(void)bootArgs;
 
-	if (pe_arm_get_soc_base_phys() == 0) {
+	/* the arm-io node, not its base: a qualcomm soc's peripherals start at physical 0 */
+	DTEntry armio;
+	if (SecureDTLookupEntry(NULL, "/arm-io", &armio) != kSuccess) {
 		return;
 	}
 
@@ -51,6 +53,13 @@ pe_identify_machine(boot_args * bootArgs)
 
 	/* Start with default values. */
 	gPEClockFrequencyInfo.timebase_frequency_hz = 24000000;
+#if !defined(APPLE_ARM64_ARCH_FAMILY) && defined(__arm64__)
+	/* the generic timer's rate as the firmware programmed it, when the device tree gives none */
+	uint64_t cntfrq = __builtin_arm_rsr64("CNTFRQ_EL0");
+	if (cntfrq != 0) {
+		gPEClockFrequencyInfo.timebase_frequency_hz = cntfrq;
+	}
+#endif
 	gPEClockFrequencyInfo.bus_clock_rate_hz = 100000000;
 	gPEClockFrequencyInfo.cpu_clock_rate_hz = 400000000;
 

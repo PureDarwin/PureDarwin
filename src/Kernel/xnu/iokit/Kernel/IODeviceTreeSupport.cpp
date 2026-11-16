@@ -630,6 +630,13 @@ IODTMapOneInterrupt( IORegistryEntry * regEntry, UInt32 * intSpec, UInt32 index,
 	bool                        cmp, ok = false;
 
 	parent = IODTFindInterruptParent( regEntry, index );
+	if (parent == NULL) {
+		// an interrupt-parent phandle the tree does not hold (a firmware-imported node): the caller skips it
+		IOLog("%s: no interrupt parent for interrupt %u\n", regEntry->getName(), (unsigned)index);
+		*spec = NULL;
+		*controller = NULL;
+		return 0;
+	}
 	IODTGetICellCounts( parent, &icells, &acells );
 	addrCmp = NULL;
 	if (acells) {

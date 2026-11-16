@@ -246,14 +246,10 @@ PDArmPlatformExpert::startQemuRTC(void)
 		bool have_time = PE_parse_boot_argn("pdtime", &fBootSecs, sizeof(fBootSecs)) && fBootSecs > 0;
 		if (have_time)
 			IOLog("PDArmPlatformExpert: calendar from pdtime %ld\n", fBootSecs);
-		// Apple SoCs have no RTC driver here, so IORTC is published at once and IOKitInitializeTime does
-		// not wait 30 s for it. The calendar comes from pdtime or starts at 1970
-		if (strcmp(platformModelName(), "Apple ARM") == 0) {
-			publishResource("IORTC", this);
-			return;
-		}
-		if (!have_time)
-			return;
+		// no RTC driver for anything but qemu's pl031, so IORTC is published at once and
+		// IOKitInitializeTime does not wait 30 s for it. The calendar comes from pdtime or starts at 1970
+		publishResource("IORTC", this);
+		return;
 	} else {
 		OSSafeReleaseNULL(armio);
 		md = IOMemoryDescriptor::withPhysicalAddress(PD_QEMU_PL031_PHYS, 0x1000, kIODirectionInOut);
