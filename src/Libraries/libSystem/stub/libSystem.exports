@@ -888,6 +888,7 @@ _malloc_zone_register
 _os_unfair_lock_trylock
 _mincore
 _pthread_set_qos_class_self_np
+_pthread_set_fixedpriority_self
 _CC_SHA256
 _ldexpl
 _scalbnl
@@ -1667,6 +1668,8 @@ _task_for_pid
 _task_read_for_pid
 _task_name_for_pid
 _pid_for_task
+_pid_resume
+_pid_suspend
 _task_info
 _thread_info
 _thread_policy_set
