@@ -5118,7 +5118,22 @@ IOService::startCandidate( IOService * service )
 	service->__patchProperties();
 #endif /* DEBUG || DEVELOPMENT */
 
+	// pdstartlog=1: each driver start before and after, so the one that never returns is the last logged
+	static int pdStartLog = -1;
+	if (pdStartLog < 0) {
+		int v = 0;
+		PE_parse_boot_argn("pdstartlog", &v, sizeof(v));
+		pdStartLog = v ? 1 : 0;
+	}
+	if (pdStartLog) {
+		IOLog("start %s on %s\n", service->getMetaClass()->getClassName(), getName());
+	}
+
 	ok = service->start(this);
+
+	if (pdStartLog) {
+		IOLog("%s %s on %s\n", ok ? "started" : "failed", service->getMetaClass()->getClassName(), getName());
+	}
 
 	if (recordTime) {
 		clock_get_uptime(&endTime);
