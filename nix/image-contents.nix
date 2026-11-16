@@ -38,6 +38,7 @@
 , kernelArm64Sun50iDebugBuild
 , kernelArm64Sc8280xpBuild
 , kernelArm64Sc8280xpDebugBuild
+, kernelArm64Sdm670Build
 , kernelArm64Virt4kDebugBuild
 , kernelArm32Bcm2835Build
 , kernelArm32Bcm2835DebugBuild
@@ -729,6 +730,7 @@ let
       kcArm64Sun50iDebugBuild = boardKc "sun50i" kernelArm64Sun50iDebugBuild { };
       kcArm64Sc8280xpReleaseBuild = boardKc "sc8280xp" kernelArm64Sc8280xpBuild { };
       kcArm64Sc8280xpDebugBuild = boardKc "sc8280xp" kernelArm64Sc8280xpDebugBuild { };
+      kcArm64Sdm670Build = boardKc "sdm670" kernelArm64Sdm670Build { };
       prelinkedArm32Bcm2835Build =
         pkgs.callPackage ./pkgs/toolchain/prelinked-arm32-bcm2835.nix {
           kernel = kernelArm32Bcm2835Build;
@@ -959,6 +961,44 @@ let
         xnuLoader = xnuLoaderArm64Sc8280xp;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=0 rd=md0 hid-legacy-shim=1";
       };
+      # the pixel 3a (sdm670): the sc8280xp kernel and collection, whose kernel hardcodes nothing past the arm
+      # architecture's own timer interrupt, on the screen the bootloader leaves lit
+      ramdiskArm64Sdm670Build = ramdiskArm64Sc8280xpBuild.override {
+        kc = kcArm64Sdm670Build;
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 rd=md0 hid-legacy-shim=1";
+      };
+      # the upstream pixel 3a device trees (sargo, and bonito-tianma for the 3a xl), built here from the devicetree-rebasing mirror and never kept in the tree
+      sdm670Dtb = board: pkgs.runCommand "puredarwin-dtb-sdm670-google-${board}" {
+        src = pkgs.fetchgit {
+          url = "https://git.kernel.org/pub/scm/linux/kernel/git/devicetree/devicetree-rebasing.git";
+          rev = "765d590c63386d13351a62d919326b99841cdc7d";
+          sparseCheckout = [ "src/arm64/qcom" "include" ];
+          hash = "sha256-4DuPhmB5bN408cvCin9mHAyjQbwF9GUDt+Ih6qJkgaI=";
+        };
+        nativeBuildInputs = [ pkgs.dtc pkgs.stdenv.cc ];
+      } ''
+        cd $src
+        cpp -nostdinc -undef -x assembler-with-cpp -D__DTS__ -I include -I src/arm64/qcom -I src/arm64 \
+          src/arm64/qcom/sdm670-google-${board}.dts > $TMPDIR/board.dts
+        mkdir -p $out
+        dtc -q -I dts -O dtb -o $out/board.dtb $TMPDIR/board.dts
+      '';
+      # an android boot image for fastboot boot: the loader's linux Image with the dtb appended, and a cpio of the
+      # collection, the boot-args and the root image, the header as pmaports' sargo deviceinfo gives it. ram only
+      bootimgArm64Sdm670 = board: pkgs.runCommand "puredarwin-bootimg-arm64-sdm670-${board}" {
+        nativeBuildInputs = [ pkgs.android-tools pkgs.cpio pkgs.gzip ];
+      } ''
+        mkdir -p root/EFI/BOOT $out
+        cp ${kcArm64Sdm670Build}/kernel root/EFI/BOOT/kernel
+        printf '%s' ${lib.escapeShellArg "-v debug=0x218 -nogzalloc_mode keepsyms=1 rd=md0 hid-legacy-shim=1"} > root/EFI/BOOT/boot-args.txt
+        gzip -9n < ${ramdiskArm64Sdm670Build}/ramdisk.img > root/ramdisk.img.gz
+        (cd root && find EFI ramdisk.img.gz | sort | cpio -o -H newc --reproducible --quiet) > initrd.cpio
+        gzip -9n < ${xnu-loader.packages.${system}.kernel-arm64-generic}/boot/xnu-loader.Image > Image.gz
+        cat Image.gz ${sdm670Dtb board}/board.dtb > Image.gz-dtb
+        mkbootimg --kernel Image.gz-dtb --ramdisk initrd.cpio --pagesize 4096 --base 0x00000000 \
+          --kernel_offset 0x00008000 --ramdisk_offset 0x01000000 --second_offset 0x00000000 \
+          --tags_offset 0x00000100 --cmdline "" -o $out/puredarwin-sdm670-${board}.img
+      '';
       imageArm64Bcm2837Build = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemArm64VirtMinimal;
         # fastfetch needs libFoundation, which the minimal base system does not
@@ -2070,6 +2110,9 @@ EOF
       ramdisk-arm64-tegra210-mainline-dtb = ramdiskArm64Tegra210MainlineDtbBuild;
       ramdisk-arm64-tegra210-sd-mainline-dtb = ramdiskArm64Tegra210SdMainlineDtbBuild;
       ramdisk-arm64-sc8280xp = ramdiskArm64Sc8280xpBuild;
+      ramdisk-arm64-sdm670 = ramdiskArm64Sdm670Build;
+      bootimg-arm64-sdm670-sargo = bootimgArm64Sdm670 "sargo";
+      bootimg-arm64-sdm670-bonito = bootimgArm64Sdm670 "bonito-tianma";
       kc-arm64-t8010 = kcArm64T8010ReleaseBuild;
       kc-arm64-virt4k-debug = kcArm64Virt4kDebugBuild;
       kc-arm64-sun50i = kcArm64Sun50iReleaseBuild;
@@ -2077,6 +2120,7 @@ EOF
       kc-arm64-msm8916 = kcArm64Msm8916Build;
       kc-arm64-sun50i-debug = kcArm64Sun50iDebugBuild;
       kc-arm64-sc8280xp = kcArm64Sc8280xpReleaseBuild;
+      kc-arm64-sdm670 = kcArm64Sdm670Build;
       kc-arm64-sc8280xp-debug = kcArm64Sc8280xpDebugBuild;
       kc-arm64-bcm2837 = kcArm64Bcm2837ReleaseBuild;
       kc-arm64-bcm2837-debug = kcArm64Bcm2837DebugBuild;

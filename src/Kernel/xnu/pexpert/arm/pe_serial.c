@@ -1042,6 +1042,130 @@ pd_ramlog_setup(const DeviceTreeNode *const devicetree_node)
 
 #endif // PD_RAMLOG_UART
 
+#ifdef PD_GENI_UART
+
+// a qualcomm GENI serial engine as the debug uart, polled, with the clocks and pins the bootloader left set up.
+// Register layout and the start-tx and start-rx sequences from OpenBSD's qcuart(4) (ISC, Mark Kettenis)
+#define GENI_STATUS                     0x040
+#define GENI_STATUS_S_CMD_ACTIVE        (1U << 12)
+#define GENI_UART_TX_TRANS_LEN          0x270
+#define GENI_M_CMD0                     0x600
+#define GENI_M_CMD0_OPCODE_UART_START_TX (1U << 27)
+#define GENI_M_IRQ_STATUS               0x610
+#define GENI_M_IRQ_CLEAR                0x618
+#define GENI_M_IRQ_CMD_DONE             (1U << 0)
+#define GENI_M_IRQ_TX_FIFO_WATERMARK    (1U << 30)
+#define GENI_S_CMD0                     0x630
+#define GENI_S_CMD0_OPCODE_UART_START_RX (1U << 27)
+#define GENI_S_IRQ_STATUS               0x640
+#define GENI_S_IRQ_CLEAR                0x648
+#define GENI_TX_FIFO                    0x700
+#define GENI_RX_FIFO                    0x780
+#define GENI_RX_FIFO_STATUS             0x804
+#define GENI_RX_FIFO_STATUS_WC_MASK     0x1ffffff
+#define GENI_TX_FIFO_WATERMARK          0x80c
+#define GENI_UART_SIZE                  0x4000
+// a engine that never answers costs a bounded wait per character, never the boot
+#define GENI_UART_SPINS                 100000u
+
+static vm_offset_t geni_uart_base = 0;
+
+#define GENI_RD(reg)      (*(volatile uint32_t *)(geni_uart_base + (reg)))
+#define GENI_WR(reg, v)   (*(volatile uint32_t *)(geni_uart_base + (reg)) = (v))
+
+static void
+geni_uart_wait(uint32_t bit)
+{
+	for (uint32_t spins = 0; spins < GENI_UART_SPINS; spins++) {
+		if (GENI_RD(GENI_M_IRQ_STATUS) & bit) {
+			break;
+		}
+	}
+}
+
+static unsigned int
+geni_uart_transmit_ready(void)
+{
+	return 1;
+}
+
+// one byte per command: watermark, length, start-tx, wait for room, the byte, wait for the command to finish
+static void
+geni_uart_transmit_data(uint8_t c)
+{
+	GENI_WR(GENI_TX_FIFO_WATERMARK, 2);
+	GENI_WR(GENI_UART_TX_TRANS_LEN, 1);
+	GENI_WR(GENI_M_CMD0, GENI_M_CMD0_OPCODE_UART_START_TX);
+	geni_uart_wait(GENI_M_IRQ_TX_FIFO_WATERMARK);
+	GENI_WR(GENI_TX_FIFO, c);
+	GENI_WR(GENI_M_IRQ_CLEAR, GENI_M_IRQ_TX_FIFO_WATERMARK);
+	geni_uart_wait(GENI_M_IRQ_CMD_DONE);
+	GENI_WR(GENI_M_IRQ_CLEAR, GENI_M_IRQ_CMD_DONE);
+}
+
+// the secondary sequencer runs the receiver: started once, and again whenever it has stopped
+static void
+geni_uart_start_rx(void)
+{
+	if (!(GENI_RD(GENI_STATUS) & GENI_STATUS_S_CMD_ACTIVE)) {
+		GENI_WR(GENI_S_IRQ_CLEAR, GENI_RD(GENI_S_IRQ_STATUS));
+		GENI_WR(GENI_S_CMD0, GENI_S_CMD0_OPCODE_UART_START_RX);
+	}
+}
+
+static unsigned int
+geni_uart_receive_ready(void)
+{
+	if (GENI_RD(GENI_RX_FIFO_STATUS) & GENI_RX_FIFO_STATUS_WC_MASK) {
+		return 1;
+	}
+	geni_uart_start_rx();
+	return 0;
+}
+
+static uint8_t
+geni_uart_receive_data(void)
+{
+	return (uint8_t)GENI_RD(GENI_RX_FIFO);
+}
+
+static void
+geni_uart_init(void)
+{
+	geni_uart_start_rx();
+}
+
+SECURITY_READ_ONLY_LATE(static struct pe_serial_functions) geni_uart_serial_functions =
+{
+	.init = geni_uart_init,
+	.transmit_ready = geni_uart_transmit_ready,
+	.transmit_data = geni_uart_transmit_data,
+	.receive_ready = geni_uart_receive_ready,
+	.receive_data = geni_uart_receive_data,
+	.device = SERIAL_PD_GENI
+};
+
+static void
+geni_uart_setup(const DeviceTreeNode *const devicetree_node)
+{
+	// reg is relative to the arm-io window like every other uart the loader describes
+	const struct {
+		uint64_t block_offset;
+		uint64_t block_size;
+	} *reg;
+	unsigned int reg_size;
+	if (SecureDTGetProperty(devicetree_node, "reg", (const void **)&reg, &reg_size) != kSuccess) {
+		panic("Unable to find the 'reg' property on the GENI uart devicetree node");
+	}
+	assert(reg_size == sizeof(*reg));
+
+	const vm_offset_t soc_base_phys = pe_arm_get_soc_base_phys();
+	geni_uart_base = ml_io_map(soc_base_phys + reg->block_offset, GENI_UART_SIZE);
+	register_serial_functions(&geni_uart_serial_functions);
+}
+
+#endif // PD_GENI_UART
+
 /*****************************************************************************/
 
 /**
@@ -1127,6 +1251,9 @@ static const struct {
 #ifdef PD_RAMLOG_UART
 	{ .compatible = "pd,ramlog", .setup = pd_ramlog_setup },
 #endif // PD_RAMLOG_UART
+#ifdef PD_GENI_UART
+	{ .compatible = "qcom,geni-debug-uart", .setup = geni_uart_setup },
+#endif // PD_GENI_UART
 };
 
 /**
@@ -1219,10 +1346,13 @@ serial_init(void)
 
 	soc_base = pe_arm_get_soc_base_phys();
 
-	if (soc_base == 0) {
+	// no arm-io node, not a zero base: a qualcomm soc's peripherals start at physical 0
+	DTEntry armio;
+	if (SecureDTLookupEntry(NULL, "/arm-io", &armio) != kSuccess) {
 		uart_initted = true;
 		return 0;
 	}
+	(void)soc_base;
 
 	PE_parse_boot_argn("disable-uart-irq", &disable_uart_irq, sizeof(disable_uart_irq));
 

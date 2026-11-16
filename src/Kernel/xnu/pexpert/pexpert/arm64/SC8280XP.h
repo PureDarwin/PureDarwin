@@ -8,6 +8,13 @@
 
 #define ARM_ARCH_TIMER
 
+// pe_serial.c's console in DRAM (xnu-loader's ram log), picked by "pd,ramlog" on /arm-io/uart0,
+// for qualcomm phones whose UART nobody can reach (the pixel 3a)
+#define PD_RAMLOG_UART
+// pe_serial.c's qualcomm GENI debug uart, picked by "qcom,geni-debug-uart" on /arm-io/uart0 (the pixel 3a's
+// usb-c sideband serial)
+#define PD_GENI_UART
+
 #define __ARM_16K_PG__            1
 #define __ARM_ARCH__              8
 #define __ARM_VMSA__              8

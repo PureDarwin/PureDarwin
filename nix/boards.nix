@@ -13,6 +13,7 @@ let
     s8000 = { machine = "S8000"; configs = [ "RELEASE" "DEBUG" ]; kc = "kc-arm64-t8010"; kcBase = "fffffff006000000"; };
     t8103 = { machine = "T8103"; configs = [ "RELEASE" "DEBUG" ]; kc = "kc-arm64"; };
     sc8280xp = { machine = "SC8280XP"; configs = [ "RELEASE" "DEBUG" ]; kc = "kc-arm64"; };
+    sdm670 = { machine = "SDM670"; configs = [ "RELEASE" ]; kc = "kc-arm64"; };
   };
 
   kernel = { lib, mkPureDarwinBuild, kernelSource, arm64CrossToolchain }: board: machine: config: mkPureDarwinBuild {

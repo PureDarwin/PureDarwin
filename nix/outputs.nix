@@ -20,7 +20,7 @@ let
     or (lib.removePrefix "kc-" n);
   strip = suffix: set: lib.mapAttrs' (n: v: lib.nameValuePair (lib.removeSuffix suffix n) v) set;
 
-  isImage = n: (has "image" n && n != "image-viewer") || has "ramdisk-" n || has "netboot-" n || n == "iso-installer";
+  isImage = n: (has "image" n && n != "image-viewer") || has "ramdisk-" n || has "netboot-" n || has "bootimg-" n || n == "iso-installer";
   isKernel = n: has "kernel" n || has "kexts" n || has "drm-" n || has "prelinked-" n || has "xnu" n
     || n == "iographics" || n == "iovirtiogpu-kext" || has "basesystem" n || n == "default"
     || n == "initrd-riscv64-virt";

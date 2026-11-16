@@ -37,7 +37,8 @@ PRIVATE_KERNELFILES = \
 	VMAPPLE.h \
 	QEMUVIRT.h \
 	SUN50I.h \
-	SC8280XP.h
+	SC8280XP.h \
+	SDM670.h
 
 
 # Headers installed into System.framework/PrivateHeaders (userspace internal SDK only).

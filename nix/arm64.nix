@@ -1967,6 +1967,7 @@ let
   kernelArm64T8103DebugBuild = boardKernels.t8103.debug;
   kernelArm64Sc8280xpBuild = boardKernels.sc8280xp.release;
   kernelArm64Sc8280xpDebugBuild = boardKernels.sc8280xp.debug;
+  kernelArm64Sdm670Build = boardKernels.sdm670.release;
   kernelArm32Bcm2835Build = mkPureDarwinBuild {
     pname = "puredarwin-kernel-arm32-bcm2835";
     src = kernelSource;
@@ -2652,6 +2653,7 @@ in
     kernelArm64Sun50iDebugBuild
     kernelArm64Sc8280xpBuild
     kernelArm64Sc8280xpDebugBuild
+    kernelArm64Sdm670Build
     kernelArm32Bcm2835Build
     kernelArm32Bcm2835DebugBuild
     kernelArm32Bcm2835DevBuild

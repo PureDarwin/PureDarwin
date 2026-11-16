@@ -348,6 +348,11 @@ arm_auxkc_init(void *mh, void *base)
  */
 
 
+#ifdef PD_EARLY_GENI_UART_PHYS
+// start.s's early putc and fault dump write here: physical through its V=P entry until arm_vm_init, mapped after
+uint64_t pd_early_uart_base = PD_EARLY_GENI_UART_PHYS;
+#endif
+
 __startup_func
 void
 arm_init(
@@ -589,6 +594,9 @@ arm_init(
 	pmap_first_pnum = (ppnum_t)atop(gDramBase);
 
 	arm_vm_init(xmaxmem, args);
+#ifdef PD_EARLY_GENI_UART_PHYS
+	pd_early_uart_base = ml_io_map(PD_EARLY_GENI_UART_PHYS, 0x4000);
+#endif
 
 	if (debug_boot_arg) {
 		patch_low_glo();

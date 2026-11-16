@@ -534,7 +534,11 @@ LEXT(exc_vectors_table)
 	.globl EXT(ExceptionVectorsBase)
 LEXT(ExceptionVectorsBase)
 Lel1_sp0_synchronous_vector:
+#ifdef PD_EARLY_FAULT_CATCH
+	b		EXT(pd_early_fault)
+#else
 	BRANCH_TO_KVA_VECTOR el1_sp0_synchronous_vector_long, 0
+#endif
 
 	.text
 	.align 7
@@ -549,12 +553,20 @@ Lel1_sp0_fiq_vector:
 	.text
 	.align 7
 Lel1_sp0_serror_vector:
+#ifdef PD_EARLY_FAULT_CATCH
+	b		EXT(pd_early_fault)
+#else
 	BRANCH_TO_KVA_VECTOR el1_sp0_serror_vector_long, 3
+#endif
 
 	.text
 	.align 7
 Lel1_sp1_synchronous_vector:
+#ifdef PD_EARLY_FAULT_CATCH
+	b		EXT(pd_early_fault)
+#else
 	BRANCH_TO_KVA_VECTOR el1_sp1_synchronous_vector_long, 4
+#endif
 
 	.text
 	.align 7
@@ -569,7 +581,11 @@ Lel1_sp1_fiq_vector:
 	.text
 	.align 7
 Lel1_sp1_serror_vector:
+#ifdef PD_EARLY_FAULT_CATCH
+	b		EXT(pd_early_fault)
+#else
 	BRANCH_TO_KVA_VECTOR el1_sp1_serror_vector_long, 7
+#endif
 
 	.text
 	.align 7

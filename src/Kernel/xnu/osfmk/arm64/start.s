@@ -73,6 +73,38 @@
 #endif
 .endmacro
 
+
+#ifdef PD_EARLY_GENI_UART_PHYS
+/* one byte to the GENI debug uart at its physical address, as pe_serial.c's driver sends it: MMU off only, x9-x12 */
+.macro PD_EARLY_PUTC
+	MOV64	x9, PD_EARLY_GENI_UART_PHYS
+	mov		w10, #2
+	str		w10, [x9, #0x80c]			// tx fifo watermark
+	mov		w10, #1
+	str		w10, [x9, #0x270]			// tx length, one byte
+	mov		w10, #(1 << 27)
+	str		w10, [x9, #0x600]			// start tx
+	mov		x11, #0x20000
+91:	ldr		w10, [x9, #0x610]
+	tbnz	w10, #30, 92f				// room in the fifo
+	subs	x11, x11, #1
+	b.ne	91b
+92:	mov		w10, #($0)
+	str		w10, [x9, #0x700]
+	mov		w10, #(1 << 30)
+	str		w10, [x9, #0x618]
+	mov		x11, #0x20000
+93:	ldr		w10, [x9, #0x610]
+	tbnz	w10, #0, 94f					// command done
+	subs	x11, x11, #1
+	b.ne	93b
+94:	mov		w10, #1
+	str		w10, [x9, #0x618]
+.endmacro
+#else
+.macro PD_EARLY_PUTC
+.endmacro
+#endif
 .macro MSR_SCTLR_EL1_X0
 #if defined(KERNEL_INTEGRITY_KTRR)
 	mov		x1, lr
@@ -479,6 +511,94 @@ start_cpu:
 	b	3b
 2:
 .endmacro
+#ifdef PD_EARLY_GENI_UART_PHYS
+/* the low byte of x15 to the debug uart, as PD_EARLY_PUTC sends it, x9-x12 clobbered */
+	.text
+	.align 2
+pd_early_putc_x15:
+	adrp	x9, EXT(pd_early_uart_base)@page
+	ldr		x9, [x9, EXT(pd_early_uart_base)@pageoff]
+	mov		w10, #2
+	str		w10, [x9, #0x80c]
+	mov		w10, #1
+	str		w10, [x9, #0x270]
+	mov		w10, #(1 << 27)
+	str		w10, [x9, #0x600]
+	mov		x11, #0x20000
+1:	ldr		w10, [x9, #0x610]
+	tbnz	w10, #30, 2f
+	subs	x11, x11, #1
+	b.ne	1b
+2:	and		w10, w15, #0xff
+	str		w10, [x9, #0x700]
+	mov		w10, #(1 << 30)
+	str		w10, [x9, #0x618]
+	mov		x11, #0x20000
+3:	ldr		w10, [x9, #0x610]
+	tbnz	w10, #0, 4f
+	subs	x11, x11, #1
+	b.ne	3b
+4:	mov		w10, #1
+	str		w10, [x9, #0x618]
+	ret
+
+/* x13 as 16 hex digits, lr kept in x20 */
+pd_early_hex_x13:
+	mov		x20, lr
+	mov		x14, #60
+1:	lsr		x15, x13, x14
+	and		x15, x15, #0xf
+	add		x16, x15, #0x30
+	add		x17, x15, #0x57
+	cmp		x15, #10
+	csel	x15, x16, x17, lt
+	bl		pd_early_putc_x15
+	subs	x14, x14, #4
+	b.pl	1b
+	mov		lr, x20
+	ret
+
+/* an EL1 exception before the console: "!ESR:ELR:FAR" on the uart, then stop */
+	.globl	EXT(pd_early_fault)
+LEXT(pd_early_fault)
+	mov		x15, #0x21
+	bl		pd_early_putc_x15
+	mrs		x13, ESR_EL1
+	bl		pd_early_hex_x13
+	mov		x15, #0x3a
+	bl		pd_early_putc_x15
+	mrs		x13, ELR_EL1
+	bl		pd_early_hex_x13
+	mov		x15, #0x3a
+	bl		pd_early_putc_x15
+	mrs		x13, FAR_EL1
+	bl		pd_early_hex_x13
+	/* the link register, then up to 8 return addresses along the frame-pointer chain */
+	mov		x15, #0x2f
+	bl		pd_early_putc_x15
+	mov		x13, x30
+	bl		pd_early_hex_x13
+	mov		x21, x29
+	mov		x22, #8
+6:	lsr		x23, x21, #40				// a frame pointer must lie in the kernel's range
+	mov		x24, #0xfffffe
+	cmp		x23, x24
+	b.ne	7f
+	tst		x21, #0xf
+	b.ne	7f
+	mov		x15, #0x2f
+	bl		pd_early_putc_x15
+	ldr		x13, [x21, #8]
+	bl		pd_early_hex_x13
+	ldr		x21, [x21]
+	subs	x22, x22, #1
+	b.ne	6b
+7:	mov		x15, #0x0a
+	bl		pd_early_putc_x15
+5:	wfe
+	b		5b
+#endif
+
 
 /*
  * _start_first_cpu
@@ -492,6 +612,7 @@ LEXT(start_first_cpu)
 	// Unlock the core for debugging
 	msr		OSLAR_EL1, xzr
 	msr		DAIFSet, #(DAIFSC_ALL)				// Disable all interrupts
+	PD_EARLY_PUTC 0x4b						// K: kernel entry
 
 	mov		x20, x0
 	mov		x21, #0
@@ -554,6 +675,7 @@ LEXT(start_first_cpu)
 	 *	Page 4 - KVA L2 table
 	 */
 
+	PD_EARLY_PUTC 0x31						// 1: boot args and stacks set up
 	// Invalidate all entries in the bootstrap page tables
 	mov		x0, #(ARM_TTE_EMPTY)				// Load invalid entry template
 	mov		x1, x25								// Start at V=P pagetable root
@@ -646,6 +768,14 @@ Lkernelcache_base_found:
 	dsb		ish
 
 
+#ifdef PD_EARLY_GENI_UART_PHYS
+	/* the first 32MB, the uart among them, as device memory in V=P L2 entry 0 (dram starts at 2GB, so it is free) */
+	add		x9, x25, #(2 * PGBYTES)
+	MOV64	x10, (ARM_TTE_TYPE_BLOCK | ARM_TTE_VALID | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_DISABLE) | ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_NX | ARM_TTE_BLOCK_PNX)
+	str		x10, [x9]
+	dsb		ish
+#endif
+	PD_EARLY_PUTC 0x32						// 2: bootstrap mappings built
 	b		common_start
 
 /*
@@ -672,6 +802,7 @@ common_start:
 	mov lr, x19
 #endif
 
+	PD_EARLY_PUTC 0x33						// 3: translation setup next
 	// Set the translation control register.
 	MOV64	x1, TCR_EL1_BOOT
 	MSR_TCR_EL1_X1
@@ -741,6 +872,7 @@ common_start:
 	 * populated, so just switch to the kernel_pmap now.
 	 */
 
+	PD_EARLY_PUTC 0x34						// 4: TTBRs, MAIR and the TLB invalidate done
 	cbz		x21, 1f
 	adrp	x0, EXT(cpu_ttep)@page
 	add		x0, x0, EXT(cpu_ttep)@pageoff
@@ -769,6 +901,7 @@ common_start:
 	PAC_INIT_KEY_STATE tmp=x0, tmp2=x1
 #endif /* HAS_APPLE_PAC */
 
+	PD_EARLY_PUTC 0x4d						// M: the MMU goes on next
 	// Enable caches, MMU, ROP and JOP
 	MOV64   x0, SCTLR_EL1_DEFAULT
 	MSR_SCTLR_EL1_X0
@@ -780,6 +913,7 @@ common_start:
 	mov		w10, #2
 	str		w10, [x9]
 	dsb		sy
+	PD_EARLY_PUTC 0x6d						// m: the MMU is on
 
 #if !VMAPPLE
 	MOV64	x1, SCTLR_EL1_DEFAULT
@@ -880,6 +1014,7 @@ arm_init_tramp:
 	add		x9, x9, EXT(pd_smp_marker)@pageoff
 	mov		w10, #5
 	str		w10, [x9]
+	PD_EARLY_PUTC 0x74						// t: running at the kernel's virtual address
 
 	/* Record the stack this CPU was handed and its cpu data pointer.
 	 * The first call below is the first thing here that actually uses the stack */

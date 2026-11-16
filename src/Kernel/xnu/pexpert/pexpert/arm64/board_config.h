@@ -360,8 +360,12 @@
 
 #endif  /* ARM64_BOARD_CONFIG_VMAPPLE */
 
-#ifdef ARM64_BOARD_CONFIG_SC8280XP
+#if defined(ARM64_BOARD_CONFIG_SC8280XP) || defined(ARM64_BOARD_CONFIG_SDM670)
+#ifdef ARM64_BOARD_CONFIG_SDM670
+#include <pexpert/arm64/SDM670.h>
+#else
 #include <pexpert/arm64/SC8280XP.h>
+#endif
 
 #define MAX_L2_CLINE        6
 #define MAX_CPUS            8
