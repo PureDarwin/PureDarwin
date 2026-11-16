@@ -11,6 +11,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -47,7 +48,6 @@ static int brk_reserved;
 static DIR *guest_dirs[1024];
 static pthread_mutex_t futex_lock = PTHREAD_MUTEX_INITIALIZER;
 static volatile int next_guest_tid = 1000;
-static volatile unsigned next_memfd;
 static __thread int guest_tid;
 static __thread int *guest_clear_tid;
 static __thread LinuxRobustHead *guest_robust_head;
@@ -167,6 +167,8 @@ socket_type(int linux_type)
 {
     if (linux_type & ~(0xf | 0x800 | 0x80000)) return -1;
     int type = linux_type & 0xf;
+    // no native seqpacket for unix sockets: a framed stream, see net.c
+    if (type == 5) return SOCK_STREAM;
     if (type != SOCK_STREAM && type != SOCK_DGRAM) return -1;
     return type;
 }
@@ -193,6 +195,8 @@ linux_fcntl(int fd, int command, long argument)
 {
     int native_command = command;
     if (command == 1030) native_command = F_DUPFD_CLOEXEC;
+    // seals are accepted and not enforced
+    else if (command == 1033 || command == 1034) return fcntl(fd, F_GETFL) < 0 ? -linux_error(errno) : 0;
     else if (command < 0 || command > 4) return -38;
     if (command == 4) {
         int old = fcntl(fd, F_GETFL);
@@ -210,29 +214,25 @@ linux_fcntl(int fd, int command, long argument)
     return result;
 }
 
+// an unlinked file in the temporary directory: unlike a Darwin shared memory object it keeps its exact size,
+// seeks, and means the same thing in the process that receives it over a socket
 static long
 linux_memfd_create(const char *name, unsigned flags)
 {
-    if (!name || (flags & ~1U)) return -22;
-    for (int attempt = 0; attempt < 100; ++attempt) {
-        char path[64];
-        unsigned number = __sync_fetch_and_add(&next_memfd, 1);
-        snprintf(path, sizeof(path), "/elftrans-%ld-%u", (long)getpid(),
-            number);
-        int fd = shm_open(path, O_RDWR | O_CREAT | O_EXCL, 0600);
-        if (fd < 0) {
-            if (errno == EEXIST) continue;
-            return -linux_error(errno);
-        }
-        shm_unlink(path);
-        if ((flags & 1) && fcntl(fd, F_SETFD, FD_CLOEXEC)) {
-            int error = errno;
-            close(fd);
-            return -linux_error(error);
-        }
-        return fd;
+    // MFD_CLOEXEC and MFD_ALLOW_SEALING
+    if (!name || (flags & ~3U)) return -22;
+    const char *tmp = getenv("TMPDIR");
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/elftrans-memfd-XXXXXX", tmp && *tmp ? tmp : "/tmp");
+    int fd = mkstemp(path);
+    if (fd < 0) return -linux_error(errno);
+    unlink(path);
+    if ((flags & 1) && fcntl(fd, F_SETFD, FD_CLOEXEC)) {
+        int error = errno;
+        close(fd);
+        return -linux_error(error);
     }
-    return -17;
+    return fd;
 }
 
 static int
@@ -246,6 +246,14 @@ message_flags(int linux_flags, int receiving)
     if (linux_flags & 0x100) flags |= MSG_WAITALL;
     if (linux_flags & 0x4000) flags |= MSG_NOSIGNAL;
     return flags;
+}
+
+// the msg_flags a receive reports, from Darwin's numbers to Linux's
+static int
+linux_msg_flags(int native)
+{
+    return (native & MSG_OOB ? 0x1 : 0) | (native & MSG_EOR ? 0x80 : 0) | (native & MSG_TRUNC ? 0x20 : 0) |
+        (native & MSG_CTRUNC ? 0x8 : 0);
 }
 
 static long
@@ -295,7 +303,11 @@ linux_sendmsg(int fd, const LinuxMsgHdr *guest, int linux_flags)
     native.msg_iovlen = (int)guest->iov_count;
     native.msg_control = used ? control : NULL;
     native.msg_controllen = (socklen_t)used;
-    ssize_t sent = sendmsg(fd, &native, flags);
+    ssize_t sent;
+    if (net_is_seqpacket(fd))
+        sent = net_seq_send(fd, guest->iov, (int)guest->iov_count, native.msg_control, native.msg_controllen, flags);
+    else
+        sent = sendmsg(fd, &native, flags);
     if (sent < 0)
         fprintf(stderr, "elftrans: sendmsg fd=%d flags=%#x errno=%d\n",
             fd, linux_flags, errno);
@@ -305,7 +317,9 @@ linux_sendmsg(int fd, const LinuxMsgHdr *guest, int linux_flags)
 static long
 linux_recvmsg(int fd, LinuxMsgHdr *guest, int linux_flags)
 {
-    int flags = message_flags(linux_flags, 1);
+    int seq = net_is_seqpacket(fd);
+    // Linux's MSG_TRUNC on a seqpacket receive asks for the real length of the message
+    int flags = message_flags(seq ? linux_flags & ~0x20 : linux_flags, 1);
     if (flags < 0 || guest->iov_count > 1024 ||
         guest->control_length > 4096) return -22;
 
@@ -318,7 +332,16 @@ linux_recvmsg(int fd, LinuxMsgHdr *guest, int linux_flags)
     native.msg_iovlen = (int)guest->iov_count;
     native.msg_control = guest->control_length ? control : NULL;
     native.msg_controllen = guest->control_length ? sizeof(control) : 0;
-    ssize_t received = recvmsg(fd, &native, flags & ~0x40000000);
+    ssize_t received;
+    if (seq) {
+        socklen_t control_length = native.msg_controllen;
+        int out_flags;
+        received = net_seq_recv(fd, guest->iov, (int)guest->iov_count, native.msg_control, &control_length,
+            flags & ~0x40000000, &out_flags, linux_flags & 0x20);
+        native.msg_controllen = control_length;
+        native.msg_flags = out_flags;
+    } else
+        received = recvmsg(fd, &native, flags & ~0x40000000);
     if (received < 0) return -linux_error(errno);
 
     size_t used = 0;
@@ -351,7 +374,7 @@ linux_recvmsg(int fd, LinuxMsgHdr *guest, int linux_flags)
         net_to_linux((const struct sockaddr *)&from, native.msg_namelen, guest->name, &guest->name_length);
     else
         guest->name_length = 0;
-    guest->flags = native.msg_flags;
+    guest->flags = linux_msg_flags(native.msg_flags);
     return received;
 }
 
@@ -809,6 +832,12 @@ sys_read(GuestRegs *r)
     long result = -38;
     if (events_read((int)r->rdi, (void *)(uintptr_t)r->rsi, (size_t)r->rdx, &result))
         return result;
+    if (net_is_seqpacket((int)r->rdi)) {
+        struct iovec v = { (void *)(uintptr_t)r->rsi, (size_t)r->rdx };
+        int ignored;
+        ssize_t got = net_seq_recv((int)r->rdi, &v, 1, NULL, NULL, 0, &ignored, 0);
+        return got < 0 ? -linux_error(errno) : got;
+    }
     ssize_t n = read((int)r->rdi, (void *)(uintptr_t)r->rsi,
         (size_t)r->rdx);
     result = n < 0 ? -linux_error(errno) : n;
@@ -821,6 +850,12 @@ sys_write(GuestRegs *r)
     long result = -38;
     if (events_write((int)r->rdi, (const void *)(uintptr_t)r->rsi, (size_t)r->rdx, &result))
         return result;
+    if (net_is_seqpacket((int)r->rdi)) {
+        struct iovec v = { (void *)(uintptr_t)r->rsi, (size_t)r->rdx };
+        ssize_t sent = net_seq_send((int)r->rdi, &v, 1, NULL, 0, 0);
+        if (sent < 0 && errno == EPIPE) kill(getpid(), SIGPIPE);
+        return sent < 0 ? -linux_error(errno) : sent;
+    }
     ssize_t n = write((int)r->rdi, (void *)(uintptr_t)r->rsi,
         (size_t)r->rdx);
     result = n < 0 ? -linux_error(errno) : n;
@@ -1470,6 +1505,7 @@ sys_socket(GuestRegs *r)
             result = -linux_error(errno);
         } else {
             int *output = (int *)(uintptr_t)r->r10;
+            if ((linux_type & 0xf) == 5) net_mark_seqpacket(pair[0]), net_mark_seqpacket(pair[1]);
             output[0] = pair[0];
             output[1] = pair[1];
             result = 0;
@@ -1564,6 +1600,13 @@ static long
 sys_eventfd(GuestRegs *r)
 {
     return events_eventfd((unsigned)r->rdi, (long)r->rax == 290 ? (int)r->rsi : 0);
+}
+
+static long
+sys_signalfd(GuestRegs *r)
+{
+    return events_signalfd((int)r->rdi, (const void *)(uintptr_t)r->rsi, (size_t)r->rdx,
+        (long)r->rax == 289 ? (int)r->r10 : 0);
 }
 
 static long
@@ -1737,6 +1780,11 @@ static long
 sys_writev(GuestRegs *r)
 {
     long result = -38;
+    if (net_is_seqpacket((int)r->rdi)) {
+        ssize_t sent = net_seq_send((int)r->rdi, (const struct iovec *)(uintptr_t)r->rsi, (int)r->rdx, NULL, 0, 0);
+        if (sent < 0 && errno == EPIPE) kill(getpid(), SIGPIPE);
+        return sent < 0 ? -linux_error(errno) : sent;
+    }
     ssize_t n = writev((int)r->rdi,
         (const struct iovec *)(uintptr_t)r->rsi,
         (int)r->rdx);
@@ -2027,6 +2075,13 @@ sys_lseek(GuestRegs *r)
     else if (whence == 4) whence = SEEK_HOLE;
     else if (whence > 2) return -22;
     off_t at = lseek((int)r->rdi, (off_t)r->rsi, whence);
+    if (at < 0 && errno == ESPIPE) {
+        // a shared memory object (memfd) cannot seek on Darwin: its size answers SEEK_END
+        struct stat st;
+        if (whence == SEEK_END && !fstat((int)r->rdi, &st) && !S_ISFIFO(st.st_mode) && !S_ISSOCK(st.st_mode) &&
+            !S_ISCHR(st.st_mode))
+            return (long)st.st_size + (long)r->rsi;
+    }
     return at < 0 ? -linux_error(errno) : at;
 }
 
@@ -2189,6 +2244,8 @@ sys_getsockopt(GuestRegs *r)
     // SO_ERROR holds an errno, which Linux numbers its own way
     if (level == 1 && option == 4 && size >= 4 && *(int *)value)
         *(int *)value = (int)linux_error(*(int *)value);
+    if (level == 1 && option == 3 && size >= 4 && *(int *)value == SOCK_STREAM && net_is_seqpacket(fd))
+        *(int *)value = 5;
     *length = size;
     return 0;
 }
@@ -2337,6 +2394,12 @@ sys_chmod(GuestRegs *r)
 static long
 sys_readv(GuestRegs *r)
 {
+    if (net_is_seqpacket((int)r->rdi)) {
+        int ignored;
+        ssize_t got = net_seq_recv((int)r->rdi, (const struct iovec *)(uintptr_t)r->rsi, (int)r->rdx, NULL, NULL,
+            0, &ignored, 0);
+        return got < 0 ? -linux_error(errno) : got;
+    }
     ssize_t n = readv((int)r->rdi, (const struct iovec *)(uintptr_t)r->rsi, (int)r->rdx);
     return n < 0 ? -linux_error(errno) : n;
 }
@@ -2501,6 +2564,8 @@ static long (*const syscalls[NSYSCALLS])(GuestRegs *) = {
     [287] = sys_timerfd,
     [288] = sys_accept,
     [290] = sys_eventfd,
+    [282] = sys_signalfd,
+    [289] = sys_signalfd,
     [291] = sys_epoll,
     [441] = sys_epoll,
     [46] = sys_sendmsg,
@@ -2590,8 +2655,20 @@ elftrans_dispatch(GuestRegs *r)
                     (unsigned long)r->rsi, result) :
                 path ? snprintf(line, sizeof(line), "elftrans: syscall %ld (%.256s) -> %ld\n", nr, path, result) :
                 snprintf(line, sizeof(line), "elftrans: syscall %ld -> %ld\n", nr, result);
-            if (size > 0 && size < (int)sizeof(line))
-                write(2, line, (size_t)size);
+            // ELFTRANS_TRACE_PID=1 tells the processes and threads of a traced tree apart
+            if (size > 0 && size < (int)sizeof(line)) {
+                static int tag = -1;
+                if (tag < 0) tag = getenv("ELFTRANS_TRACE_PID") != NULL;
+                if (tag) {
+                    char out[448];
+                    uint64_t tid = 0;
+                    pthread_threadid_np(NULL, &tid);
+                    int n = snprintf(out, sizeof(out), "[%d.%llu] %s", (int)getpid(), (unsigned long long)tid, line);
+                    if (n > 0 && n < (int)sizeof(out)) write(2, out, (size_t)n);
+                } else {
+                    write(2, line, (size_t)size);
+                }
+            }
         }
         if (result != SYSCALL_RESTORED)
             r->rax = (uint64_t)result, r->rcx = r->rip, r->r11 = r->rflags;

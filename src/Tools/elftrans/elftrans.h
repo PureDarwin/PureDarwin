@@ -139,6 +139,12 @@ struct sockaddr;
 struct sockaddr_storage;
 int net_to_native(const void *guest, uint32_t length, struct sockaddr_storage *native, unsigned *native_length);
 void net_to_linux(const struct sockaddr *native, unsigned native_length, void *guest, uint32_t *length);
+void net_mark_seqpacket(int fd);
+int net_is_seqpacket(int fd);
+struct iovec;
+ssize_t net_seq_send(int fd, const struct iovec *iov, int count, const void *control, unsigned control_len, int flags);
+ssize_t net_seq_recv(int fd, const struct iovec *iov, int count, void *control, unsigned *control_len, int flags,
+                     int *msg_flags, int want_real);
 long net_socket(int domain, int linux_type, int protocol);
 long net_bind_connect(int fd, const void *address, uint32_t length, int connecting);
 long net_accept(int fd, void *address, uint32_t *length, int linux_flags);
@@ -148,6 +154,7 @@ long net_recvfrom(int fd, void *buf, size_t n, int linux_flags, void *address, u
 int net_option(int level, int option, int *native_level, int *native_option);
 int net_option_ignored(int level, int option);
 long events_eventfd(unsigned initial, int flags);
+long events_signalfd(int fd, const void *mask, size_t size, int flags);
 long events_timerfd_create(int clock, int flags);
 long events_timerfd_settime(int fd, int flags, const void *value, void *old);
 long events_timerfd_gettime(int fd, void *out);

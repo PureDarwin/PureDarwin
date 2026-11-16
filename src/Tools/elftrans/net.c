@@ -4,12 +4,15 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <poll.h>
+#include <pthread.h>
 #include <netinet/tcp.h>
 #include <signal.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <sys/un.h>
 #include <unistd.h>
 #include "elftrans.h"
@@ -142,6 +145,295 @@ fail:;
     return -linux_error(error);
 }
 
+// Darwin has no seqpacket unix sockets: a stream socket stands in, one message being a 4-byte length and
+// its bytes. Which sockets are seqpacket is kept on the socket itself, as SO_DONTTRUNC: Linux programs cannot
+// set it (it has no Linux number), it only changes datagram receives, and it lives in the kernel's socket,
+// so fork, exec, dup and descriptors passed over SCM_RIGHTS all carry it, and accept() copies it from the
+// listener. Not covered: two processes receiving on one socket at once can split a message between them
+// (threads of one process are serialized), and a sender in another process that is cut off midway through a
+// message (non-blocking and killed) leaves a torn one.
+void
+net_mark_seqpacket(int fd)
+{
+    int on = 1;
+    setsockopt(fd, SOL_SOCKET, SO_DONTTRUNC, &on, sizeof(on));
+}
+
+int
+net_is_seqpacket(int fd)
+{
+    int on = 0;
+    socklen_t n = sizeof(on);
+    return !getsockopt(fd, SOL_SOCKET, SO_DONTTRUNC, &on, &n) && on;
+}
+
+// one lock per descriptor number for the senders and one for the receivers, so a message goes in and
+// comes out whole among threads
+#define SEQ_LOCKS 4096
+static pthread_mutex_t seq_send_locks[SEQ_LOCKS], seq_recv_locks[SEQ_LOCKS];
+static pthread_once_t seq_once = PTHREAD_ONCE_INIT;
+
+static void
+seq_init_locks(void)
+{
+    for (int i = 0; i < SEQ_LOCKS; i++) {
+        pthread_mutex_init(&seq_send_locks[i], NULL);
+        pthread_mutex_init(&seq_recv_locks[i], NULL);
+    }
+}
+
+static void
+seq_init(void)
+{
+    seq_init_locks();
+    // a lock another thread held at fork stays locked in the child
+    pthread_atfork(NULL, NULL, seq_init_locks);
+}
+
+static pthread_mutex_t *
+seq_lock(pthread_mutex_t *locks, int fd)
+{
+    pthread_once(&seq_once, seq_init);
+    return &locks[(unsigned)fd % SEQ_LOCKS];
+}
+
+// the entries of in that cover bytes [skip, limit) of the whole, copied to out
+static int
+iov_window(const struct iovec *in, int count, size_t skip, size_t limit, struct iovec *out)
+{
+    int n = 0;
+    size_t at = 0;
+
+    for (int i = 0; i < count && at < limit; i++) {
+        size_t len = in[i].iov_len, from = skip > at ? skip - at : 0;
+
+        if (from < len) {
+            size_t to = limit - at < len ? limit - at : len;
+
+            out[n].iov_base = (char *)in[i].iov_base + from;
+            out[n].iov_len = to - from;
+            n++;
+        }
+        at += len;
+    }
+    return n;
+}
+
+static void
+wait_fd(int fd, short events)
+{
+    struct pollfd p = { fd, events, 0 };
+    poll(&p, 1, -1);
+}
+
+// reads want bytes into iov, waiting for the rest once part of a message is in. The first call may bring
+// the message's control data, into control (capacity *control_len, then the length received). A short count
+// is the peer closing; -1 only when nothing of the message was taken
+static ssize_t
+seq_fill(int fd, const struct iovec *iov, int count, size_t want, int flags, int committed, void *control,
+         socklen_t *control_len)
+{
+    struct iovec v[1025];
+    socklen_t capacity = control ? *control_len : 0;
+    size_t got = 0;
+
+    if (control_len)
+        *control_len = 0;
+    while (got < want) {
+        struct msghdr m = {0};
+        ssize_t r;
+
+        m.msg_iov = v;
+        m.msg_iovlen = iov_window(iov, count, got, want, v);
+        if (control && !*control_len)
+            m.msg_control = control, m.msg_controllen = capacity;
+        r = recvmsg(fd, &m, got || committed ? 0 : flags);
+        if (r < 0) {
+            if (errno == EINTR && (got || committed))
+                continue;
+            if (errno == EAGAIN && (got || committed)) {
+                wait_fd(fd, POLLIN);
+                continue;
+            }
+            return got ? (ssize_t)got : -1;
+        }
+        if (!r)
+            break;
+        got += r;
+        if (control && m.msg_controllen)
+            *control_len = m.msg_controllen;
+    }
+    return got;
+}
+
+// one message out: the length and the bytes in one sendmsg, so the control data travels with the header
+ssize_t
+net_seq_send(int fd, const struct iovec *iov, int count, const void *control, socklen_t control_len, int flags)
+{
+    struct iovec v[1025];
+    pthread_mutex_t *lock;
+    size_t total = 0, done, want;
+    uint32_t length;
+    struct msghdr m = {0};
+    ssize_t r;
+
+    if (count < 0 || count > 1024) {
+        errno = EMSGSIZE;
+        return -1;
+    }
+    for (int i = 0; i < count; i++)
+        total += iov[i].iov_len;
+    if (total > UINT32_MAX) {
+        errno = EMSGSIZE;
+        return -1;
+    }
+    length = (uint32_t)total;
+    v[0].iov_base = &length;
+    v[0].iov_len = 4;
+    memcpy(v + 1, iov, count * sizeof(*iov));
+    want = total + 4;
+    m.msg_iov = v;
+    m.msg_iovlen = count + 1;
+    m.msg_control = (void *)control;
+    m.msg_controllen = control_len;
+    lock = seq_lock(seq_send_locks, fd);
+    pthread_mutex_lock(lock);
+    r = sendmsg(fd, &m, flags);
+    if (r < 0) {
+        int error = errno;
+
+        pthread_mutex_unlock(lock);
+        errno = error;
+        return -1;
+    }
+    done = r;
+    // a non-blocking socket took part of it: the message is begun, so finish it
+    while (done < want) {
+        struct iovec rest[1025];
+        struct msghdr m2 = {0};
+
+        m2.msg_iov = rest;
+        m2.msg_iovlen = iov_window(v, count + 1, done, want, rest);
+        r = sendmsg(fd, &m2, flags);
+        if (r < 0) {
+            if (errno == EINTR)
+                continue;
+            if (errno == EAGAIN) {
+                wait_fd(fd, POLLOUT);
+                continue;
+            }
+            break;
+        }
+        done += r;
+    }
+    {
+        int error = errno;
+
+        pthread_mutex_unlock(lock);
+        errno = error;
+    }
+    return done < want ? -1 : (ssize_t)total;
+}
+
+// one message in. A buffer shorter than the message takes its start and drops the rest, with MSG_TRUNC in
+// *msg_flags; want_real returns the message's length instead (Linux's MSG_TRUNC flag). 0 is the peer gone.
+// MSG_PEEK looks at the bytes already queued and brings no control data
+ssize_t
+net_seq_recv(int fd, const struct iovec *iov, int count, void *control, socklen_t *control_len, int flags,
+             int *msg_flags, int want_real)
+{
+    struct iovec v[1025];
+    pthread_mutex_t *lock;
+    size_t capacity = 0, take;
+    uint32_t length = 0;
+    ssize_t got;
+    int error = 0;
+
+    if (count < 0 || count > 1024) {
+        errno = EMSGSIZE;
+        return -1;
+    }
+    for (int i = 0; i < count; i++)
+        capacity += iov[i].iov_len;
+    *msg_flags = 0;
+    lock = seq_lock(seq_recv_locks, fd);
+    pthread_mutex_lock(lock);
+    if (flags & MSG_PEEK) {
+        struct msghdr m = {0};
+
+        if (control_len)
+            *control_len = 0;
+
+        v[0].iov_base = &length;
+        v[0].iov_len = 4;
+        memcpy(v + 1, iov, count * sizeof(*iov));
+        m.msg_iov = v;
+        m.msg_iovlen = count + 1;
+        // the length can be half in; it is a matter of microseconds
+        for (int tries = 0;; tries++) {
+            got = recvmsg(fd, &m, flags & (MSG_PEEK | MSG_DONTWAIT));
+            if (got < 0 || got == 0 || got >= 4 || tries > 1000)
+                break;
+            usleep(1000);
+        }
+        if (got < 0)
+            error = errno;
+        else if (got < 4)
+            got = 0;
+        else {
+            take = (size_t)got - 4;
+            if (take > length)
+                take = length;
+            if (length > capacity)
+                *msg_flags |= MSG_TRUNC;
+            got = want_real ? (ssize_t)length : (ssize_t)take;
+        }
+        goto out;
+    }
+    {
+        struct iovec head = { &length, 4 };
+
+        got = seq_fill(fd, &head, 1, 4, flags & MSG_DONTWAIT, 0, control, control_len);
+    }
+    if (got < 0) {
+        error = errno;
+        goto out;
+    }
+    if (got < 4) {
+        got = 0;
+        goto out;
+    }
+    take = length < capacity ? length : capacity;
+    got = seq_fill(fd, iov, count, take, 0, 1, NULL, NULL);
+    if (got < 0)
+        error = errno, got = 0;
+    if ((size_t)got == take && length > take) {
+        char scratch[16384];
+        struct iovec drop = { scratch, 0 };
+        size_t left = length - take;
+
+        while (left) {
+            drop.iov_len = left < sizeof(scratch) ? left : sizeof(scratch);
+            ssize_t r = seq_fill(fd, &drop, 1, drop.iov_len, 0, 1, NULL, NULL);
+
+            if (r <= 0)
+                break;
+            left -= r;
+        }
+    }
+    if (length > capacity)
+        *msg_flags |= MSG_TRUNC;
+    if (want_real && got >= 0 && (size_t)got == take)
+        got = length;
+out:
+    pthread_mutex_unlock(lock);
+    if (error) {
+        errno = error;
+        return -1;
+    }
+    return got;
+}
+
 long
 net_socket(int domain, int linux_type, int protocol)
 {
@@ -153,6 +445,11 @@ net_socket(int domain, int linux_type, int protocol)
         return -22;
     if (type != SOCK_STREAM && type != SOCK_DGRAM && type != SOCK_SEQPACKET && type != SOCK_RAW)
         return -94;
+    if (type == SOCK_SEQPACKET && family == AF_UNIX) {
+        long fd = finish_fd(socket(AF_UNIX, SOCK_STREAM, 0), linux_type);
+        if (fd >= 0) net_mark_seqpacket((int)fd);
+        return fd;
+    }
     // IPPROTO_IP and the protocols both number the same
     return finish_fd(socket(family, type, family == AF_UNIX ? 0 : protocol), linux_type);
 }
@@ -229,6 +526,14 @@ net_sendto(int fd, const void *buf, size_t n, int linux_flags, const void *addre
 
     if (flags < 0)
         return -22;
+    if (net_is_seqpacket(fd)) {
+        struct iovec v = { (void *)buf, n };
+
+        sent = net_seq_send(fd, &v, 1, NULL, 0, flags);
+        if (sent < 0 && errno == EPIPE && !(linux_flags & 0x4000))
+            kill(getpid(), SIGPIPE);
+        return sent < 0 ? -linux_error(errno) : sent;
+    }
     if (address) {
         int error = net_to_native(address, length, &native, &native_length);
 
@@ -246,11 +551,21 @@ net_recvfrom(int fd, void *buf, size_t n, int linux_flags, void *address, uint32
 {
     struct sockaddr_storage native;
     socklen_t native_length = sizeof(native);
-    int flags = send_flags(linux_flags & ~0x40000000);
+    int seq = net_is_seqpacket(fd), real = seq && (linux_flags & 0x20);
+    int flags = send_flags((linux_flags & ~0x40000000) & ~(seq ? 0x20 : 0));
     ssize_t got;
 
     if (flags < 0)
         return -22;
+    if (seq) {
+        struct iovec v = { buf, n };
+        int ignored;
+
+        got = net_seq_recv(fd, &v, 1, NULL, NULL, flags, &ignored, real);
+        if (address && length)
+            *length = 0;
+        return got < 0 ? -linux_error(errno) : got;
+    }
     got = recvfrom(fd, buf, n, flags, address ? (struct sockaddr *)&native : NULL, address ? &native_length : NULL);
     if (got < 0)
         return -linux_error(errno);

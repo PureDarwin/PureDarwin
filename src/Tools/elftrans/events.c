@@ -7,6 +7,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/event.h>
@@ -31,7 +32,7 @@ typedef struct __attribute__((packed)) {
     uint64_t data;
 } LinuxEpollEvent;
 
-enum { SPECIAL_NONE, SPECIAL_EPOLL, SPECIAL_EVENT, SPECIAL_TIMER };
+enum { SPECIAL_NONE, SPECIAL_EPOLL, SPECIAL_EVENT, SPECIAL_TIMER, SPECIAL_SIGNAL };
 
 typedef struct {
     int fd;
@@ -54,6 +55,14 @@ typedef struct {
     Watch *watches;
     unsigned nwatches, cap;
 } Special;
+
+// signalfd: a byte holding the Linux signal number waits on the fd for each signal that arrives
+#define MAX_SIGNALFDS 16
+typedef struct {
+    _Atomic int other;
+    _Atomic uint64_t mask;
+} SignalFd;
+static SignalFd signalfds[MAX_SIGNALFDS];
 
 #define MAX_SPECIAL 65536
 static Special *specials[MAX_SPECIAL];
@@ -167,11 +176,140 @@ counted_add(Special *s, uint64_t add)
     return 0;
 }
 
+
+static void
+signalfd_host_signal(int native)
+{
+    int saved = errno;
+    int sig = signals_linux_number(native);
+
+    for (int i = 0; i < MAX_SIGNALFDS; i++) {
+        int other = atomic_load(&signalfds[i].other);
+        char byte = (char)sig;
+
+        if (other > 0 && (atomic_load(&signalfds[i].mask) & (1ull << (sig - 1))))
+            send(other, &byte, 1, MSG_DONTWAIT);
+    }
+    errno = saved;
+}
+
+// signals aimed at the process while every guest thread blocks them land here: a thread that blocks all the others
+static void *
+signalfd_thread(void *arg)
+{
+    uint64_t mask = *(uint64_t *)arg;
+    sigset_t set;
+
+    free(arg);
+    sigfillset(&set);
+    for (int native = 1; native < 32; native++) {
+        int sig = signals_linux_number(native);
+
+        if (native != SIGKILL && native != SIGSTOP && sig < 64 && (mask & (1ull << (sig - 1))))
+            sigdelset(&set, native);
+    }
+    pthread_sigmask(SIG_SETMASK, &set, NULL);
+    for (;;)
+        pause();
+    return NULL;
+}
+
+static void
+signalfd_watch(uint64_t mask)
+{
+    struct sigaction sa = {0};
+    uint64_t *arg = malloc(sizeof(*arg));
+    pthread_t t;
+
+    sa.sa_handler = signalfd_host_signal;
+    sa.sa_flags = SA_RESTART;
+    sigfillset(&sa.sa_mask);
+    for (int native = 1; native < 32; native++) {
+        int sig = signals_linux_number(native);
+
+        if (native != SIGKILL && native != SIGSTOP && sig < 64 && (mask & (1ull << (sig - 1))))
+            sigaction(native, &sa, NULL);
+    }
+    if (arg) {
+        *arg = mask;
+        if (!pthread_create(&t, NULL, signalfd_thread, arg))
+            pthread_detach(t);
+        else
+            free(arg);
+    }
+}
+
+long
+events_signalfd(int fd, const void *mask_arg, size_t size, int flags)
+{
+    uint64_t mask;
+    long result;
+
+    if (size != 8 || (flags & ~(0x800 | 0x80000)))
+        return -22;
+    memcpy(&mask, mask_arg, 8);
+    // SIGKILL and SIGSTOP cannot be taken
+    mask &= ~((1ull << 8) | (1ull << 18));
+    pthread_mutex_lock(&lock);
+    if (fd >= 0) {
+        Special *s = special(fd, SPECIAL_SIGNAL);
+
+        for (int i = 0; s && i < MAX_SIGNALFDS; i++)
+            if (atomic_load(&signalfds[i].other) == s->other)
+                atomic_store(&signalfds[i].mask, mask);
+        pthread_mutex_unlock(&lock);
+        if (!s)
+            return -22;
+        signalfd_watch(mask);
+        return fd;
+    }
+    pthread_mutex_unlock(&lock);
+    result = counted_new(SPECIAL_SIGNAL, flags, 0);
+    if (result < 0)
+        return result;
+    pthread_mutex_lock(&lock);
+    for (int i = 0; i < MAX_SIGNALFDS; i++) {
+        if (!atomic_load(&signalfds[i].other)) {
+            atomic_store(&signalfds[i].mask, mask);
+            atomic_store(&signalfds[i].other, specials[result]->other);
+            break;
+        }
+    }
+    pthread_mutex_unlock(&lock);
+    signalfd_watch(mask);
+    return result;
+}
+
+// 128-byte signalfd_siginfo records, one per signal that arrived
+static long
+signal_read(int fd, void *buf, size_t n)
+{
+    char sigs[64];
+    ssize_t got;
+    size_t count = n / 128;
+
+    if (!count)
+        return -22;
+    if (count > sizeof(sigs))
+        count = sizeof(sigs);
+    got = recv(fd, sigs, count, (fcntl(fd, F_GETFL) & O_NONBLOCK) ? MSG_DONTWAIT : 0);
+    if (got < 0)
+        return -linux_error(errno);
+    memset(buf, 0, (size_t)got * 128);
+    for (ssize_t i = 0; i < got; i++)
+        *(uint32_t *)((char *)buf + i * 128) = (uint32_t)sigs[i];
+    return got * 128;
+}
+
 int
 events_read(int fd, void *buf, size_t n, long *result)
 {
     Special *s = special(fd, 0);
 
+    if (s && s->kind == SPECIAL_SIGNAL) {
+        *result = signal_read(fd, buf, n);
+        return 1;
+    }
     if (!s || (s->kind != SPECIAL_EVENT && s->kind != SPECIAL_TIMER))
         return 0;
     *result = counted_read(fd, s, buf, n);
@@ -538,6 +676,14 @@ events_close(int fd)
 
             EV_SET(&ev, (uintptr_t)fd, EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
             kevent(timer_queue, &ev, 1, NULL, 0, NULL);
+        }
+        if (s->kind == SPECIAL_SIGNAL) {
+            for (int i = 0; i < MAX_SIGNALFDS; i++) {
+                if (atomic_load(&signalfds[i].other) == s->other) {
+                    atomic_store(&signalfds[i].mask, 0);
+                    atomic_store(&signalfds[i].other, 0);
+                }
+            }
         }
         if (s->other > 0)
             close(s->other);
