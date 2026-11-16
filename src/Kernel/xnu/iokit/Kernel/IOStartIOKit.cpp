@@ -79,12 +79,23 @@ IOKitInitializeTime( void )
 
 	IOService::waitForService(
 		IOService::resourceMatching("IORTC"), &t );
-	// Without an RTC the wait above ran its full 30 s, and root mount came to rely on storage
-	// matching being done by then: with one, wait for the registry to settle instead
+	// a short settle for storage still matching; root mount waits for the boot volume itself, and
+	// drivers waiting on BSD (the network family) keep the registry busy until bsd_init, so never longer
 	{
-		mach_timespec_t q = { 30, 0 };
+		mach_timespec_t q = { 2, 0 };
 
-		IOService::getServiceRoot()->waitQuiet(&q);
+		if (IOService::getServiceRoot()->waitQuiet(&q) == kIOReturnTimeout) {
+			IORegistryIterator *it = IORegistryIterator::iterateOver(gIOServicePlane, kIORegistryIterateRecursively);
+			IORegistryEntry *e;
+			while (it != NULL && (e = it->getNextObject()) != NULL) {
+				IOService *svc = OSDynamicCast(IOService, e);
+				if (svc != NULL && svc->getBusyState() != 0) {
+					IOLog("IOKitInitializeTime: still busy after 2 s: %s (%s) busy %u\n", svc->getName(),
+					    svc->getMetaClass()->getClassName(), (unsigned)svc->getBusyState());
+				}
+			}
+			OSSafeReleaseNULL(it);
+		}
 	}
 #if defined(__i386__) || defined(__x86_64__)
 	IOService::waitForService(
