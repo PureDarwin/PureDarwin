@@ -670,6 +670,27 @@ events_epoll_wait(int epfd, void *out_arg, int max, int64_t timeout_ns)
     return count;
 }
 
+// a descriptor that arrived over SCM_RIGHTS
+void
+events_adopt(int fd)
+{
+    // the kernel just handed this number out, so whatever special had it is gone
+    pthread_mutex_lock(&lock);
+    if (fd >= 0 && fd < MAX_SPECIAL)
+        specials[fd] = NULL;
+    pthread_mutex_unlock(&lock);
+}
+
+// the child of a fork: kqueues do not cross, so the epoll instances behind them are gone
+void
+events_fork_child(void)
+{
+    for (int i = 0; i < MAX_SPECIAL; i++) {
+        if (specials[i] && specials[i]->kind == SPECIAL_EPOLL)
+            specials[i] = NULL;
+    }
+}
+
 // the fd goes: its state, its hidden end, and every epoll's watch on it
 void
 events_close(int fd)

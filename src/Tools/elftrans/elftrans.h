@@ -154,6 +154,8 @@ long net_recvfrom(int fd, void *buf, size_t n, int linux_flags, void *address, u
 int net_option(int level, int option, int *native_level, int *native_option);
 int net_option_ignored(int level, int option);
 long events_eventfd(unsigned initial, int flags);
+void events_adopt(int fd);
+void events_fork_child(void);
 long events_signalfd(int fd, const void *mask, size_t size, int flags);
 long events_timerfd_create(int clock, int flags);
 long events_timerfd_settime(int fd, int flags, const void *value, void *old);

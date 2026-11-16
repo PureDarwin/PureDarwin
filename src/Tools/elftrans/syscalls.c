@@ -352,9 +352,11 @@ linux_recvmsg(int fd, LinuxMsgHdr *guest, int linux_flags)
         size_t payload = item->cmsg_len - CMSG_LEN(0);
         size_t space = (sizeof(LinuxCmsg) + payload + 7) & ~(size_t)7;
         int *descriptors = (int *)(void *)CMSG_DATA(item);
-        for (size_t i = 0; i < payload / sizeof(int); ++i)
+        for (size_t i = 0; i < payload / sizeof(int); ++i) {
+            events_adopt(descriptors[i]);
             if (linux_flags & 0x40000000)
                 fcntl(descriptors[i], F_SETFD, FD_CLOEXEC);
+        }
         if (space > guest->control_length - used) {
             for (size_t i = 0; i < payload / sizeof(int); ++i)
                 close(descriptors[i]);
@@ -1248,6 +1250,7 @@ linux_fork(GuestRegs *r, uintptr_t flags, uintptr_t stack, int *parent_tid, int 
     // the child: the only thread, its waiters and the syscall server stayed with the parent
     guest_tid = getpid();
     signals_fork_child(guest_tid);
+    events_fork_child();
     futex_waiters = NULL;
     pthread_mutex_unlock(&futex_lock);
     pthread_mutex_unlock(&sites_lock);
