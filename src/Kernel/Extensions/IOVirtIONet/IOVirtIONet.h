@@ -11,6 +11,7 @@
 #include <IOKit/IOService.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOTimerEventSource.h>
+#include <IOKit/network/IOKernelDebugger.h>
 #include <IOKit/IOWorkLoop.h>
 #include <IOKit/pci/IOPCIDevice.h>
 #include <IOKit/network/IOEthernetController.h>
@@ -48,12 +49,18 @@ public:
 
     IOOutputQueue *createOutputQueue() override;
 
+    // polled, for KDP and the network log: no locks, no sleeping
+    void sendPacket(void *pkt, UInt32 pktSize) override;
+    void receivePacket(void *pkt, UInt32 *pktSize, UInt32 timeout) override;
+
 private:
     IOPCIDevice       *fPCIDevice;
     IOVirtIOTransport  fTransport;
     IOWorkLoop        *fWorkLoop;
     IOTimerEventSource *fPollTimer;
     IOEthernetInterface *fInterface;
+    IOKernelDebugger  *fDebugger;
+    IOSimpleLock      *fTxLock;   // the tx ring, between the stack's output and the polled sender
 
     VirtQueue fRxQ; // queue index 0
     VirtQueue fTxQ; // queue index 1
@@ -72,6 +79,7 @@ private:
     bool     initRxRing();
     void     postRxBuffer(unsigned slot);
     void     pollReceive();
+    UInt32   queueTx(const void *data, size_t len);
     bool     publishLinkMedium();
     static void pollTimerAction(OSObject *owner, IOTimerEventSource *sender);
 };

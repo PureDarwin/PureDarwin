@@ -138,6 +138,9 @@ bool IOVirtIONet::start(IOService *provider)
         IOLog("IOVirtIONet: failed to init virtqueues\n");
         return false;
     }
+    fTxLock = IOSimpleLockAlloc();
+    if (!fTxLock)
+        return false;
     for (int i = 0; i < kVNetTxCount; i++) {
         fTxBuf[i] = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
             kernel_task, kIODirectionInOut | kIOMemoryPhysicallyContiguous,
@@ -172,6 +175,10 @@ bool IOVirtIONet::start(IOService *provider)
     }
     setLinkStatus(kIONetworkLinkValid | kIONetworkLinkActive, getCurrentMedium());
 
+    // kdp_match_name=en0 picks this interface for KDP and the network log
+    if (!attachDebuggerClient(&fDebugger))
+        IOLog("IOVirtIONet: no debugger client\n");
+
     registerService();
     return true;
 }
@@ -181,6 +188,10 @@ void IOVirtIONet::stop(IOService *provider)
     if (fEnabled)
         disable(fInterface);
 
+    if (fDebugger) {
+        detachDebuggerClient(fDebugger);
+        fDebugger = NULL;
+    }
     if (fInterface) {
         detachInterface(fInterface, true);
         fInterface->release();
@@ -204,6 +215,7 @@ void IOVirtIONet::free()
     fTransport.detach();
 
     if (fPollTimer) { fPollTimer->release(); fPollTimer = NULL; }
+    if (fTxLock) { IOSimpleLockFree(fTxLock); fTxLock = NULL; }
 
     if (fPCIDevice) {
         fPCIDevice->close(this);
@@ -306,9 +318,11 @@ void IOVirtIONet::pollReceive()
 
     // Also reclaim any finished TX slots so outputPacket() doesn't stall
     // waiting for a free one under sustained send load.
+    IOInterruptState is = IOSimpleLockLockDisableInterrupt(fTxLock);
     while (fTransport.pollForCompletion(&fTxQ, 0, 0, 0)) {
         if (fTxOutstanding) fTxOutstanding--;
     }
+    IOSimpleLockUnlockEnableInterrupt(fTxLock, is);
 
     if (reposted)
         fTransport.notify(&fRxQ);
@@ -324,34 +338,84 @@ UInt32 IOVirtIONet::outputPacket(mbuf_t m, void *param)
         return kIOReturnOutputDropped;
     }
 
-    if (fTxOutstanding >= kVNetTxCount) {
-        // Ring full - give the device a brief window to drain before
-        // dropping (no backpressure signaling to the output queue yet).
-        uint32_t len; uint16_t id;
-        if (fTransport.pollForCompletion(&fTxQ, 50, &len, &id) && fTxOutstanding)
-            fTxOutstanding--;
-        if (fTxOutstanding >= kVNetTxCount) {
-            freePacket(m);
-            return kIOReturnOutputDropped;
-        }
+    uint8_t frame[kVNetMaxPacket];
+    mbuf_copydata(m, 0, pktLen, frame);
+    freePacket(m);
+
+    IOInterruptState is = IOSimpleLockLockDisableInterrupt(fTxLock);
+    UInt32 ret = queueTx(frame, pktLen);
+    IOSimpleLockUnlockEnableInterrupt(fTxLock, is);
+    return ret;
+}
+
+// one frame onto the tx ring, the lock held; a full ring gets a bounded spin to drain, never a sleep
+UInt32 IOVirtIONet::queueTx(const void *data, size_t len)
+{
+    for (unsigned spins = 0; ; spins++) {
+        while (fTransport.pollForCompletion(&fTxQ, 0, 0, 0))
+            if (fTxOutstanding) fTxOutstanding--;
+        if (fTxOutstanding < kVNetTxCount || spins >= 50000)
+            break;
+        IODelay(1);
     }
+    if (fTxOutstanding >= kVNetTxCount)
+        return kIOReturnOutputDropped;
 
     unsigned slot = fTxNextSlot;
     uint8_t *buf = (uint8_t *)fTxBuf[slot]->getBytesNoCopy();
     bzero(buf, kVNetHdrSize); // zeroed virtio_net_hdr_v1: no offload/GSO
-    mbuf_copydata(m, 0, pktLen, buf + kVNetHdrSize);
+    bcopy(data, buf + kVNetHdrSize, len);
 
-    VirtIOChainEntry entry = { fTxBuf[slot]->getPhysicalAddress(),
-                              (uint32_t)(kVNetHdrSize + pktLen), false };
+    VirtIOChainEntry entry = { fTxBuf[slot]->getPhysicalAddress(), (uint32_t)(kVNetHdrSize + len), false };
     fTransport.addDescChain(&fTxQ, &entry, 1);
     fTransport.notify(&fTxQ);
 
     fTxOutstanding++;
     fTxNextSlot = (fTxNextSlot + 1) % kVNetTxCount;
     fTxPackets++;
-
-    freePacket(m);
     return kIOReturnOutputSuccess;
+}
+
+// the debugger's transmit: reclaim slots, send, and spin until the frame is out so its buffer is free
+void IOVirtIONet::sendPacket(void *pkt, UInt32 pktSize)
+{
+    if (!pkt || pktSize == 0 || pktSize > kVNetMaxPacket || !fTxLock)
+        return;
+
+    // a lock held by a cpu the debugger stopped would never come free: drop the frame instead
+    if (!IOSimpleLockTryLock(fTxLock))
+        return;
+    queueTx(pkt, pktSize);
+    IOSimpleLockUnlock(fTxLock);
+}
+
+// the debugger's receive: one frame within timeout ms, its buffer handed straight back to the device
+void IOVirtIONet::receivePacket(void *pkt, UInt32 *pktSize, UInt32 timeout)
+{
+    uint64_t waitedUs = 0;
+
+    *pktSize = 0;
+    for (;;) {
+        uint32_t len;
+        uint16_t id;
+        if (fTransport.pollForCompletion(&fRxQ, 0, &len, &id)) {
+            if (id < kVNetRxCount && len > kVNetHdrSize && len <= kVNetHdrSize + kVNetMaxPacket) {
+                UInt32 n = (UInt32)(len - kVNetHdrSize);
+                bcopy((uint8_t *)fRxBuf[id]->getBytesNoCopy() + kVNetHdrSize, pkt, n);
+                *pktSize = n;
+            }
+            if (id < kVNetRxCount)
+                postRxBuffer(id);
+            fTransport.notify(&fRxQ);
+            if (*pktSize)
+                return;
+            continue;
+        }
+        if (waitedUs >= (uint64_t)timeout * 1000)
+            return;
+        IODelay(10);
+        waitedUs += 10;
+    }
 }
 
 IOReturn IOVirtIONet::getHardwareAddress(IOEthernetAddress *addr)
