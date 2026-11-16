@@ -1,4 +1,4 @@
-// PDDRMnvidia.cpp - starts nvidia-drm over the modeset core once PDNVLoader has the GPUs, one linux pci_dev for each
+// PDDRMnvidia.cpp - nvidia-drm over the modeset core, one instance per GPU PDNVLoader has brought up, each with its linux pci_dev
 // Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 
 #include <IOKit/IOLib.h>
@@ -11,10 +11,11 @@
 extern "C" {
 // PDNVLoader's, which this kext links against
 uint32_t pdnv_gpu_count(void);
+uint32_t pdnv_gpu_id(uint32_t i);
 void *pdnv_gpu_pci_device(uint32_t i);
 void pdnv_gpu_set_os_device(uint32_t i, void *os_device);
 void *pd_nvdrm_claimed_device(void);
-int pd_nvdrm_start(void);
+int pd_nvdrm_add_gpu(uint32_t gpu_id);
 }
 
 class PDDRMnvidia : public IOService {
@@ -26,34 +27,45 @@ public:
 
 OSDefineMetaClassAndStructors(PDDRMnvidia, IOService);
 
+// one start at a time: nvidia-drm comes up once, then takes the GPUs one by one
+static IOLock *sStartLock;
+
 bool
 PDDRMnvidia::start(IOService *provider)
 {
-	uint32_t n, i, linked = 0;
-
 	if (!IOService::start(provider))
 		return false;
 	pdos_xnu_init();
 
-	// PDNVGPU holds each IOPCIDevice open, the linux side only reads its config space and BARs through it
-	n = pdnv_gpu_count();
-	for (i = 0; i < n; i++) {
-		IOPCIDevice *pci = OSDynamicCast(IOPCIDevice, (OSObject *)pdnv_gpu_pci_device(i));
-		void *dev;
-
-		if (pci == NULL || pd_fbsd_attach_pci_device(pci) == NULL ||
-		    (dev = pd_nvdrm_claimed_device()) == NULL) {
-			IOLog("PDDRMnvidia: GPU %u has no linux pci device\n", i);
-			continue;
-		}
-		pdnv_gpu_set_os_device(i, dev);
-		linked++;
-	}
-	if (linked == 0)
+	// the provider is PDNVGPU, registered once its GPU is up, on the IOPCIDevice it holds open: the linux side
+	// only reads that device's config space and BARs
+	IOPCIDevice *pci = OSDynamicCast(IOPCIDevice, provider->getProvider());
+	uint32_t n = pdnv_gpu_count(), i;
+	for (i = 0; i < n && pdnv_gpu_pci_device(i) != pci; i++)
+		;
+	if (pci == NULL || i == n) {
+		IOLog("PDDRMnvidia: %s is not a GPU PDNVLoader drives\n", provider->getName());
 		return false;
+	}
 
-	int err = pd_nvdrm_start();
-	IOLog("PDDRMnvidia: nv_drm_init returned %d for %u GPU(s)\n", err, linked);
+	if (sStartLock == NULL) {
+		IOLock *lock = IOLockAlloc();
+		if (!OSCompareAndSwapPtr(NULL, lock, (void * volatile *)&sStartLock))
+			IOLockFree(lock);
+	}
+	IOLockLock(sStartLock);
+	void *dev = NULL;
+	int err = -1;
+	if (pd_fbsd_attach_pci_device(pci) != NULL && (dev = pd_nvdrm_claimed_device()) != NULL) {
+		pdnv_gpu_set_os_device(i, dev);
+		err = pd_nvdrm_add_gpu(pdnv_gpu_id(i));
+	}
+	IOLockUnlock(sStartLock);
+	if (dev == NULL) {
+		IOLog("PDDRMnvidia: GPU %u has no linux pci device\n", i);
+		return false;
+	}
+	IOLog("PDDRMnvidia: GPU %u (id 0x%x) into nvidia-drm, %d\n", i, pdnv_gpu_id(i), err);
 	if (err != 0)
 		return false;
 	// PDDRMFramebuffer matches on this, then lights the displays through the drm display client

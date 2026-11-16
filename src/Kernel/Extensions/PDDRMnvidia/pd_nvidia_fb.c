@@ -24,14 +24,46 @@ void pd_drm_fb_free_pinned(struct drm_client_buffer *buf);
 void pd_amdgpu_fb_register(struct drm_device *dev);
 int pd_nvdrm_dev_register(struct drm_device *dev, unsigned long flags);
 
-// as the linux build's: each GPU the modeset core knows gets its drm device
+// the GPUs given to nvidia-drm, each once and only after PDDRMnvidia set its linux device
+static NvU32 pd_gpu_ready[NV_MAX_GPUS], pd_gpu_done[NV_MAX_GPUS];
+static unsigned pd_nready, pd_ndone;
+
+static bool
+pd_gpu_in(const NvU32 *list, unsigned n, NvU32 id)
+{
+	for (unsigned i = 0; i < n; i++)
+		if (list[i] == id)
+			return true;
+	return false;
+}
+
+static void
+pd_register_ready(const struct NvKmsKapiGpuInfo *gpu_info)
+{
+	NvU32 id = gpu_info->gpuInfo.gpu_id;
+
+	if (!pd_gpu_in(pd_gpu_ready, pd_nready, id) || pd_gpu_in(pd_gpu_done, pd_ndone, id))
+		return;
+	pd_gpu_done[pd_ndone++] = id;
+	nv_drm_register_drm_device(gpu_info);
+}
+
+// at nv_drm_init: the GPUs ready so far, the rest come through pd_nvdrm_register_gpu
 int
 nv_drm_probe_devices(void)
 {
 	nv_drm_update_drm_driver_features();
-	if (nvKms->enumerateGpus(nv_drm_register_drm_device) == 0)
-		NV_DRM_LOG_INFO("No NVIDIA GPUs found");
+	nvKms->enumerateGpus(pd_register_ready);
 	return 0;
+}
+
+int
+pd_nvdrm_register_gpu(NvU32 gpu_id)
+{
+	if (!pd_gpu_in(pd_gpu_ready, pd_nready, gpu_id) && pd_nready < NV_MAX_GPUS)
+		pd_gpu_ready[pd_nready++] = gpu_id;
+	nvKms->enumerateGpus(pd_register_ready);
+	return pd_gpu_in(pd_gpu_done, pd_ndone, gpu_id) ? 0 : -ENODEV;
 }
 
 // registered, then given to the display client behind PDDRMFramebuffer when it has heads

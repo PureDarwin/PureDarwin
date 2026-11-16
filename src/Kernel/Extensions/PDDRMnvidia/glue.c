@@ -78,13 +78,24 @@ pd_nvdrm_claimed_device(void)
 	return pdev != NULL ? &pdev->dev : NULL;
 }
 
-// as modeset=1 fbdev=0 on linux: kernel modesetting, with PD's display client in place of nvidia-drm's fbdev console
+int pd_nvdrm_register_gpu(uint32_t gpu_id);
+
+// as modeset=1 fbdev=0 on linux: kernel modesetting, with PD's display client in place of nvidia-drm's fbdev console.
+// nvidia-drm comes up with the first GPU and registers each one PDDRMnvidia has given its linux device
 int
-pd_nvdrm_start(void)
+pd_nvdrm_add_gpu(uint32_t gpu_id)
 {
-	nv_drm_modeset_module_param = true;
-	nv_drm_fbdev_module_param = false;
-	return nv_drm_init();
+	static int started;
+
+	if (!started) {
+		nv_drm_modeset_module_param = true;
+		nv_drm_fbdev_module_param = false;
+		int err = nv_drm_init();
+		if (err != 0)
+			return err;
+		started = 1;
+	}
+	return pd_nvdrm_register_gpu(gpu_id);
 }
 
 // no network interface comes out of this driver

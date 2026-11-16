@@ -810,6 +810,12 @@ pdnv_gpu_count(void)
 	return sNumGPUs;
 }
 
+uint32_t
+pdnv_gpu_id(uint32_t i)
+{
+	return i < sNumGPUs ? sGPUs[i]->gpu_id : 0;
+}
+
 void *
 pdnv_gpu_pci_device(uint32_t i)
 {

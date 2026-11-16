@@ -66,6 +66,7 @@ void *pdnv_dev_kms_per_open(int fd);                  // the nvkms_per_open behi
 int pdnv_dev_kms_node(void);                          // /dev/nvidia-modeset, after pdnvkms_init
 // for PDDRMnvidia: the GPUs, each one's IOPCIDevice, and the linux device nvidia-drm is to see in its place
 uint32_t pdnv_gpu_count(void);
+uint32_t pdnv_gpu_id(uint32_t i);
 void *pdnv_gpu_pci_device(uint32_t i);
 void pdnv_gpu_set_os_device(uint32_t i, void *os_device);
 

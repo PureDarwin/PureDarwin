@@ -33,9 +33,7 @@
             <key>IOMatchCategory</key>
             <string>PDDRMnvidia</string>
             <key>IOProviderClass</key>
-            <string>IOResources</string>
-            <key>IOResourceMatch</key>
-            <string>PDNVResourceManager</string>
+            <string>PDNVGPU</string>
         </dict>
         <key>PDDRMFramebufferNVIDIA</key>
         <dict>
