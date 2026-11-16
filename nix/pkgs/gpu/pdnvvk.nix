@@ -6,7 +6,8 @@
 }:
 
 # Linux Vulkan checks run under elftrans on NVIDIA's driver: pdvkhead (devices, memory, a buffer) and
-# pdvktri (a triangle on the GPU's own display through VK_KHR_display)
+# pdvktri (a triangle on the GPU's own display through VK_KHR_display), and pdcuda (the CUDA driver API: a
+# context, PTX JIT and a vector add)
 stdenv.mkDerivation {
   pname = "puredarwin-pdnvvk";
   version = "0.1";
@@ -21,6 +22,7 @@ stdenv.mkDerivation {
     glslangValidator -V --vn tri_frag -o tri_frag.h tri.frag
     $CC -O2 -Wall pdvkhead.c -lvulkan -o pdvkhead
     $CC -O2 -Wall -I. pdvktri.c -lvulkan -o pdvktri
+    $CC -O2 -Wall pdcuda.c -ldl -o pdcuda
     runHook postBuild
   '';
 
@@ -28,6 +30,7 @@ stdenv.mkDerivation {
     runHook preInstall
     install -Dm755 pdvkhead $out/bin/pdvkhead
     install -Dm755 pdvktri $out/bin/pdvktri
+    install -Dm755 pdcuda $out/bin/pdcuda
     runHook postInstall
   '';
 

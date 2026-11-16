@@ -13,6 +13,8 @@ let
   libs = [
     "libnvidia-ml" "libGLX_nvidia" "libnvidia-glcore" "libnvidia-glsi" "libnvidia-tls" "libnvidia-gpucomp"
     "libnvidia-glvkspirv" "libEGL_nvidia" "libnvidia-eglcore"
+    # the CUDA driver and its PTX JIT
+    "libcuda" "libnvidia-ptxjitcompiler"
   ];
 in
 stdenvNoCC.mkDerivation {
@@ -51,6 +53,8 @@ stdenvNoCC.mkDerivation {
     ln -s libnvidia-ml.so.1 $out/${nv}/libnvidia-ml.so
     ln -s libGLX_nvidia.so.${version} $out/${nv}/libGLX_nvidia.so.0
     ln -s libEGL_nvidia.so.${version} $out/${nv}/libEGL_nvidia.so.0
+    ln -s libcuda.so.${version} $out/${nv}/libcuda.so.1
+    ln -s libnvidia-ptxjitcompiler.so.${version} $out/${nv}/libnvidia-ptxjitcompiler.so.1
     # glvnd's EGL dispatcher as the package ships it, the Vulkan driver loads libEGL.so.1
     install -Dm755 libEGL.so.1.1.0 $out/${nv}/libEGL.so.1.1.0
     install -Dm755 libGLdispatch.so.0 $out/${nv}/libGLdispatch.so.0

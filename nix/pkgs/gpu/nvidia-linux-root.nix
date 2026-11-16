@@ -4,6 +4,8 @@
 , glibc
 , pdnvvk
 , vulkan-tools
+, virglrenderer
+, vulkan-loader
 , libx11
 , libxext
 , libxcb
@@ -18,7 +20,7 @@ let
   # NVIDIA's GLX driver dlopens the X client libraries by soname
   x = map lib.getLib [ libx11 libxext libxcb libxau libxdmcp ];
   xlibs = lib.concatMapStringsSep ":" (p: "${p}/lib") x;
-  closure = closureInfo { rootPaths = [ glibc pdnvvk vulkan-tools ] ++ x; };
+  closure = closureInfo { rootPaths = [ glibc pdnvvk vulkan-tools virglrenderer vulkan-loader ] ++ x; };
   vkenv = "LD_LIBRARY_PATH=${nv}:${xlibs} VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json";
   wrap = name: env: prog: ''
     cat > $out/usr/local/bin/${name} <<EOF
@@ -42,4 +44,6 @@ runCommand "puredarwin-nvidia-linux-root" { } ''
   ${wrap "vulkaninfo" vkenv "${vulkan-tools}/bin/vulkaninfo"}
   ${wrap "pdvkhead" vkenv "${pdnvvk}/bin/pdvkhead"}
   ${wrap "pdvktri" vkenv "${pdnvvk}/bin/pdvktri"}
+  # the vtest server PD's venus driver reaches with VN_DEBUG=vtest: vulkan for darwin programs on NVIDIA's driver
+  ${wrap "virgl_test_server" "${vkenv} LD_LIBRARY_PATH=${vulkan-loader}/lib:${nv}:${xlibs}" "${virglrenderer}/bin/virgl_test_server"}
 ''
