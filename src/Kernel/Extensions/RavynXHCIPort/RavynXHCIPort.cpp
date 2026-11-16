@@ -33,6 +33,30 @@
 #include "RavynXHCIUSBBus.h"
 #include <IOKit/usb/IOUSBDevice.h>
 
+#if defined(__x86_64__)
+// the kernel's xHCI Debug Capability console, started by the loader (pexpert/i386/pe_xhci_dbc.c).
+// A host controller reset clears the DbC registers, so the controller that carries it
+// is announced before HCRST, and the DbC is rebuilt once the controller is ready again
+extern "C" int pd_dbc_hc_reset_begin(uint32_t rid);
+extern "C" void pd_dbc_hc_reset_end(void);
+
+static bool dbcResetBegin(IOPCIDevice *pci)
+{
+    if (!pci) return false;
+    uint32_t rid = ((uint32_t)pci->getBusNumber() << 8) | ((uint32_t)pci->getDeviceNumber() << 3) |
+                   (uint32_t)pci->getFunctionNumber();
+    return pd_dbc_hc_reset_begin(rid) != 0;
+}
+
+static void dbcResetEnd(bool active)
+{
+    if (active) pd_dbc_hc_reset_end();
+}
+#else
+static bool dbcResetBegin(IOPCIDevice *) { return false; }
+static void dbcResetEnd(bool) {}
+#endif
+
 #define super IOService
 OSDefineMetaClassAndStructors(RavynXHCIPort, IOService);
 
@@ -828,10 +852,12 @@ void RavynXHCIPort::quiesce(const char *why)
         for (int i = 0; i < 2000 && !(opRead32(XHCI_USBSTS) & XHCI_USBSTS_HCH); i++) {
             IODelay(10);
         }
+        bool dbc = dbcResetBegin(fPCI);
         opWrite32(XHCI_USBCMD, opRead32(XHCI_USBCMD) | XHCI_USBCMD_HCRST);
         for (int i = 0; i < 10000 && (opRead32(XHCI_USBCMD) & XHCI_USBCMD_HCRST); i++) {
             IODelay(10);
         }
+        dbcResetEnd(dbc);
         sts = opRead32(XHCI_USBSTS);
     }
     if (!fPCI && fSoCMaps[2]) {
@@ -912,14 +938,18 @@ bool RavynXHCIPort::resetController()
             IOSleep(1);
     }
 
+    bool dbc = dbcResetBegin(fPCI);
     opWrite32(XHCI_USBCMD, opRead32(XHCI_USBCMD) | XHCI_USBCMD_HCRST);
     for (int i = 0; i < 2000; i++) {
         if (!(opRead32(XHCI_USBCMD) & XHCI_USBCMD_HCRST) &&
-            !(opRead32(XHCI_USBSTS) & XHCI_USBSTS_CNR))
+            !(opRead32(XHCI_USBSTS) & XHCI_USBSTS_CNR)) {
+            dbcResetEnd(dbc);
             return true;
+        }
         IOSleep(1);
     }
     XHCI_Log("reset timed out USBCMD=%08x USBSTS=%08x", opRead32(XHCI_USBCMD), opRead32(XHCI_USBSTS));
+    dbcResetEnd(dbc);
     return false;
 }
 

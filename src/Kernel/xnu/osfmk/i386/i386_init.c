@@ -703,6 +703,8 @@ i386_slide_and_rebase_image(uintptr_t kstart_addr)
  * Non-bootstrap processors are called with argument boot_args_start NULL.
  * These processors switch immediately to the existing kernel page tables.
  */
+extern void pd_dbc_set_cmdline(const char *cmdline);
+
 __attribute__((noreturn))
 void
 vstart(vm_offset_t boot_args_start)
@@ -744,6 +746,7 @@ vstart(vm_offset_t boot_args_start)
 		lphysfree = kernelBootArgs->kaddr + kernelBootArgs->ksize;
 		physfree = (void *)(uintptr_t)((lphysfree + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
 
+		pd_dbc_set_cmdline(kernelBootArgs->CommandLine);
 		pal_serial_init();
 
 		DBG("revision      0x%x\n", kernelBootArgs->Revision);

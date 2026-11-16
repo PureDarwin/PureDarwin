@@ -95,6 +95,8 @@
         <string>8.0.0</string>
         <key>com.apple.kpi.bsd</key>
         <string>8.0.0</string>
+        <key>com.apple.kpi.unsupported</key>
+        <string>8.0.0b1</string>
     </dict>
     <key>OSBundleCompatibleVersion</key>
     <string>1.0.0</string>

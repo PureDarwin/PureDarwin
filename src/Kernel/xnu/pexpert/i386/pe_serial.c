@@ -46,6 +46,12 @@ struct pe_serial_functions {
 
 static struct pe_serial_functions *gPESF;
 
+/* xHCI Debug Capability console started by the loader, see pe_xhci_dbc.c */
+extern int pd_dbc_init(void);
+extern void pd_dbc_putc(char c);
+extern int pd_dbc_getc(void);
+static int dbc_enabled = 0;
+
 static int uart_initted = 0;   /* 1 if init'ed */
 
 static unsigned int legacy_uart_enabled = 0; /* 1 Legacy IO based UART is supported on platform */
@@ -606,6 +612,8 @@ serial_init( void )
 	unsigned new_uart_baud_rate = 0;
 	unsigned new_comport = 0;
 
+	dbc_enabled = pd_dbc_init();
+
 	/* Select the legacy UART I/O base (defaults to COM3 above). */
 	if (PE_parse_boot_argn("comport", &new_comport, sizeof(new_comport))) {
 		if (new_comport != 0) {
@@ -637,13 +645,16 @@ serial_init( void )
 		pcie_uart_enabled = 1;
 		return 1;
 	} else {
-		return 0;
+		return dbc_enabled;
 	}
 }
 
 static void
 uart_putc(char c)
 {
+	if (dbc_enabled) {
+		pd_dbc_putc(c);
+	}
 	if (uart_initted && (legacy_uart_enabled || lpss_uart_enabled || pcie_uart_enabled)) {
 		while (!gPESF->tr0()) {
 			;       /* Wait until THR is empty. */
@@ -656,12 +667,11 @@ static int
 uart_getc(void)
 {
 	if (uart_initted && (legacy_uart_enabled || lpss_uart_enabled || pcie_uart_enabled)) {
-		if (!gPESF->rr0()) {
-			return -1;
+		if (gPESF->rr0()) {
+			return gPESF->rd0();
 		}
-		return gPESF->rd0();
 	}
-	return -1;
+	return dbc_enabled ? pd_dbc_getc() : -1;
 }
 
 void
