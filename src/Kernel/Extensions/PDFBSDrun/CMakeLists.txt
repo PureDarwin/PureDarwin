@@ -19,6 +19,7 @@ set(PDFBSDRUN_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/glue.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/dev/usb/wlan/if_run.c")
 
 add_fbsdkpi_driver(PDFBSDrun
+    SHARED
     CLASS PDFBSDrun
     BUNDLE_IDENTIFIER org.puredarwin.driver.PDFBSDrun
     INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist"

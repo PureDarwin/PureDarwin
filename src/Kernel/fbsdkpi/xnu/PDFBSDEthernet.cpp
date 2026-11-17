@@ -65,6 +65,7 @@ PDFBSD_CLASS::start(IOService *provider)
 	// attaching runs the whole FreeBSD probe and attach, one device at a time across every driver
 	pd_fbsd_driver_enter(pd_fbsd_driver_record());
 #ifdef PDFBSD_USB
+	pd_fbsd_usb_install();
 	fIfp = pd_fbsd_attach_usb(fUSBDev);
 #else
 	fIfp = pd_fbsd_attach_pci(fPCI);

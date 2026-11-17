@@ -253,3 +253,16 @@ pd_usb_module(void)
 	sUSBModule.cancel_queued_transfers = cancel_queued_transfers;
 	return &sUSBModule;
 }
+
+extern "C" status_t (*pd_usb_register_hook)(void *dev);
+extern "C" void (*pd_usb_unregister_hook)(void);
+extern "C" usb_module_info *(*pd_usb_module_hook)(void);
+
+// hands the layer the usb shim, before a usb driver's first attach
+extern "C" void
+pd_fbsd_usb_install(void)
+{
+	pd_usb_register_hook = pd_usb_register;
+	pd_usb_unregister_hook = pd_usb_unregister;
+	pd_usb_module_hook = pd_usb_module;
+}

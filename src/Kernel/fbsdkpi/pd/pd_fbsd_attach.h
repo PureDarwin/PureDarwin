@@ -19,6 +19,8 @@ int pd_fbsd_init(void);
 void *pd_fbsd_attach_pci(void *pcidev);
 // the same on a usb interface, usbdev is the handle pdusb_open returned
 void *pd_fbsd_attach_usb(void *usbdev);
+// installs the usb shim in the layer, before the first pd_fbsd_attach_usb
+void pd_fbsd_usb_install(void);
 void pd_fbsd_detach(void *ifp);
 
 // the same for drivers that create no ifnet, returns the attached device_t

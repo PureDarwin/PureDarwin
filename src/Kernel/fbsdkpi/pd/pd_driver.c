@@ -299,9 +299,9 @@ _fbsd_init_hardware_pci(driver_t *drivers[])
 	return B_OK;
 }
 
-// the usb module of a kext built with the usb shim, weak so pci-only kexts link without it
-status_t pd_usb_register(void *dev) __attribute__((weak));
-void pd_usb_unregister(void) __attribute__((weak));
+// the usb shim's entry points, set by pd_fbsd_usb_install so pci-only kexts link without it
+status_t (*pd_usb_register_hook)(void *dev);
+void (*pd_usb_unregister_hook)(void);
 
 // the usb shim found a driver for the device pd_fbsd_attach_usb gave it, attach it as pci does
 status_t
@@ -413,14 +413,14 @@ pd_fbsd_attach_pci(void *pcidev)
 void *
 pd_fbsd_attach_usb(void *usbdev)
 {
-	if (pd_usb_register == NULL || pd_fbsd_init() != 0)
+	if (pd_usb_register_hook == NULL || pd_fbsd_init() != 0)
 		return NULL;
-	if (pd_usb_register(usbdev) != B_OK)
+	if (pd_usb_register_hook(usbdev) != B_OK)
 		return NULL;
 	sAttached = NULL;
 	__haiku_init_hardware();
 	if (sAttached == NULL)
-		pd_usb_unregister();
+		pd_usb_unregister_hook();
 	pd_fbsd_claim_slot(sAttached);
 	return sAttached;
 }

@@ -1145,8 +1145,9 @@ object_cache_reserve(object_cache *cache, size_t object_count, uint32 flags)
 
 // modules, the pci bus manager, the usb module of a usb driver and an empty network buffer module
 
-// a weak symbol, only kexts built with the usb shim carry pd_usb.cpp
-extern "C" struct usb_module_info *pd_usb_module(void) __attribute__((weak));
+// set by pd_fbsd_usb_install, from the usb shim of a usb driver or of PDFreeBSDKPIUSB
+extern "C" struct usb_module_info *(*pd_usb_module_hook)(void);
+struct usb_module_info *(*pd_usb_module_hook)(void);
 #ifndef B_USB_MODULE_NAME
 #define B_USB_MODULE_NAME "bus_managers/usb/v3.1"
 #endif
@@ -1160,8 +1161,8 @@ get_module(const char *path, module_info **_info)
 		*_info = (module_info *)pd_pci_module();
 		return B_OK;
 	}
-	if (strcmp(path, B_USB_MODULE_NAME) == 0 && pd_usb_module() != NULL) {
-		*_info = (module_info *)pd_usb_module();
+	if (strcmp(path, B_USB_MODULE_NAME) == 0 && pd_usb_module_hook != NULL) {
+		*_info = (module_info *)pd_usb_module_hook();
 		return B_OK;
 	}
 	if (strcmp(path, NET_BUFFER_MODULE_NAME) == 0) {

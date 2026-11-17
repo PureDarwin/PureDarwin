@@ -55,6 +55,7 @@
     "PDE1000.kext"
     "PDFreeBSDKPI.kext"
     "PDLinuxKPI.kext"
+    "PDFreeBSDKPIUSB.kext"
     "PDFBSDem.kext"
     "PDFBSDigc.kext"
     # PDFBSDrge is untested, it stays out

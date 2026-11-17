@@ -1707,6 +1707,12 @@
     </dict>
     <key>OSBundleLibraries</key>
     <dict>
+        <key>org.puredarwin.kpi.freebsd</key>
+        <string>1.0.0</string>
+        <key>org.puredarwin.kpi.freebsd.usb</key>
+        <string>1.0.0</string>
+        <key>org.puredarwin.kpi.linux</key>
+        <string>1.0.0</string>
         <key>com.apple.iokit.IO80211Family</key>
         <string>1.0.0</string>
         <key>com.apple.iokit.IONetworkingFamily</key>
