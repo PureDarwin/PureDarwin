@@ -26,6 +26,8 @@
 #define JOINING_PATH "/var/run/org.puredarwin.wifi.joining"
 
 static char ifname[16];
+// a name given with -i is never swapped for another interface
+static int ifname_fixed;
 
 static int request(int set, int type, int value, void *data, uint32_t len)
 {
@@ -48,6 +50,7 @@ static int request(int set, int type, int value, void *data, uint32_t len)
 void pdwifi_set_interface(const char *name)
 {
 	strlcpy(ifname, name, sizeof(ifname));
+	ifname_fixed = 1;
 }
 
 const char *pdwifi_interface(void)
@@ -56,6 +59,8 @@ const char *pdwifi_interface(void)
 
 	if (ifname[0] && request(0, APPLE80211_IOC_STATE, 0, &st, sizeof(st)) == 0)
 		return ifname;
+	if (ifname_fixed)
+		return NULL;
 	for (int i = 0; i < 8; i++) {
 		snprintf(ifname, sizeof(ifname), "en%d", i);
 		if (request(0, APPLE80211_IOC_STATE, 0, &st, sizeof(st)) == 0)
