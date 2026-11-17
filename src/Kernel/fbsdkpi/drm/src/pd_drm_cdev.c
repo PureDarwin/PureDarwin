@@ -186,6 +186,11 @@ __register_chrdev_p(unsigned int major, unsigned int baseminor,
     unsigned int count, const char *name, const struct file_operations *fops,
     uid_t uid, gid_t gid, int mode)
 {
+	extern unsigned long __drm_debug;
+	extern long pd_drm_tunable_long(const char *path, long def);
+
+	// drm_debug=N sets drm's debug categories for every driver, 0x4 kms, 0x100 dp
+	__drm_debug = (unsigned long)pd_drm_tunable_long("drm.debug", (long)__drm_debug);
 	pd_dri_fops = fops;
 	pd_lfile_lkpi_init();
 	return -pd_dri_register(&pd_dri_ops);
