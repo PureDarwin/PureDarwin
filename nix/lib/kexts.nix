@@ -123,7 +123,6 @@ in
   # freebsd run for the ralink usb dongles, aux KC like rtwn
   { name = "PDFBSDrun.kext"; dir = "PDFBSDrun"; headers = [ "IO80211Family" "IOPCIFamily" "IOUSBFamily" ]; extra = fbsdkpi;
     arches = x86; kc = [ ]; }
-  { name = "PDRalinkUSB.kext"; dir = "PDRalinkUSB"; headers = [ "IO80211Family" "IOUSBFamily" ]; arches = x86; kc = x86; }
   { name = "PDQwx.kext"; dir = "PDQwx"; headers = [ "IO80211Family" "IOPCIFamily" ]; arches = x86arm; kc = x86; }
   { name = "PDUSBNCM.kext"; dir = "PDUSBNCM"; headers = [ "IONetworkingFamily" "IOUSBFamily" ]; arches = x86; kc = x86; }
   { name = "IOAudioFamily.kext"; dir = "IOAudioFamily"; arches = x86; kc = x86; }

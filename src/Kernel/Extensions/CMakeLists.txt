@@ -118,7 +118,6 @@ elseif(PUREDARWIN_ARM64)
 endif()
 add_subdirectory(PDRealtek8111)
 add_subdirectory(IO80211Family)
-add_subdirectory(PDRalinkUSB)
 add_subdirectory(PDQwx)
 add_subdirectory(IOAudioFamily)
 add_subdirectory(RavynHDAudio)
@@ -166,7 +165,7 @@ add_dependencies(kexts
     IOGOPFramebuffer.kext IOVirtIOFamily.kext IOVirtIOGPU.kext IOVirtIONet.kext
     IOVirtIOBlock.kext
     IOHIDFamily.kext IONetworkingFamily.kext PDE1000.kext PDRealtek8111.kext
-    IO80211Family.kext PDRalinkUSB.kext PDQwx.kext
+    IO80211Family.kext PDQwx.kext
     IOAudioFamily.kext RavynHDAudio.kext PDUSBAudio.kext
     corecrypto.kext ext4.kext msdosfs.kext cd9660.kext PDAuxHello.kext apfs.kext HFSEncodings.kext hfs.kext
     AppleFileSystemDriver.kext Ext4FileSystemDriver.kext ApfsFileSystemDriver.kext

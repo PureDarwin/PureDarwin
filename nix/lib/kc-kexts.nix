@@ -63,7 +63,6 @@
     "IO80211Family.kext"
     # links against IO80211Family, so it must come after it
     "PDFBSDrtw89.kext"
-    "PDRalinkUSB.kext"
     "PDQwx.kext"
     "PDUSBNCM.kext"
     "IOAudioFamily.kext"
