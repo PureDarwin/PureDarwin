@@ -18,7 +18,7 @@ set(FBSDKPI_LINUXKPI_SOURCES
 
 set(FBSDKPI_LINUXKPI_PD_SOURCES
     pd_linux_current.c pd_linux_page.c pd_lkpi_kern.c pd_lkpi_uma.c
-    pd_lkpi_libkern.c pd_lkpi_misc.c
+    pd_lkpi_libkern.c pd_lkpi_misc.c pd_lkpi_acpi.c
     pd_linux_of.c pd_linux_platform.c pd_linux_clk.c)
 
 # linux wifi drivers add net80211 and the wlan glue
@@ -232,9 +232,24 @@ set(FBSDKPI_LKPI_OPTIONS "SHELL:-include ${FBSDKPI_DIR}/pd/fbsd-extra/pd_lkpi_pr
     -Werror=implicit-function-declaration)
 set(FBSDKPI_LKPI_NAMES "SHELL:-include ${FBSDKPI_DIR}/pd/pd_lkpi_names.h")
 
+# the one linuxkpi serves drm and wifi alike: it and every driver on it see drm-kmod's linux headers and its
+# LINUXKPI_VERSION, so structs match. drm's own environment (pd_drm_pre.h, its CONFIG_ set) stays with the drm
+# core and drivers, the wifi drivers keep theirs
+function(_fbsdkpi_drm_lkpi incs defs opts)
+    if(NOT PD_DRMKMOD_DIR)
+        message(FATAL_ERROR "the shared linuxkpi needs PD_DRMKMOD_DIR, the drm-kmod tree")
+    endif()
+    include("${FBSDKPI_DIR}/drm/drm.cmake")
+    pd_drm_layout("${PD_DRMKMOD_DIR}" drminc drmdefs drmopts)
+    set(${incs} ${drminc} ${FBSDKPI_LKPI_INCLUDES} PARENT_SCOPE)
+    set(${defs} LINUXKPI_VERSION=61400 PARENT_SCOPE)
+    set(${opts} PARENT_SCOPE)
+endfunction()
+
 function(add_fbsdkpi_lkpi_library name)
     cmake_parse_arguments(FL "" "BUNDLE_IDENTIFIER;INFO_PLIST" "" ${ARGN})
     set(lkpi)
+    _fbsdkpi_drm_lkpi(lkinc lkdefs lkopts)
     foreach(src IN LISTS FBSDKPI_LINUXKPI_SOURCES FBSDKPI_LINUXKPI_WLAN_SOURCES)
         list(APPEND lkpi "${FBSDKPI_DIR}/freebsd/linuxkpi/common/src/${src}")
     endforeach()
@@ -250,9 +265,9 @@ function(add_fbsdkpi_lkpi_library name)
         "${FBSDKPI_DIR}/freebsd/crypto/sha1.c")
     set(shared PD_FBSD_SHARED=1 PD_LKPI_WLAN_DEFS=1)
     _fbsdkpi_objects(${name}_lkpi SOURCES ${lkpi} VISIBLE
-        INCLUDES ${FBSDKPI_LKPI_INCLUDES}
-        DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${shared}
-        OPTIONS ${FBSDKPI_NAMES} ${FBSDKPI_LKPI_NAMES} ${FBSDKPI_LKPI_OPTIONS})
+        INCLUDES ${lkinc}
+        DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${shared} ${lkdefs} KBUILD_MODNAME=\"linuxkpi\"
+        OPTIONS ${FBSDKPI_NAMES} ${FBSDKPI_LKPI_NAMES} ${FBSDKPI_LKPI_OPTIONS} ${lkopts})
     _fbsdkpi_objects(${name}_glue SOURCES "${FBSDKPI_DIR}/pd/pd_lkpi_glue.c" VISIBLE
         INCLUDES "${FBSDKPI_DIR}/haiku/freebsd_iflib/compat"
         DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${shared}
@@ -275,6 +290,13 @@ function(add_fbsdkpi_driver name)
 
     # a SHARED driver links PDFreeBSDKPI.kext for the layer and builds only its own code, under the shared names
     set(names)
+    set(shlkinc)
+    set(shlkdefs)
+    set(shlkopts)
+    if(FD_SHARED AND FD_LINUXKPI)
+        # the driver's own objects see linuxkpi as the shared linuxkpi was built
+        _fbsdkpi_drm_lkpi(shlkinc shlkdefs shlkopts)
+    endif()
     if(FD_SHARED)
         if(FD_LINUXKPI_DRM)
             message(FATAL_ERROR "${name}: the shared layer has no drm linuxkpi yet")
@@ -376,9 +398,9 @@ function(add_fbsdkpi_driver name)
 
     if(FD_SOURCES)
         _fbsdkpi_objects(${name}_driver SOURCES ${FD_SOURCES}
-            INCLUDES ${FD_INCLUDES} ${iflibinc} ${lkpiinc}
-            DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${FD_DEFINITIONS}
-            OPTIONS ${names} ${lkpiopt})
+            INCLUDES ${FD_INCLUDES} ${iflibinc} ${shlkinc} ${lkpiinc}
+            DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${FD_DEFINITIONS} ${shlkdefs}
+            OPTIONS ${names} ${lkpiopt} ${shlkopts})
         # an undeclared call links to nothing and panics on first use, so iflib drivers fail the build
         if(FD_IFLIB)
             target_compile_options(${name}_driver PRIVATE -Werror=implicit-function-declaration)

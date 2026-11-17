@@ -1596,7 +1596,12 @@
             } // lib.optionalAttrs (arch != "x86_64") {
               puredarwinArch = arch;
               inherit arm64CrossToolchain;
-            } // kextsOnlyArgs xnuHeaders)).overrideAttrs (old: {
+            } // kextsOnlyArgs xnuHeaders // {
+              # the fbsdkpi kexts build linuxkpi the drm way, against the one drm-kmod tree every driver shares
+              extraCmakeFlags = (kextsOnlyArgs xnuHeaders).extraCmakeFlags
+                ++ lib.optional (arch == "x86_64" && builtins.any (k: builtins.elem "src/Kernel/fbsdkpi/fbsdkpi.cmake" (k.extra or [ ])) own)
+                  "-DPD_DRMKMOD_DIR=${drmKmodAllSrc}";
+            })).overrideAttrs (old: {
               postPatch = (old.postPatch or "") + kextPostPatch dir;
             });
           kextDirs = arch: lib.unique (map (k: k.dir) (kextsFor arch));
@@ -1686,6 +1691,34 @@
             cd $out
             patch -p1 < ${./src/Kernel/fbsdkpi/drm/linux-nouveau-pd.patch}
             # PD's clean-room headers take the place of three whose history could not be settled
+            cp -r ${./src/Kernel/fbsdkpi/drm/nouveau}/. drivers/gpu/drm/nouveau/
+            chmod -R u+w drivers/gpu/drm/nouveau
+          '';
+          # one tree for every drm driver and the shared linuxkpi: the drm core is the same in all of them, the
+          # per-driver patches only touch their own driver
+          drmKmodAllSrc = pkgs.runCommand "puredarwin-drm-kmod-all-src" {
+            nativeBuildInputs = [ pkgs.xz pkgs.stdenv.cc ];
+          } ''
+            cp -r ${drmKmodSrc.src} $out
+            chmod -R u+w $out
+            cd $out
+            grep -v '^#' ${./src/Kernel/fbsdkpi/drm/drm-kmod-remove.txt} | while read -r f; do
+              rm -rf "$f"
+            done
+            patch -p1 < ${./src/Kernel/fbsdkpi/drm/drm-kmod-pd.patch}
+            patch -p1 < ${./src/Kernel/fbsdkpi/drm/drm-kmod-i915-pd.patch}
+            patch -p1 < ${./src/Kernel/fbsdkpi/drm/drm-kmod-radeon-pd.patch}
+            r=drivers/gpu/drm/radeon
+            rm -f $r/radeon_freebsd.c $r/radeon_trace_freebsd.h $r/*_reg_safe.h
+            cc -o mkregtable $r/mkregtable.c
+            for t in r100 r200 r300 r420 rn50 rs600 rv515 r600 evergreen cayman; do
+              ./mkregtable $r/reg_srcs/$t > $r/''${t}_reg_safe.h
+            done
+            rm mkregtable
+            tar -xJf ${linux614Src} --strip-components=1 -C $out \
+              linux-6.14/drivers/gpu/drm/nouveau \
+              linux-6.14/include/drm/i2c/ch7006.h linux-6.14/include/drm/i2c/sil164.h
+            patch -p1 < ${./src/Kernel/fbsdkpi/drm/linux-nouveau-pd.patch}
             cp -r ${./src/Kernel/fbsdkpi/drm/nouveau}/. drivers/gpu/drm/nouveau/
             chmod -R u+w drivers/gpu/drm/nouveau
           '';

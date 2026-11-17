@@ -13,7 +13,7 @@ let
   x86riscv = [ "x86_64" "riscv64" ];
   armriscv = [ "arm64" "riscv64" ];
   fbsdkpi = [ "src/Kernel/fbsdkpi/fbsdkpi.cmake" "src/Kernel/fbsdkpi/freebsd" "src/Kernel/fbsdkpi/haiku"
-    "src/Kernel/fbsdkpi/pd" "src/Kernel/fbsdkpi/xnu" "src/Kernel/fbsdkpi/pd_dri_cdev.h"
+    "src/Kernel/fbsdkpi/pd" "src/Kernel/fbsdkpi/xnu" "src/Kernel/fbsdkpi/drm" "src/Kernel/fbsdkpi/pd_dri_cdev.h"
     "src/Kernel/fbsdkpi/pd_fbsd_os.h" ];
 in
 [

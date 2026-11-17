@@ -30,6 +30,7 @@ typedef uint64_t acpi_integer;
 #define ACPI_TYPE_STRING 2
 #define ACPI_TYPE_BUFFER 3
 #define ACPI_TYPE_PACKAGE 4
+#define ACPI_TYPE_LOCAL_REFERENCE 0x14
 
 #define ACPI_ALLOCATE_BUFFER ((acpi_size)-1)
 #define ACPI_FULL_PATHNAME 0
@@ -89,6 +90,12 @@ union acpi_object {
 		uint32_t count;
 		union acpi_object *elements;
 	} package;
+	// a named object a method returned, as iwlwifi's _PRR reset reads it
+	struct {
+		acpi_object_type type;
+		acpi_object_type actual_type;
+		acpi_handle handle;
+	} reference;
 };
 
 struct acpi_object_list {
