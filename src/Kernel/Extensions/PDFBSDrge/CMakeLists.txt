@@ -8,6 +8,7 @@ foreach(src if_rge.c if_rge_hw.c if_rge_stats.c if_rge_sysctl.c)
 endforeach()
 
 add_fbsdkpi_driver(PDFBSDrge
+    SHARED
     CLASS PDFBSDrge
     BUNDLE_IDENTIFIER org.puredarwin.driver.PDFBSDrge
     INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist"

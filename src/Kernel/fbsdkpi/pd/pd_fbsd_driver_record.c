@@ -11,9 +11,9 @@
 void pdos_net_input(void *cookie, const void *frame, size_t len);
 void pdos_net_input_chain(void *cookie, void *chain);
 void pdos_net_link(void *cookie, int up, uint64_t baudrate);
-// a driver without firmware has no table
-extern const struct pd_firmware_image pd_firmware_images[] __attribute__((weak));
-extern const int pd_firmware_image_count __attribute__((weak));
+// every driver links a table, empty without firmware
+extern const struct pd_firmware_image pd_firmware_images[];
+extern const int pd_firmware_image_count;
 
 // lkpi wifi drivers take these from pd_lkpi_wlan.c, the rest from HAIKU_FBSD_DRIVERS_GLUE
 status_t init_wlan_stack(void);
@@ -44,7 +44,7 @@ pd_fbsd_driver_record(void)
 		sRecord.net_input_chain = pdos_net_input_chain;
 		sRecord.net_link = pdos_net_link;
 		sRecord.firmware_images = pd_firmware_images;
-		sRecord.firmware_count = &pd_firmware_image_count != NULL ? pd_firmware_image_count : 0;
+		sRecord.firmware_count = pd_firmware_image_count;
 		sRecord.sysinit_begin = (void **)SET_BEGIN(__freebsd_sysinit);
 		sRecord.sysinit_end = (void **)SET_LIMIT(__freebsd_sysinit);
 		sRecord.sysuninit_begin = (void **)SET_BEGIN(__freebsd_sysuninit);

@@ -40,6 +40,8 @@
     </dict>
     <key>OSBundleLibraries</key>
     <dict>
+        <key>org.puredarwin.kpi.freebsd</key>
+        <string>1.0.0</string>
         <key>com.apple.iokit.IONetworkingFamily</key>
         <string>3.4</string>
         <key>com.apple.iokit.IOPCIFamily</key>
