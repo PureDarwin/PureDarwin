@@ -36,7 +36,19 @@ struct pdusb_xfer {
 	pdusb_done_t		done;
 	void			*cookie;
 	IOUSBCompletion		completion;
+	// the completion and the submit each hold one, a failed Read may already have completed
+	volatile SInt32		refs;
+	volatile SInt32		completed;
 };
+
+static void
+xfer_release(struct pdusb_xfer *x)
+{
+	if (OSDecrementAtomic(&x->refs) == 1) {
+		OSSafeReleaseNULL(x->mem);
+		IOFree(x, sizeof(*x));
+	}
+}
 
 static uint64_t
 number_property(IOService *service, const char *key)
@@ -184,8 +196,8 @@ xfer_done(void *target, void *parameter, IOReturn status, UInt32 remaining)
 		memcpy(x->buf, x->mem->getBytesNoCopy(), actual);
 	pdusb_done_t done = x->done;
 	void *cookie = x->cookie;
-	OSSafeReleaseNULL(x->mem);
-	IOFree(x, sizeof(*x));
+	x->completed = 1;
+	xfer_release(x);
 	done(cookie, map_status(status), actual);
 	OSDecrementAtomic(&pipe->inflight);
 }
@@ -217,6 +229,7 @@ pdusb_queue(void *devp, int ep, void *buf, size_t len, pdusb_done_t done, void *
 	x->completion.target = x;
 	x->completion.action = &xfer_done;
 	x->completion.parameter = NULL;
+	x->refs = 2;
 	if (!pipe->in && len > 0)
 		memcpy(x->mem->getBytesNoCopy(), buf, len);
 
@@ -224,12 +237,15 @@ pdusb_queue(void *devp, int ep, void *buf, size_t len, pdusb_done_t done, void *
 	IOReturn ret = pipe->in
 		? pipe->pipe->Read(x->mem, 0, 0, (UInt32)len, &x->completion)
 		: pipe->pipe->Write(x->mem, 0, 0, (UInt32)len, &x->completion);
-	if (ret != kIOReturnSuccess) {
+	if (ret != kIOReturnSuccess && !x->completed) {
+		// no completion will come, drop its reference too
 		OSDecrementAtomic(&pipe->inflight);
-		OSSafeReleaseNULL(x->mem);
-		IOFree(x, sizeof(*x));
+		xfer_release(x);
+		xfer_release(x);
 		return map_status(ret);
 	}
+	// the result reached the driver through the completion
+	xfer_release(x);
 	return PDUSB_OK;
 }
 
