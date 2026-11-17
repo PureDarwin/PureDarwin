@@ -311,7 +311,8 @@ pd_wlan_get_status(void *cookie, struct pd_wlan_status *status)
 		}
 		int8_t rssi = 0, noise = 0;
 		ic->ic_node_getsignal(ni, &rssi, &noise);
-		status->rssi = rssi;
+		// half-dB steps over the noise floor, as in the scan results
+		status->rssi = noise + rssi / 2;
 		status->noise = noise;
 		status->authorized = (ni->ni_flags & IEEE80211_NODE_AUTH) != 0;
 	}
