@@ -92,6 +92,8 @@ in
     arches = all; kc = x86; }
   { name = "PDHyperV.kext"; dir = "PDHyperV"; headers = [ "IONetworkingFamily" "IOStorageFamily" ]; arches = x86; kc = x86; }
   { name = "PDE1000.kext"; dir = "PDE1000"; headers = [ "IONetworkingFamily" "IOPCIFamily" ]; arches = x86arm; kc = x86; }
+  { name = "PDFreeBSDKPI.kext"; dir = "PDFreeBSDKPI"; headers = [ "IONetworkingFamily" "IOPCIFamily" ]; extra = fbsdkpi;
+    arches = x86arm; kc = x86; }
   { name = "PDFBSDem.kext"; dir = "PDFBSDem"; headers = [ "IONetworkingFamily" "IOPCIFamily" ]; extra = fbsdkpi;
     arches = x86arm; kc = x86; }
   { name = "PDFBSDigc.kext"; dir = "PDFBSDigc"; headers = [ "IONetworkingFamily" "IOPCIFamily" ]; extra = fbsdkpi;

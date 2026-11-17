@@ -283,4 +283,30 @@ extern const char* __haiku_firmware_name_map[][2];
 
 #define nitems(_a)     (sizeof((_a)) / sizeof((_a)[0]))
 
+#ifdef PD_FBSD_SHARED
+/* the shared layer serves every driver: the names a driver's glue defines are looked up in its record */
+#include "pd_fbsd_driver.h"
+int pd_fbsd_requires(int flag);
+#undef HAIKU_DRIVER_REQUIRES
+#define HAIKU_DRIVER_REQUIRES(flag) \
+	(((flag) & FBSD_TASKQUEUES) ? 1 : pd_fbsd_requires(flag))
+#define PD_DEVICE_REQUIRES(dev, flag) (pd_fbsd_device_driver(dev)->requirements & (flag))
+#define gDriverName (pd_fbsd_current != NULL ? pd_fbsd_current->name : "fbsdkpi")
+#define __haiku_init_hardware() (pd_fbsd_current->init_hardware())
+#define __haiku_select_miibus_driver(dev) \
+	((driver_t *)pd_fbsd_device_driver(dev)->select_miibus(dev))
+#undef HAIKU_CHECK_DISABLE_INTERRUPTS
+#undef HAIKU_REENABLE_INTERRUPTS
+#define HAIKU_CHECK_DISABLE_INTERRUPTS(dev) (pd_fbsd_device_driver(dev)->disable_intr(dev))
+#define HAIKU_REENABLE_INTERRUPTS(dev) (pd_fbsd_device_driver(dev)->reenable_intr(dev))
+#ifndef PD_LKPI_WLAN_DEFS
+#define start_wlan(dev) ((status_t)pd_fbsd_device_driver(dev)->start_wlan(dev))
+#define stop_wlan(dev) ((status_t)pd_fbsd_device_driver(dev)->stop_wlan(dev))
+#define init_wlan_stack() ((status_t)pd_fbsd_current->init_wlan_stack())
+#define uninit_wlan_stack() (pd_fbsd_current->uninit_wlan_stack())
+#endif
+#else
+#define PD_DEVICE_REQUIRES(dev, flag) HAIKU_DRIVER_REQUIRES(flag)
+#endif
+
 #endif	/* _FBSD_COMPAT_SYS_HAIKU_MODULE_H_ */

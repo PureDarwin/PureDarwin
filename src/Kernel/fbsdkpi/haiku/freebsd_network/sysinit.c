@@ -78,6 +78,14 @@ run_sysinit_set(struct sysinit* const* begin, struct sysinit* const* end,
 }
 
 
+// a set from another binary: a driver's own SYSINITs, run by the shared layer
+void
+pd_fbsd_run_sysinit(void **begin, void **end, int reverse)
+{
+	run_sysinit_set((struct sysinit* const*)begin, (struct sysinit* const*)end, reverse);
+}
+
+
 void
 init_sysinit()
 {

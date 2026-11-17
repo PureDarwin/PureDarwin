@@ -18,6 +18,8 @@
 #include "pd_fbsd_os.h"
 #include "pd_fbsd_attach.h"
 #include "pd_haiku_kernel.h"
+#include "pd_fbsd_driver.h"
+#include <kernel/lock.h>
 #include <compat/sys/rman.h>
 #include <compat/dev/pci/pcivar.h>
 #include "fbsd-extra/dev/pci/pci_private.h"
@@ -34,6 +36,9 @@ int (*pd_fbsd_post_attach)(device_t dev);
 int pd_fbsd_frames_on_transmit;
 
 static void *sCookies[MAX_DEVICES];
+// the driver that attached each interface, whose xnu side gets its frames
+static struct pd_fbsd_driver *sSlotDriver[MAX_DEVICES];
+static void pd_fbsd_claim_slot(struct ifnet *ifp);
 static void *sPciDevs[MAX_DEVICES];
 static void *sPendingPci;
 static struct ifnet *sAttached;
@@ -41,6 +46,39 @@ static struct ifnet *sAttached;
 static device_t sAttachedDevice;
 static int sWantIfnet = 1;
 static int sInitialised;
+
+// the driver attaching now: attaches across every driver run one at a time under sAttachLock
+struct pd_fbsd_driver *pd_fbsd_current;
+static mutex sAttachLock = MUTEX_INITIALIZER("fbsdkpi attach");
+
+void
+pd_fbsd_driver_enter(struct pd_fbsd_driver *driver)
+{
+	mutex_lock(&sAttachLock);
+	pd_fbsd_current = driver;
+}
+
+void
+pd_fbsd_driver_leave(void)
+{
+	pd_fbsd_current = NULL;
+	mutex_unlock(&sAttachLock);
+}
+
+// the driver a device came from, or the one attaching for a device made outside an attach
+struct pd_fbsd_driver *
+pd_fbsd_device_driver(void *dev)
+{
+	device_t d = dev;
+
+	return d != NULL && d->pd_driver != NULL ? d->pd_driver : pd_fbsd_current;
+}
+
+int
+pd_fbsd_requires(int flag)
+{
+	return pd_fbsd_current != NULL ? (pd_fbsd_current->requirements & flag) : 0;
+}
 
 status_t
 init_root_device(device_t *_root, int bus_type)
@@ -304,8 +342,15 @@ pd_fbsd_attach_usb_found(device_t root, driver_t *driver, void *compat,
 	return sAttached != NULL ? B_OK : B_ERROR;
 }
 
+#ifdef PD_FBSD_SHARED
+static int pd_fbsd_init_layer(void);
+#define PD_FBSD_INIT_NAME pd_fbsd_init_layer
+static
+#else
+#define PD_FBSD_INIT_NAME pd_fbsd_init
+#endif
 int
-pd_fbsd_init(void)
+PD_FBSD_INIT_NAME(void)
 {
 	if (sInitialised)
 		return 0;
@@ -325,12 +370,32 @@ pd_fbsd_init(void)
 			return status;
 	}
 	init_sysinit();
+#ifndef PD_FBSD_SHARED
 	status = init_wlan_stack();
 	if (status < B_OK)
 		return status;
+#endif
 	sInitialised = 1;
 	return 0;
 }
+
+#ifdef PD_FBSD_SHARED
+// once per driver, its first attach: its own SYSINITs and its wlan stack
+static int
+pd_fbsd_init_driver(void)
+{
+	struct pd_fbsd_driver *d = pd_fbsd_current;
+
+	if (d == NULL || d->initialised)
+		return d != NULL ? 0 : -1;
+	pd_fbsd_run_sysinit(d->sysinit_begin, d->sysinit_end, 0);
+	if (init_wlan_stack() < B_OK)
+		return -1;
+	d->initialised = 1;
+	return 0;
+}
+#define pd_fbsd_init()	(pd_fbsd_init_layer() != 0 ? -1 : pd_fbsd_init_driver())
+#endif
 
 void *
 pd_fbsd_attach_pci(void *pcidev)
@@ -341,6 +406,7 @@ pd_fbsd_attach_pci(void *pcidev)
 	sAttached = NULL;
 	__haiku_init_hardware();
 	sPendingPci = NULL;
+	pd_fbsd_claim_slot(sAttached);
 	return sAttached;
 }
 
@@ -355,6 +421,7 @@ pd_fbsd_attach_usb(void *usbdev)
 	__haiku_init_hardware();
 	if (sAttached == NULL)
 		pd_usb_unregister();
+	pd_fbsd_claim_slot(sAttached);
 	return sAttached;
 }
 
@@ -449,11 +516,21 @@ cookie_slot(struct ifnet *ifp)
 	return -1;
 }
 
+// the interface just attached belongs to the driver attaching
+static void
+pd_fbsd_claim_slot(struct ifnet *ifp)
+{
+	int slot = ifp != NULL ? cookie_slot(ifp) : -1;
+
+	if (slot >= 0)
+		sSlotDriver[slot] = pd_fbsd_current;
+}
+
 void
 pd_fbsd_set_cookie(void *cookie_ifp, void *cookie)
 {
 	int slot = cookie_slot(cookie_ifp);
-	if (slot >= 0)
+	if (slot >= 0 && sSlotDriver[slot] != NULL)
 		sCookies[slot] = cookie;
 }
 
@@ -696,9 +773,9 @@ pd_netif_input(struct ifnet *ifp, struct mbuf *m)
 		}
 		if (cookie != NULL && (ifp->flags & DEVICE_CLOSED) == 0) {
 			if (m->m_next == NULL)
-				pdos_net_input(cookie, mtod(m, void *), m->m_len);
+				sSlotDriver[slot]->net_input(cookie, mtod(m, void *), m->m_len);
 			else
-				pdos_net_input_chain(cookie, m);
+				sSlotDriver[slot]->net_input_chain(cookie, m);
 		}
 		m_freem(m);
 		m = next;
@@ -709,9 +786,9 @@ void
 pd_netif_link(struct ifnet *ifp, int linkState)
 {
 	int slot = cookie_slot(ifp);
-	if (slot < 0 || sCookies[slot] == NULL)
+	if (slot < 0 || sCookies[slot] == NULL || sSlotDriver[slot] == NULL)
 		return;
-	pdos_net_link(sCookies[slot], linkState == LINK_STATE_UP,
+	sSlotDriver[slot]->net_link(sCookies[slot], linkState == LINK_STATE_UP,
 		ifp->if_baudrate);
 }
 

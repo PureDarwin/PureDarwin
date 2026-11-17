@@ -10,6 +10,7 @@
 #include "PDFBSDEthernet.h"
 #include "pd_fbsd_os.h"
 #include "pd_fbsd_attach.h"
+#include "pd_fbsd_driver.h"
 #ifdef PDFBSD_USB
 #include <IOKit/usb/IOUSBInterface.h>
 #include "pd_fbsd_usb.h"
@@ -22,7 +23,6 @@ OSDefineMetaClassAndStructors(PDFBSD_CLASS, PDFBSD_BASE);
 #define PDFBSD_STR(x)	PDFBSD_STR2(x)
 
 static IOLock *sTxLock;
-static IOLock *sAttachLock;
 
 bool
 PDFBSD_CLASS::start(IOService *provider)
@@ -59,19 +59,17 @@ PDFBSD_CLASS::start(IOService *provider)
 	pdos_xnu_init();
 	if (sTxLock == NULL)
 		sTxLock = IOLockAlloc();
-	if (sAttachLock == NULL)
-		sAttachLock = IOLockAlloc();
 
 	IOLog(PDFBSD_STR(PDFBSD_CLASS) ": attaching the FreeBSD driver\n");
 
-	// attaching runs the whole FreeBSD probe and attach, one device at a time
-	IOLockLock(sAttachLock);
+	// attaching runs the whole FreeBSD probe and attach, one device at a time across every driver
+	pd_fbsd_driver_enter(pd_fbsd_driver_record());
 #ifdef PDFBSD_USB
 	fIfp = pd_fbsd_attach_usb(fUSBDev);
 #else
 	fIfp = pd_fbsd_attach_pci(fPCI);
 #endif
-	IOLockUnlock(sAttachLock);
+	pd_fbsd_driver_leave();
 	if (fIfp == NULL) {
 		IOLog(PDFBSD_STR(PDFBSD_CLASS) ": the FreeBSD driver did not attach\n");
 #ifdef PDFBSD_USB

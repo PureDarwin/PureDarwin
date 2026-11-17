@@ -53,6 +53,7 @@
     "IOVirtIOBlock.kext"
     "PDHyperV.kext"
     "PDE1000.kext"
+    "PDFreeBSDKPI.kext"
     "PDFBSDem.kext"
     "PDFBSDigc.kext"
     # PDFBSDrge is untested, it stays out

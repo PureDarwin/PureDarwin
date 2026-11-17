@@ -8,6 +8,7 @@
 
 
 #include "device.h"
+#include "pd_fbsd_driver.h"
 
 #include <stdio.h>
 
@@ -35,6 +36,9 @@ init_device(device_t device, driver_t *driver)
 {
 	list_init_etc(&device->children, offsetof(struct device, link));
 	device->unit = sNextUnit++;
+#ifdef __PUREDARWIN__
+	device->pd_driver = pd_fbsd_current;
+#endif
 
 	if (driver != NULL && device_set_driver(device, driver) < 0)
 		return NULL;
@@ -504,7 +508,7 @@ device_attach(device_t device)
 	if (result == 0)
 		atomic_or(&device->flags, DEVICE_ATTACHED);
 
-	if (result == 0 && HAIKU_DRIVER_REQUIRES(FBSD_WLAN_FEATURE))
+	if (result == 0 && PD_DEVICE_REQUIRES(device, FBSD_WLAN_FEATURE))
 		result = start_wlan(device);
 
 	return result;
@@ -520,7 +524,7 @@ device_detach(device_t device)
 	if ((atomic_and(&device->flags, ~DEVICE_ATTACHED) & DEVICE_ATTACHED) != 0
 			&& device->methods.device_detach != NULL) {
 		int result = 0;
-		if (HAIKU_DRIVER_REQUIRES(FBSD_WLAN_FEATURE))
+		if (PD_DEVICE_REQUIRES(device, FBSD_WLAN_FEATURE))
 			result = stop_wlan(device);
 		if (result != 0 && result != B_BAD_VALUE) {
 			atomic_or(&device->flags, DEVICE_ATTACHED);

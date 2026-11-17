@@ -8,6 +8,7 @@
 
 void init_sysinit();
 void uninit_sysinit();
+void pd_fbsd_run_sysinit(void **begin, void **end, int reverse);
 
 
 #endif /* SYSINIT_H */

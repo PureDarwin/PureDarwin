@@ -12,6 +12,7 @@ add_fbsdkpi_driver(PDFBSDigc
     BUNDLE_IDENTIFIER org.puredarwin.driver.PDFBSDigc
     INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist"
     IFLIB
+    SHARED
     INCLUDES "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/dev/igc"
     SOURCES ${PDFBSDIGC_SOURCES})
 

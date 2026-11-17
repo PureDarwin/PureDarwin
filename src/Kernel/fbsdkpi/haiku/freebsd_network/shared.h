@@ -12,7 +12,12 @@
 #include <sys/bus.h>
 
 
+#ifdef PD_FBSD_SHARED
+/* one table for every driver the shared layer serves */
+#define MAX_DEVICES	32
+#else
 #define MAX_DEVICES	8
+#endif
 
 
 struct ifnet;
@@ -20,6 +25,9 @@ struct ifnet;
 struct device {
 	struct device	*parent;
 	struct device	*root;
+#ifdef __PUREDARWIN__
+	struct pd_fbsd_driver *pd_driver;	/* the driver attaching when this device was made */
+#endif
 
 	driver_t		*driver;
 	struct list		children;

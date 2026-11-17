@@ -14,8 +14,15 @@
 #include "pd_fbsd_os.h"
 
 // the table is generated for each driver kext, it may be empty
+#ifdef PD_FBSD_SHARED
+// the shared layer loads from the table of the driver attaching
+#include "pd_fbsd_driver.h"
+#define pd_firmware_images	(pd_fbsd_current->firmware_images)
+#define pd_firmware_image_count	(pd_fbsd_current->firmware_count)
+#else
 extern const struct pd_firmware_image pd_firmware_images[];
 extern const int pd_firmware_image_count;
+#endif
 
 static const char *
 base_name(const char *path)

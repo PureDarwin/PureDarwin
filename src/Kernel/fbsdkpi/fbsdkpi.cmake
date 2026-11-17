@@ -53,7 +53,7 @@ set(FBSDKPI_IFLIB_SOURCES
 
 # one object library of FreeBSD-side code, which never sees an xnu header
 function(_fbsdkpi_objects target)
-    cmake_parse_arguments(FO "" "" "SOURCES;INCLUDES;DEFINITIONS;OPTIONS" ${ARGN})
+    cmake_parse_arguments(FO "VISIBLE" "" "SOURCES;INCLUDES;DEFINITIONS;OPTIONS" ${ARGN})
     add_library(${target} OBJECT ${FO_SOURCES})
     file(GLOB osdirs LIST_DIRECTORIES true "${FBSDKPI_DIR}/pd/haiku-headers/os/*")
     target_include_directories(${target} BEFORE PRIVATE
@@ -75,8 +75,8 @@ function(_fbsdkpi_objects target)
         ${FO_DEFINITIONS})
     target_compile_options(${target} PRIVATE
         -ffreestanding -nostdlibinc -fno-common -fno-stack-protector
-        # names like printf, malloc and wakeup must not leak to later kexts
-        -fvisibility=hidden
+        # names like printf, malloc and wakeup must not leak to later kexts; the shared layer exports its own
+        $<$<NOT:$<BOOL:${FO_VISIBLE}>>:-fvisibility=hidden>
         $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti -std=gnu++17 -fapple-kext>
         $<$<COMPILE_LANGUAGE:C>:-std=gnu11>
         -Wno-everything
@@ -119,10 +119,10 @@ function(_fbsdkpi_firmware name out)
     endif()
 endfunction()
 
-function(add_fbsdkpi_driver name)
-    cmake_parse_arguments(FD "IFLIB;LINUXKPI;LINUXKPI_DRM;USB" "CLASS;BUNDLE_IDENTIFIER;INFO_PLIST"
-        "SOURCES;INCLUDES;DEFINITIONS;FIRMWARE;XNU_SOURCES;LKPI_INCLUDES;LKPI_DEFINITIONS;LKPI_OPTIONS;OBJECTS" ${ARGN})
+# the shared layer: core and iflib once, as a library kext the drivers link against
+set(FBSDKPI_NAMES "SHELL:-include ${FBSDKPI_DIR}/pd/pd_kpi_names.h")
 
+function(_fbsdkpi_core_sources out usb)
     set(core)
     foreach(src IN LISTS FBSDKPI_NETWORK_SOURCES)
         list(APPEND core "${FBSDKPI_DIR}/haiku/freebsd_network/${src}")
@@ -136,15 +136,85 @@ function(add_fbsdkpi_driver name)
         "${FBSDKPI_DIR}/pd/pd_firmware.c"
         "${FBSDKPI_DIR}/haiku/kernel_util/RadixBitmap.cpp"
         "${FBSDKPI_DIR}/haiku/kernel_util/Random.cpp")
-    if(FD_USB)
+    if(usb)
         foreach(src IN LISTS FBSDKPI_USB_SOURCES)
             list(APPEND core "${FBSDKPI_DIR}/haiku/freebsd_network/${src}")
         endforeach()
         list(APPEND core "${FBSDKPI_DIR}/pd/pd_usb.cpp")
     endif()
-    _fbsdkpi_firmware(${name} firmware ${FD_FIRMWARE})
-    _fbsdkpi_objects(${name}_core SOURCES ${core} ${firmware})
-    set(objects $<TARGET_OBJECTS:${name}_core>)
+    set(${out} ${core} PARENT_SCOPE)
+endfunction()
+
+function(_fbsdkpi_xnu_target name class)
+    set(shim "${CMAKE_CURRENT_BINARY_DIR}/shim-include")
+    set(ionf "${FBSDKPI_DIR}/../Extensions/IONetworkingFamily")
+    file(MAKE_DIRECTORY "${shim}/IOKit/network")
+    foreach(hdr
+        IOBasicOutputQueue.h IOEthernetController.h IOEthernetInterface.h
+        IOEthernetStats.h IOGatedOutputQueue.h IOKernelDebugger.h
+        IOMbufMemoryCursor.h IOMbufQueue.h IONetworkController.h
+        IONetworkControllerPrivate.h IONetworkData.h IONetworkDebug.h
+        IONetworkInterface.h IONetworkMedium.h IONetworkStack.h
+        IONetworkStats.h IONetworkTypesPrivate.h IONetworkUserClient.h
+        IOOutputQueue.h IOPacketQueue.h)
+        file(CREATE_LINK "${ionf}/${hdr}" "${shim}/IOKit/network/${hdr}" SYMBOLIC)
+    endforeach()
+    target_include_directories(${name}.kext PRIVATE
+        "${FBSDKPI_DIR}"
+        "${FBSDKPI_DIR}/pd"
+        "${FBSDKPI_DIR}/xnu"
+        "${shim}"
+        "${FBSDKPI_DIR}/../Extensions/IOPCIFamily/include"
+        "${FBSDKPI_DIR}/../xnu/EXTERNAL_HEADERS")
+    target_compile_definitions(${name}.kext PRIVATE __PRIVATE_SPI__ PDFBSD_CLASS=${class})
+    target_compile_options(${name}.kext PRIVATE
+        -Wno-sign-conversion -Wno-implicit-int-conversion -Wno-shorten-64-to-32
+        -Wno-unused-parameter -Wno-deprecated-declarations)
+    set_property(TARGET ${name}.kext PROPERTY CXX_STANDARD 14)
+    add_dependencies(${name}.kext IONetworkingFamily.kext)
+endfunction()
+
+function(add_fbsdkpi_library name)
+    cmake_parse_arguments(FL "" "BUNDLE_IDENTIFIER;INFO_PLIST" "" ${ARGN})
+    _fbsdkpi_core_sources(core OFF)
+    set(shared PD_FBSD_SHARED=1)
+    _fbsdkpi_objects(${name}_core SOURCES ${core} VISIBLE
+        DEFINITIONS ${shared} OPTIONS ${FBSDKPI_NAMES})
+    set(iflib)
+    foreach(src IN LISTS FBSDKPI_IFLIB_SOURCES)
+        list(APPEND iflib "${FBSDKPI_DIR}/haiku/freebsd_iflib/${src}")
+    endforeach()
+    _fbsdkpi_objects(${name}_iflib SOURCES ${iflib} VISIBLE
+        INCLUDES "${FBSDKPI_DIR}/haiku/freebsd_iflib" "${FBSDKPI_DIR}/haiku/freebsd_iflib/compat"
+        DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ALTQ ${shared} OPTIONS ${FBSDKPI_NAMES})
+    add_kext_bundle(${name}.kext INFO_PLIST ${FL_INFO_PLIST} KERNEL_PRIVATE
+        BUNDLE_IDENTIFIER ${FL_BUNDLE_IDENTIFIER} BUNDLE_VERSION 1.0.0)
+    set_property(TARGET ${name}.kext PROPERTY OUTPUT_NAME ${name})
+    target_sources(${name}.kext PRIVATE "${FBSDKPI_DIR}/xnu/pd_fbsd_os.cpp"
+        $<TARGET_OBJECTS:${name}_core> $<TARGET_OBJECTS:${name}_iflib>)
+    _fbsdkpi_xnu_target(${name} ${name})
+    install(TARGETS ${name}.kext DESTINATION System/Library/Extensions COMPONENT BaseSystem)
+endfunction()
+
+function(add_fbsdkpi_driver name)
+    cmake_parse_arguments(FD "IFLIB;LINUXKPI;LINUXKPI_DRM;USB;SHARED" "CLASS;BUNDLE_IDENTIFIER;INFO_PLIST"
+        "SOURCES;INCLUDES;DEFINITIONS;FIRMWARE;XNU_SOURCES;LKPI_INCLUDES;LKPI_DEFINITIONS;LKPI_OPTIONS;OBJECTS" ${ARGN})
+
+    # a SHARED driver links PDFreeBSDKPI.kext for the layer and builds only its own code, under the shared names
+    set(names)
+    if(FD_SHARED)
+        if(FD_USB OR FD_FIRMWARE OR FD_LINUXKPI OR FD_LINUXKPI_DRM OR FD_XNU_SOURCES)
+            message(FATAL_ERROR "${name}: the shared layer has no usb, firmware, linuxkpi or own xnu glue yet")
+        endif()
+        set(names ${FBSDKPI_NAMES})
+    endif()
+    _fbsdkpi_core_sources(core "${FD_USB}")
+    set(objects)
+    if(NOT FD_SHARED)
+        _fbsdkpi_firmware(${name} firmware ${FD_FIRMWARE})
+        _fbsdkpi_objects(${name}_core SOURCES ${core} ${firmware})
+        set(objects $<TARGET_OBJECTS:${name}_core>)
+    endif()
 
     # iflib and the driver build as FreeBSD drivers, as in haiku's jamfiles
     set(iflibinc)
@@ -154,10 +224,12 @@ function(add_fbsdkpi_driver name)
             list(APPEND iflib "${FBSDKPI_DIR}/haiku/freebsd_iflib/${src}")
         endforeach()
         set(iflibinc "${FBSDKPI_DIR}/haiku/freebsd_iflib/compat")
-        _fbsdkpi_objects(${name}_iflib SOURCES ${iflib}
-            INCLUDES "${FBSDKPI_DIR}/haiku/freebsd_iflib" ${iflibinc}
-            DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ALTQ)
-        list(APPEND objects $<TARGET_OBJECTS:${name}_iflib>)
+        if(NOT FD_SHARED)
+            _fbsdkpi_objects(${name}_iflib SOURCES ${iflib}
+                INCLUDES "${FBSDKPI_DIR}/haiku/freebsd_iflib" ${iflibinc}
+                DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ALTQ)
+            list(APPEND objects $<TARGET_OBJECTS:${name}_iflib>)
+        endif()
     endif()
 
     # linuxkpi and net80211 see FreeBSD headers ahead of haiku's compat ones
@@ -214,12 +286,17 @@ function(add_fbsdkpi_driver name)
     foreach(obj IN LISTS FD_OBJECTS)
         list(APPEND objects $<TARGET_OBJECTS:${obj}>)
     endforeach()
+    # the record PDFBSDEthernet hands the layer, built from this driver's glue names
+    if(NOT FD_XNU_SOURCES)
+        _fbsdkpi_objects(${name}_record SOURCES "${FBSDKPI_DIR}/pd/pd_fbsd_driver_record.c" OPTIONS ${names})
+        list(APPEND objects $<TARGET_OBJECTS:${name}_record>)
+    endif()
 
     if(FD_SOURCES)
         _fbsdkpi_objects(${name}_driver SOURCES ${FD_SOURCES}
             INCLUDES ${FD_INCLUDES} ${iflibinc} ${lkpiinc}
             DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${FD_DEFINITIONS}
-            OPTIONS ${lkpiopt})
+            OPTIONS ${lkpiopt} ${names})
         # an undeclared call links to nothing and panics on first use, so iflib drivers fail the build
         if(FD_IFLIB)
             target_compile_options(${name}_driver PRIVATE -Werror=implicit-function-declaration)
@@ -230,7 +307,10 @@ function(add_fbsdkpi_driver name)
     add_kext_bundle(${name}.kext INFO_PLIST ${FD_INFO_PLIST} KERNEL_PRIVATE
         BUNDLE_IDENTIFIER ${FD_BUNDLE_IDENTIFIER} BUNDLE_VERSION 1.0.0)
     set_property(TARGET ${name}.kext PROPERTY OUTPUT_NAME ${name})
-    set(xnusrc "${FBSDKPI_DIR}/xnu/pd_fbsd_os.cpp")
+    set(xnusrc)
+    if(NOT FD_SHARED)
+        list(APPEND xnusrc "${FBSDKPI_DIR}/xnu/pd_fbsd_os.cpp")
+    endif()
     if(FD_USB)
         list(APPEND xnusrc "${FBSDKPI_DIR}/xnu/pd_fbsd_usb.cpp")
     endif()
@@ -242,35 +322,10 @@ function(add_fbsdkpi_driver name)
     target_sources(${name}.kext PRIVATE ${xnusrc} ${objects})
     set_property(SOURCE ${xnusrc} TARGET_DIRECTORY ${name}.kext
         APPEND PROPERTY COMPILE_OPTIONS -fvisibility=hidden)
-
-    # IONetworkingFamily's headers through the usual shim directory
-    set(shim "${CMAKE_CURRENT_BINARY_DIR}/shim-include")
-    set(ionf "${FBSDKPI_DIR}/../Extensions/IONetworkingFamily")
-    file(MAKE_DIRECTORY "${shim}/IOKit/network")
-    foreach(hdr
-        IOBasicOutputQueue.h IOEthernetController.h IOEthernetInterface.h
-        IOEthernetStats.h IOGatedOutputQueue.h IOKernelDebugger.h
-        IOMbufMemoryCursor.h IOMbufQueue.h IONetworkController.h
-        IONetworkControllerPrivate.h IONetworkData.h IONetworkDebug.h
-        IONetworkInterface.h IONetworkMedium.h IONetworkStack.h
-        IONetworkStats.h IONetworkTypesPrivate.h IONetworkUserClient.h
-        IOOutputQueue.h IOPacketQueue.h)
-        file(CREATE_LINK "${ionf}/${hdr}" "${shim}/IOKit/network/${hdr}" SYMBOLIC)
-    endforeach()
-    target_include_directories(${name}.kext PRIVATE
-        "${FBSDKPI_DIR}"
-        "${FBSDKPI_DIR}/pd"
-        "${FBSDKPI_DIR}/xnu"
-        "${shim}"
-        "${FBSDKPI_DIR}/../Extensions/IOPCIFamily/include"
-        "${FBSDKPI_DIR}/../xnu/EXTERNAL_HEADERS")
-    target_compile_definitions(${name}.kext PRIVATE
-        __PRIVATE_SPI__ PDFBSD_CLASS=${FD_CLASS})
-    target_compile_options(${name}.kext PRIVATE
-        -Wno-sign-conversion -Wno-implicit-int-conversion -Wno-shorten-64-to-32
-        -Wno-unused-parameter -Wno-deprecated-declarations)
-    set_property(TARGET ${name}.kext PROPERTY CXX_STANDARD 14)
-    add_dependencies(${name}.kext IONetworkingFamily.kext)
+    _fbsdkpi_xnu_target(${name} ${FD_CLASS})
+    if(FD_SHARED AND TARGET PDFreeBSDKPI.kext)
+        add_dependencies(${name}.kext PDFreeBSDKPI.kext)
+    endif()
     if(FD_USB)
         target_link_libraries(${name}.kext PRIVATE IOUSBFamilyHeaders)
         target_compile_definitions(${name}.kext PRIVATE PDFBSD_USB=1)
