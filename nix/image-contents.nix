@@ -1121,7 +1121,7 @@ let
         xnuLoader = xnuLoaderDefault;
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-wayland.img";
-        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1 ahci_debug=1 csr-active-config=0x23";
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1 ahci_debug=1 csr-active-config=0x23 dtrace_kernel_symbol_mode=1";
       };
       # wifi firmware the drivers load from /Library/Firmware/<driver>, kept out
       # of the kernel collection and the kext bundles
@@ -1348,8 +1348,9 @@ let
         espMB = 60;
         rootMB = 1200;
         # a graphical boot: the progress bar instead of the verbose log, which -v brings back
-        # csr-active-config=0x23 lets the unprotected aux KC load (0x3) and opens DTrace up to fbt/sdt (0x20)
-        bootArgs = "debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopprogress=1 csr-active-config=0x23";
+        # csr-active-config=0x23 lets the unprotected aux KC load (0x3) and opens DTrace up to fbt/sdt (0x20),
+        # dtrace_kernel_symbol_mode=1 has the kernel give fbt its own symbols, no CoreSymbolication needed
+        bootArgs = "debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopprogress=1 csr-active-config=0x23 dtrace_kernel_symbol_mode=1";
       };
       # the install and rescue drive: the desktop with the disk tools, pdinstall and Install PureDarwin
       imageInstallerBuild = imageWaylandMinimalBuild.override (old: {

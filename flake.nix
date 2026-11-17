@@ -2588,7 +2588,7 @@
             ];
             # every drm firmware family no longer fits the wayland-minimal root
             rootMB = old.rootMB + 600;
-            bootArgs = "-v debug=0x210 -nogzalloc_mode keepsyms=1 gopconsole=1 -noprogress csr-active-config=0x23 fbsdkpi_debug=1 pdnouveau=1";
+            bootArgs = "-v debug=0x210 -nogzalloc_mode keepsyms=1 gopconsole=1 -noprogress csr-active-config=0x23 dtrace_kernel_symbol_mode=1 fbsdkpi_debug=1 pdnouveau=1";
           });
           # Fedora's Microsoft-signed shim and the step that turns an image into its Secure Boot twin
           shimBuild = pd.x86_64.shim;
@@ -2646,7 +2646,7 @@
               ++ [ nvidiaAuxFiles elftransBuild nvidia580 nvidiaLinuxRoot pdnvprobeBuild ];
             imageFileName = "puredarwin-nvidia.img";
             rootMB = old.rootMB + 600;
-            bootArgs = "-v debug=0x210 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 -noprogress csr-active-config=0x23 fbsdkpi_debug=1";
+            bootArgs = "-v debug=0x210 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 -noprogress csr-active-config=0x23 dtrace_kernel_symbol_mode=1 fbsdkpi_debug=1";
           });
           pdgltriBuild = pd.x86_64.pdgltri;
           # neuswc composites with GL on radeonsi (gles) or with pixman (cpu)
