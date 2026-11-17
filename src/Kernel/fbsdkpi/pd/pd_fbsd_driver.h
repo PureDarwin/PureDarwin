@@ -40,6 +40,9 @@ struct pd_fbsd_driver *pd_fbsd_driver_record(void);
 void pd_fbsd_driver_enter(struct pd_fbsd_driver *driver);
 void pd_fbsd_driver_leave(void);
 
+// every driver that has attached, in order, NULL past the last
+struct pd_fbsd_driver *pd_fbsd_driver_at(int index);
+
 // a library kext's own SYSINIT set, run with the layer's and in registration order
 void pd_fbsd_register_library(void **sysinit_begin, void **sysinit_end);
 

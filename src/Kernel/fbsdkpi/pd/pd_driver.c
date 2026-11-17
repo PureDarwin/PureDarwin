@@ -51,11 +51,27 @@ static int sInitialised;
 struct pd_fbsd_driver *pd_fbsd_current;
 static mutex sAttachLock = MUTEX_INITIALIZER("fbsdkpi attach");
 
+// the drivers seen so far, for what runs outside an attach (firmware at interface up)
+#define PD_FBSD_MAX_DRIVERS 32
+static struct pd_fbsd_driver *sDrivers[PD_FBSD_MAX_DRIVERS];
+static int sDriverRecords;
+
 void
 pd_fbsd_driver_enter(struct pd_fbsd_driver *driver)
 {
 	mutex_lock(&sAttachLock);
 	pd_fbsd_current = driver;
+	int i;
+	for (i = 0; i < sDriverRecords && sDrivers[i] != driver; i++) {
+	}
+	if (i == sDriverRecords && sDriverRecords < PD_FBSD_MAX_DRIVERS)
+		sDrivers[sDriverRecords++] = driver;
+}
+
+struct pd_fbsd_driver *
+pd_fbsd_driver_at(int index)
+{
+	return index >= 0 && index < sDriverRecords ? sDrivers[index] : NULL;
 }
 
 void

@@ -15,10 +15,9 @@
 
 // the table is generated for each driver kext, it may be empty
 #ifdef PD_FBSD_SHARED
-// the shared layer loads from the table of the driver attaching
+// the shared layer searches every driver's table: firmware loads at interface up too, on a task queue with no
+// driver attaching, and each driver's firmware names are its own
 #include "pd_fbsd_driver.h"
-#define pd_firmware_images	(pd_fbsd_current->firmware_images)
-#define pd_firmware_image_count	(pd_fbsd_current->firmware_count)
 #else
 extern const struct pd_firmware_image pd_firmware_images[];
 extern const int pd_firmware_image_count;
@@ -31,17 +30,32 @@ base_name(const char *path)
 	return slash != NULL ? slash + 1 : path;
 }
 
+// drivers ask with or without a directory, match either way
 static const struct pd_firmware_image *
-find_image(const char *name)
+find_in(const struct pd_firmware_image *images, int count, const char *name)
 {
-	// drivers ask with or without a directory, match either way
-	for (int i = 0; i < pd_firmware_image_count; i++) {
-		const struct pd_firmware_image *image = &pd_firmware_images[i];
+	for (int i = 0; i < count; i++) {
+		const struct pd_firmware_image *image = &images[i];
 		if (strcmp(image->name, name) == 0
 				|| strcmp(base_name(image->name), base_name(name)) == 0)
 			return image;
 	}
 	return NULL;
+}
+
+static const struct pd_firmware_image *
+find_image(const char *name)
+{
+#ifdef PD_FBSD_SHARED
+	const struct pd_firmware_image *image = NULL;
+	struct pd_fbsd_driver *d;
+
+	for (int i = 0; image == NULL && (d = pd_fbsd_driver_at(i)) != NULL; i++)
+		image = find_in(d->firmware_images, d->firmware_count, name);
+	return image;
+#else
+	return find_in(pd_firmware_images, pd_firmware_image_count, name);
+#endif
 }
 
 // marks a firmware read from the bundle, its data is freed on put
