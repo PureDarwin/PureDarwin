@@ -297,7 +297,7 @@ unsigned long pd_lkpi_jiffies(void);
 #define jiffies pd_lkpi_jiffies()
 void _intr_drain(int irq);
 void hexdump(const void *ptr, int length, const char *hdr, int flags);
-// swap.h's current_is_kswapd names these; drm-kmod's suspend.h pulls it in. Never called outside drm, which has its own
+// swap.h's current_is_kswapd names these and drm-kmod's suspend.h pulls it in. Never called outside drm, which has its own
 struct proc;
 #ifndef curproc
 #define curproc ((struct proc *)0)

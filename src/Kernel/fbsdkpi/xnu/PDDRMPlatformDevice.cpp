@@ -9,6 +9,7 @@
 
 #include "pd_fbsd_os.h"
 #include "pd_fbsd_attach.h"
+#include "pd_fbsd_driver.h"
 #include "pd_fbsd_xnu.h"
 
 #define PDDRM_STR2(x)	#x
@@ -32,7 +33,6 @@ private:
 
 OSDefineMetaClassAndStructors(PDFBSD_CLASS, IOService);
 
-static IOLock *sAttachLock;
 
 #ifdef PDDRM_OPT_IN_BOOTARG
 IOService *
@@ -200,11 +200,10 @@ PDFBSD_CLASS::start(IOService *provider)
 	setProperty("PDDRMState", "init");
 	pdos_xnu_init();
 	setProperty("PDDRMState", "attaching");
-	if (sAttachLock == NULL)
-		sAttachLock = IOLockAlloc();
-	IOLockLock(sAttachLock);
+	// one attach at a time across every driver on the shared layer
+	pd_fbsd_driver_enter(pd_fbsd_driver_record());
 	fDevice = pd_fbsd_attach_platform_device(&pd);
-	IOLockUnlock(sAttachLock);
+	pd_fbsd_driver_leave();
 	setProperty("PDDRMState", fDevice != NULL ? "attached" : "failed");
 	if (fDevice == NULL) {
 		IOLog(PDDRM_NAME ": no linux driver attached\n");

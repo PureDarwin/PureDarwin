@@ -7,10 +7,12 @@
 #include "pd_fbsd_driver.h"
 #include "pd_firmware.h"
 
-// the xnu side of this driver, in PDFBSDEthernet.cpp
+#ifndef PD_FBSD_NO_NET
+// the xnu side of a network driver, in PDFBSDEthernet.cpp
 void pdos_net_input(void *cookie, const void *frame, size_t len);
 void pdos_net_input_chain(void *cookie, void *chain);
 void pdos_net_link(void *cookie, int up, uint64_t baudrate);
+#endif
 // every driver links a table, empty without firmware
 extern const struct pd_firmware_image pd_firmware_images[];
 extern const int pd_firmware_image_count;
@@ -40,9 +42,11 @@ pd_fbsd_driver_record(void)
 		sRecord.uninit_wlan_stack = uninit_wlan_stack;
 		sRecord.start_wlan = (int (*)(void *))start_wlan;
 		sRecord.stop_wlan = (int (*)(void *))stop_wlan;
+#ifndef PD_FBSD_NO_NET
 		sRecord.net_input = pdos_net_input;
 		sRecord.net_input_chain = pdos_net_input_chain;
 		sRecord.net_link = pdos_net_link;
+#endif
 		sRecord.firmware_images = pd_firmware_images;
 		sRecord.firmware_count = pd_firmware_image_count;
 		sRecord.sysinit_begin = (void **)SET_BEGIN(__freebsd_sysinit);

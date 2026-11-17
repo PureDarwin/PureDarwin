@@ -12,6 +12,7 @@
 
 #include "pd_fbsd_os.h"
 #include "pd_fbsd_attach.h"
+#include "pd_fbsd_driver.h"
 #include "pd_fbsd_xnu.h"
 #include "pd_drm_fb.h"
 
@@ -64,7 +65,6 @@ private:
 
 OSDefineMetaClassAndStructors(PDFBSD_CLASS, IOService);
 
-static IOLock *sAttachLock;
 
 // an unclean stop leaves the PSP ring behind and the next create fails, so destroy rings
 // through MP0 C2PMSG_64 first. False when the PSP does not answer, then the gpu is left alone.
@@ -252,13 +252,12 @@ bool
 PDFBSD_CLASS::attachLinux(void)
 {
 	pdos_xnu_init();
-	if (sAttachLock == NULL)
-		sAttachLock = IOLockAlloc();
 
 	PDDRM_LOG(PDDRM_STR(PDFBSD_CLASS) ": attaching the linux driver\n");
-	IOLockLock(sAttachLock);
+	// one attach at a time across every driver on the shared layer
+	pd_fbsd_driver_enter(pd_fbsd_driver_record());
 	fDevice = pd_fbsd_attach_pci_device(fPCI);
-	IOLockUnlock(sAttachLock);
+	pd_fbsd_driver_leave();
 	if (fDevice == NULL) {
 		PDDRM_LOG(PDDRM_STR(PDFBSD_CLASS) ": the linux driver did not attach\n");
 		const char *last = pd_driver_last_error();

@@ -96,6 +96,8 @@ in
     arches = x86arm; kc = x86; }
   { name = "PDFreeBSDKPIUSB.kext"; dir = "PDFreeBSDKPIUSB"; headers = [ "IONetworkingFamily" "IOPCIFamily" "IOUSBFamily" ];
     extra = fbsdkpi; arches = x86; kc = x86; }
+  { name = "PDDRM.kext"; dir = "PDDRM"; headers = [ "IONetworkingFamily" "IOPCIFamily" "IOGraphicsFamily" "PDDRMDri" ];
+    extra = fbsdkpi; arches = x86; }
   { name = "PDLinuxKPI.kext"; dir = "PDLinuxKPI"; headers = [ "IONetworkingFamily" "IOPCIFamily" ]; extra = fbsdkpi;
     arches = x86; kc = x86; }
   { name = "PDFBSDem.kext"; dir = "PDFBSDem"; headers = [ "IONetworkingFamily" "IOPCIFamily" ]; extra = fbsdkpi;

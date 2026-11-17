@@ -75,7 +75,7 @@ function(_fbsdkpi_objects target)
         ${FO_DEFINITIONS})
     target_compile_options(${target} PRIVATE
         -ffreestanding -nostdlibinc -fno-common -fno-stack-protector
-        # names like printf, malloc and wakeup must not leak to later kexts; the shared layer exports its own
+        # names like printf, malloc and wakeup must not leak to later kexts, the shared layer exports its own
         $<$<NOT:$<BOOL:${FO_VISIBLE}>>:-fvisibility=hidden>
         $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti -std=gnu++17 -fapple-kext>
         $<$<COMPILE_LANGUAGE:C>:-std=gnu11>
@@ -196,7 +196,7 @@ function(add_fbsdkpi_library name)
     install(TARGETS ${name}.kext DESTINATION System/Library/Extensions COMPONENT BaseSystem)
 endfunction()
 
-# haiku's usb shim once, for the usb drivers; links PDFreeBSDKPI and IOUSBFamily
+# haiku's usb shim once for the usb drivers, linked to PDFreeBSDKPI and IOUSBFamily
 function(add_fbsdkpi_usb_library name)
     cmake_parse_arguments(FL "" "BUNDLE_IDENTIFIER;INFO_PLIST" "" ${ARGN})
     set(usb)
@@ -219,7 +219,7 @@ function(add_fbsdkpi_usb_library name)
     install(TARGETS ${name}.kext DESTINATION System/Library/Extensions COMPONENT BaseSystem)
 endfunction()
 
-# linuxkpi, net80211 and the wlan glue once, for the wifi drivers; links PDFreeBSDKPI
+# linuxkpi, net80211 and the wlan glue once for every linuxkpi driver, linked to PDFreeBSDKPI
 set(FBSDKPI_LKPI_INCLUDES
     "${FBSDKPI_DIR}/pd/lkpi-override"
     "${FBSDKPI_DIR}/freebsd/linuxkpi/common/include"
@@ -231,6 +231,7 @@ set(FBSDKPI_LKPI_INCLUDES
 set(FBSDKPI_LKPI_OPTIONS "SHELL:-include ${FBSDKPI_DIR}/pd/fbsd-extra/pd_lkpi_pre.h"
     -Werror=implicit-function-declaration)
 set(FBSDKPI_LKPI_NAMES "SHELL:-include ${FBSDKPI_DIR}/pd/pd_lkpi_names.h")
+set(FBSDKPI_DRM_NAMES "SHELL:-include ${FBSDKPI_DIR}/pd/pd_drm_names.h")
 
 # the one linuxkpi serves drm and wifi alike: it and every driver on it see drm-kmod's linux headers and its
 # LINUXKPI_VERSION, so structs match. drm's own environment (pd_drm_pre.h, its CONFIG_ set) stays with the drm
@@ -284,6 +285,54 @@ function(add_fbsdkpi_lkpi_library name)
     install(TARGETS ${name}.kext DESTINATION System/Library/Extensions COMPONENT BaseSystem)
 endfunction()
 
+# the drm core, ttm, dma-buf and the drm-only linuxkpi pieces once, in drm's environment, for every drm driver
+function(add_fbsdkpi_drm_library name)
+    cmake_parse_arguments(FL "" "BUNDLE_IDENTIFIER;INFO_PLIST" "" ${ARGN})
+    if(NOT PD_DRMKMOD_DIR)
+        message(FATAL_ERROR "${name} needs PD_DRMKMOD_DIR, the drm-kmod tree")
+    endif()
+    include("${FBSDKPI_DIR}/drm/drm.cmake")
+    set(drmkmod "${PD_DRMKMOD_DIR}")
+    pd_drm_layout("${drmkmod}" drminc drmdefs drmopts)
+    pd_drm_core_includes("${drmkmod}" coreinc)
+    set(core)
+    foreach(src IN LISTS PD_DRM_CORE_SOURCES)
+        list(APPEND core "${drmkmod}/drivers/gpu/drm/${src}")
+    endforeach()
+    foreach(src IN LISTS PD_DRM_DMABUF_SOURCES)
+        list(APPEND core "${drmkmod}/drivers/dma-buf/${src}")
+    endforeach()
+    foreach(src IN LISTS PD_DRM_VIDEO_SOURCES)
+        list(APPEND core "${drmkmod}/drivers/video/${src}")
+    endforeach()
+    foreach(src IN LISTS PD_DRM_PD_SOURCES)
+        list(APPEND core "${PD_DRM_DIR}/src/${src}")
+    endforeach()
+    set(lkdrm)
+    foreach(src IN LISTS FBSDKPI_LINUXKPI_DRM_SOURCES)
+        list(APPEND lkdrm "${FBSDKPI_DIR}/freebsd/linuxkpi/common/src/${src}")
+    endforeach()
+    set(inc ${drminc} ${FBSDKPI_LKPI_INCLUDES} ${coreinc})
+    set(defs FBSD_DRIVER=1 _XOPEN_SOURCE PD_FBSD_SHARED=1 PD_LKPI_WLAN_DEFS=1 ${drmdefs})
+    set(opts ${FBSDKPI_NAMES} ${FBSDKPI_LKPI_NAMES} ${FBSDKPI_DRM_NAMES} ${FBSDKPI_LKPI_OPTIONS} ${drmopts})
+    _fbsdkpi_objects(${name}_drm SOURCES ${core} VISIBLE INCLUDES ${inc}
+        DEFINITIONS ${defs} KBUILD_MODNAME=\"drm\" LINUXKPI_PARAM_PREFIX=drm_ OPTIONS ${opts})
+    _fbsdkpi_objects(${name}_lkdrm SOURCES ${lkdrm} VISIBLE INCLUDES ${inc}
+        DEFINITIONS ${defs} KBUILD_MODNAME=\"linuxkpi\" OPTIONS ${opts})
+    add_kext_bundle(${name}.kext INFO_PLIST ${FL_INFO_PLIST} KERNEL_PRIVATE
+        BUNDLE_IDENTIFIER ${FL_BUNDLE_IDENTIFIER} BUNDLE_VERSION 1.0.0)
+    set_property(TARGET ${name}.kext PROPERTY OUTPUT_NAME ${name})
+    target_sources(${name}.kext PRIVATE "${FBSDKPI_DIR}/xnu/pd_lkpi_kext.cpp"
+        $<TARGET_OBJECTS:${name}_drm> $<TARGET_OBJECTS:${name}_lkdrm>)
+    _fbsdkpi_xnu_target(${name} ${name})
+    foreach(lib PDFreeBSDKPI PDLinuxKPI)
+        if(TARGET ${lib}.kext)
+            add_dependencies(${name}.kext ${lib}.kext)
+        endif()
+    endforeach()
+    install(TARGETS ${name}.kext DESTINATION System/Library/Extensions COMPONENT BaseSystem)
+endfunction()
+
 function(add_fbsdkpi_driver name)
     cmake_parse_arguments(FD "IFLIB;LINUXKPI;LINUXKPI_DRM;USB;SHARED" "CLASS;BUNDLE_IDENTIFIER;INFO_PLIST"
         "SOURCES;INCLUDES;DEFINITIONS;FIRMWARE;XNU_SOURCES;LKPI_INCLUDES;LKPI_DEFINITIONS;LKPI_OPTIONS;OBJECTS" ${ARGN})
@@ -298,12 +347,12 @@ function(add_fbsdkpi_driver name)
         _fbsdkpi_drm_lkpi(shlkinc shlkdefs shlkopts)
     endif()
     if(FD_SHARED)
-        if(FD_LINUXKPI_DRM)
-            message(FATAL_ERROR "${name}: the shared layer has no drm linuxkpi yet")
-        endif()
         set(names ${FBSDKPI_NAMES})
-        if(FD_LINUXKPI)
+        if(FD_LINUXKPI OR FD_LINUXKPI_DRM)
             list(APPEND names ${FBSDKPI_LKPI_NAMES})
+        endif()
+        if(FD_LINUXKPI_DRM)
+            list(APPEND names ${FBSDKPI_DRM_NAMES})
         endif()
     endif()
     _fbsdkpi_core_sources(core "${FD_USB}")
@@ -389,12 +438,14 @@ function(add_fbsdkpi_driver name)
     foreach(obj IN LISTS FD_OBJECTS)
         list(APPEND objects $<TARGET_OBJECTS:${obj}>)
     endforeach()
-    # the record PDFBSDEthernet hands the layer, built from this driver's glue names
-    list(FIND FD_XNU_SOURCES "${FBSDKPI_DIR}/xnu/PDFBSDEthernet.cpp" ethidx)
-    if(NOT FD_XNU_SOURCES OR NOT ethidx EQUAL -1 OR FD_XNU_SOURCES MATCHES "PDFBSDEthernet.cpp")
-        _fbsdkpi_objects(${name}_record SOURCES "${FBSDKPI_DIR}/pd/pd_fbsd_driver_record.c" OPTIONS ${names})
-        list(APPEND objects $<TARGET_OBJECTS:${name}_record>)
+    # the record the driver's xnu class hands the layer, built from this driver's glue names
+    set(recdefs)
+    if(FD_XNU_SOURCES AND NOT FD_XNU_SOURCES MATCHES "PDFBSDEthernet.cpp")
+        set(recdefs PD_FBSD_NO_NET=1)
     endif()
+    _fbsdkpi_objects(${name}_record SOURCES "${FBSDKPI_DIR}/pd/pd_fbsd_driver_record.c"
+        DEFINITIONS ${recdefs} OPTIONS ${names})
+    list(APPEND objects $<TARGET_OBJECTS:${name}_record>)
 
     if(FD_SOURCES)
         _fbsdkpi_objects(${name}_driver SOURCES ${FD_SOURCES}
@@ -428,7 +479,7 @@ function(add_fbsdkpi_driver name)
         APPEND PROPERTY COMPILE_OPTIONS -fvisibility=hidden)
     _fbsdkpi_xnu_target(${name} ${FD_CLASS})
     if(FD_SHARED)
-        foreach(lib PDFreeBSDKPI PDFreeBSDKPIUSB PDLinuxKPI)
+        foreach(lib PDFreeBSDKPI PDFreeBSDKPIUSB PDLinuxKPI PDDRM)
             if(TARGET ${lib}.kext)
                 add_dependencies(${name}.kext ${lib}.kext)
             endif()

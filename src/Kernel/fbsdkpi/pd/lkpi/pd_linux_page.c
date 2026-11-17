@@ -476,7 +476,6 @@ pmap_page_set_memattr(vm_page_t m, vm_memattr_t ma)
 	m->pd_memattr = ma;
 }
 
-#ifdef PD_LKPI_DRM
 // device apertures get page records with no kernel address, so ttm can name
 // vram pages by physical address
 #include <vm/vm_phys.h>
@@ -518,4 +517,3 @@ vm_phys_fictitious_to_vm_page(vm_paddr_t pa)
 {
 	return PHYS_TO_VM_PAGE(pa);
 }
-#endif
