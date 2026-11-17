@@ -35,3 +35,27 @@ diff -ruN a/drivers/gpu/drm/radeon/radeon_drv.c b/drivers/gpu/drm/radeon/radeon_
  	return 0;
  
  err_agp:
+diff -ruN a/drivers/gpu/drm/radeon/radeon_kms.c b/drivers/gpu/drm/radeon/radeon_kms.c
+--- a/drivers/gpu/drm/radeon/radeon_kms.c
++++ b/drivers/gpu/drm/radeon/radeon_kms.c
+@@ -95,7 +95,7 @@
+ 	rdev->agp = NULL;
+ 
+ done_free:
+-	kfree(rdev);
++	/* rdev holds the drm_device and devm_drm_dev_alloc owns it, as in Linux */
+ 	dev->dev_private = NULL;
+ }
+ 
+diff -ruN a/drivers/gpu/drm/radeon/radeon_drv.c b/drivers/gpu/drm/radeon/radeon_drv.c
+--- a/drivers/gpu/drm/radeon/radeon_drv.c
++++ b/drivers/gpu/drm/radeon/radeon_drv.c
+@@ -363,7 +363,7 @@
+ err_agp:
+ 	pci_disable_device(pdev);
+ err_free:
+-	drm_dev_put(ddev);
++	/* devm_drm_dev_alloc drops its reference when the device goes, as in Linux */
+ 	return ret;
+ }
+ 
