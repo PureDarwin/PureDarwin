@@ -1160,6 +1160,33 @@ let
         cp ${pkgs.linux-firmware.src}/LICENSES/LICENCE.rtlwifi_firmware.txt $fw/LICENCE.rtwn_firmware.txt
       '';
       # rt2870.bin for PDFBSDrun, as the runfw image firmware(9) asks for: rt2870 in its first 4 KB, rt3071 in the rest
+      # intel 1000 to 6000 series firmware for PDFBSDiwn from linux-firmware, under the names iwn asks for
+      iwnFirmwareBuild = pkgs.runCommand "puredarwin-iwn-firmware" { } ''
+        fw=$out/Library/Firmware
+        mkdir -p $fw
+        while read name src; do
+          from=${pkgs.linux-firmware}/lib/firmware/$src
+          if [ -e "$from.zst" ]; then ${pkgs.zstd}/bin/zstd -dqf "$from.zst" -o $fw/$name
+          elif [ -e "$from.xz" ]; then ${pkgs.xz}/bin/xz -dc "$from.xz" > $fw/$name
+          elif [ -e "$from" ]; then cp -L "$from" $fw/$name
+          else echo "iwn firmware: no $src in linux-firmware" >&2; exit 1
+          fi
+        done <<EOF
+        iwn100fw iwlwifi-100-5.ucode
+        iwn105fw iwlwifi-105-6.ucode
+        iwn135fw iwlwifi-135-6.ucode
+        iwn1000fw iwlwifi-1000-5.ucode
+        iwn2000fw iwlwifi-2000-6.ucode
+        iwn2030fw iwlwifi-2030-6.ucode
+        iwn5000fw iwlwifi-5000-5.ucode
+        iwn5150fw iwlwifi-5150-2.ucode
+        iwn6000fw iwlwifi-6000-4.ucode
+        iwn6000g2afw iwlwifi-6000g2a-6.ucode
+        iwn6000g2bfw iwlwifi-6000g2b-6.ucode
+        iwn6050fw iwlwifi-6050-5.ucode
+        EOF
+        cp ${pkgs.linux-firmware.src}/LICENSES/LICENCE.iwlwifi_firmware $fw/LICENCE.iwn_firmware
+      '';
       runFirmwareBuild = pkgs.runCommand "puredarwin-run-firmware" { } ''
         fw=$out/Library/Firmware
         mkdir -p $fw
@@ -1197,6 +1224,7 @@ let
         [
           rtw89FirmwareBuild
           rtwnFirmwareBuild
+          iwnFirmwareBuild
           runFirmwareBuild
           qwxFirmwareBuild
           pd.localeData

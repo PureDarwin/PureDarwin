@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>English</string>
+    <key>CFBundleExecutable</key>
+    <string>PDFBSDiwn</string>
+    <key>CFBundleGetInfoString</key>
+    <string>1.0.0, Copyright (C) 2026 PureDarwin Project. All rights reserved.</string>
+    <key>CFBundleIdentifier</key>
+    <string>org.puredarwin.driver.PDFBSDiwn</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>PDFBSDiwn</string>
+    <key>CFBundlePackageType</key>
+    <string>KEXT</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>CFBundleVersion</key>
+    <string>1.0.0</string>
+    <key>IOKitPersonalities</key>
+    <dict>
+        <key>PDFBSDiwn</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>org.puredarwin.driver.PDFBSDiwn</string>
+            <key>IOClass</key>
+            <string>PDFBSDiwn</string>
+            <key>IOPCIMatch</key>
+            <string>0x00828086 0x00838086 0x00848086 0x00858086 0x00878086 0x00898086 0x008a8086 0x008b8086 0x00908086 0x00918086 0x08858086 0x08868086 0x08878086 0x08888086 0x088e8086 0x088f8086 0x08908086 0x08918086 0x08928086 0x08938086 0x08948086 0x08958086 0x08968086 0x08978086 0x08ae8086 0x08af8086 0x42298086 0x422b8086 0x422c8086 0x422d8086 0x42308086 0x42328086 0x42338086 0x42358086 0x42368086 0x42378086 0x42388086 0x42398086 0x423a8086 0x423b8086 0x423c8086 0x423d8086</string>
+            <key>IOProbeScore</key>
+            <integer>7000</integer>
+            <key>IOProviderClass</key>
+            <string>IOPCIDevice</string>
+        </dict>
+    </dict>
+    <key>OSBundleLibraries</key>
+    <dict>
+        <key>org.puredarwin.kpi.freebsd</key>
+        <string>1.0.0</string>
+        <key>org.puredarwin.kpi.linux</key>
+        <string>1.0.0</string>
+        <key>com.apple.iokit.IO80211Family</key>
+        <string>1.0.0</string>
+        <key>com.apple.iokit.IONetworkingFamily</key>
+        <string>3.4</string>
+        <key>com.apple.iokit.IOPCIFamily</key>
+        <string>2.9</string>
+        <key>com.apple.kpi.iokit</key>
+        <string>10.0.0d1</string>
+        <key>com.apple.kpi.libkern</key>
+        <string>10.0.0d1</string>
+        <key>com.apple.kpi.mach</key>
+        <string>10.0.0d1</string>
+        <key>com.apple.kpi.unsupported</key>
+        <string>10.0.0d1</string>
+        <key>com.apple.kpi.bsd</key>
+        <string>10.0.0d1</string>
+    </dict>
+    <key>OSBundleCompatibleVersion</key>
+    <string>1.0.0</string>
+    <key>OSBundleRequired</key>
+    <string>Local-Root</string>
+</dict>
+</plist>

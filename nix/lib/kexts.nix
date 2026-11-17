@@ -120,6 +120,9 @@ in
   # loaded from the gpu images' aux KC, with net80211 and linuxkpi it would push the boot KC past the loader's limit
   { name = "PDFBSDrtwn.kext"; dir = "PDFBSDrtwn"; headers = [ "IO80211Family" "IOPCIFamily" "IOUSBFamily" ]; extra = fbsdkpi;
     arches = x86; kc = [ ]; }
+  # freebsd iwn for the intel 1000 to 6000 series iwlwifi only drives with dvm, aux KC like rtwn
+  { name = "PDFBSDiwn.kext"; dir = "PDFBSDiwn"; headers = [ "IO80211Family" "IOPCIFamily" ]; extra = fbsdkpi;
+    arches = x86; kc = [ ]; }
   # freebsd run for the ralink usb dongles, aux KC like rtwn
   { name = "PDFBSDrun.kext"; dir = "PDFBSDrun"; headers = [ "IO80211Family" "IOPCIFamily" "IOUSBFamily" ]; extra = fbsdkpi;
     arches = x86; kc = [ ]; }

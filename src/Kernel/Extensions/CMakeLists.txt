@@ -83,6 +83,7 @@ if(PUREDARWIN_ARCH STREQUAL "x86_64")
     add_subdirectory(PDFBSDrtw89)
     add_subdirectory(PDFBSDiwlwifi)
     add_subdirectory(PDFBSDrtwn)
+    add_subdirectory(PDFBSDiwn)
     add_subdirectory(PDFBSDrun)
     add_subdirectory(PDDRMDri)
     # amdgpu through drm-kmod; the drm-kmod tree comes from nix, so it is optional
@@ -171,7 +172,7 @@ add_dependencies(kexts
     AppleFileSystemDriver.kext Ext4FileSystemDriver.kext ApfsFileSystemDriver.kext
 )
 if(PUREDARWIN_ARCH STREQUAL "x86_64")
-    add_dependencies(kexts PDFBSDem.kext PDFBSDigc.kext PDFBSDix.kext PDFBSDrge.kext PDFBSDrtw89.kext PDFBSDiwlwifi.kext PDFBSDrtwn.kext PDFBSDrun.kext PDDRMDri.kext)
+    add_dependencies(kexts PDFBSDem.kext PDFBSDigc.kext PDFBSDix.kext PDFBSDrge.kext PDFBSDrtw89.kext PDFBSDiwlwifi.kext PDFBSDrtwn.kext PDFBSDiwn.kext PDFBSDrun.kext PDDRMDri.kext)
 endif()
 add_dependencies(kexts PDI2CFamily.kext PDI2CHID.kext PDDesignWareI2C.kext PDUSBNCM.kext)
 if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32)

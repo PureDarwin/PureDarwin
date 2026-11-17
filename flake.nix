@@ -2593,7 +2593,7 @@
             kexts = drmGpuKexts;
             kcTools = kc-tools.packages.${system}.default;
             # radeon takes the pre-GCN parts it lists at a higher score than amdgpu's catch-all, amdgpu the rest
-            auxKexts = [ "PDDRM.kext" "PDDRMamdgpu.kext" "PDDRMi915.kext" "PDDRMnouveau.kext" "PDDRMradeon.kext" "PDFBSDiwlwifi.kext" "PDFBSDrtwn.kext" "PDFBSDrun.kext" "PDFBSDix.kext" "PDSerialHID.kext" ];
+            auxKexts = [ "PDDRM.kext" "PDDRMamdgpu.kext" "PDDRMi915.kext" "PDDRMnouveau.kext" "PDDRMradeon.kext" "PDFBSDiwlwifi.kext" "PDFBSDiwn.kext" "PDFBSDrtwn.kext" "PDFBSDrun.kext" "PDFBSDix.kext" "PDSerialHID.kext" ];
           };
           # what every desktop image carries for the drm drivers: the combined aux KC and firmware
           gpuDefaultPackages = [ gpuAuxFiles (mkAmdgpuFirmware [ "granite-ridge" "mendocino" "navi21" "navi22" "navi23" "navi24" "navi31" "navi32" "navi33" "raven" "renoir" "rembrandt" "kaveri" "kabini" "mullins" "polaris10" "polaris11" "polaris12" "vegam" ]) i915Firmware ];
