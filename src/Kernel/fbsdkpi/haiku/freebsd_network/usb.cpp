@@ -354,6 +354,8 @@ struct usb_xfer {
 
 	uint8 usb_state;
 	bool in_progress;
+	// completions of stopped transfers still queued, the invoker drops them
+	int stale;
 	status_t result;
 	int transferred_length;
 
@@ -457,6 +459,7 @@ usbd_transfer_setup(struct freebsd_usb_device* udev,
 
 		xfer->usb_state = USB_ST_SETUP;
 		xfer->in_progress = false;
+		xfer->stale = 0;
 		xfer->transferred_length = 0;
 		cv_init(&xfer->condition, "FreeBSD USB transfer");
 
@@ -632,6 +635,13 @@ usbd_invoker(void* arg, int pending)
 {
 	struct usb_xfer* xfer = (struct usb_xfer*)arg;
 	mtx_lock(xfer->mutex);
+	if (xfer->stale > 0) {
+		// stop already gave the driver its cancel, its buffers may be gone
+		xfer->stale--;
+		mtx_unlock(xfer->mutex);
+		cv_broadcast(&xfer->condition);
+		return;
+	}
 	xfer->in_progress = false;
 	xfer->usb_state = (xfer->result == B_OK) ? USB_ST_TRANSFERRED : USB_ST_ERROR;
 	xfer->callback(xfer, map_usb_error(xfer->result));
@@ -704,6 +714,14 @@ usbd_transfer_stop(struct usb_xfer* xfer)
 
 	// Unfortunately we have no way of cancelling just one transfer.
 	sUSB->cancel_queued_transfers(xfer->pipe);
+	if (!xfer->in_progress)
+		return;
+
+	// as on FreeBSD the driver sees the cancel before stop returns, the late completion is dropped
+	xfer->stale++;
+	xfer->in_progress = false;
+	xfer->usb_state = USB_ST_ERROR;
+	xfer->callback(xfer, USB_ERR_CANCELLED);
 }
 
 
@@ -715,8 +733,9 @@ usbd_transfer_drain(struct usb_xfer* xfer)
 
 	mtx_lock(xfer->mutex);
 	usbd_transfer_stop(xfer);
-	while (xfer->in_progress)
-		cv_wait(&xfer->condition, xfer->mutex);
+	// a completion that never comes must not hang detach, give up after two seconds
+	for (int i = 0; (xfer->in_progress || xfer->stale > 0) && i < 20; i++)
+		cv_timedwait(&xfer->condition, xfer->mutex, hz / 10 > 0 ? hz / 10 : 1);
 	mtx_unlock(xfer->mutex);
 }
 
