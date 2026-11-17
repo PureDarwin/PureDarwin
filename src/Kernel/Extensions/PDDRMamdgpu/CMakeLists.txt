@@ -30,11 +30,21 @@ endforeach()
 foreach(src IN LISTS PD_DRM_PD_SOURCES)
     list(APPEND core "${PD_DRM_DIR}/src/${src}")
 endforeach()
-_fbsdkpi_objects(PDDRMamdgpu_drm SOURCES ${core}
-    INCLUDES ${lkpiinc} ${coreinc}
-    DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${drmdefs}
-        KBUILD_MODNAME=\"drm\" LINUXKPI_PARAM_PREFIX=drm_
-    OPTIONS ${lkpiopt})
+# x86 links the drm core, linuxkpi and fbsdkpi from PDDRM and the libraries under it, arm64 still carries its own
+set(shared)
+set(names)
+set(drmobj)
+if(PUREDARWIN_ARCH STREQUAL "x86_64")
+    set(shared SHARED)
+    set(names ${FBSDKPI_NAMES} ${FBSDKPI_LKPI_NAMES} ${FBSDKPI_DRM_NAMES})
+else()
+    _fbsdkpi_objects(PDDRMamdgpu_drm SOURCES ${core}
+        INCLUDES ${lkpiinc} ${coreinc}
+        DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${drmdefs}
+            KBUILD_MODNAME=\"drm\" LINUXKPI_PARAM_PREFIX=drm_
+        OPTIONS ${lkpiopt})
+    set(drmobj PDDRMamdgpu_drm)
+endif()
 
 set(amd)
 set(amdfp)
@@ -54,16 +64,17 @@ set(amddefs FBSD_DRIVER=1 _XOPEN_SOURCE ${drmdefs}
 _fbsdkpi_objects(PDDRMamdgpu_amd SOURCES ${amd}
     INCLUDES ${lkpiinc} ${coreinc} ${amdinc}
     DEFINITIONS ${amddefs}
-    OPTIONS ${lkpiopt})
+    OPTIONS ${names} ${lkpiopt})
 # dc's display mode library computes in floating point between kernel_fpu_begin
 # and kernel_fpu_end
 # linux's cc_stack_align4 is 2^4 bytes, the fp code calls into dc code that keeps sse values on the stack
 _fbsdkpi_objects(PDDRMamdgpu_amdfp SOURCES ${amdfp}
     INCLUDES ${lkpiinc} ${coreinc} ${amdinc}
     DEFINITIONS ${amddefs}
-    OPTIONS ${lkpiopt} -msse -msse2 -mstack-alignment=16)
+    OPTIONS ${names} ${lkpiopt} -msse -msse2 -mstack-alignment=16)
 
 add_fbsdkpi_driver(PDDRMamdgpu
+    ${shared}
     CLASS PDDRMamdgpu
     BUNDLE_IDENTIFIER org.puredarwin.driver.PDDRMamdgpu
     INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist"
@@ -72,7 +83,7 @@ add_fbsdkpi_driver(PDDRMamdgpu
     LKPI_INCLUDES ${drminc}
     LKPI_DEFINITIONS ${drmdefs} KBUILD_MODNAME=\"linuxkpi\"
     LKPI_OPTIONS ${drmopts}
-    OBJECTS PDDRMamdgpu_drm PDDRMamdgpu_amd PDDRMamdgpu_amdfp
+    OBJECTS ${drmobj} PDDRMamdgpu_amd PDDRMamdgpu_amdfp
     XNU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/../../fbsdkpi/xnu/PDDRMDevice.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/../../fbsdkpi/xnu/PDDRMFramebuffer.cpp"
 )

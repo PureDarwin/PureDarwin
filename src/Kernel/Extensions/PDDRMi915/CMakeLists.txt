@@ -30,11 +30,21 @@ endforeach()
 foreach(src IN LISTS PD_DRM_PD_SOURCES)
     list(APPEND core "${PD_DRM_DIR}/src/${src}")
 endforeach()
-_fbsdkpi_objects(PDDRMi915_drm SOURCES ${core}
-    INCLUDES ${lkpiinc} ${coreinc}
-    DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${drmdefs}
-        KBUILD_MODNAME=\"drm\" LINUXKPI_PARAM_PREFIX=drm_
-    OPTIONS ${lkpiopt})
+# x86 links the drm core, linuxkpi and fbsdkpi from PDDRM and the libraries under it, arm64 still carries its own
+set(shared)
+set(names)
+set(drmobj)
+if(PUREDARWIN_ARCH STREQUAL "x86_64")
+    set(shared SHARED)
+    set(names ${FBSDKPI_NAMES} ${FBSDKPI_LKPI_NAMES} ${FBSDKPI_DRM_NAMES})
+else()
+    _fbsdkpi_objects(PDDRMi915_drm SOURCES ${core}
+        INCLUDES ${lkpiinc} ${coreinc}
+        DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${drmdefs}
+            KBUILD_MODNAME=\"drm\" LINUXKPI_PARAM_PREFIX=drm_
+        OPTIONS ${lkpiopt})
+    set(drmobj PDDRMi915_drm)
+endif()
 
 set(i915)
 foreach(src IN LISTS PD_DRM_I915_SOURCES)
@@ -51,9 +61,10 @@ endforeach()
 _fbsdkpi_objects(PDDRMi915_i915 SOURCES ${i915}
     INCLUDES ${lkpiinc} ${coreinc} ${i915inc}
     DEFINITIONS ${i915defs}
-    OPTIONS ${lkpiopt} -Wno-pointer-arith -Wno-format -Wno-cast-qual)
+    OPTIONS ${names} ${lkpiopt} -Wno-pointer-arith -Wno-format -Wno-cast-qual)
 
 add_fbsdkpi_driver(PDDRMi915
+    ${shared}
     CLASS PDDRMi915
     BUNDLE_IDENTIFIER org.puredarwin.driver.PDDRMi915
     INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist"
@@ -62,7 +73,7 @@ add_fbsdkpi_driver(PDDRMi915
     LKPI_INCLUDES ${drminc}
     LKPI_DEFINITIONS ${drmdefs} KBUILD_MODNAME=\"linuxkpi\"
     LKPI_OPTIONS ${drmopts}
-    OBJECTS PDDRMi915_drm PDDRMi915_i915
+    OBJECTS ${drmobj} PDDRMi915_i915
     XNU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/../../fbsdkpi/xnu/PDDRMDevice.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/../../fbsdkpi/xnu/PDDRMFramebuffer.cpp"
 )

@@ -1799,7 +1799,7 @@
             installKernel = false;
             installKexts = true;
             installKextNames = [ "PDDRMnvidia.kext" ];
-            extraCmakeFlags = [ "-DPD_DRMKMOD_DIR=${drmKmodSrc}" "-DPD_NVIDIA_DRM_DIR=${pd.x86_64.nvidiaDrmSrc}" ];
+            extraCmakeFlags = [ "-DPD_DRMKMOD_DIR=${drmKmodAllSrc}" "-DPD_NVIDIA_DRM_DIR=${pd.x86_64.nvidiaDrmSrc}" ];
             ninjaFlags = [ "-k" "0" ];
           };
           # gsp firmware for turing (tu1xx), ampere ga10x (ga107 is the rtx 2050) and ada ad10x, only
@@ -1868,7 +1868,7 @@
             installKernel = false;
             installKexts = true;
             installKextNames = [ "PDDRMi915.kext" ];
-            extraCmakeFlags = [ "-DPD_DRMKMOD_DIR=${drmKmodI915Src}" ];
+            extraCmakeFlags = [ "-DPD_DRMKMOD_DIR=${drmKmodAllSrc}" ];
             ninjaFlags = [ "-k" "0" ];
           };
           # the amdgpu kext, built apart from the boot kexts and loaded from the
@@ -1881,7 +1881,7 @@
             installKernel = false;
             installKexts = true;
             installKextNames = [ "PDDRMamdgpu.kext" ];
-            extraCmakeFlags = [ "-DPD_DRMKMOD_DIR=${drmKmodSrc}" ];
+            extraCmakeFlags = [ "-DPD_DRMKMOD_DIR=${drmKmodAllSrc}" ];
             # report every compile error of a bring-up build at once
             ninjaFlags = [ "-k" "0" ];
           };
@@ -1894,7 +1894,7 @@
             installKernel = false;
             installKexts = true;
             installKextNames = [ "PDDRMradeon.kext" ];
-            extraCmakeFlags = [ "-DPD_DRMKMOD_DIR=${drmKmodRadeonSrc}" ];
+            extraCmakeFlags = [ "-DPD_DRMKMOD_DIR=${drmKmodAllSrc}" ];
             ninjaFlags = [ "-k" "0" ];
           };
           # the adreno drm driver for arm64, the fbsdkpi layer's first arm64 user

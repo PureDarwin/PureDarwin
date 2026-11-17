@@ -30,11 +30,21 @@ endforeach()
 foreach(src IN LISTS PD_DRM_PD_SOURCES)
     list(APPEND core "${PD_DRM_DIR}/src/${src}")
 endforeach()
-_fbsdkpi_objects(PDDRMradeon_drm SOURCES ${core}
-    INCLUDES ${lkpiinc} ${coreinc}
-    DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${drmdefs}
-        KBUILD_MODNAME=\"drm\" LINUXKPI_PARAM_PREFIX=drm_
-    OPTIONS ${lkpiopt})
+# x86 links the drm core, linuxkpi and fbsdkpi from PDDRM and the libraries under it, arm64 still carries its own
+set(shared)
+set(names)
+set(drmobj)
+if(PUREDARWIN_ARCH STREQUAL "x86_64")
+    set(shared SHARED)
+    set(names ${FBSDKPI_NAMES} ${FBSDKPI_LKPI_NAMES} ${FBSDKPI_DRM_NAMES})
+else()
+    _fbsdkpi_objects(PDDRMradeon_drm SOURCES ${core}
+        INCLUDES ${lkpiinc} ${coreinc}
+        DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${drmdefs}
+            KBUILD_MODNAME=\"drm\" LINUXKPI_PARAM_PREFIX=drm_
+        OPTIONS ${lkpiopt})
+    set(drmobj PDDRMradeon_drm)
+endif()
 
 set(rad)
 foreach(src IN LISTS PD_DRM_RADEON_SOURCES)
@@ -48,9 +58,10 @@ _fbsdkpi_objects(PDDRMradeon_radeon SOURCES ${rad}
     INCLUDES ${lkpiinc} ${coreinc} ${radinc}
     DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${drmdefs} CONFIG_DRM_RADEON PD_DRM_FB_DRIVER_BUFFERS
         KBUILD_MODNAME=\"radeonkms\" LINUXKPI_PARAM_PREFIX=radeon_ DRM_SYSCTL_PARAM_PREFIX=_radeonkms
-    OPTIONS ${lkpiopt} -Wno-pointer-arith -Wno-format -Wno-cast-qual)
+    OPTIONS ${names} ${lkpiopt} -Wno-pointer-arith -Wno-format -Wno-cast-qual)
 
 add_fbsdkpi_driver(PDDRMradeon
+    ${shared}
     CLASS PDDRMradeon
     BUNDLE_IDENTIFIER org.puredarwin.driver.PDDRMradeon
     INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist"
@@ -59,7 +70,7 @@ add_fbsdkpi_driver(PDDRMradeon
     LKPI_INCLUDES ${drminc}
     LKPI_DEFINITIONS ${drmdefs} KBUILD_MODNAME=\"linuxkpi\"
     LKPI_OPTIONS ${drmopts}
-    OBJECTS PDDRMradeon_drm PDDRMradeon_radeon
+    OBJECTS ${drmobj} PDDRMradeon_radeon
     XNU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/../../fbsdkpi/xnu/PDDRMDevice.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/../../fbsdkpi/xnu/PDDRMFramebuffer.cpp"
 )

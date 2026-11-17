@@ -31,11 +31,21 @@ endforeach()
 foreach(src IN LISTS PD_DRM_PD_SOURCES)
     list(APPEND core "${PD_DRM_DIR}/src/${src}")
 endforeach()
-_fbsdkpi_objects(PDDRMnvidia_drm SOURCES ${core}
-    INCLUDES ${lkpiinc} ${coreinc}
-    DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${drmdefs}
-        KBUILD_MODNAME=\"drm\" LINUXKPI_PARAM_PREFIX=drm_
-    OPTIONS ${lkpiopt})
+# x86 links the drm core, linuxkpi and fbsdkpi from PDDRM and the libraries under it, arm64 still carries its own
+set(shared)
+set(names)
+set(drmobj)
+if(PUREDARWIN_ARCH STREQUAL "x86_64")
+    set(shared SHARED)
+    set(names ${FBSDKPI_NAMES} ${FBSDKPI_LKPI_NAMES} ${FBSDKPI_DRM_NAMES})
+else()
+    _fbsdkpi_objects(PDDRMnvidia_drm SOURCES ${core}
+        INCLUDES ${lkpiinc} ${coreinc}
+        DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${drmdefs}
+            KBUILD_MODNAME=\"drm\" LINUXKPI_PARAM_PREFIX=drm_
+        OPTIONS ${lkpiopt})
+    set(drmobj PDDRMnvidia_drm)
+endif()
 
 # the sources nvidia-drm-sources.mk lists, with PD's conftest answers in front of the package's common headers
 set(nv nvidia-drm.c nvidia-drm-drv.c nvidia-drm-utils.c nvidia-drm-crtc.c nvidia-drm-encoder.c
@@ -53,10 +63,11 @@ _fbsdkpi_objects(PDDRMnvidia_nvidia SOURCES ${nv}
     DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${drmdefs} PD_DRM_FB_DRIVER_BUFFERS NV_BSD NVCPU_X86_64 NV_KERNEL_INTERFACE_LAYER
         NV_VERSION_STRING=\"580.196.07\"
         KBUILD_MODNAME=\"nvidia_drm\" LINUXKPI_PARAM_PREFIX=nvidia_drm_
-    OPTIONS ${lkpiopt} "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/pd_nvdrm_pre.h"
+    OPTIONS ${names} ${lkpiopt} "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/pd_nvdrm_pre.h"
         -Wno-pointer-arith -Wno-format -Wno-cast-qual)
 
 add_fbsdkpi_driver(PDDRMnvidia
+    ${shared}
     CLASS PDDRMnvidia
     BUNDLE_IDENTIFIER org.puredarwin.driver.PDDRMnvidia
     INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist"
@@ -65,7 +76,7 @@ add_fbsdkpi_driver(PDDRMnvidia
     LKPI_INCLUDES ${drminc}
     LKPI_DEFINITIONS ${drmdefs} KBUILD_MODNAME=\"linuxkpi\"
     LKPI_OPTIONS ${drmopts}
-    OBJECTS PDDRMnvidia_drm PDDRMnvidia_nvidia
+    OBJECTS ${drmobj} PDDRMnvidia_nvidia
     XNU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/PDDRMnvidia.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/../../fbsdkpi/xnu/PDDRMFramebuffer.cpp"
 )
