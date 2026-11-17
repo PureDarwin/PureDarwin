@@ -30,6 +30,7 @@ foreach(src
 endforeach()
 
 add_fbsdkpi_driver(PDFBSDiwlwifi
+    SHARED
     CLASS PDFBSDiwlwifi
     BUNDLE_IDENTIFIER org.puredarwin.driver.PDFBSDiwlwifi
     INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist"

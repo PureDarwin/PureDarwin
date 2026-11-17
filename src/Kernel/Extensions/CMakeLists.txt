@@ -73,6 +73,7 @@ endif()
 # FreeBSD drivers on the fbsdkpi layer, x86_64 only for now
 if(PUREDARWIN_ARCH STREQUAL "x86_64")
     add_subdirectory(PDFreeBSDKPI)
+    add_subdirectory(PDLinuxKPI)
     add_subdirectory(PDFBSDem)
     add_subdirectory(PDFBSDigc)
     add_subdirectory(PDFBSDix)

@@ -12,6 +12,7 @@ foreach(src
 endforeach()
 
 add_fbsdkpi_driver(PDFBSDrtw89
+    SHARED
     CLASS PDFBSDrtw89
     BUNDLE_IDENTIFIER org.puredarwin.driver.PDFBSDrtw89
     INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist"

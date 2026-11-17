@@ -196,6 +196,56 @@ function(add_fbsdkpi_library name)
     install(TARGETS ${name}.kext DESTINATION System/Library/Extensions COMPONENT BaseSystem)
 endfunction()
 
+# linuxkpi, net80211 and the wlan glue once, for the wifi drivers; links PDFreeBSDKPI
+set(FBSDKPI_LKPI_INCLUDES
+    "${FBSDKPI_DIR}/pd/lkpi-override"
+    "${FBSDKPI_DIR}/freebsd/linuxkpi/common/include"
+    "${FBSDKPI_DIR}/freebsd/linuxkpi/dummy/include"
+    "${FBSDKPI_DIR}/pd/fbsd-extra"
+    "${FBSDKPI_DIR}/freebsd"
+    "${FBSDKPI_DIR}/freebsd/crypto/rijndael"
+    "${FBSDKPI_DIR}/haiku/freebsd_iflib/compat")
+set(FBSDKPI_LKPI_OPTIONS "SHELL:-include ${FBSDKPI_DIR}/pd/fbsd-extra/pd_lkpi_pre.h"
+    -Werror=implicit-function-declaration)
+set(FBSDKPI_LKPI_NAMES "SHELL:-include ${FBSDKPI_DIR}/pd/pd_lkpi_names.h")
+
+function(add_fbsdkpi_lkpi_library name)
+    cmake_parse_arguments(FL "" "BUNDLE_IDENTIFIER;INFO_PLIST" "" ${ARGN})
+    set(lkpi)
+    foreach(src IN LISTS FBSDKPI_LINUXKPI_SOURCES FBSDKPI_LINUXKPI_WLAN_SOURCES)
+        list(APPEND lkpi "${FBSDKPI_DIR}/freebsd/linuxkpi/common/src/${src}")
+    endforeach()
+    foreach(src IN LISTS FBSDKPI_LINUXKPI_PD_SOURCES FBSDKPI_LINUXKPI_WLAN_PD_SOURCES)
+        list(APPEND lkpi "${FBSDKPI_DIR}/pd/lkpi/${src}")
+    endforeach()
+    foreach(src IN LISTS FBSDKPI_NET80211_SOURCES)
+        list(APPEND lkpi "${FBSDKPI_DIR}/freebsd/net80211/${src}")
+    endforeach()
+    list(APPEND lkpi
+        "${FBSDKPI_DIR}/freebsd/crypto/rijndael/rijndael-alg-fst.c"
+        "${FBSDKPI_DIR}/freebsd/crypto/rijndael/rijndael-api.c"
+        "${FBSDKPI_DIR}/freebsd/crypto/sha1.c")
+    set(shared PD_FBSD_SHARED=1 PD_LKPI_WLAN_DEFS=1)
+    _fbsdkpi_objects(${name}_lkpi SOURCES ${lkpi} VISIBLE
+        INCLUDES ${FBSDKPI_LKPI_INCLUDES}
+        DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${shared}
+        OPTIONS ${FBSDKPI_NAMES} ${FBSDKPI_LKPI_NAMES} ${FBSDKPI_LKPI_OPTIONS})
+    _fbsdkpi_objects(${name}_glue SOURCES "${FBSDKPI_DIR}/pd/pd_lkpi_glue.c" VISIBLE
+        INCLUDES "${FBSDKPI_DIR}/haiku/freebsd_iflib/compat"
+        DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${shared}
+        OPTIONS ${FBSDKPI_NAMES} ${FBSDKPI_LKPI_NAMES})
+    add_kext_bundle(${name}.kext INFO_PLIST ${FL_INFO_PLIST} KERNEL_PRIVATE
+        BUNDLE_IDENTIFIER ${FL_BUNDLE_IDENTIFIER} BUNDLE_VERSION 1.0.0)
+    set_property(TARGET ${name}.kext PROPERTY OUTPUT_NAME ${name})
+    target_sources(${name}.kext PRIVATE "${FBSDKPI_DIR}/xnu/pd_lkpi_kext.cpp"
+        $<TARGET_OBJECTS:${name}_lkpi> $<TARGET_OBJECTS:${name}_glue>)
+    _fbsdkpi_xnu_target(${name} ${name})
+    if(TARGET PDFreeBSDKPI.kext)
+        add_dependencies(${name}.kext PDFreeBSDKPI.kext)
+    endif()
+    install(TARGETS ${name}.kext DESTINATION System/Library/Extensions COMPONENT BaseSystem)
+endfunction()
+
 function(add_fbsdkpi_driver name)
     cmake_parse_arguments(FD "IFLIB;LINUXKPI;LINUXKPI_DRM;USB;SHARED" "CLASS;BUNDLE_IDENTIFIER;INFO_PLIST"
         "SOURCES;INCLUDES;DEFINITIONS;FIRMWARE;XNU_SOURCES;LKPI_INCLUDES;LKPI_DEFINITIONS;LKPI_OPTIONS;OBJECTS" ${ARGN})
@@ -203,10 +253,13 @@ function(add_fbsdkpi_driver name)
     # a SHARED driver links PDFreeBSDKPI.kext for the layer and builds only its own code, under the shared names
     set(names)
     if(FD_SHARED)
-        if(FD_USB OR FD_LINUXKPI OR FD_LINUXKPI_DRM OR FD_XNU_SOURCES)
-            message(FATAL_ERROR "${name}: the shared layer has no usb, linuxkpi or own xnu glue yet")
+        if(FD_USB OR FD_LINUXKPI_DRM)
+            message(FATAL_ERROR "${name}: the shared layer has no usb or drm linuxkpi yet")
         endif()
         set(names ${FBSDKPI_NAMES})
+        if(FD_LINUXKPI)
+            list(APPEND names ${FBSDKPI_LKPI_NAMES})
+        endif()
     endif()
     _fbsdkpi_core_sources(core "${FD_USB}")
     # the firmware table, empty or not, stays with the driver: the shared layer reads it through the record
@@ -275,16 +328,18 @@ function(add_fbsdkpi_driver name)
                 "${FBSDKPI_DIR}/freebsd/crypto/rijndael/rijndael-api.c"
                 "${FBSDKPI_DIR}/freebsd/crypto/sha1.c")
         endif()
-        _fbsdkpi_objects(${name}_lkpi SOURCES ${lkpi}
-            INCLUDES ${lkpiinc}
-            DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${FD_LKPI_DEFINITIONS}
-            OPTIONS ${lkpiopt})
-        # tasklets run on iflib's grouptask queues
-        _fbsdkpi_objects(${name}_lkpiglue SOURCES "${FBSDKPI_DIR}/pd/pd_lkpi_glue.c"
-            "${FBSDKPI_DIR}/haiku/freebsd_iflib/subr_gtaskqueue.c"
-            INCLUDES "${FBSDKPI_DIR}/haiku/freebsd_iflib/compat"
-            DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE)
-        list(APPEND objects $<TARGET_OBJECTS:${name}_lkpi> $<TARGET_OBJECTS:${name}_lkpiglue>)
+        if(NOT FD_SHARED)
+            _fbsdkpi_objects(${name}_lkpi SOURCES ${lkpi}
+                INCLUDES ${lkpiinc}
+                DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${FD_LKPI_DEFINITIONS}
+                OPTIONS ${lkpiopt})
+            # tasklets run on iflib's grouptask queues
+            _fbsdkpi_objects(${name}_lkpiglue SOURCES "${FBSDKPI_DIR}/pd/pd_lkpi_glue.c"
+                "${FBSDKPI_DIR}/haiku/freebsd_iflib/subr_gtaskqueue.c"
+                INCLUDES "${FBSDKPI_DIR}/haiku/freebsd_iflib/compat"
+                DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE)
+            list(APPEND objects $<TARGET_OBJECTS:${name}_lkpi> $<TARGET_OBJECTS:${name}_lkpiglue>)
+        endif()
     endif()
     foreach(obj IN LISTS FD_OBJECTS)
         list(APPEND objects $<TARGET_OBJECTS:${obj}>)
@@ -300,7 +355,7 @@ function(add_fbsdkpi_driver name)
         _fbsdkpi_objects(${name}_driver SOURCES ${FD_SOURCES}
             INCLUDES ${FD_INCLUDES} ${iflibinc} ${lkpiinc}
             DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${FD_DEFINITIONS}
-            OPTIONS ${lkpiopt} ${names})
+            OPTIONS ${names} ${lkpiopt})
         # an undeclared call links to nothing and panics on first use, so iflib drivers fail the build
         if(FD_IFLIB)
             target_compile_options(${name}_driver PRIVATE -Werror=implicit-function-declaration)

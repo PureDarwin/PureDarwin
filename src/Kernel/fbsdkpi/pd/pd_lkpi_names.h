@@ -1,0 +1,70 @@
+// SPDX-License-Identifier: MIT
+// PDLinuxKPI's names that xnu or another kext also exports, renamed so it links flat in one KC
+// made from the built kexts by pd-fbsdkpi-notes/tools/gen-kpi-names.sh
+#ifndef PD_LKPI_NAMES_H
+#define PD_LKPI_NAMES_H
+
+#define arc4random_uniform pdk_arc4random_uniform
+#define bsearch pdk_bsearch
+#define ieee80211_add_rates pdk_ieee80211_add_rates
+#define ieee80211_add_rsn pdk_ieee80211_add_rsn
+#define ieee80211_add_ssid pdk_ieee80211_add_ssid
+#define ieee80211_add_wme_info pdk_ieee80211_add_wme_info
+#define ieee80211_add_wpa pdk_ieee80211_add_wpa
+#define ieee80211_add_xrates pdk_ieee80211_add_xrates
+#define ieee80211_beacon_alloc pdk_ieee80211_beacon_alloc
+#define ieee80211_chan2ieee pdk_ieee80211_chan2ieee
+#define ieee80211_classify pdk_ieee80211_classify
+#define ieee80211_create_ibss pdk_ieee80211_create_ibss
+#define ieee80211_crypto_attach pdk_ieee80211_crypto_attach
+#define ieee80211_crypto_detach pdk_ieee80211_crypto_detach
+#define ieee80211_decap pdk_ieee80211_decap
+#define ieee80211_dup_bss pdk_ieee80211_dup_bss
+#define ieee80211_encap pdk_ieee80211_encap
+#define ieee80211_fix_rate pdk_ieee80211_fix_rate
+#define ieee80211_ibss_merge pdk_ieee80211_ibss_merge
+#define ieee80211_ieee2mhz pdk_ieee80211_ieee2mhz
+#define ieee80211_ifattach pdk_ieee80211_ifattach
+#define ieee80211_ifdetach pdk_ieee80211_ifdetach
+#define ieee80211_ioctl pdk_ieee80211_ioctl
+#define ieee80211_iterate_nodes pdk_ieee80211_iterate_nodes
+#define ieee80211_media2rate pdk_ieee80211_media2rate
+#define ieee80211_media_change pdk_ieee80211_media_change
+#define ieee80211_media_status pdk_ieee80211_media_status
+#define ieee80211_mgmt_output pdk_ieee80211_mgmt_output
+#define ieee80211_mhz2ieee pdk_ieee80211_mhz2ieee
+#define ieee80211_node_attach pdk_ieee80211_node_attach
+#define ieee80211_node_detach pdk_ieee80211_node_detach
+#define ieee80211_node_join pdk_ieee80211_node_join
+#define ieee80211_node_leave pdk_ieee80211_node_leave
+#define ieee80211_output pdk_ieee80211_output
+#define ieee80211_phymode_name pdk_ieee80211_phymode_name
+#define ieee80211_plcp2rate pdk_ieee80211_plcp2rate
+#define ieee80211_print_essid pdk_ieee80211_print_essid
+#define ieee80211_proto_attach pdk_ieee80211_proto_attach
+#define ieee80211_proto_detach pdk_ieee80211_proto_detach
+#define ieee80211_pwrsave pdk_ieee80211_pwrsave
+#define ieee80211_rate2media pdk_ieee80211_rate2media
+#define ieee80211_rate2plcp pdk_ieee80211_rate2plcp
+#define ieee80211_recv_action pdk_ieee80211_recv_action
+#define ieee80211_recv_bar pdk_ieee80211_recv_bar
+#define ieee80211_recv_pspoll pdk_ieee80211_recv_pspoll
+#define ieee80211_reset_erp pdk_ieee80211_reset_erp
+#define ieee80211_send_mgmt pdk_ieee80211_send_mgmt
+#define ieee80211_setbasicrates pdk_ieee80211_setbasicrates
+#define ieee80211_setmode pdk_ieee80211_setmode
+#define ieee80211_setup_rates pdk_ieee80211_setup_rates
+#define ieee80211_state_name pdk_ieee80211_state_name
+#define kmem_free pdk_kmem_free
+#define kmod_info pdk_kmod_info
+#define microtime pdk_microtime
+#define nanotime pdk_nanotime
+#define nanouptime pdk_nanouptime
+#define osrelease pdk_osrelease
+#define sha1_init pdk_sha1_init
+#define sha1_loop pdk_sha1_loop
+#define sha1_result pdk_sha1_result
+#define strtol pdk_strtol
+#define strtoul pdk_strtoul
+
+#endif
