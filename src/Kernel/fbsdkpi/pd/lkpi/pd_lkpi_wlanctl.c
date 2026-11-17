@@ -80,7 +80,12 @@ pd_wlan_scan(void *cookie, const uint8_t *ssid, uint32_t ssid_len)
 	// a manual roaming station only scans and joins when told to, and a scan
 	// still running makes net80211 refuse a new one with EBUSY
 	wlan_set(ifp, IEEE80211_IOC_ROAMING, IEEE80211_ROAMING_MANUAL, NULL, 0);
-	ieee80211_cancel_scan(ifp->if_softc);
+	// the cancel is asynchronous: until the old scan has stopped a new request gets EINPROGRESS and starts
+	// nothing, so wait for it, up to two seconds
+	struct ieee80211vap *vap = ifp->if_softc;
+	ieee80211_cancel_scan(vap);
+	for (int i = 0; i < 200 && (vap->iv_ic->ic_flags & IEEE80211_F_SCAN) != 0; i++)
+		pause("pdscan", hz / 100 > 0 ? hz / 100 : 1);
 	return wlan_set(ifp, IEEE80211_IOC_SCAN_REQ, 0, &sr, sizeof(sr));
 }
 
@@ -114,7 +119,8 @@ pd_wlan_scan_results(void *cookie, struct pd_wlan_bss *out, int max)
 		bss->freq = sr->isr_freq;
 		bss->chan_flags = sr->isr_flags;
 		bss->channel = ieee80211_mhz2ieee(sr->isr_freq, sr->isr_flags);
-		bss->rssi = sr->isr_rssi;
+		// net80211 gives half-dB steps over the noise floor, the caller wants dBm as FreeBSD's ifconfig shows
+		bss->rssi = sr->isr_noise + sr->isr_rssi / 2;
 		bss->noise = sr->isr_noise;
 		bss->capinfo = sr->isr_capinfo;
 		bss->intval = sr->isr_intval;

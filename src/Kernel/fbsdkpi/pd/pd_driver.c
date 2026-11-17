@@ -34,6 +34,8 @@ void (*pd_fbsd_prepare_device)(device_t dev);
 int (*pd_fbsd_post_attach)(device_t dev);
 // set by the wlan glue, ethernet frames then go to if_transmit
 int pd_fbsd_frames_on_transmit;
+// set by the wlan glue, waits out the state changes a down queued
+void (*pd_fbsd_settle)(void *ifp);
 
 static void *sCookies[MAX_DEVICES];
 // the driver that attached each interface, whose xnu side gets its frames
@@ -592,12 +594,19 @@ pd_fbsd_up(void *cookie)
 	struct ifnet *ifp = cookie;
 	struct ifreq ifr;
 
+	// up and running already: cycling it again would drop a wlan radio and its scan
+	if ((ifp->if_flags & IFF_UP) != 0 && (ifp->if_drv_flags & IFF_DRV_RUNNING) != 0)
+		return 0;
+
 	IFF_LOCKGIANT(ifp);
 	if (ifp->if_init != NULL)
 		ifp->if_init(ifp->if_softc);
 
 	ifp->if_flags &= ~IFF_UP;
 	ifp->if_ioctl(ifp, SIOCSIFFLAGS, NULL);
+	// net80211 stops a vap through queued state changes, its up only starts a vap that has reached INIT
+	if (pd_fbsd_settle != NULL)
+		pd_fbsd_settle(ifp);
 
 	memset(&ifr, 0, sizeof(ifr));
 	ifr.ifr_media = IFM_MAKEWORD(IFM_ETHER, IFM_AUTO, 0, 0);

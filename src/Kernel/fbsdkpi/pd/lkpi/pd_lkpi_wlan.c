@@ -18,6 +18,7 @@
 struct ieee80211vap *pd_wlan_create_vap(struct ieee80211com *ic, int unit);
 extern int (*pd_fbsd_post_attach)(device_t dev);
 extern int pd_fbsd_frames_on_transmit;
+extern void (*pd_fbsd_settle)(void *ifp);
 
 static int sVapUnit;
 
@@ -48,9 +49,23 @@ lkpi_wlan_post_attach(device_t dev)
 	return made > 0 ? 0 : ENXIO;
 }
 
+// a vap's queued state changes and its radio's up or down, finished before pd_fbsd_up brings it up again
+static void
+lkpi_wlan_settle(void *cookie)
+{
+	struct ifnet *ifp = cookie;
+	struct ieee80211vap *vap = ifp->if_softc;
+	struct ieee80211com *ic = vap->iv_ic;
+
+	for (int i = 0; i < NET80211_IV_NSTATE_NUM; i++)
+		ieee80211_draintask(ic, &vap->iv_nstate_task[i]);
+	ieee80211_waitfor_parent(ic);
+}
+
 status_t
 init_wlan_stack(void)
 {
+	pd_fbsd_settle = lkpi_wlan_settle;
 	pd_fbsd_post_attach = lkpi_wlan_post_attach;
 	pd_fbsd_frames_on_transmit = 1;
 	return B_OK;
