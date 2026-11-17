@@ -342,9 +342,9 @@ r12a_power_off(struct rtwn_softc *sc)
 		rtwn_delay(sc, 5000);
 	}
 	if (ntries == 10) {
+		// a chip left half on by an earlier run never reads idle, power it down anyway
 		device_printf(sc->sc_dev, "%s: failed to block Tx queues\n",
 		    __func__);
-		return;
 	}
 
 	/* Turn off 3-wire. */
