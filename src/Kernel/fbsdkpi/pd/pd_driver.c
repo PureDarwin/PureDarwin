@@ -133,6 +133,15 @@ pd_fbsd_requires(int flag)
 	return pd_fbsd_current != NULL ? (pd_fbsd_current->requirements & flag) : 0;
 }
 
+// the wlan glue's vap setup is shared by every kext, only a driver that asked for wlan gets it
+static int
+pd_fbsd_wlan_setup(device_t device)
+{
+	if (pd_fbsd_post_attach == NULL || !pd_fbsd_requires(FBSD_WLAN_FEATURE))
+		return 0;
+	return pd_fbsd_post_attach(device);
+}
+
 status_t
 init_root_device(device_t *_root, int bus_type)
 {
@@ -321,7 +330,7 @@ _fbsd_init_hardware_pci(driver_t *drivers[])
 	int32 before = gDeviceCount;
 	mtx_lock(&Giant);
 	if (device->methods.device_probe(device) >= 0 && device_attach(device) == 0
-		&& (pd_fbsd_post_attach == NULL || pd_fbsd_post_attach(device) == 0)) {
+		&& pd_fbsd_wlan_setup(device) == 0) {
 		dprintf("%s: attached %s\n", gDriverName, device_get_nameunit(device));
 	} else {
 		dprintf("%s: probe, attach or wlan setup failed\n", gDriverName);
@@ -368,7 +377,7 @@ pd_fbsd_attach_usb_found(device_t root, driver_t *driver, void *compat,
 	int32 before = gDeviceCount;
 	mtx_lock(&Giant);
 	if (device->methods.device_probe(device) >= 0 && device_attach(device) == 0
-		&& (pd_fbsd_post_attach == NULL || pd_fbsd_post_attach(device) == 0)) {
+		&& pd_fbsd_wlan_setup(device) == 0) {
 		dprintf("%s: attached %s\n", gDriverName, device_get_nameunit(device));
 	} else {
 		dprintf("%s: usb probe, attach or wlan setup failed\n", gDriverName);
