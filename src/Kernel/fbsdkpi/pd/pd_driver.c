@@ -40,6 +40,23 @@ void (*pd_fbsd_settle)(void *ifp);
 static void *sCookies[MAX_DEVICES];
 // the driver that attached each interface, whose xnu side gets its frames
 static struct pd_fbsd_driver *sSlotDriver[MAX_DEVICES];
+
+// the ifnet an attach just made, never one an earlier device already owns
+static struct ifnet *
+newest_unclaimed(device_t root, int32 before)
+{
+	struct ifnet *found = NULL;
+
+	for (int i = 0; i < MAX_DEVICES; i++) {
+		if (gDevices[i] != NULL && sSlotDriver[i] == NULL && gDevices[i]->root_device == root)
+			found = gDevices[i];
+	}
+	for (int i = MAX_DEVICES - 1; found == NULL && gDeviceCount > before && i >= 0; i--) {
+		if (gDevices[i] != NULL && sSlotDriver[i] == NULL)
+			found = gDevices[i];
+	}
+	return found;
+}
 static void pd_fbsd_claim_slot(struct ifnet *ifp);
 static void *sPciDevs[MAX_DEVICES];
 static void *sPendingPci;
@@ -319,13 +336,7 @@ _fbsd_init_hardware_pci(driver_t *drivers[])
 		return B_OK;
 
 	// the newest ifnet belongs to this device
-	sAttached = NULL;
-	for (int i = 0; i < MAX_DEVICES; i++) {
-		if (gDevices[i] != NULL && gDevices[i]->root_device == root)
-			sAttached = gDevices[i];
-	}
-	if (sAttached == NULL && gDeviceCount > before)
-		sAttached = gDevices[gDeviceCount - 1];
+	sAttached = newest_unclaimed(root, before);
 	if (sAttached == NULL)
 		return B_ERROR;
 	for (int i = 0; i < MAX_DEVICES; i++) {
@@ -368,13 +379,7 @@ pd_fbsd_attach_usb_found(device_t root, driver_t *driver, void *compat,
 	mtx_unlock(&Giant);
 	sAttachedDevice = device;
 
-	sAttached = NULL;
-	for (int i = 0; i < MAX_DEVICES; i++) {
-		if (gDevices[i] != NULL && gDevices[i]->root_device == root)
-			sAttached = gDevices[i];
-	}
-	if (sAttached == NULL && gDeviceCount > before)
-		sAttached = gDevices[gDeviceCount - 1];
+	sAttached = newest_unclaimed(root, before);
 	return sAttached != NULL ? B_OK : B_ERROR;
 }
 

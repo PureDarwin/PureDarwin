@@ -169,6 +169,7 @@ usb_cleanup_device(freebsd_usb_device* udev)
 
 
 #ifdef __PUREDARWIN__
+extern "C" uint32 pd_usb_first_device(void);
 extern "C" status_t pd_fbsd_attach_usb_found(device_t root, driver_t* driver,
 	void* compat_device, void (*prepare)(void*, device_t));
 #endif
@@ -217,7 +218,8 @@ _fbsd_init_hardware_uhub(driver_t* drivers[])
 		return status;
 
 	bool found = false;
-	uint32 cookie = 0;
+	// the newest device only, the ones before it are attached already
+	uint32 cookie = pd_usb_first_device();
 	struct freebsd_usb_device udev = {};
 	while ((status = get_next_usb_device(&cookie, &udev)) == B_OK) {
 		int best = 0;

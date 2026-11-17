@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// haiku's usb module for the freebsd usb shim in usb.cpp, over the one usb interface
+// haiku's usb module for the freebsd usb shim in usb.cpp, over the usb interfaces
 // the xnu side attached on, through the pdusb calls
 
 #include <OS.h>
@@ -10,88 +10,139 @@
 
 #include "pd_fbsd_usb.h"
 
-// usb.cpp walks ids from 0 and takes the first one with a configuration
-#define PD_USB_DEVICE		1
-// pipe handles, distinct from the device id so a mixed-up handle fails
+// every registered device gets a fresh id, usb.cpp's attach walk starts at the newest one
+#define PD_USB_MAX_DEVICES	16
+// pipe handles carry the device id above the endpoint, distinct from device ids
 #define PD_USB_PIPE_BASE	0x100
+#define PD_USB_PIPE_SHIFT	16
 
-static void *sDev;
-static struct pdusb_info sInfo;
-static usb_device_descriptor sDeviceDesc;
-static usb_configuration_descriptor sConfigDesc;
-static usb_interface_descriptor sIfaceDesc;
-static usb_endpoint_descriptor sEpDesc[PDUSB_MAX_EP];
-static usb_endpoint_info sEpInfo[PDUSB_MAX_EP];
-static usb_interface_info sIfaceInfo;
-static usb_interface_list sIfaceList;
-static usb_configuration_info sConfig;
+struct pd_usb_dev {
+	usb_id				id;
+	void				*dev;
+	struct pdusb_info		info;
+	usb_device_descriptor		deviceDesc;
+	usb_configuration_descriptor	configDesc;
+	usb_interface_descriptor	ifaceDesc;
+	usb_endpoint_descriptor		epDesc[PDUSB_MAX_EP];
+	usb_endpoint_info		epInfo[PDUSB_MAX_EP];
+	usb_interface_info		ifaceInfo;
+	usb_interface_list		ifaceList;
+	usb_configuration_info		config;
+};
+
+static struct pd_usb_dev *sDevs[PD_USB_MAX_DEVICES];
+static usb_id sNextId = 1;
+static usb_id sNewest;
+
+static struct pd_usb_dev *
+find_dev(usb_id id)
+{
+	for (int i = 0; i < PD_USB_MAX_DEVICES; i++)
+		if (sDevs[i] != NULL && sDevs[i]->id == id)
+			return sDevs[i];
+	return NULL;
+}
 
 extern "C" status_t
 pd_usb_register(void *dev)
 {
-	if (pdusb_get_info(dev, &sInfo) != 0)
+	int slot = -1;
+	for (int i = 0; i < PD_USB_MAX_DEVICES && slot < 0; i++)
+		if (sDevs[i] == NULL)
+			slot = i;
+	// the walk gives up at 1024
+	if (slot < 0 || sNextId >= 1024)
 		return B_ERROR;
-	sDev = dev;
-
-	sDeviceDesc.length = sizeof(sDeviceDesc);
-	sDeviceDesc.descriptor_type = USB_DESCRIPTOR_DEVICE;
-	sDeviceDesc.usb_version = sInfo.usb_version;
-	sDeviceDesc.device_class = sInfo.dev_class;
-	sDeviceDesc.device_subclass = sInfo.dev_subclass;
-	sDeviceDesc.device_protocol = sInfo.dev_protocol;
-	sDeviceDesc.max_packet_size_0 = sInfo.max_packet0;
-	sDeviceDesc.vendor_id = sInfo.vendor;
-	sDeviceDesc.product_id = sInfo.product;
-	sDeviceDesc.device_version = sInfo.release;
-	sDeviceDesc.num_configurations = 1;
-
-	sIfaceDesc.length = sizeof(sIfaceDesc);
-	sIfaceDesc.descriptor_type = USB_DESCRIPTOR_INTERFACE;
-	sIfaceDesc.interface_number = sInfo.if_number;
-	sIfaceDesc.num_endpoints = sInfo.nep;
-	sIfaceDesc.interface_class = sInfo.if_class;
-	sIfaceDesc.interface_subclass = sInfo.if_subclass;
-	sIfaceDesc.interface_protocol = sInfo.if_protocol;
-
-	for (int i = 0; i < sInfo.nep; i++) {
-		sEpDesc[i].length = sizeof(sEpDesc[i]);
-		sEpDesc[i].descriptor_type = USB_DESCRIPTOR_ENDPOINT;
-		sEpDesc[i].endpoint_address = sInfo.ep[i].addr;
-		sEpDesc[i].attributes = sInfo.ep[i].attrs;
-		sEpDesc[i].max_packet_size = sInfo.ep[i].max_packet;
-		sEpDesc[i].interval = sInfo.ep[i].interval;
-		sEpInfo[i].descr = &sEpDesc[i];
-		sEpInfo[i].handle = PD_USB_PIPE_BASE + i;
+	struct pd_usb_dev *d = (struct pd_usb_dev *)calloc(1, sizeof(*d));
+	if (d == NULL)
+		return B_NO_MEMORY;
+	if (pdusb_get_info(dev, &d->info) != 0) {
+		free(d);
+		return B_ERROR;
 	}
-	sIfaceInfo.descr = &sIfaceDesc;
-	sIfaceInfo.handle = PD_USB_DEVICE;
-	sIfaceInfo.endpoint_count = sInfo.nep;
-	sIfaceInfo.endpoint = sEpInfo;
-	sIfaceList.alt_count = 1;
-	sIfaceList.alt = &sIfaceInfo;
-	sIfaceList.active = &sIfaceInfo;
+	d->id = sNextId++;
+	d->dev = dev;
 
-	sConfigDesc.length = sizeof(sConfigDesc);
-	sConfigDesc.descriptor_type = USB_DESCRIPTOR_CONFIGURATION;
-	sConfigDesc.number_interfaces = 1;
-	sConfigDesc.configuration_value = sInfo.config_value;
-	sConfig.descr = &sConfigDesc;
-	sConfig.interface_count = 1;
-	sConfig.interface = &sIfaceList;
+	d->deviceDesc.length = sizeof(d->deviceDesc);
+	d->deviceDesc.descriptor_type = USB_DESCRIPTOR_DEVICE;
+	d->deviceDesc.usb_version = d->info.usb_version;
+	d->deviceDesc.device_class = d->info.dev_class;
+	d->deviceDesc.device_subclass = d->info.dev_subclass;
+	d->deviceDesc.device_protocol = d->info.dev_protocol;
+	d->deviceDesc.max_packet_size_0 = d->info.max_packet0;
+	d->deviceDesc.vendor_id = d->info.vendor;
+	d->deviceDesc.product_id = d->info.product;
+	d->deviceDesc.device_version = d->info.release;
+	d->deviceDesc.num_configurations = 1;
+
+	d->ifaceDesc.length = sizeof(d->ifaceDesc);
+	d->ifaceDesc.descriptor_type = USB_DESCRIPTOR_INTERFACE;
+	d->ifaceDesc.interface_number = d->info.if_number;
+	d->ifaceDesc.num_endpoints = d->info.nep;
+	d->ifaceDesc.interface_class = d->info.if_class;
+	d->ifaceDesc.interface_subclass = d->info.if_subclass;
+	d->ifaceDesc.interface_protocol = d->info.if_protocol;
+
+	for (int i = 0; i < d->info.nep; i++) {
+		d->epDesc[i].length = sizeof(d->epDesc[i]);
+		d->epDesc[i].descriptor_type = USB_DESCRIPTOR_ENDPOINT;
+		d->epDesc[i].endpoint_address = d->info.ep[i].addr;
+		d->epDesc[i].attributes = d->info.ep[i].attrs;
+		d->epDesc[i].max_packet_size = d->info.ep[i].max_packet;
+		d->epDesc[i].interval = d->info.ep[i].interval;
+		d->epInfo[i].descr = &d->epDesc[i];
+		d->epInfo[i].handle = (d->id << PD_USB_PIPE_SHIFT) + PD_USB_PIPE_BASE + i;
+	}
+	d->ifaceInfo.descr = &d->ifaceDesc;
+	d->ifaceInfo.handle = d->id;
+	d->ifaceInfo.endpoint_count = d->info.nep;
+	d->ifaceInfo.endpoint = d->epInfo;
+	d->ifaceList.alt_count = 1;
+	d->ifaceList.alt = &d->ifaceInfo;
+	d->ifaceList.active = &d->ifaceInfo;
+
+	d->configDesc.length = sizeof(d->configDesc);
+	d->configDesc.descriptor_type = USB_DESCRIPTOR_CONFIGURATION;
+	d->configDesc.number_interfaces = 1;
+	d->configDesc.configuration_value = d->info.config_value;
+	d->config.descr = &d->configDesc;
+	d->config.interface_count = 1;
+	d->config.interface = &d->ifaceList;
+
+	sDevs[slot] = d;
+	sNewest = d->id;
 	return B_OK;
 }
 
+// drops the device registered last, its attach failed
 extern "C" void
 pd_usb_unregister(void)
 {
-	sDev = NULL;
+	for (int i = 0; i < PD_USB_MAX_DEVICES; i++) {
+		if (sDevs[i] != NULL && sDevs[i]->id == sNewest) {
+			free(sDevs[i]);
+			sDevs[i] = NULL;
+		}
+	}
+	sNewest = 0;
 }
 
-static int
-pipe_index(usb_pipe pipe)
+// where usb.cpp's attach walk starts, so it finds only the device being attached
+extern "C" uint32
+pd_usb_first_device(void)
 {
-	int i = (int)pipe - PD_USB_PIPE_BASE;
-	return i >= 0 && i < sInfo.nep ? i : -1;
+	return sNewest;
+}
+
+static struct pd_usb_dev *
+pipe_dev(usb_pipe pipe, int *ep)
+{
+	struct pd_usb_dev *d = find_dev(pipe >> PD_USB_PIPE_SHIFT);
+	int i = (int)(pipe & ((1u << PD_USB_PIPE_SHIFT) - 1)) - PD_USB_PIPE_BASE;
+	if (d == NULL || i < 0 || i >= d->info.nep)
+		return NULL;
+	*ep = i;
+	return d;
 }
 
 static status_t
@@ -114,22 +165,25 @@ map_status(int status)
 static const usb_device_descriptor *
 get_device_descriptor(usb_device device)
 {
-	return sDev != NULL && device == PD_USB_DEVICE ? &sDeviceDesc : NULL;
+	struct pd_usb_dev *d = find_dev(device);
+	return d != NULL ? &d->deviceDesc : NULL;
 }
 
 static const usb_configuration_info *
 get_configuration(usb_device device)
 {
-	return sDev != NULL && device == PD_USB_DEVICE ? &sConfig : NULL;
+	struct pd_usb_dev *d = find_dev(device);
+	return d != NULL ? &d->config : NULL;
 }
 
 static status_t
 send_request(usb_device device, uint8 requestType, uint8 request, uint16 value,
 	uint16 index, uint16 length, void *data, size_t *actualLength)
 {
-	if (sDev == NULL || device != PD_USB_DEVICE)
+	struct pd_usb_dev *d = find_dev(device);
+	if (d == NULL)
 		return B_DEV_INVALID_PIPE;
-	return map_status(pdusb_control(sDev, requestType, request, value, index,
+	return map_status(pdusb_control(d->dev, requestType, request, value, index,
 		length, data, actualLength));
 }
 
@@ -172,8 +226,9 @@ static status_t
 queue(usb_pipe pipe, iovec *vec, size_t count, void *data, size_t dataLength,
 	usb_callback_func callback, void *cookie)
 {
-	int ep = pipe_index(pipe);
-	if (sDev == NULL || ep < 0)
+	int ep;
+	struct pd_usb_dev *d = pipe_dev(pipe, &ep);
+	if (d == NULL)
 		return B_DEV_INVALID_PIPE;
 
 	struct pd_usb_xfer *x = (struct pd_usb_xfer *)calloc(1, sizeof(*x));
@@ -207,7 +262,7 @@ queue(usb_pipe pipe, iovec *vec, size_t count, void *data, size_t dataLength,
 		buf = x->bounce;
 	}
 
-	int status = pdusb_queue(sDev, ep, buf, x->length, xfer_done, x);
+	int status = pdusb_queue(d->dev, ep, buf, x->length, xfer_done, x);
 	if (status != PDUSB_OK) {
 		free(x->bounce);
 		free(x);
@@ -233,10 +288,11 @@ queue_interrupt(usb_pipe pipe, void *data, size_t dataLength,
 static status_t
 cancel_queued_transfers(usb_pipe pipe)
 {
-	int ep = pipe_index(pipe);
-	if (sDev == NULL || ep < 0)
+	int ep;
+	struct pd_usb_dev *d = pipe_dev(pipe, &ep);
+	if (d == NULL)
 		return B_DEV_INVALID_PIPE;
-	return map_status(pdusb_abort(sDev, ep));
+	return map_status(pdusb_abort(d->dev, ep));
 }
 
 static usb_module_info sUSBModule;
