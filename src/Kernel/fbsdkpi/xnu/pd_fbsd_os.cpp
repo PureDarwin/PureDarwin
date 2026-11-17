@@ -402,6 +402,42 @@ mapping_track(IOMemoryDescriptor *desc, IOMemoryMap *map, uint64_t offset)
 	return m->va;
 }
 
+// the configurator can leave a rom bar on top of the boot flash, this finds a place to move it
+extern "C" int
+pdos_find_mmio_hole(uint32_t size, uint32_t *out)
+{
+	struct range { uint64_t base, len; } used[128];
+	uint32_t n = 0;
+	OSIterator *it = IOService::getMatchingServices(IOService::serviceMatching("IOPCIDevice"));
+
+	if (it == NULL || size == 0)
+		return 0;
+	while (OSObject *o = it->getNextObject()) {
+		IOPCIDevice *d = OSDynamicCast(IOPCIDevice, o);
+		for (unsigned i = 0; d != NULL && i < d->getDeviceMemoryCount() && n < 128; i++) {
+			IODeviceMemory *m = d->getDeviceMemoryWithIndex(i);
+			if (m == NULL)
+				continue;
+			used[n].base = m->getPhysicalAddress();
+			used[n].len = m->getLength();
+			n++;
+		}
+	}
+	it->release();
+
+	for (uint64_t a = 0xfe000000ULL - size; a >= 0xc0000000ULL; a -= size) {
+		bool ok = true;
+		for (uint32_t i = 0; i < n && ok; i++)
+			if (a < used[i].base + used[i].len && used[i].base < a + size)
+				ok = false;
+		if (ok) {
+			*out = (uint32_t)a;
+			return 1;
+		}
+	}
+	return 0;
+}
+
 void *
 pdos_map_phys(uint64_t phys, size_t size, int uncached)
 {

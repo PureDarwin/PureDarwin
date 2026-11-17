@@ -302,8 +302,9 @@ pd_vga_device(device_t dev)
 }
 
 static size_t pd_vga_bios_size;
+static uint32_t pd_vga_bios_bar;
 
-// maps the expansion rom the firmware (or a vm's romfile) placed, the caller enabled its decode
+// maps the expansion rom the firmware (or a vm's romfile) placed, with its decode enabled while mapped
 void *
 vga_pci_map_bios(device_t dev, size_t *size)
 {
@@ -326,12 +327,29 @@ vga_pci_map_bios(device_t dev, size_t *size)
 	if (sized == 0)
 		return NULL;
 	len = (size_t)(~sized + 1);
+	// bit 0 turns the rom decode on, without it every read returns 0xff
+	pci_write_config(vga, PD_PCIR_ROM, bar | 1, 4);
 	rom = pdos_map_phys(bar & ~0x7ffu, len, 1);
-	if (rom == NULL)
+	if (rom != NULL && (((uint8_t *)rom)[0] != 0x55 || ((uint8_t *)rom)[1] != 0xaa)) {
+		uint32_t hole;
+		// the bar may sit on the boot flash, move it to a free window as the firmware should have
+		pdos_unmap_phys(rom, len);
+		rom = NULL;
+		if (pdos_find_mmio_hole((uint32_t)len, &hole)) {
+			printf("pd: vga rom moved to 0x%08x\n", hole);
+			pci_write_config(vga, PD_PCIR_ROM, hole | 1, 4);
+			rom = pdos_map_phys(hole, len, 1);
+			bar = hole;
+		}
+	}
+	if (rom == NULL) {
+		pci_write_config(vga, PD_PCIR_ROM, pd_vga_bios_bar = bar & ~1u, 4);
 		return NULL;
+	}
 	printf("pd: vga rom %zu bytes at 0x%08x, signature %02x %02x\n", len, bar & ~0x7ffu,
 	    ((uint8_t *)rom)[0], ((uint8_t *)rom)[1]);
 	pd_vga_bios_size = len;
+	pd_vga_bios_bar = bar & ~1u;
 	*size = len;
 	return rom;
 }
@@ -339,8 +357,12 @@ vga_pci_map_bios(device_t dev, size_t *size)
 void
 vga_pci_unmap_bios(device_t dev, void *bios)
 {
+	device_t vga = pd_vga_device(dev);
+
 	if (bios != NULL)
 		pdos_unmap_phys(bios, pd_vga_bios_size);
+	if (vga != NULL)
+		pci_write_config(vga, PD_PCIR_ROM, pd_vga_bios_bar, 4);
 }
 
 // newbus pieces linux_pci.c names for drm and rescans

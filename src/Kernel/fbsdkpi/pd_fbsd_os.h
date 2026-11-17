@@ -35,6 +35,8 @@ void pdos_free_contig(void *ptr, size_t size);
 uint64_t pdos_vtophys(const void *va);
 // uncached: 0 cached, 1 uncached, 2 write-combining
 void *pdos_map_phys(uint64_t phys, size_t size, int uncached);
+// a size-aligned window in the 32-bit pci hole no device's memory overlaps, 0 if none
+int pdos_find_mmio_hole(uint32_t size, uint32_t *out);
 void pdos_unmap_phys(void *va, size_t size);
 // maps a physically contiguous range for a device's dma through its iommu,
 // bouncing it below 2^addrbits when needed, NULL on failure
