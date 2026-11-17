@@ -40,6 +40,9 @@ struct pd_fbsd_driver *pd_fbsd_driver_record(void);
 void pd_fbsd_driver_enter(struct pd_fbsd_driver *driver);
 void pd_fbsd_driver_leave(void);
 
+// a library kext's own SYSINIT set, run with the layer's and in registration order
+void pd_fbsd_register_library(void **sysinit_begin, void **sysinit_end);
+
 // the layer side of the lookup: the driver attaching now, and the one a device came from
 extern struct pd_fbsd_driver *pd_fbsd_current;
 struct pd_fbsd_driver *pd_fbsd_device_driver(void *dev);

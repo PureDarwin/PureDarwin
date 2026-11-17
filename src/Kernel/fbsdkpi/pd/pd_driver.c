@@ -74,6 +74,24 @@ pd_fbsd_device_driver(void *dev)
 	return d != NULL && d->pd_driver != NULL ? d->pd_driver : pd_fbsd_current;
 }
 
+// the SYSINIT sets of the library kexts on this one, in the order they loaded, which is dependency order
+#define PD_FBSD_MAX_LIBRARIES 8
+static struct { void **begin, **end; } sLibraries[PD_FBSD_MAX_LIBRARIES];
+static int sLibraryCount;
+
+void
+pd_fbsd_register_library(void **begin, void **end)
+{
+	if (sLibraryCount >= PD_FBSD_MAX_LIBRARIES)
+		panic("fbsdkpi: more than %d library kexts", PD_FBSD_MAX_LIBRARIES);
+	sLibraries[sLibraryCount].begin = begin;
+	sLibraries[sLibraryCount].end = end;
+	sLibraryCount++;
+	// a library loaded after the layer came up, from the aux KC, runs its set at once
+	if (sInitialised)
+		pd_fbsd_run_sysinit(begin, end, 0);
+}
+
 int
 pd_fbsd_requires(int flag)
 {
@@ -370,6 +388,8 @@ PD_FBSD_INIT_NAME(void)
 			return status;
 	}
 	init_sysinit();
+	for (int i = 0; i < sLibraryCount; i++)
+		pd_fbsd_run_sysinit(sLibraries[i].begin, sLibraries[i].end, 0);
 #ifndef PD_FBSD_SHARED
 	status = init_wlan_stack();
 	if (status < B_OK)

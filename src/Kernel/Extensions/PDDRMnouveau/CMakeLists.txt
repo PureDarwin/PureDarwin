@@ -30,11 +30,19 @@ endforeach()
 foreach(src IN LISTS PD_DRM_PD_SOURCES)
     list(APPEND core "${PD_DRM_DIR}/src/${src}")
 endforeach()
-_fbsdkpi_objects(PDDRMnouveau_drm SOURCES ${core}
-    INCLUDES ${lkpiinc} ${coreinc}
-    DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${drmdefs}
-        KBUILD_MODNAME=\"drm\" LINUXKPI_PARAM_PREFIX=drm_
-    OPTIONS ${lkpiopt})
+# x86 links the drm core, linuxkpi and fbsdkpi from PDDRM and the libraries under it, arm64 still carries its own
+set(shared)
+set(names)
+if(PUREDARWIN_ARCH STREQUAL "x86_64")
+    set(shared SHARED)
+    set(names ${FBSDKPI_NAMES} ${FBSDKPI_LKPI_NAMES} ${FBSDKPI_DRM_NAMES})
+else()
+    _fbsdkpi_objects(PDDRMnouveau_drm SOURCES ${core}
+        INCLUDES ${lkpiinc} ${coreinc}
+        DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${drmdefs}
+            KBUILD_MODNAME=\"drm\" LINUXKPI_PARAM_PREFIX=drm_
+        OPTIONS ${lkpiopt})
+endif()
 
 set(nv)
 foreach(src IN LISTS PD_DRM_NOUVEAU_SOURCES)
@@ -45,7 +53,10 @@ foreach(src IN LISTS PD_DRM_NOUVEAU_PD_SOURCES)
 endforeach()
 # arm64 brings nouveau up on tegra210 as a device tree platform device
 set(nvplat)
-set(nvobjs PDDRMnouveau_drm PDDRMnouveau_nouveau)
+set(nvobjs PDDRMnouveau_nouveau)
+if(NOT shared)
+    list(APPEND nvobjs PDDRMnouveau_drm)
+endif()
 set(nvxnu "${CMAKE_CURRENT_SOURCE_DIR}/../../fbsdkpi/xnu/PDDRMDevice.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../fbsdkpi/xnu/PDDRMFramebuffer.cpp")
 if(PUREDARWIN_ARM64)
@@ -72,10 +83,11 @@ _fbsdkpi_objects(PDDRMnouveau_nouveau SOURCES ${nv}
     DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${drmdefs} CONFIG_DRM_NOUVEAU PD_DRM_FB_DRIVER_BUFFERS ${nvplat}
         CONFIG_NOUVEAU_I2C_INTERNAL CONFIG_NOUVEAU_I2C_INTERNAL_DEFAULT
         KBUILD_MODNAME=\"nouveau\" LINUXKPI_PARAM_PREFIX=nouveau_
-    OPTIONS ${lkpiopt} "SHELL:-include ${PD_DRM_DIR}/include/pd_nouveau_pre.h"
+    OPTIONS ${names} ${lkpiopt} "SHELL:-include ${PD_DRM_DIR}/include/pd_nouveau_pre.h"
         -Wno-pointer-arith -Wno-format -Wno-cast-qual)
 
 add_fbsdkpi_driver(PDDRMnouveau
+    ${shared}
     CLASS PDDRMnouveau
     BUNDLE_IDENTIFIER org.puredarwin.driver.PDDRMnouveau
     INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist"

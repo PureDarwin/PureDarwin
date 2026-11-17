@@ -119,6 +119,12 @@ function(_fbsdkpi_firmware name out)
     endif()
 endfunction()
 
+# a library kext over PDFreeBSDKPI: its start routine hands the layer the SYSINIT sets in its own binary
+function(_fbsdkpi_library_start name)
+    _fbsdkpi_objects(${name}_start SOURCES "${FBSDKPI_DIR}/pd/pd_fbsd_library.c" OPTIONS ${FBSDKPI_NAMES})
+    target_sources(${name}.kext PRIVATE $<TARGET_OBJECTS:${name}_start>)
+endfunction()
+
 # the shared layer: core and iflib once, as a library kext the drivers link against
 set(FBSDKPI_NAMES "SHELL:-include ${FBSDKPI_DIR}/pd/pd_kpi_names.h")
 
@@ -207,7 +213,9 @@ function(add_fbsdkpi_usb_library name)
     _fbsdkpi_objects(${name}_usb SOURCES ${usb} VISIBLE
         DEFINITIONS PD_FBSD_SHARED=1 OPTIONS ${FBSDKPI_NAMES})
     add_kext_bundle(${name}.kext INFO_PLIST ${FL_INFO_PLIST} KERNEL_PRIVATE
-        BUNDLE_IDENTIFIER ${FL_BUNDLE_IDENTIFIER} BUNDLE_VERSION 1.0.0)
+        BUNDLE_IDENTIFIER ${FL_BUNDLE_IDENTIFIER} BUNDLE_VERSION 1.0.0
+        MAIN_FUNCTION pd_fbsd_library_start ANTIMAIN_FUNCTION pd_fbsd_library_stop)
+    _fbsdkpi_library_start(${name})
     set_property(TARGET ${name}.kext PROPERTY OUTPUT_NAME ${name})
     target_sources(${name}.kext PRIVATE "${FBSDKPI_DIR}/xnu/pd_fbsd_usb.cpp" $<TARGET_OBJECTS:${name}_usb>)
     _fbsdkpi_xnu_target(${name} ${name})
@@ -274,7 +282,9 @@ function(add_fbsdkpi_lkpi_library name)
         DEFINITIONS FBSD_DRIVER=1 _XOPEN_SOURCE ${shared}
         OPTIONS ${FBSDKPI_NAMES} ${FBSDKPI_LKPI_NAMES})
     add_kext_bundle(${name}.kext INFO_PLIST ${FL_INFO_PLIST} KERNEL_PRIVATE
-        BUNDLE_IDENTIFIER ${FL_BUNDLE_IDENTIFIER} BUNDLE_VERSION 1.0.0)
+        BUNDLE_IDENTIFIER ${FL_BUNDLE_IDENTIFIER} BUNDLE_VERSION 1.0.0
+        MAIN_FUNCTION pd_fbsd_library_start ANTIMAIN_FUNCTION pd_fbsd_library_stop)
+    _fbsdkpi_library_start(${name})
     set_property(TARGET ${name}.kext PROPERTY OUTPUT_NAME ${name})
     target_sources(${name}.kext PRIVATE "${FBSDKPI_DIR}/xnu/pd_lkpi_kext.cpp"
         $<TARGET_OBJECTS:${name}_lkpi> $<TARGET_OBJECTS:${name}_glue>)
@@ -320,7 +330,9 @@ function(add_fbsdkpi_drm_library name)
     _fbsdkpi_objects(${name}_lkdrm SOURCES ${lkdrm} VISIBLE INCLUDES ${inc}
         DEFINITIONS ${defs} KBUILD_MODNAME=\"linuxkpi\" OPTIONS ${opts})
     add_kext_bundle(${name}.kext INFO_PLIST ${FL_INFO_PLIST} KERNEL_PRIVATE
-        BUNDLE_IDENTIFIER ${FL_BUNDLE_IDENTIFIER} BUNDLE_VERSION 1.0.0)
+        BUNDLE_IDENTIFIER ${FL_BUNDLE_IDENTIFIER} BUNDLE_VERSION 1.0.0
+        MAIN_FUNCTION pd_fbsd_library_start ANTIMAIN_FUNCTION pd_fbsd_library_stop)
+    _fbsdkpi_library_start(${name})
     set_property(TARGET ${name}.kext PROPERTY OUTPUT_NAME ${name})
     target_sources(${name}.kext PRIVATE "${FBSDKPI_DIR}/xnu/pd_lkpi_kext.cpp"
         $<TARGET_OBJECTS:${name}_drm> $<TARGET_OBJECTS:${name}_lkdrm>)
@@ -459,7 +471,32 @@ function(add_fbsdkpi_driver name)
         list(APPEND objects $<TARGET_OBJECTS:${name}_driver>)
     endif()
 
-    add_kext_bundle(${name}.kext INFO_PLIST ${FD_INFO_PLIST} KERNEL_PRIVATE
+    # a SHARED driver depends on the libraries it links, added here so one plist serves shared and legacy builds
+    set(plist ${FD_INFO_PLIST})
+    if(FD_SHARED)
+        set(libs org.puredarwin.kpi.freebsd)
+        if(FD_USB)
+            list(APPEND libs org.puredarwin.kpi.freebsd.usb)
+        endif()
+        if(FD_LINUXKPI OR FD_LINUXKPI_DRM)
+            list(APPEND libs org.puredarwin.kpi.linux)
+        endif()
+        if(FD_LINUXKPI_DRM)
+            list(APPEND libs org.puredarwin.kpi.drm)
+        endif()
+        file(READ ${FD_INFO_PLIST} text)
+        set(add "")
+        foreach(lib IN LISTS libs)
+            string(FIND "${text}" "<key>${lib}</key>" at)
+            if(at EQUAL -1)
+                string(APPEND add "\n\t\t<key>${lib}</key>\n\t\t<string>1.0.0</string>")
+            endif()
+        endforeach()
+        string(REGEX REPLACE "(<key>OSBundleLibraries</key>[ \t\r\n]*<dict>)" "\\1${add}" text "${text}")
+        set(plist "${CMAKE_CURRENT_BINARY_DIR}/${name}-Info.plist")
+        file(WRITE ${plist} "${text}")
+    endif()
+    add_kext_bundle(${name}.kext INFO_PLIST ${plist} KERNEL_PRIVATE
         BUNDLE_IDENTIFIER ${FD_BUNDLE_IDENTIFIER} BUNDLE_VERSION 1.0.0)
     set_property(TARGET ${name}.kext PROPERTY OUTPUT_NAME ${name})
     set(xnusrc)

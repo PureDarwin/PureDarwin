@@ -68,4 +68,42 @@
 #define wakeup pdk_wakeup
 #define wakeup_one pdk_wakeup_one
 
+// clashes with kernel globals outside its export lists, found against the built kernel
+#define eventhandler_deregister pdk_eventhandler_deregister
+#define eventhandler_find_list pdk_eventhandler_find_list
+#define eventhandler_prune_list pdk_eventhandler_prune_list
+#define eventhandler_register pdk_eventhandler_register
+#define ffsll pdk_ffsll
+#define geteuid pdk_geteuid
+#define if_addmulti pdk_if_addmulti
+#define if_delmulti pdk_if_delmulti
+#define if_qflush pdk_if_qflush
+#define m_append pdk_m_append
+#define m_copym pdk_m_copym
+#define m_defrag pdk_m_defrag
+#define m_dup pdk_m_dup
+#define m_fixhdr pdk_m_fixhdr
+#define m_getcl pdk_m_getcl
+#define m_getptr pdk_m_getptr
+#define m_length pdk_m_length
+#define m_pulldown pdk_m_pulldown
+#define m_tag_copy pdk_m_tag_copy
+#define m_tag_copy_chain pdk_m_tag_copy_chain
+#define m_tag_delete pdk_m_tag_delete
+#define m_tag_delete_chain pdk_m_tag_delete_chain
+#define m_tag_locate pdk_m_tag_locate
+#define max_datalen pdk_max_datalen
+#define max_hdr pdk_max_hdr
+#define max_linkhdr pdk_max_linkhdr
+#define max_protohdr pdk_max_protohdr
+#define ppsratecheck pdk_ppsratecheck
+#define sbuf_bcat pdk_sbuf_bcat
+#define sbuf_bcpy pdk_sbuf_bcpy
+#define sbuf_clear pdk_sbuf_clear
+#define sbuf_cpy pdk_sbuf_cpy
+#define sbuf_done pdk_sbuf_done
+#define sbuf_setpos pdk_sbuf_setpos
+#define sbuf_trim pdk_sbuf_trim
+#define timingsafe_bcmp pdk_timingsafe_bcmp
+
 #endif

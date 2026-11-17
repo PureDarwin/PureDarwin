@@ -67,4 +67,9 @@
 #define strtol pdk_strtol
 #define strtoul pdk_strtoul
 
+// clashes with kernel globals outside its export lists, found against the built kernel
+#define pmap_copy_page pdk_pmap_copy_page
+#define pmap_zero_page pdk_pmap_zero_page
+#define rt_ifmsg pdk_rt_ifmsg
+
 #endif
