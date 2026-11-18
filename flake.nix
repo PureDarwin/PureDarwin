@@ -2728,7 +2728,9 @@
             # the same with NVIDIA's 580 driver for Maxwell to Volta
             image-nvidia = imageNvidiaBuild;
           }
-            // lib.filterAttrs (_: lib.isDerivation) nixPortPackages;
+            // lib.filterAttrs (_: lib.isDerivation) nixPortPackages
+            # the frameworks built for the browser with emscripten (see nix/wasm.nix)
+            // import ./nix/wasm.nix { inherit pkgs lib; };
           # every package by target and scope name: nix build .#pd.x86_64.zsh, .#pd.arm64.zsh
           outputs = import ./nix/outputs.nix {
             inherit lib all tests;

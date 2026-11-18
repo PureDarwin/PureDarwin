@@ -32,7 +32,7 @@ let
     "kc-tools-guest" "debugserver" "mingw-aarch64-cc" "mingw-aarch64-crt" "mingw-arm64ec-cc" "xnu-loader-ia32" ]
     || has "compiler-rt" n;
   isRunner = n: ends "-runner" n;
-  isOtherTarget = n: lib.any (s: ends s n || lib.hasInfix s n) [ "-armv6" "-riscv64" "-arm32-" ] || has "riscv64-macho" n;
+  isOtherTarget = n: lib.any (s: ends s n || lib.hasInfix s n) [ "-armv6" "-riscv64" "-arm32-" "-wasm" ] || has "riscv64-macho" n;
   isArm64 = n: ends "-arm64" n || lib.hasInfix "-arm64-" n;
 
   claimed = n: isImage n || isKernel n || isKc n || isFirmware n || isToolchain n || isRunner n || isOtherTarget n;
@@ -49,6 +49,7 @@ in
       armv6 = strip "-armv6" (inGroup (n: lib.hasInfix "-armv6" n));
       riscv64 = strip "-riscv64" (inGroup (n: lib.hasInfix "riscv64" n && !(isImage n) && !(isKc n) && !(isRunner n)));
       arm32 = inGroup (n: lib.hasInfix "-arm32-" n && !(isKernel n));
+      wasm32 = strip "-wasm" (inGroup (n: ends "-wasm" n));
     };
     kernel = byBoard "kernel-arm64-" (inGroup (n: isKernel n && !(isImage n)));
     kc = byBoard "arm64-" (lib.mapAttrs' (n: v: lib.nameValuePair (kcName n) v) (inGroup isKc));
