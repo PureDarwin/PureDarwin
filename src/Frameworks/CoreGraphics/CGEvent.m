@@ -22,6 +22,7 @@
  */
 
 #import <CoreGraphics/CGEvent.h>
+#include <CoreFoundation/CFObjCMessage.h>
 #import <CoreGraphics/CGDirectDisplay.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
@@ -119,7 +120,7 @@ static uint64_t PDAppKitUnsigned(const char *selector)
 
     if (event == Nil || !class_respondsToSelector(object_getClass((id)event), sel_registerName(selector)))
         return 0;
-    return ((unsigned long (*)(id, SEL))objc_msgSend)((id)event, sel_registerName(selector));
+    return CF_MSGSEND(unsigned long (*)(id, SEL), (id)event, sel_registerName(selector));
 }
 
 static CGPoint PDCurrentLocation(void)
@@ -128,7 +129,7 @@ static CGPoint PDCurrentLocation(void)
 
     if (event == Nil)
         return CGPointZero;
-    return ((CGPoint (*)(id, SEL))objc_msgSend)((id)event, sel_registerName("mouseLocation"));
+    return CF_MSGSEND(CGPoint (*)(id, SEL), (id)event, sel_registerName("mouseLocation"));
 }
 
 CFTypeID CGEventGetTypeID(void) {
@@ -440,7 +441,7 @@ bool CGEventSourceKeyState(CGEventSourceStateID stateID, CGKeyCode key) {
     SEL isDown = sel_registerName("_isKeyCodeDown:");
 
     if (event != Nil && class_respondsToSelector(object_getClass((id)event), isDown) &&
-        ((BOOL (*)(id, SEL, unsigned short))objc_msgSend)((id)event, isDown, key))
+        CF_MSGSEND(BOOL (*)(id, SEL, unsigned short), (id)event, isDown, key))
         return true;
 
     switch (key) {

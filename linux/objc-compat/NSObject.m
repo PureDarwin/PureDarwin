@@ -9,6 +9,7 @@
 #include <objc/hooks.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 id objc_retain_fast_np(id obj);
 void objc_release_fast_np(id obj);
@@ -157,6 +158,16 @@ struct argon_cf_hooks argon_cf;
 + (IMP)methodForSelector:(SEL)aSelector { return class_getMethodImplementation(object_getClass(self), aSelector); }
 + (IMP)instanceMethodForSelector:(SEL)aSelector { return class_getMethodImplementation(self, aSelector); }
 
+#if defined(__EMSCRIPTEN__)
+// performSelector: calls each method by its own type, a wasm call through any other traps (CFObjCMessage.h)
+- (id)performSelector:(SEL)aSelector { return _CFObjCPerform(self, aSelector, 0, nil, nil); }
+- (id)performSelector:(SEL)aSelector withObject:(id)object { return _CFObjCPerform(self, aSelector, 1, object, nil); }
+- (id)performSelector:(SEL)aSelector withObject:(id)object1 withObject:(id)object2
+{
+    return _CFObjCPerform(self, aSelector, 2, object1, object2);
+}
++ (id)performSelector:(SEL)aSelector { return _CFObjCPerform(self, aSelector, 0, nil, nil); }
+#else
 - (id)performSelector:(SEL)aSelector
 {
     return CF_MSGSEND(id (*)(id, SEL), self, aSelector);
@@ -176,6 +187,7 @@ struct argon_cf_hooks argon_cf;
 {
     return CF_MSGSEND(id (*)(id, SEL), self, aSelector);
 }
+#endif
 
 - (id)copy { return [(id)self copyWithZone:NULL]; }
 - (id)mutableCopy { return [(id)self mutableCopyWithZone:NULL]; }

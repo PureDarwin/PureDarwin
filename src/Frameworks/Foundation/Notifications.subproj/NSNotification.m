@@ -239,7 +239,7 @@ OBJC_EXPORT id objc_loadWeakRetained(id *location);
                 continue;
             }
         }
-        CF_MSGSEND(void (*)(id, SEL, id), target, entry->_selector,
+        CF_PERFORM1(target, entry->_selector,
                                               notification);
         if (entry->_zeroing) {
             [target release];

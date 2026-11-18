@@ -48,6 +48,14 @@ static NSRect visibleFrameForFrame(NSRect frame) {
     return visFrame;
 }
 
+// methods this file sends that no header it imports declares, with their implementations' types: a guessed
+// id return mismatches a void or floating point method, which wasm traps and other targets get away with
+@interface NSObject (PDDeclaredHere)
+-(int)_drainPipe; // AppKit/NSApplication.m
+-(void)_propertiesFromMode:(CGDisplayModeRef)mode colorSpace:(CGColorSpaceRef)cs displayID:(CGDirectDisplayID)displayID; // AppKit/NSScreen.m
+-(NSSelectInputSource *)inputSource; // AppKit/NSApplication.m
+@end
+
 @interface NSScreen (NSDisplayModeChange)
 -(void)_setFrame:(NSRect)frame visibleFrame:(NSRect)visibleFrame;
 @end
@@ -474,6 +482,7 @@ NSColor *NSColorGetCatalogColor(NSString *catalogName,NSString *colorName){
 }
 
 #import <AppKit/NSGraphicsStyle.h>
+
 
 @implementation NSGraphicsStyle (Overrides) 
 -(void)drawMenuBranchArrowInRect:(NSRect)rect selected:(BOOL)selected {

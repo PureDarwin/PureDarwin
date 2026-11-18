@@ -525,7 +525,7 @@ static void __NSArrayAbstract(id self, SEL _cmd) {
 
     for (CFIndex index = 0; index < count; ++index) {
         id value = (id)CFArrayGetValueAtIndex((CFArrayRef)self, index);
-        CF_MSGSEND(void (*)(id, SEL), value, selector);
+        CF_PERFORM0(value, selector);
     }
 }
 
@@ -534,7 +534,7 @@ static void __NSArrayAbstract(id self, SEL _cmd) {
 
     for (CFIndex index = 0; index < count; ++index) {
         id value = (id)CFArrayGetValueAtIndex((CFArrayRef)self, index);
-        CF_MSGSEND(void (*)(id, SEL, id), value, selector, object);
+        CF_PERFORM1(value, selector, object);
     }
 }
 

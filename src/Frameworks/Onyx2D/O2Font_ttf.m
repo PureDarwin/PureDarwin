@@ -20,7 +20,8 @@
    return (O2Glyph)(int)NSMapGet(_nameToGlyph,name);
 }
 
-O2FontRef O2FontCreateWithFontName_platform(NSString *name) {
+// the TrueType fallback, AppKit's FreeType fonts (O2Font_FT.m) take over wherever it is linked
+__attribute__((weak)) O2FontRef O2FontCreateWithFontName_platform(NSString *name) {
 #ifdef FREETYPE_PRESENT
    FcPattern *pattern=NULL;
    FcPattern *match=nil;
@@ -68,7 +69,7 @@ O2FontRef O2FontCreateWithFontName_platform(NSString *name) {
 #endif
 }
 
-O2FontRef O2FontCreateWithDataProvider_platform(O2DataProviderRef provider) {
+__attribute__((weak)) O2FontRef O2FontCreateWithDataProvider_platform(O2DataProviderRef provider) {
 #ifdef FREETYPE_PRESENT
    return [[O2Font_freetype alloc] initWithDataProvider:provider];
 #else

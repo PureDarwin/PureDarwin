@@ -54,7 +54,7 @@ static void *startDetachedThread(void *context) {
     NSAutoreleasePool *pool = [NSAutoreleasePool new];
 
     [NSThread currentThread];
-    CF_MSGSEND(void (*)(id, SEL, id), info->target, info->selector,
+    CF_PERFORM1(info->target, info->selector,
         info->object);
 
     [info->object release];
@@ -134,7 +134,7 @@ static void *startThreadObject(void *context) {
     _executing = YES;
 
     if (_target != nil && _selector != NULL) {
-        CF_MSGSEND(void (*)(id, SEL, id), _target, _selector, _argument);
+        CF_PERFORM1(_target, _selector, _argument);
     }
 
     _executing = NO;
@@ -312,7 +312,7 @@ id NSThreadSharedInstanceDoNotCreate(NSString *className) {
     /* Already there, or no main run loop to hop to: just call it. Hopping in
      * the first case would deadlock a waitUntilDone:YES against itself. */
     if (main == NULL || [NSThread isMainThread]) {
-        CF_MSGSEND(void (*)(id, SEL, id), self, selector, object);
+        CF_PERFORM1(self, selector, object);
         return;
     }
 
@@ -321,7 +321,7 @@ id NSThreadSharedInstanceDoNotCreate(NSString *className) {
         id argument = [object retain];
 
         CFRunLoopPerformBlock(main, kCFRunLoopCommonModes, ^{
-            CF_MSGSEND(void (*)(id, SEL, id), target, selector, argument);
+            CF_PERFORM1(target, selector, argument);
             [argument release];
             [target release];
         });
@@ -332,7 +332,7 @@ id NSThreadSharedInstanceDoNotCreate(NSString *className) {
     dispatch_semaphore_t done = dispatch_semaphore_create(0);
 
     CFRunLoopPerformBlock(main, kCFRunLoopCommonModes, ^{
-        CF_MSGSEND(void (*)(id, SEL, id), self, selector, object);
+        CF_PERFORM1(self, selector, object);
         dispatch_semaphore_signal(done);
     });
     CFRunLoopWakeUp(main);

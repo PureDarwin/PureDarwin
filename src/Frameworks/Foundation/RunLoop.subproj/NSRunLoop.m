@@ -124,8 +124,9 @@ static void descriptorCallBack(CFFileDescriptorRef descriptor, CFOptionFlags typ
 
 NSRunLoopMode const NSDefaultRunLoopMode = @"kCFRunLoopDefaultMode";
 NSRunLoopMode const NSRunLoopCommonModes = @"kCFRunLoopCommonModes";
-NSRunLoopMode const NSEventTrackingRunLoopMode = @"NSEventTrackingRunLoopMode";
-NSRunLoopMode const NSModalPanelRunLoopMode = @"NSModalPanelRunLoopMode";
+// AppKit owns these two, its definitions take over wherever it is linked
+__attribute__((weak)) NSRunLoopMode const NSEventTrackingRunLoopMode = @"NSEventTrackingRunLoopMode";
+__attribute__((weak)) NSRunLoopMode const NSModalPanelRunLoopMode = @"NSModalPanelRunLoopMode";
 
 // sources are file descriptors as Cocotron's AppKit expects, waited on as CFFileDescriptors in the
 // thread's CFRunLoop so CF sources and cross-thread wake-ups end the wait. NSTimer uses libdispatch.
@@ -268,10 +269,7 @@ static void createRunLoopKey(void) {
 
         NSRunLoopPerform *perform = [[_performs objectAtIndex:selected] retain];
         [_performs removeObjectAtIndex:selected];
-        typedef void (*PerformIMP)(id, SEL, id);
-        PerformIMP implementation = (PerformIMP)[perform->target
-            methodForSelector:perform->selector];
-        implementation(perform->target, perform->selector, perform->argument);
+        CF_PERFORM1(perform->target, perform->selector, perform->argument);
         [perform release];
         fired = YES;
     }
@@ -409,7 +407,7 @@ static NSMutableArray *pendingPerforms(void) {
     @synchronized (pendingPerforms()) {
         [pendingPerforms() removeObjectIdenticalTo:self];
     }
-    CF_MSGSEND(void (*)(id, SEL, id), _target, _selector, _argument);
+    CF_PERFORM1(_target, _selector, _argument);
     [self release];
 }
 

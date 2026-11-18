@@ -17,9 +17,16 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSCell.h>
 #import <AppKit/NSObject+BindingSupport.h>
 
+
 static void* NSMultipleValueBinderChangeContext;
 static void* NSMultipleValueBinderWholeArrayChangeContext;
 
+
+// methods this file sends that no header it imports declares, with their implementations' types: a guessed
+// id return mismatches a void or floating point method, which wasm traps and other targets get away with
+@interface NSObject (PDDeclaredHere)
+-(Class)classForCoder; // AppKit/NSColor.subproj/NSColor.m
+@end
 
 @interface _NSMultipleValueWrapperArray : NSArray
 {

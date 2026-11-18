@@ -20,6 +20,15 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSRaise.h>
 #import <Foundation/NSKeyedArchiver.h>
 
+
+// methods this file sends that no header it imports declares, with their implementations' types: a guessed
+// id return mismatches a void or floating point method, which wasm traps and other targets get away with
+@interface NSObject (PDDeclaredHere)
++(NSColor *)clearColor; // AppKit/NSColor.subproj/NSColor.m
+-(id)_binderForBinding:(id)binding create:(BOOL)create; // AppKit/NSKeyValueBinding/NSObject+BindingSupport.m
+-(BOOL)validateUserInterfaceItem:(id <NSValidatedUserInterfaceItem>)item; // AppKit/NSDocument.m
+@end
+
 @interface NSWindow(PDBlur)
 -(void)_setBackgroundBlurInset:(CGFloat)inset radius:(CGFloat)radius;
 @end

@@ -14,6 +14,13 @@
 #import <AppKit/NSRaise.h>
 #import <Foundation/NSPlatform.h>
 
+
+// methods this file sends that no header it imports declares, with their implementations' types: a guessed
+// id return mismatches a void or floating point method, which wasm traps and other targets get away with
+@interface NSObject (PDDeclaredHere)
+- (NSString *)stringByAppendingFormat:(NSString *)format, ...; // Foundation/String.subproj/NSString.m
+@end
+
 @implementation NSObject(NSNibLoading)
 
 -(void)awakeFromNib {

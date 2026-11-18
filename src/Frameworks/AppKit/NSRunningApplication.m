@@ -34,6 +34,11 @@ static NSString *executablePathForPid(pid_t pid)
 // the process start time, from the kernel's proc table
 static NSDate *launchDateForPid(pid_t pid)
 {
+#if defined(__EMSCRIPTEN__)
+    // a page has no process table to ask
+    (void)pid;
+    return nil;
+#else
     int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, pid };
     struct kinfo_proc info;
     size_t len = sizeof(info);
@@ -41,6 +46,7 @@ static NSDate *launchDateForPid(pid_t pid)
     if (sysctl(mib, 4, &info, &len, NULL, 0) != 0 || len == 0)
         return nil;
     return [NSDate dateWithTimeIntervalSince1970:info.kp_proc.p_starttime.tv_sec + info.kp_proc.p_starttime.tv_usec / 1e6];
+#endif
 }
 
 @implementation NSRunningApplication

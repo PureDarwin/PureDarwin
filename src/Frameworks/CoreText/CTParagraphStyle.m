@@ -1,6 +1,7 @@
 // CTParagraphStyle.m - paragraph styles, text tabs and run delegates
 // Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 #import "CTInternal.h"
+#include <CoreFoundation/CFObjCMessage.h>
 #import "CTLayout.h"
 #import <objc/message.h>
 
@@ -143,11 +144,11 @@ bool CTParagraphStyleGetValueForSpecifier(CTParagraphStyleRef paragraphStyle, CT
 
 // AppKit's paragraph style is only known by its selectors here
 static CGFloat floatValue(id object, SEL selector) {
-    return ((CGFloat (*)(id, SEL))objc_msgSend)(object, selector);
+    return CF_MSGSEND(CGFloat (*)(id, SEL), object, selector);
 }
 
 static NSInteger integerValue(id object, SEL selector) {
-    return ((NSInteger (*)(id, SEL))objc_msgSend)(object, selector);
+    return CF_MSGSEND(NSInteger (*)(id, SEL), object, selector);
 }
 
 // the paragraph style in a run's attributes, CTParagraphStyle or AppKit's NSParagraphStyle

@@ -14,4 +14,8 @@ s = parts[0] + head + "\t\treturn __objc_wasm_nil_slot(selector);\n" + parts[1] 
 a = "\tif (nil == receiver) { return (IMP)nil_method; }"
 assert s.count(a) == 1
 s = s.replace(a, "\tif (nil == receiver) { return __objc_wasm_nil_imp(selector); }")
+# a message nothing implements gets a zero of its own type too, and a line on stderr naming it
+a = "static struct objc_slot *objc_msg_forward3_null(id receiver, SEL op) { return &nil_slot_v1; }"
+assert s.count(a) == 1
+s = s.replace(a, "struct objc_slot *__objc_wasm_unknown_slot(id, SEL);\nstatic struct objc_slot *objc_msg_forward3_null(id receiver, SEL op) { return __objc_wasm_unknown_slot(receiver, op); }")
 open(p, "w").write(s)

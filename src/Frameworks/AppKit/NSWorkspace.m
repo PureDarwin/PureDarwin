@@ -25,7 +25,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #include <sys/statvfs.h>
 #include <sys/mount.h>
 #else
+#if __has_include(<sys/ucred.h>)
 #include <sys/ucred.h>
+#endif
 #include <sys/mount.h>
 #endif
 #import <AppKit/NSRaise.h>
@@ -463,6 +465,21 @@ static BOOL argonMountForPath(const char *path, char *source, size_t sourceSize,
    if(type!=NULL)
     *type=[NSString stringWithUTF8String:fstype];
    return YES;
+#elif defined(__EMSCRIPTEN__)
+   // a page has one file system, emscripten's in memory: writable, never removable or unmountable
+   if(path==nil || access([path fileSystemRepresentation],F_OK)!=0)
+    return NO;
+   if(isRemovable!=NULL)
+    *isRemovable=NO;
+   if(isWritable!=NULL)
+    *isWritable=YES;
+   if(isUnmountable!=NULL)
+    *isUnmountable=NO;
+   if(description!=NULL)
+    *description=@"memfs";
+   if(type!=NULL)
+    *type=@"memfs";
+   return YES;
 #else
    struct statfs info;
 
@@ -536,6 +553,9 @@ static BOOL argonMountForPath(const char *path, char *source, size_t sourceSize,
    if(table!=NULL)
     endmntent(table);
    return result;
+#elif defined(__EMSCRIPTEN__)
+   // nothing in a page can be ejected
+   return [NSArray array];
 #else
    struct statfs *mounts=NULL;
    int count=getmntinfo(&mounts,MNT_NOWAIT);
@@ -560,6 +580,9 @@ static BOOL argonMountForPath(const char *path, char *source, size_t sourceSize,
    if(table!=NULL)
     endmntent(table);
    return result;
+#elif defined(__EMSCRIPTEN__)
+   // a page's file system is one volume, the root
+   return [NSArray arrayWithObject:@"/"];
 #else
    struct statfs *mounts=NULL;
    int count=getmntinfo(&mounts,MNT_NOWAIT);

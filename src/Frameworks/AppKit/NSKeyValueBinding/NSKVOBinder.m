@@ -15,7 +15,14 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSControl.h>
 #import "NSObject+BindingSupport.h"
 
+
 static void *NSKVOBinderChangeContext;
+
+// methods this file sends that no header it imports declares, with their implementations' types: a guessed
+// id return mismatches a void or floating point method, which wasm traps and other targets get away with
+@interface NSObject (PDDeclaredHere)
+- (BOOL)isEqualTo:(id)object; // Foundation/Runtime.subproj/NSObjectDescription.m
+@end
 
 @implementation _NSKVOBinder
 -(void)startObservingChanges

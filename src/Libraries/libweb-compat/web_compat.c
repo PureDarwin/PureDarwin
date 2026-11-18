@@ -10,6 +10,7 @@
 #include <sys/sysinfo.h>
 #include <uuid/uuid.h>
 #include <emscripten/heap.h>
+#include <errno.h>
 
 int backtrace(void **frames, int max)
 {
@@ -60,6 +61,28 @@ int sysinfo(struct sysinfo *info)
     info->mem_unit = 1;
     info->procs = 1;
     return 0;
+}
+
+// libobjc2 asks the C++ runtime for its exception globals to tell a C++ exception from an Objective-C one.
+// emscripten's JavaScript exceptions keep none, so the answer is always that no C++ exception is in flight.
+struct cxa_eh_globals {
+    void *caughtExceptions;
+    unsigned int uncaughtExceptions;
+};
+
+void *__cxa_get_globals(void)
+{
+    static struct cxa_eh_globals globals;
+    return &globals;
+}
+
+// nothing in a page is mounted apart from its one file system, so there is nothing to unmount
+int umount2(const char *target, int flags)
+{
+    (void)target;
+    (void)flags;
+    errno = EINVAL;
+    return -1;
 }
 
 // notify(3) inside the page: a name table, a state per name, and the handlers registered on each

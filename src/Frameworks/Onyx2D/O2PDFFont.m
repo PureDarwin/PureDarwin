@@ -5,6 +5,13 @@
 #import <Onyx2D/O2Encoding.h>
 #import "O2PDFCharWidths.h"
 
+
+// methods this file sends that no header it imports declares, with their implementations' types: a guessed
+// id return mismatches a void or floating point method, which wasm traps and other targets get away with
+@interface NSObject (PDDeclaredHere)
+- (instancetype)initWithCString:(const char *)cString encoding:(NSStringEncoding)encoding; // Foundation/String.subproj/NSString.m
+@end
+
 @implementation O2PDFFont
 
 static inline O2TextEncoding textEncodingWithName(const char *name){

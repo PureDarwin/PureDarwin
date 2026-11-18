@@ -34,7 +34,17 @@
 #import <CoreGraphics/CGImage.h>
 // display mode flags (kDisplayModeValidFlag and so on) for CGDisplayModeGetIOFlags, as Apple's header brings them in
 #include <IOKit/IOKitLib.h>
+// Argon's IOKit shim and the browser build carry no IOKit graphics headers, the flags are only for Darwin callers
+#if __has_include(<IOKit/graphics/IOGraphicsTypes.h>)
 #include <IOKit/graphics/IOGraphicsTypes.h>
+#else
+// the mode flags CGDisplayModeGetIOFlags reports, with IOGraphicsTypes.h's values
+enum {
+    kDisplayModeValidFlag = 0x00000001,
+    kDisplayModeSafeFlag = 0x00000002,
+    kDisplayModeDefaultFlag = 0x00000004,
+};
+#endif
 
 #if __BLOCKS__
 #import <dispatch/dispatch.h>

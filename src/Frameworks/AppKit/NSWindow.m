@@ -70,6 +70,17 @@
 #import <WindowServer/message.h>
 #import <WindowServer/rpc.h>
 
+// methods this file sends that no header it imports declares, with their implementations' types: a guessed
+// id return mismatches a void or floating point method, which wasm traps and other targets get away with
+@interface NSObject (PDDeclaredHere)
++(NSGraphicsContext *)graphicsContextWithGraphicsPort:(CGContextRef)context flipped:(BOOL)flipped; // AppKit/NSGraphicsContext.m
++(NSGraphicsContext *)graphicsContextWithWindow:(NSWindow *)window; // AppKit/NSGraphicsContext.m
++ (BOOL)quartzDebuggingIsEnabled; // AppKit/NSGraphicsContext.m
++(void)setCurrentContext:(NSGraphicsContext *)context; // AppKit/NSGraphicsContext.m
++ (void)setQuartzDebugMode:(BOOL)mode; // AppKit/NSGraphicsContext.m
+-(void)_removeWindow:(NSWindow *)window; // AppKit/NSApplication.m
+@end
+
 @interface NSCursor (NSWindowResize)
 +(NSCursor *)_windowResizeCursorForEdges:(int)edges;
 @end
@@ -77,6 +88,7 @@
 // set while the pointer is over the resize band, so leaving it hands the cursor back
 static char resizeBandKey;
 #import "O2Context_builtin_FT.h"
+
 
 NSString * const NSWindowDidBecomeKeyNotification=@"NSWindowDidBecomeKeyNotification";
 NSString * const NSWindowDidChangeBackingPropertiesNotification=@"NSWindowDidChangeBackingPropertiesNotification";
@@ -419,9 +431,11 @@ static BOOL _allowsAutomaticWindowTabbing=YES;
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     if(_context)
         [_context release];
+#if !defined(__EMSCRIPTEN__)
     if(buffer && bufsize)
         munmap(buffer, bufsize);
     shm_unlink([shmPath cString]);
+#endif
     [shmPath release];
     [bundleID release];
     //if(_cglContext)
@@ -452,14 +466,26 @@ static BOOL _allowsAutomaticWindowTabbing=YES;
 -(O2Context *) createCGContextIfNeeded
 {
     if(_context == nil) {
+#if !defined(__EMSCRIPTEN__)
         if(buffer != NULL && bufsize > 0)
             munmap(buffer, bufsize);
+#endif
 
         int depth = [_display depth] / 8;
-        int shmfd = shm_open([shmPath cString], O_RDWR, 0600);
         // whole pixels, truncated as the window server does, or a fractional width shears every row
         int pixelsWide = (int)_frame.size.width, pixelsHigh = (int)_frame.size.height;
         bufsize = (size_t)depth * pixelsWide * pixelsHigh;
+#if defined(__EMSCRIPTEN__)
+        // in a page the window server is this process, its buffer is drawn into directly
+        size_t served = 0;
+        buffer = _windowServerWindowBuffer((int)_number, &served);
+        if(buffer == NULL || served < bufsize) {
+            buffer = NULL;
+            return nil;
+        }
+        int shmfd = 0;
+#else
+        int shmfd = shm_open([shmPath cString], O_RDWR, 0600);
 
         if(shmfd >= 0) {
             /* The window server sizes this object from its own idea of the
@@ -481,6 +507,7 @@ static BOOL _allowsAutomaticWindowTabbing=YES;
             buffer = NULL;
             return nil;
         }
+#endif
 
         O2ColorSpaceRef colorSpace = O2ColorSpaceCreateDeviceRGB();
         O2Surface *surface = [[O2Surface alloc] initWithBytes:buffer

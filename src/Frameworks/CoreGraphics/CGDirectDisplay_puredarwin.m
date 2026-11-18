@@ -12,7 +12,12 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#if __has_include(<mach/port.h>)
 #include <mach/port.h>
+#else
+// Argon's and the browser build's mach shim carry the port types in mach.h
+#include <mach/mach.h>
+#endif
 #include <dlfcn.h>
 #import <CoreFoundation/CFRuntime.h>
 #include <dispatch/dispatch.h>

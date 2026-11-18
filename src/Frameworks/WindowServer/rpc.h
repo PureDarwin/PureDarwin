@@ -29,6 +29,13 @@ int _windowServerConnect(void);
  */
 int _windowServerReceiveMessage(PortMessage *msg);
 
+#if defined(__EMSCRIPTEN__)
+// a page: the window's pixels are memory the window server owns, AppKit draws into them in place
+void *_windowServerWindowBuffer(int windowID, size_t *sizeOut);
+// called after each input event is queued, AppKit drains the queue from there instead of a receive thread
+void _windowServerWebSetPump(void (*pump)(void));
+#endif
+
 // metal: the process's wl_display, and a desynchronised child surface of a window at (x, y) from its top left
 // (wl_surface, with its wl_subsurface in *subsurfaceOut) for CAMetalLayer to present into with Vulkan. NULL without a wl_subcompositor or window.
 void *_windowServerWaylandDisplay(void);

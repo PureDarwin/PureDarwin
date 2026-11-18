@@ -26,6 +26,15 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSPasteboard.h>
 #import <Foundation/NSKeyedArchiver.h>
 
+
+// methods this file sends that no header it imports declares, with their implementations' types: a guessed
+// id return mismatches a void or floating point method, which wasm traps and other targets get away with
+@interface NSObject (PDDeclaredHere)
++(NSColor *)colorWithCatalogName:(NSString *)catalogName colorName:(NSString *)colorName color:(NSColor *)color; // AppKit/NSColor.subproj/NSColor_catalog.m
+-(CGColorRef)CGColorRef; // AppKit/NSColor.subproj/NSColor_CGColor.m
+-(NSColor *)color; // AppKit/NSColorPanel.m
+@end
+
 @interface NSColor(private)
 -(NSString *)catalogName;
 -(NSString *)colorName;

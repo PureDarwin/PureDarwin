@@ -33,10 +33,19 @@
 #import <Onyx2D/O2Context.h>
 #import <AppKit/NSScreen.h>
 
+// methods this file sends that no header it imports declares, with their implementations' types: a guessed
+// id return mismatches a void or floating point method, which wasm traps and other targets get away with
+@interface NSObject (PDDeclaredHere)
+-(CGContextRef)graphicsPort; // AppKit/NSGraphicsContext.m
+-(void)requestMove:(NSEvent *)event; // AppKit/NSWindow.m
+-(void)requestResize:(NSEvent *)event; // AppKit/NSWindow.m
+@end
+
 @interface NSThemeFrame (TitlebarPrivate)
 -(void)_titlebarDoubleClicked;
 @end
 #include <stdint.h>
+
 
 // libSystem exports notify(3), the sdk ships no header for it
 extern uint32_t notify_register_check(const char *name, int *out_token);

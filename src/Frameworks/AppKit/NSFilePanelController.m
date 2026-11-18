@@ -29,6 +29,7 @@
 #import <objc/runtime.h>
 #import <dlfcn.h>
 
+
 #define SIDEBAR_WIDTH 134
 #define TOOLBAR_HEIGHT 40
 #define FULLSIZE_TOOLBAR_HEIGHT 52
@@ -41,6 +42,15 @@ enum {
     PDPanelSheet,
     PDPanelModeless
 };
+
+// methods this file sends that no header it imports declares, with their implementations' types: a guessed
+// id return mismatches a void or floating point method, which wasm traps and other targets get away with
+@interface NSObject (PDDeclaredHere)
++ (instancetype)typeWithFilenameExtension:(NSString *)filenameExtension; // UniformTypeIdentifiers/UTType.m
++ (instancetype)typeWithIdentifier:(NSString *)identifier; // UniformTypeIdentifiers/UTType.m
+- (BOOL)conformsToType:(id)type; // UniformTypeIdentifiers/UTType.m, a UTType
+- (NSString *)preferredFilenameExtension; // UniformTypeIdentifiers/UTType.m
+@end
 
 @interface NSSavePanel (PDFilePanelPrivate)
 - (void)_setFilename:(NSString *)filename;

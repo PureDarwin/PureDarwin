@@ -27,6 +27,13 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import "NSCellUndoManager.h"
 #import <AppKit/NSTextView.h>
 
+
+// methods this file sends that no header it imports declares, with their implementations' types: a guessed
+// id return mismatches a void or floating point method, which wasm traps and other targets get away with
+@interface NSObject (PDDeclaredHere)
+- (void)setFormat:(NSString *)format; // the formatters' format string, as on NSNumberFormatter
+@end
+
 @implementation NSCell
 
 #pragma mark -

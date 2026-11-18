@@ -185,7 +185,7 @@
     if (_block != nil)
         _block(self);
     else if (_target != nil && _selector != NULL)
-        CF_MSGSEND(void (*)(id, SEL, id), _target, _selector, self);
+        CF_PERFORM1(_target, _selector, self);
     else
         return;
     if (_repeats) {

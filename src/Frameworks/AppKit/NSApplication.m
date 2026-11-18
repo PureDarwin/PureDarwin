@@ -51,6 +51,16 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 extern void _dispatch_main_queue_callback_4CF(void *);
 
 // the menu client requests' main-thread halves
+// methods this file sends that no header it imports declares, with their implementations' types: a guessed
+// id return mismatches a void or floating point method, which wasm traps and other targets get away with
+@interface NSObject (PDDeclaredHere)
++(void)_setKeyCode:(unsigned short)keyCode down:(BOOL)down; // AppKit/NSEvent.subproj/NSEvent.m
++(NSGraphicsContext *)currentContext; // AppKit/NSGraphicsContext.m
++(NSEvent *)keyEventWithType:(NSEventType)type location:(NSPoint)location modifierFlags:(unsigned)modifierFlags window:(NSWindow *)window characters:(NSString *)characters charactersIgnoringModifiers:(NSString *)charactersIgnoringModifiers isARepeat:(BOOL)isARepeat keyCode:(unsigned short)keyCode; // AppKit/NSEvent.subproj/NSEvent.m
+-(void)machServiceLoop:(id)object; // AppKit/NSApplication.m
+-(void)processStateUpdate:(struct wsRPCWindow *)data; // AppKit/NSWindow.m
+@end
+
 @interface NSApplication (PDMenuClientMain)
 - (void)_activateApplicationFromDock;
 - (void)_activateMenuItemAtPath:(NSArray *)indexPath forWindow:(NSNumber *)windowId;
@@ -150,6 +160,23 @@ OBJC_EXPORT id objc_storeWeak(id *location, id obj);
 OBJC_EXPORT id objc_storeWeakOrNil(id *location, id obj);
 #endif
 
+#if defined(__EMSCRIPTEN__)
+#include <emscripten.h>
+
+@interface NSApplication (Web)
+-(void)_webTick;
+@end
+
+static void _NSApplicationWebTick(void *app) {
+    [(NSApplication *)app _webTick];
+}
+
+// the window server queued input: handle it now, in the browser callback that brought it
+static void _NSApplicationWebPump(void) {
+    [NSApp machServiceLoop:nil];
+}
+#endif
+
 @implementation NSApplication
 
 id NSApp=nil;
@@ -220,10 +247,18 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
 
 -(void)machServiceLoop:(id)object {
     //NSLog(@"starting mach service loop");
+#if defined(__EMSCRIPTEN__)
+    // a page drains the queue once per input event, the click counting carries across those calls
+    static NSTimeInterval lastClickTime = 0;
+    static NSTimeInterval lastRightClickTime = 0;
+    static unsigned clickCount = 0;
+    static unsigned rightClickCount = 0;
+#else
     NSTimeInterval lastClickTime = 0;
     NSTimeInterval lastRightClickTime = 0;
     unsigned clickCount = 0;
     unsigned rightClickCount = 0;
+#endif
     struct timespec ts;
 
     while(1) {
@@ -682,7 +717,11 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
    pthread_mutex_init(_lock,NULL);
 
     [self _showSplashImage];
+#if defined(__EMSCRIPTEN__)
+    _windowServerWebSetPump(_NSApplicationWebPump);
+#else
     [NSThread detachNewThreadSelector:@selector(machServiceLoop:) toTarget:self withObject:nil];
+#endif
 
    return NSApp;
 }
@@ -1597,6 +1636,28 @@ static void pdRunOnMain(void (^work)(void))
         [_windows makeObjectsPerformSelector:@selector(_hideForDeactivation)];
 }
 
+#if defined(__EMSCRIPTEN__)
+// a page cannot wait for events: the browser calls this once a frame, and it takes what is there
+-(void)_webTick {
+    NSAutoreleasePool *pool = [NSAutoreleasePool new];
+    NSEvent *event;
+
+    while((event = [self nextEventMatchingMask:NSAnyEventMask untilDate:[NSDate distantPast]
+                                        inMode:NSDefaultRunLoopMode dequeue:YES]) != nil) {
+        NS_DURING
+         [self sendEvent:event];
+        NS_HANDLER
+         [self reportException:localException];
+        NS_ENDHANDLER
+    }
+    [self _checkForReleasedWindows];
+    [self _checkForTerminate];
+    [pool release];
+    if(!_isRunning)
+        emscripten_cancel_main_loop();
+}
+#endif
+
 -(void)run {
 
   static BOOL didlaunch = NO;
@@ -1613,6 +1674,11 @@ static void pdRunOnMain(void (^work)(void))
     NS_ENDHANDLER
   }
 
+#if defined(__EMSCRIPTEN__)
+  // never returns: the browser's frame loop drives -_webTick from here on
+  emscripten_set_main_loop_arg(_NSApplicationWebTick, self, 0, 1);
+  return;
+#endif
    do {
     // There is another pool inside nextEventMatchingMask. Do we really need this one?
     pool = [NSAutoreleasePool new];

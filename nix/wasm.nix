@@ -54,6 +54,10 @@ let
       sed -i 's/^OBJC_PUBLIC void __objc_exec_class(struct objc_module_abi_8 \*module)$/OBJC_PUBLIC void __objc_exec_class(struct objc_module_abi_8 *module, ...)/' loader.c
       sed -i 's/^id objc_lookup_class(const char \*name)$/id objc_lookup_class(const char *name, ...)/' class_table.c
       sed -i 's/^id objc_lookup_class(const char \*name);$/id objc_lookup_class(const char *name, ...);/' objc/runtime-deprecated.h
+      # objc_get_class too, for a class sent a message by name
+      sed -i 's/^id objc_get_class(const char \*name)$/id objc_get_class(const char *name, ...)/' class_table.c
+      sed -i 's/^id objc_get_class(const char \*name);$/id objc_get_class(const char *name, ...);/' objc/runtime-deprecated.h
+      grep -q 'objc_get_class(const char \*name, \.\.\.)$' class_table.c
       sed -i 's/^void objc_resolve_class(Class);$/BOOL objc_resolve_class(Class);/' dtable.c
       sed -i 's/^PRIVATE void objc_resolve_class(Class);$/PRIVATE BOOL objc_resolve_class(Class);/' runtime.c
       grep -q '^PRIVATE BOOL objc_resolve_class(Class);' runtime.c
@@ -366,6 +370,9 @@ let
     cp -L inc/Foundation/*.h $out/include/Foundation/
     cp inc/TargetConditionals.h $out/include/
     cp -r $compat/include $out/include/argon-compat
+    chmod -R u+w $out/include/argon-compat
+    # the compat copy reaches into the source tree, the installed one is the header itself (as Argon does)
+    cp inc/TargetConditionals.h $out/include/argon-compat/TargetConditionals.h
     cp -r $web/include/. $out/include/
   '';
 
@@ -489,6 +496,302 @@ let
     cp -r logs $out/
   '';
 
+  # the image and font libraries Onyx2D and CoreText use, static for wasm from nixpkgs' own sources.
+  # emscripten's ports fetch at build time, which the sandbox does not allow.
+  zlibWasm = pkgs.stdenv.mkDerivation {
+    pname = "puredarwin-zlib-wasm";
+    inherit (pkgs.zlib) version src;
+    nativeBuildInputs = [ emcc pkgs.python3 ];
+    dontStrip = true;
+    configurePhase = "${emSetup}\nemconfigure ./configure --static --prefix=$out";
+    buildPhase = "emmake make -j$NIX_BUILD_CORES libz.a";
+    installPhase = "emmake make install";
+  };
+
+  # a CMake library as static wasm, FLAGS its CMake options
+  emCMake = { pname, pkg, flags ? "", deps ? [ ] }: pkgs.stdenv.mkDerivation {
+    inherit pname;
+    inherit (pkg) version src;
+    nativeBuildInputs = [ emcc pkgs.cmake pkgs.python3 ];
+    dontStrip = true;
+    dontUseCmakeConfigure = true;
+    configurePhase = ''
+      ${emSetup}
+      emcmake cmake -S . -B wasm-build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+        -DCMAKE_INSTALL_PREFIX=$out -DCMAKE_PREFIX_PATH="${lib.concatStringsSep ";" deps}" ${flags}
+    '';
+    buildPhase = "cmake --build wasm-build -j$NIX_BUILD_CORES";
+    installPhase = "cmake --install wasm-build";
+  };
+
+  pngWasm = emCMake {
+    pname = "puredarwin-libpng-wasm"; pkg = pkgs.libpng; deps = [ zlibWasm ];
+    # emscripten's toolchain searches only its sysroot, so dependencies are named outright
+    flags = "-DPNG_SHARED=OFF -DPNG_TESTS=OFF -DPNG_TOOLS=OFF -DPNG_FRAMEWORK=OFF"
+      + " -DZLIB_LIBRARY=${zlibWasm}/lib/libz.a -DZLIB_INCLUDE_DIR=${zlibWasm}/include";
+  };
+
+  jpegWasm = emCMake {
+    pname = "puredarwin-libjpeg-turbo-wasm"; pkg = pkgs.libjpeg;
+    flags = "-DENABLE_SHARED=OFF -DWITH_SIMD=OFF -DWITH_TURBOJPEG=OFF -DWITH_JAVA=OFF";
+  };
+
+  freetypeWasm = emCMake {
+    pname = "puredarwin-freetype-wasm"; pkg = pkgs.freetype; deps = [ zlibWasm pngWasm ];
+    flags = "-DFT_REQUIRE_ZLIB=ON -DFT_REQUIRE_PNG=ON -DFT_DISABLE_HARFBUZZ=ON -DFT_DISABLE_BZIP2=ON -DFT_DISABLE_BROTLI=ON"
+      + " -DZLIB_LIBRARY=${zlibWasm}/lib/libz.a -DZLIB_INCLUDE_DIR=${zlibWasm}/include"
+      + " -DPNG_LIBRARY=${pngWasm}/lib/libpng.a -DPNG_PNG_INCLUDE_DIR=${pngWasm}/include";
+  };
+
+  tiffWasm = emCMake {
+    pname = "puredarwin-libtiff-wasm"; pkg = pkgs.libtiff;
+    flags = "-Dtiff-tools=OFF -Dtiff-tests=OFF -Dtiff-contrib=OFF -Dtiff-docs=OFF -Dlzma=OFF -Dzstd=OFF -Dwebp=OFF"
+      + " -Djbig=OFF -Dlerc=OFF -Dlibdeflate=OFF -Dcxx=OFF"
+      + " -DZLIB_LIBRARY=${zlibWasm}/lib/libz.a -DZLIB_INCLUDE_DIR=${zlibWasm}/include"
+      + " -DJPEG_LIBRARY=${jpegWasm}/lib/libjpeg.a -DJPEG_INCLUDE_DIR=${jpegWasm}/include";
+  };
+
+  expatWasm = emCMake {
+    pname = "puredarwin-expat-wasm"; pkg = pkgs.expat;
+    flags = "-DEXPAT_BUILD_TOOLS=OFF -DEXPAT_BUILD_EXAMPLES=OFF -DEXPAT_BUILD_TESTS=OFF -DEXPAT_BUILD_DOCS=OFF"
+      + " -DEXPAT_SHARED_LIBS=OFF";
+  };
+
+  # meson's view of emscripten, for the libraries that build with meson
+  emMesonCross = pkgs.writeText "emscripten-cross.ini" ''
+    [binaries]
+    c = 'emcc'
+    cpp = 'em++'
+    ar = 'emar'
+    ranlib = 'emranlib'
+    pkg-config = 'pkg-config'
+
+    [host_machine]
+    system = 'emscripten'
+    cpu_family = 'wasm32'
+    cpu = 'wasm32'
+    endian = 'little'
+  '';
+
+  # fribidi (LGPL-2.1), the bidirectional text algorithm CoreText's typesetter runs
+  fribidiWasm = pkgs.stdenv.mkDerivation {
+    pname = "puredarwin-fribidi-wasm";
+    inherit (pkgs.fribidi) version src;
+    nativeBuildInputs = [ emcc pkgs.meson pkgs.ninja pkgs.pkg-config pkgs.python3 ];
+    dontStrip = true;
+    dontUseMesonConfigure = true;
+    dontUseNinjaBuild = true;
+    dontUseNinjaInstall = true;
+    configurePhase = ''
+      ${emSetup}
+      patchShebangs .
+      meson setup wasm-build --cross-file ${emMesonCross} --prefix=$out --default-library=static --wrap-mode=nodownload \
+        --buildtype=release -Ddocs=false -Dtests=false -Dbin=false
+    '';
+    buildPhase = "ninja -C wasm-build -j$NIX_BUILD_CORES";
+    installPhase = "ninja -C wasm-build install";
+  };
+
+  # fontconfig (MIT-style) over the freetype and expat above. Its configuration and the fonts are files in
+  # the page's file system, the frameworks match fonts through it as they do on Linux.
+  fontconfigWasm = pkgs.stdenv.mkDerivation {
+    pname = "puredarwin-fontconfig-wasm";
+    inherit (pkgs.fontconfig) version src;
+    nativeBuildInputs = [ emcc pkgs.meson pkgs.ninja pkgs.pkg-config pkgs.gperf pkgs.python3 pkgs.gettext ];
+    dontStrip = true;
+    dontUseMesonConfigure = true;
+    dontUseNinjaBuild = true;
+    dontUseNinjaInstall = true;
+    configurePhase = ''
+      ${emSetup}
+      # the generators fontconfig runs at build time say /usr/bin/env, which the sandbox has not got
+      patchShebangs .
+      # freetype's .pc requires libpng's and zlib's
+      export PKG_CONFIG_PATH=${freetypeWasm}/lib/pkgconfig:${expatWasm}/lib/pkgconfig:${pngWasm}/lib/pkgconfig:${zlibWasm}/lib/pkgconfig
+      export PKG_CONFIG_LIBDIR=$PKG_CONFIG_PATH
+      meson setup wasm-build --cross-file ${emMesonCross} --prefix=$out --default-library=static --wrap-mode=nodownload \
+        --buildtype=release -Ddoc=disabled -Dtests=disabled -Dtools=disabled -Dcache-build=disabled -Dnls=disabled \
+        -Dxml-backend=expat -Dbaseconfig-dir=/etc/fonts -Dconfig-dir=/etc/fonts/conf.d -Dcache-dir=/var/cache/fontconfig \
+        -Ddefault-fonts-dirs=/System/Library/Fonts
+    '';
+    buildPhase = "ninja -C wasm-build -j$NIX_BUILD_CORES";
+    # /etc/fonts and the cache directory are paths inside the page, they land under $out/page for its file system
+    installPhase = ''
+      DESTDIR=$TMPDIR/dest ninja -C wasm-build install
+      cp -r $TMPDIR/dest$out/. $out/
+      mkdir -p $out/page
+      # conf.d links into conf.avail, already in $out: the page gets the files themselves
+      cp -rL $TMPDIR/dest/etc $out/page/
+    '';
+  };
+
+  # harfbuzz builds as one translation unit, harfbuzz.cc, over the freetype above
+  harfbuzzWasm = pkgs.stdenv.mkDerivation {
+    pname = "puredarwin-harfbuzz-wasm";
+    inherit (pkgs.harfbuzz) version src;
+    nativeBuildInputs = [ emcc pkgs.python3 ];
+    dontStrip = true;
+    dontConfigure = true;
+    buildPhase = ''
+      ${emSetup}
+      em++ -O2 -std=c++17 -fno-exceptions -fno-rtti -DHAVE_FREETYPE=1 -DHB_NO_MT \
+        -I${freetypeWasm}/include/freetype2 -c src/harfbuzz.cc -o harfbuzz.o
+      emar rcs libharfbuzz.a harfbuzz.o
+    '';
+    installPhase = ''
+      mkdir -p $out/lib $out/include/harfbuzz
+      cp libharfbuzz.a $out/lib/
+      cp src/hb*.h $out/include/harfbuzz/
+    '';
+  };
+
+  # the graphics frameworks and AppKit for the page on Argon's graphics recipe (linux/nix/packages.nix), as static
+  # libraries. WindowServer is rpc_web.c, a canvas per window. CGL and the Wayland pieces have no page counterpart.
+  appkitWasm = pkgs.runCommand "puredarwin-appkit-wasm" { nativeBuildInputs = [ emcc pkgs.python3 ]; } ''
+    ${emSetup}
+    top=${lib.fileset.toSource { root = ../.; fileset = lib.fileset.unions [ ../src/Frameworks/Onyx2D ../src/Frameworks/CoreGraphics
+      ../src/Frameworks/CoreText ../src/Frameworks/QuartzCore ../src/Frameworks/AppKit ../src/Frameworks/WindowServer
+      ../src/Frameworks/OpenGL ../src/Frameworks/CoreVideo ../src/Frameworks/ApplicationServices ../src/Libraries/CoreServices
+      ../linux/iokit ]; }}
+    fw=$top/src/Frameworks
+    F=${foundationWasm}/include
+    mkdir -p inc/OpenGL inc/CoreVideo inc/CoreServices inc/IOKit inc/WindowServer $out/lib
+    cp $fw/OpenGL/include/OpenGL/*.h inc/OpenGL/
+    cp $fw/CoreVideo/*.h inc/CoreVideo/
+    cp $top/src/Libraries/CoreServices/include/CoreServices/*.h inc/CoreServices/
+    cp $top/linux/iokit/include/IOKit/*.h inc/IOKit/
+    for f in Onyx2D CoreGraphics CoreText QuartzCore AppKit WindowServer ApplicationServices; do
+      mkdir -p inc/$f; find $fw/$f -name '*.h' -exec cp {} inc/$f/ \;
+    done
+    flags="-O2 ${objcFlags} -fno-objc-arc -D__PUREDARWIN__=1 -DARGON_LIBOBJC2=1 -D_GNU_SOURCE -DDEPLOYMENT_RUNTIME_OBJC=1 \
+      -DINCLUDE_OBJC=1 -include argon-darwin.h -I$F/argon-compat -I$F -I$F/Foundation -I$F/CoreFoundation -Iinc -Iinc/AppKit \
+      -Iinc/Onyx2D -Iinc/CoreGraphics -I${libobjc2Wasm}/include -I${dispatchWebWasm}/include \
+      -I${freetypeWasm}/include/freetype2 -I${harfbuzzWasm}/include/harfbuzz -I${pngWasm}/include -I${jpegWasm}/include \
+      -I${zlibWasm}/include -I${fontconfigWasm}/include -I${fontconfigWasm}/include/fontconfig -I${tiffWasm}/include \
+      -I${fribidiWasm}/include/fribidi -I${icuWasm}/include -Wno-everything"
+    # every file is tried, so one build shows every error left
+    bad=0
+    cc() { lib=$1; dir=$2; f=$3; mkdir -p obj/$lib
+      lang=objective-c; case $f in *.c) lang=c ;; esac
+      emcc -x $lang $flags -c $dir/$f -o obj/$lib/$(echo $f | tr / _).o 2> err.log || { bad=1; echo "== $lib/$f"; grep error: err.log | head -5; }; }
+    for f in $(cd $fw/Onyx2D && ls *.m); do cc Onyx2D $fw/Onyx2D $f; done
+    for f in $(cd $fw/CoreGraphics && ls *.m | grep -vxE 'CGLPixelSurface.m|CGDirectDisplay.m|KTFont\+PDF.m'); do cc CoreGraphics $fw/CoreGraphics $f; done
+    # every CoreText source: the font registry and descriptors live outside the two files Argon lists
+    for f in $(cd $fw/CoreText && ls *.m); do cc CoreText $fw/CoreText $f; done
+    for f in $(cd $fw/QuartzCore && ls *.m); do cc QuartzCore $fw/QuartzCore $f; done
+    cc WindowServer $fw/WindowServer rpc_web.c
+    cc CGL $fw/OpenGL CGL_web.c
+    cc CoreServices $top/src/Libraries/CoreServices LaunchServices.c
+    cc CoreServices $top/src/Libraries/CoreServices MultiprocessingCompat.c
+    for f in $(cd $fw/AppKit && find . -name '*.m' | sed 's|^\./||' | grep -v '^CoreData_/' | sort); do cc AppKit $fw/AppKit $f; done
+    [ $bad = 0 ]
+    for l in Onyx2D CoreGraphics CoreText QuartzCore WindowServer CGL CoreServices AppKit; do emar rcs $out/lib/lib$l.a obj/$l/*.o; done
+    cp -r inc $out/include
+    mkdir -p $out/Resources
+    cp -a $fw/AppKit/*.lproj $out/Resources/ 2>/dev/null || true
+  '';
+
+  systemFonts = pkgs.callPackage ./pkgs/base/system-fonts.nix { };
+
+  # everything an AppKit program for the page links, frameworks whole (classes are found by name)
+  appkitLibs = "-Wl,--whole-archive ${appkitWasm}/lib/libAppKit.a ${appkitWasm}/lib/libQuartzCore.a"
+    + " ${appkitWasm}/lib/libCoreText.a ${appkitWasm}/lib/libCoreGraphics.a ${appkitWasm}/lib/libOnyx2D.a"
+    + " ${appkitWasm}/lib/libWindowServer.a ${appkitWasm}/lib/libCGL.a ${appkitWasm}/lib/libCoreServices.a"
+    + " -Wl,--no-whole-archive"
+    + " ${fontconfigWasm}/lib/libfontconfig.a ${expatWasm}/lib/libexpat.a ${harfbuzzWasm}/lib/libharfbuzz.a"
+    + " ${fribidiWasm}/lib/libfribidi.a"
+    + " ${freetypeWasm}/lib/libfreetype.a ${tiffWasm}/lib/libtiff.a ${pngWasm}/lib/libpng.a ${jpegWasm}/lib/libjpeg.a"
+    + " ${zlibWasm}/lib/libz.a ${foundationLibs}";
+
+  # the page's file system: the fonts, fontconfig's configuration and ICU's data, preloaded before main runs
+  pageFiles = pkgs.runCommand "puredarwin-web-files" { } ''
+    mkdir -p $out/System/Library/Fonts $out/etc $out/icu $out/var/cache/fontconfig
+    cp -r ${systemFonts}/System/Library/Fonts/Inter $out/System/Library/Fonts/
+    cp -r ${fontconfigWasm}/page/etc/fonts $out/etc/
+    cp ${icuWasm}/share/icu/${icuWasm.version}/icudt76l.dat $out/icu/
+  '';
+
+  # an AppKit window in a page (src/Tests/web/hello): open index.html from a web server
+  webHello = pkgs.runCommand "puredarwin-web-hello" { nativeBuildInputs = [ emcc pkgs.python3 ]; } ''
+    ${emSetup}
+    set +e +o pipefail
+    src=${../src/Tests/web/hello}
+    A=${appkitWasm}/include
+    F=${foundationWasm}/include
+    emcc -O1 ${objcFlags} -fno-objc-arc -DARGON_LIBOBJC2=1 -include argon-darwin.h -I$F/argon-compat -I$F -I$F/Foundation \
+      -I$F/CoreFoundation -I$A -I$A/AppKit -I$A/Onyx2D -I$A/CoreGraphics -I${libobjc2Wasm}/include -I${dispatchWebWasm}/include \
+      -Wno-everything $src/main.m ${appkitLibs} --preload-file ${pageFiles}@/ --pre-js ${icuPreJs} \
+      ${emLinkFlags} -fexceptions -sLEGACY_GL_EMULATION=1 -sWASM_BIGINT -sERROR_ON_UNDEFINED_SYMBOLS=1 --profiling-funcs \
+      -sEXPORTED_RUNTIME_METHODS=UTF8ToString -Wl,--error-limit=0 -o hello.js 2>&1 | grep -v "^warning" | head -400
+    [ -f hello.js ] || exit 1
+    mkdir -p $out
+    cp hello.js hello.wasm hello.data $src/index.html $out/
+  '';
+
+  # the hello page in headless Chromium: it must come up and see a click on its button (src/Tests/web/check.mjs).
+  # The screenshots before and after the click are the output, for a person reading CI.
+  webCheck = pkgs.runCommand "puredarwin-web-check" { nativeBuildInputs = [ pkgs.chromium pkgs.nodejs pkgs.python3 ]; } ''
+    export HOME=$TMPDIR
+    mkdir -p $out
+    node ${../src/Tests/web/check.mjs} ${pkgs.chromium}/bin/chromium ${webHello} $out 2>&1 | tee $out/log.txt
+    grep -q '^PASS$' $out/log.txt
+  '';
+
+  # the graphics frameworks and AppKit compiled for wasm file by file on Argon's graphics recipe, every error
+  # kept. The image and font libraries' headers are the native ones here, only to measure. Never fails.
+  graphicsSurveyWasm = pkgs.runCommand "puredarwin-graphics-survey-wasm" { nativeBuildInputs = [ emcc pkgs.python3 ]; } ''
+    ${emSetup}
+    set +e +o pipefail
+    top=${lib.fileset.toSource { root = ../.; fileset = lib.fileset.unions [ ../src/Frameworks/Onyx2D ../src/Frameworks/CoreGraphics
+      ../src/Frameworks/CoreText ../src/Frameworks/QuartzCore ../src/Frameworks/AppKit ../src/Frameworks/WindowServer
+      ../src/Frameworks/OpenGL ../src/Frameworks/CoreVideo ../src/Frameworks/ApplicationServices ../src/Libraries/CoreServices
+      ../linux/iokit ]; }}
+    fw=$top/src/Frameworks
+    F=${foundationWasm}/include
+    mkdir -p inc/OpenGL inc/CoreVideo inc/CoreServices inc/IOKit logs $out
+    cp $fw/OpenGL/include/OpenGL/*.h inc/OpenGL/
+    cp $fw/CoreVideo/*.h inc/CoreVideo/
+    cp $top/src/Libraries/CoreServices/include/CoreServices/*.h inc/CoreServices/
+    cp $top/linux/iokit/include/IOKit/*.h inc/IOKit/
+    for f in Onyx2D CoreGraphics CoreText QuartzCore AppKit WindowServer ApplicationServices; do
+      mkdir -p inc/$f; find $fw/$f -name '*.h' -exec cp {} inc/$f/ \;
+    done
+    native="-idirafter ${pkgs.freetype.dev}/include/freetype2 -idirafter ${pkgs.fontconfig.dev}/include \
+      -idirafter ${pkgs.libpng.dev}/include -idirafter ${pkgs.libjpeg.dev}/include -idirafter ${pkgs.libtiff.dev}/include \
+      -idirafter ${pkgs.zlib.dev}/include -idirafter ${pkgs.fontconfig.dev}/include/fontconfig"
+    flags="${objcFlags} -fno-objc-arc -D__PUREDARWIN__=1 -DARGON_LIBOBJC2=1 -D_GNU_SOURCE -DDEPLOYMENT_RUNTIME_OBJC=1 \
+      -DINCLUDE_OBJC=1 -include argon-darwin.h -I$F/argon-compat -I$F -I$F/Foundation -I$F/CoreFoundation -Iinc -Iinc/AppKit \
+      -Iinc/Onyx2D -Iinc/CoreGraphics -I${libobjc2Wasm}/include -I${dispatchWebWasm}/include -Wno-everything $native \
+      -Wobjc-method-access"
+    try() {
+      layer=$1; f=$2
+      lang=objective-c; case $f in *.c) lang=c ;; esac
+      log=logs/$layer-$(echo $f | tr / _).log
+      if emcc -x $lang $flags -c $fw/$layer/$f -o /dev/null > $log 2>&1; then echo "ok   $layer $f" >> $out/files.txt
+      else echo "FAIL $layer $f: $(grep -m1 'error:' $log | sed 's/^[^ ]* //')" >> $out/files.txt; fi
+    }
+    for f in $(cd $fw/Onyx2D && ls *.m); do try Onyx2D $f; done
+    for f in $(cd $fw/CoreGraphics && ls *.m | grep -vxE 'CGLPixelSurface.m|CGDirectDisplay.m|KTFont\+PDF.m'); do try CoreGraphics $f; done
+    for f in CTFont.m KTFont.m; do try CoreText $f; done
+    for f in $(cd $fw/QuartzCore && ls *.m); do try QuartzCore $f; done
+    for f in $(cd $fw/AppKit && find . -name '*.m' | sed 's|^\./||' | grep -v '^CoreData_/' | sort); do try AppKit $f; done
+    {
+      for l in Onyx2D CoreGraphics CoreText QuartzCore AppKit; do
+        echo "$l: $(grep -c "^ok   $l " $out/files.txt) ok, $(grep -c "^FAIL $l " $out/files.txt) failed"
+      done
+      echo; echo "first errors by cause:"
+      for l in logs/*.log; do grep -m1 'error:' $l; done | sed 's/^[^ ]* error: //' | sed "s/'[^']*'/'X'/g" | sort | uniq -c | sort -rn | head -40
+      echo; echo "missing headers:"
+      cat logs/*.log | grep "fatal error: '" | sed "s/.*fatal error: '\([^']*\)'.*/\1/" | sort | uniq -c | sort -rn
+      echo; echo "names:"
+      cat logs/*.log | grep -o "unknown type name '[^']*'\|undeclared identifier '[^']*'\|undeclared function '[^']*'\|no member named '[^']*' in '[^']*'" | sort | uniq -c | sort -rn | head -50
+      # a message to a method no header declares: clang guesses id (id, SEL, ...), which wasm traps if the method differs
+      echo; echo "undeclared methods:"
+      cat logs/*.log | grep -h "not found (return type defaults to" | sed 's/^[^ ]*\/src\/Frameworks\///' | sort -u
+    } > $out/summary.txt
+    cp -r logs $out/
+  '';
+
   # every CoreFoundation source compiled for wasm on its own, to see the whole port at once: the files that
   # build, and for the rest the first error of each, counted by cause. Never fails, it is a measurement.
   cfSurveyWasm = pkgs.runCommand "puredarwin-cf-survey-wasm" { nativeBuildInputs = [ emcc pkgs.python3 ]; } ''
@@ -524,6 +827,19 @@ let
 in
 {
   cf-survey-wasm = cfSurveyWasm;
+  zlib-wasm = zlibWasm;
+  libpng-wasm = pngWasm;
+  libjpeg-wasm = jpegWasm;
+  freetype-wasm = freetypeWasm;
+  harfbuzz-wasm = harfbuzzWasm;
+  expat-wasm = expatWasm;
+  libtiff-wasm = tiffWasm;
+  fontconfig-wasm = fontconfigWasm;
+  fribidi-wasm = fribidiWasm;
+  graphics-survey-wasm = graphicsSurveyWasm;
+  appkit-wasm = appkitWasm;
+  web-hello-wasm = webHello;
+  web-check-wasm = webCheck;
   foundation-wasm = foundationWasm;
   foundation-smoke-wasm = foundationSmokeWasm;
   libffi-wasm = ffiWasm;

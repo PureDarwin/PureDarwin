@@ -24,6 +24,14 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSObject+BindingSupport.h>
 #import <AppKit/NSRaise.h>
 
+
+// methods this file sends that no header it imports declares, with their implementations' types: a guessed
+// id return mismatches a void or floating point method, which wasm traps and other targets get away with
+@interface NSObject (PDDeclaredHere)
+-(NSResponder *)firstResponder; // AppKit/NSWindow.m
+-(BOOL)isKeyWindow; // AppKit/NSWindow.m
+@end
+
 @implementation NSTextFieldCell
 
 -(void)encodeWithCoder:(NSCoder *)coder {

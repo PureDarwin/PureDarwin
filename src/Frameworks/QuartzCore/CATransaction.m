@@ -7,10 +7,18 @@
 #import <Foundation/NSThread-Private.h>
 #import "CATransactionGroup.h"
 
+
 NSString * const kCATransactionAnimationDuration=@"kCATransactionAnimationDuration";
 NSString * const kCATransactionDisableActions=@"kCATransactionDisableActions";
 NSString * const kCATransactionAnimationTimingFunction=@"kCATransactionAnimationTimingFunction";
 NSString * const kCATransactionCompletionBlock=@"kCATransactionCompletionBlock";
+
+// methods this file sends that no header it imports declares, with their implementations' types: a guessed
+// id return mismatches a void or floating point method, which wasm traps and other targets get away with
+@interface NSObject (PDDeclaredHere)
+- (id)objectForKey:(id)key; // Foundation/Collections.subproj/NSConstantCollections.m
+- (void)setObject:(id)object forKey:(id)key; // Foundation/Collections.subproj/NSDictionary.m
+@end
 
 @implementation CATransaction
 

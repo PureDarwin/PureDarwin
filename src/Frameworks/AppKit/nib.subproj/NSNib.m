@@ -20,6 +20,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import "NSCustomObject.h"
 #import "NSNibArchiveUnarchiver.h"
 
+
 NSString * const NSNibOwner=@"NSOwner";
 NSString * const NSNibTopLevelObjects=@"NSNibTopLevelObjects";
 
@@ -51,6 +52,12 @@ static NSString *keyedObjectsInNibDirectory(NSString *path) {
     return plain;
    return [path stringByAppendingPathComponent:[NSString stringWithFormat:@"keyedobjects-%ld.nib",(long)best]];
 }
+
+// methods this file sends that no header it imports declares, with their implementations' types: a guessed
+// id return mismatches a void or floating point method, which wasm traps and other targets get away with
+@interface NSObject (PDDeclaredHere)
+-(NSMenu *)submenu; // AppKit/NSMenu.subproj/NSMenuItem.m
+@end
 
 @implementation NSNib
 

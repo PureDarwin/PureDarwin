@@ -5,6 +5,13 @@
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
 
+
+// methods this file sends that no header it imports declares, with their implementations' types: a guessed
+// id return mismatches a void or floating point method, which wasm traps and other targets get away with
+@interface NSObject (PDDeclaredHere)
+-(void)itemChanged:(NSMenuItem *)item; // AppKit/NSMenu.subproj/NSMenu.m
+@end
+
 @implementation NSMenuItemBadge
 
 + (instancetype)updatesWithCount:(NSInteger)itemCount

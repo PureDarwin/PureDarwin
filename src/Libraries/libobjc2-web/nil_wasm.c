@@ -86,8 +86,20 @@ static struct nil_entry *nil_entry_for(SEL selector)
     char sig[64];
     int n = 0, sret = 0;
 
-    if (types == NULL)
-        types = "@@:"; // untyped selectors are sent as id (id, SEL)
+    char untyped[40];
+    if (types == NULL) {
+        // an untyped selector says how many arguments it takes in its colons, each one taken as a word
+        const char *name = sel_getName(selector);
+        int n = 0;
+        untyped[n++] = '@';
+        untyped[n++] = '@';
+        untyped[n++] = ':';
+        for (const char *c = name; c != NULL && *c != '\0' && n < (int)sizeof(untyped) - 1; c++)
+            if (*c == ':')
+                untyped[n++] = '@';
+        untyped[n] = '\0';
+        types = untyped;
+    }
     const char *ret = skip_qualifiers(types);
     char r = *ret == 'v' ? 'v' : single_element(ret);
     if (r == 0) {
@@ -138,6 +150,30 @@ struct objc_slot *__objc_wasm_nil_slot(SEL selector)
 struct objc_method *__objc_wasm_nil_method(SEL selector)
 {
     return &nil_entry_for(selector)->method;
+}
+
+#include <stdio.h>
+
+// a message the receiver does not implement, with no forwarding installed: logged once per selector and answered
+// with zero of the call's own type, where Darwin would raise
+struct objc_slot *__objc_wasm_unknown_slot(id receiver, SEL selector)
+{
+    struct nil_entry *e = nil_entry_for(selector);
+    static const char *seen[256];
+    static int nseen;
+    const char *name = sel_getName(selector);
+    int logged = 0;
+
+    for (int i = 0; i < nseen; i++)
+        if (seen[i] == name)
+            logged = 1;
+    if (!logged) {
+        if (nseen < (int)(sizeof(seen) / sizeof(seen[0])))
+            seen[nseen++] = name;
+        fprintf(stderr, "objc: %c[%s %s] is not implemented, answering zero\n",
+                class_isMetaClass(object_getClass(receiver)) ? '+' : '-', object_getClassName(receiver), name);
+    }
+    return &e->slot;
 }
 
 IMP __objc_wasm_nil_imp(SEL selector)

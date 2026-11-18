@@ -4,6 +4,7 @@
 // PrintCore lives in ApplicationServices, which is built after AppKit,
 // so its functions are looked up when first needed
 #import <AppKit/NSPrintInfo.h>
+#include <CoreFoundation/CFObjCMessage.h>
 #import <AppKit/NSPrinter.h>
 #import <AppKit/NSPrintPanel.h>
 #import <AppKit/NSPageLayout.h>
@@ -221,7 +222,7 @@ static void finishSheet(id panel, NSInteger result, id delegate, SEL selector, v
 {
     if (delegate == nil || selector == NULL)
         return;
-    ((void (*)(id, SEL, id, NSInteger, void *))objc_msgSend)(delegate, selector, panel, result, contextInfo);
+    CF_MSGSEND(void (*)(id, SEL, id, NSInteger, void *), delegate, selector, panel, result, contextInfo);
 }
 
 @implementation NSPrintPanel (PDModern)

@@ -13,6 +13,14 @@
 #import <math.h>
 
 
+
+// methods this file sends that no header it imports declares, with their implementations' types: a guessed
+// id return mismatches a void or floating point method, which wasm traps and other targets get away with
+@interface NSObject (PDDeclaredHere)
++ (instancetype)typeWithFilenameExtension:(NSString *)filenameExtension; // UniformTypeIdentifiers/UTType.m
++ (instancetype)typeWithIdentifier:(NSString *)identifier; // UniformTypeIdentifiers/UTType.m
+@end
+
 @interface NSMenu (PDPrivate)
 + (void)_pdCancelTracking;
 @end

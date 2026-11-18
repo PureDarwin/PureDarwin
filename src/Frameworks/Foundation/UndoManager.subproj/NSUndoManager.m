@@ -49,7 +49,7 @@ NSString *const NSUndoManagerWillUndoChangeNotification = @"NSUndoManagerWillUnd
         [_invocation invoke];
         return;
     }
-    CF_MSGSEND(void (*)(id, SEL, id), _target, _selector, _object);
+    CF_PERFORM1(_target, _selector, _object);
 }
 
 @end

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 
 #import <AppKit/NSAccessibilityCustomAction.h>
+#include <CoreFoundation/CFObjCMessage.h>
 #import <Foundation/Foundation.h>
 #import <objc/message.h>
 
@@ -41,7 +42,7 @@
     if (_handler)
         return _handler();
     if (_target && _selector && [_target respondsToSelector:_selector])
-        return ((BOOL (*)(id, SEL, id))objc_msgSend)(_target, _selector, self);
+        return CF_MSGSEND(BOOL (*)(id, SEL, id), _target, _selector, self);
     return NO;
 }
 
