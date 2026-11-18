@@ -244,6 +244,11 @@ ccmp_encap(struct ieee80211_key *k, struct mbuf *m)
 	int hdrlen;
 	int is_mgmt;
 
+#ifdef __PUREDARWIN__
+	// a key newkey made and setkey has not filled yet has no schedule, rijndael would run past it
+	if ((k->wk_flags & IEEE80211_KEY_SWENCRYPT) != 0 && ctx->cc_aes.Nr == 0)
+		return (0);
+#endif
 	hdrlen = ieee80211_hdrspace(ic, mtod(m, void *));
 	wh = mtod(m, const struct ieee80211_frame *);
 	is_mgmt = IEEE80211_IS_MGMT(wh);
@@ -317,6 +322,11 @@ ccmp_decap(struct ieee80211_key *k, struct mbuf *m, int hdrlen)
 
 	rxs = ieee80211_get_rx_params_ptr(m);
 
+#ifdef __PUREDARWIN__
+	// as in ccmp_encap, a frame on a key whose schedule is not set yet is dropped
+	if ((k->wk_flags & IEEE80211_KEY_SWDECRYPT) != 0 && ctx->cc_aes.Nr == 0)
+		return (0);
+#endif
 	if ((rxs != NULL) && (rxs->c_pktflags & IEEE80211_RX_F_IV_STRIP) != 0)
 		goto finish;
 
