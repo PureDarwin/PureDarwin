@@ -748,6 +748,177 @@ let
     grep -q '^PASS$' $out/log.txt
   '';
 
+  # LLVM 21's middle end for wasm, the libraries air2spv reads AIR and runs its passes with (no backends). The cross
+  # build makes a native llvm-tblgen of its own first
+  llvmWasm = pkgs.stdenv.mkDerivation {
+    pname = "puredarwin-llvm-wasm";
+    inherit (pkgs.llvmPackages_21.llvm) version;
+    src = pkgs.llvmPackages_21.llvm.monorepoSrc;
+    nativeBuildInputs = [ emcc pkgs.cmake pkgs.ninja pkgs.python3 ];
+    dontStrip = true;
+    dontUseCmakeConfigure = true;
+    dontUseNinjaBuild = true;
+    dontUseNinjaInstall = true;
+    configurePhase = ''
+      ${emSetup}
+      emcmake cmake -S llvm -B wasm-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$out \
+        -DLLVM_TARGETS_TO_BUILD= -DLLVM_ENABLE_PROJECTS= -DLLVM_ENABLE_THREADS=OFF -DLLVM_ENABLE_ZLIB=OFF \
+        -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_ENABLE_TERMINFO=OFF -DLLVM_ENABLE_LIBEDIT=OFF \
+        -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_INCLUDE_UTILS=OFF \
+        -DLLVM_BUILD_TOOLS=OFF -DLLVM_INCLUDE_TOOLS=OFF -DLLVM_ENABLE_BACKTRACES=OFF -DLLVM_ENABLE_PIC=OFF \
+        -DLLVM_DEFAULT_TARGET_TRIPLE=wasm32-unknown-emscripten -DLLVM_HOST_TRIPLE=wasm32-unknown-emscripten \
+        -DCMAKE_C_FLAGS=-fexceptions -DCMAKE_CXX_FLAGS=-fexceptions
+    '';
+    buildPhase = "ninja -C wasm-build -j$NIX_BUILD_CORES LLVMPasses LLVMBitReader";
+    installPhase = ''
+      mkdir -p $out/lib $out/include
+      cp wasm-build/lib/*.a $out/lib/
+      cp -r llvm/include/llvm llvm/include/llvm-c $out/include/
+      cp -r wasm-build/include/llvm/. $out/include/llvm/
+    '';
+  };
+
+  # air2spv's command line for wasm on the LLVM above, run under node with the real file system
+  air2spvWasm = pkgs.runCommand "puredarwin-air2spv-wasm" { nativeBuildInputs = [ emcc pkgs.python3 ]; } ''
+    ${emSetup}
+    src=${lib.fileset.toSource { root = ../src/Tools; fileset = lib.fileset.unions [ ../src/Tools/air2spv
+      ../src/Tools/airjitd/bridge.h ../src/Tools/airjitd/ir.h ../src/Tools/airjitd/ir.c ]; }}
+    cd $src/air2spv
+    mkdir -p $out/bin
+    for f in spv.c translate.c iface.c air.c cfg.c a2s.c ../airjitd/ir.c main.c; do
+      emcc -O2 -std=gnu11 -Wno-everything -I${llvmWasm}/include -I${pkgs.spirv-headers}/include -c $f \
+        -o $TMPDIR/$(basename $f .c).o
+    done
+    # linked as C++: LLVM brings the C++ runtime
+    em++ $TMPDIR/*.o $(ls ${llvmWasm}/lib/libLLVM*.a) -fexceptions -sNODERAWFS=1 -sALLOW_MEMORY_GROWTH=1 \
+      -sSTACK_SIZE=8388608 -o $out/bin/air2spv.js
+  '';
+
+  # Indium's tests (0BSD), whose shaders are Apple sample code precompiled with Apple's metal
+  indiumSrc = pkgs.fetchFromGitHub {
+    owner = "darlinghq";
+    repo = "indium";
+    rev = "8423a7d2f053167030d2bc4a227f96243c740667";
+    hash = "sha256-yrGSbR7ZllQnHMN98YMkcn+IF2oOPvuDqP3cIU7BYVg=";
+  };
+
+  # every Indium test shader through the native air2spv and the wasm one: the SPIR-V and reflection must match
+  air2spvWasmCheck = pkgs.runCommand "puredarwin-air2spv-wasm-check" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
+    native=${pkgs.callPackage ./pkgs/gpu/air2spv.nix { }}/bin/air2spv
+    mkdir -p $out
+    n=0 bad=0
+    for m in $(find ${indiumSrc}/test -name '*.metallib' | sort); do
+      t=$(basename $(dirname $m))-$(basename $m .metallib)
+      $native $m -o native.spv -r native.json > native.log 2>&1 || { echo "native failed: $t"; continue; }
+      node ${air2spvWasm}/bin/air2spv.js $m -o wasm.spv -r wasm.json > wasm.log 2>&1 || { echo "wasm failed: $t"; cat wasm.log | head -5; bad=$((bad+1)); continue; }
+      if cmp -s native.spv wasm.spv && cmp -s native.json wasm.json; then echo "same: $t ($(stat -c %s wasm.spv) bytes)"
+      else echo "DIFFERENT: $t"; bad=$((bad+1)); fi
+      n=$((n+1))
+    done | tee $out/report.txt
+    # no shaders found is a failure too, never an empty pass
+    grep -q "^same: " $out/report.txt
+    ! grep -q "DIFFERENT\|wasm failed" $out/report.txt
+  '';
+
+  # Dawn (BSD-3-Clause) at the commit the WebGPU package above was made from, without its submodules
+  dawnSrc = pkgs.fetchFromGitHub {
+    owner = "google";
+    repo = "dawn";
+    rev = "01940842b667a7812d0e4ca0ef4367fbec294241";
+    hash = "sha256-31kSvVPTwqv+R0W2bFu9hTAoOUg+TpimOegrNHQEIik=";
+  };
+
+  # Tint, Dawn's shader compiler, for wasm: SPIR-V in, WGSL out, the step air2spv's output takes to WebGPU.
+  # Only tint_api and what it needs are built, over nixpkgs' SPIRV-Tools, SPIRV-Headers and Abseil sources
+  tintWasm = pkgs.stdenv.mkDerivation {
+    pname = "puredarwin-tint-wasm";
+    version = "0194084";
+    src = dawnSrc;
+    # Dawn's generators template with jinja2, its third_party copy is a submodule left out
+    nativeBuildInputs = [ emcc pkgs.cmake pkgs.ninja (pkgs.python3.withPackages (ps: [ ps.jinja2 ps.markupsafe ])) ];
+    dontStrip = true;
+    dontUseCmakeConfigure = true;
+    dontUseNinjaBuild = true;
+    dontUseNinjaInstall = true;
+    # Dawn's emscripten build is for its webgpu.h alone and stops adding third party code early, before the
+    # SPIR-V headers and tools Tint's SPIR-V reader is built on
+    postPatch = ''
+      grep -q '^if (EMSCRIPTEN)$' third_party/CMakeLists.txt
+      sed -i '/^if (EMSCRIPTEN)$/{N;/\n    return()$/{N;d}}' third_party/CMakeLists.txt
+      ! grep -A1 '^if (EMSCRIPTEN)$' third_party/CMakeLists.txt | grep -q 'return()'
+    '';
+    configurePhase = ''
+      ${emSetup}
+      emcmake cmake -S . -B wasm-build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+        -DDAWN_SPIRV_TOOLS_DIR=${pkgs.spirv-tools.src} -DDAWN_SPIRV_HEADERS_DIR=${pkgs.spirv-headers.src} \
+        -DDAWN_ABSEIL_DIR=${pkgs.abseil-cpp.src} -DDAWN_FETCH_DEPENDENCIES=OFF -DDAWN_BUILD_MONOLITHIC_LIBRARY=OFF \
+        -DDAWN_JINJA2_DIR=${pkgs.python3Packages.jinja2}/${pkgs.python3.sitePackages}/jinja2 \
+        -DDAWN_MARKUPSAFE_DIR=${pkgs.python3Packages.markupsafe}/${pkgs.python3.sitePackages}/markupsafe \
+        -DDAWN_BUILD_SAMPLES=OFF -DDAWN_BUILD_TESTS=OFF -DDAWN_BUILD_PROTOBUF=OFF -DDAWN_ENABLE_INSTALL=OFF \
+        -DDAWN_ENABLE_D3D11=OFF -DDAWN_ENABLE_D3D12=OFF -DDAWN_ENABLE_METAL=OFF -DDAWN_ENABLE_NULL=OFF \
+        -DDAWN_ENABLE_DESKTOP_GL=OFF -DDAWN_ENABLE_OPENGLES=OFF -DDAWN_ENABLE_VULKAN=OFF \
+        -DDAWN_ENABLE_WEBGPU_ON_WEBGPU=OFF -DDAWN_ENABLE_SPIRV_VALIDATION=OFF -DDAWN_USE_GLFW=OFF \
+        -DTINT_BUILD_SPV_READER=ON -DTINT_BUILD_WGSL_WRITER=ON -DTINT_BUILD_WGSL_READER=ON \
+        -DTINT_BUILD_SPV_WRITER=OFF -DTINT_BUILD_MSL_WRITER=OFF -DTINT_BUILD_HLSL_WRITER=OFF \
+        -DTINT_BUILD_GLSL_WRITER=OFF -DTINT_BUILD_GLSL_VALIDATOR=OFF -DTINT_BUILD_CMD_TOOLS=OFF \
+        -DTINT_BUILD_TESTS=OFF -DTINT_BUILD_IR_BINARY=OFF -DTINT_BUILD_FUZZERS=OFF -DTINT_BUILD_BENCHMARKS=OFF \
+        "-DCMAKE_CXX_FLAGS=-fexceptions -Wno-error -Wno-c2y-extensions -Wno-deprecated-pragma -I${pkgs.spirv-headers.src}/include -I$PWD/wasm-build/third_party/spirv-tools" \
+        "-DCMAKE_C_FLAGS=-fexceptions -Wno-error -Wno-deprecated-pragma -I${pkgs.spirv-headers.src}/include"
+    '';
+    # Tint's SPIR-V reader includes tables SPIRV-Tools generates, so those come first
+    buildPhase = ''
+      ninja -C wasm-build -j$NIX_BUILD_CORES SPIRV-Tools-opt
+      ninja -C wasm-build -j$NIX_BUILD_CORES tint_api
+    '';
+    installPhase = ''
+      mkdir -p $out/lib $out/include
+      find wasm-build -name '*.a' -exec cp {} $out/lib/ \;
+      # Tint's headers include each other as src/tint/..., src/utils/... and include/...
+      mkdir -p $out/include/src
+      cp -r src/tint src/utils $out/include/src/
+      cp -r include/. $out/include/
+      cp -r wasm-build/gen $out/include/gen 2>/dev/null || true
+    '';
+  };
+
+  # spv2wgsl for wasm: airjitd's SPIR-V to WGSL step (webgpu/wgsl.cc over Tint) as a node command, for checking
+  spv2wgslWasm = pkgs.runCommand "puredarwin-spv2wgsl-wasm" { nativeBuildInputs = [ emcc pkgs.python3 ]; } ''
+    ${emSetup}
+    w=${../src/Tools/airjitd/webgpu}
+    T=${tintWasm}/include
+    mkdir -p $out/bin
+    em++ -O2 -std=c++20 -fexceptions -Wno-everything -I$T -I$T/gen \
+      -c $w/wgsl.cc -o $TMPDIR/wgsl.o
+    emcc -O2 -Wno-everything -c $w/spv2wgsl.c -o $TMPDIR/spv2wgsl.o
+    # the archives depend on each other in no fixed order, the group resolves them all
+    em++ $TMPDIR/wgsl.o $TMPDIR/spv2wgsl.o -Wl,--start-group $(ls ${tintWasm}/lib/*.a) -Wl,--end-group -fexceptions \
+      -sNODERAWFS=1 -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=8388608 -o $out/bin/spv2wgsl.js
+  '';
+
+  # every Indium test shader the way the page will take it: air2spv with the push constants as a uniform buffer, then
+  # Tint to WGSL. Each WGSL is kept for reading
+  wgslCheck = pkgs.runCommand "puredarwin-wgsl-check" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
+    mkdir -p $out
+    for m in $(find ${indiumSrc}/test -name '*.metallib' | sort); do
+      t=$(basename $(dirname $m))-$(basename $m .metallib)
+      if ! node ${air2spvWasm}/bin/air2spv.js -W -U 31 $m -o $t.spv -r $out/$t.json > $t.log 2>&1; then
+        echo "air2spv failed: $t: $(head -3 $t.log)"; continue
+      fi
+      if node ${spv2wgslWasm}/bin/spv2wgsl.js $t.spv $out/$t.wgsl > $t.log 2>&1; then echo "wgsl: $t ($(wc -l < $out/$t.wgsl) lines)"
+      else echo "TINT FAILED: $t: $(head -c 600 $t.log)"; fi
+    done | tee $out/report.txt
+    grep -q "^wgsl: " $out/report.txt
+  '';
+
+  # Dawn's webgpu.h for emscripten, the release emscripten 5.0.6 pins (its remote port), fetched with that port's hash
+  emdawnwebgpu = pkgs.runCommand "puredarwin-emdawnwebgpu" { nativeBuildInputs = [ pkgs.unzip ]; } ''
+    mkdir -p $out
+    unzip -q ${pkgs.fetchurl {
+      url = "https://github.com/google/dawn/releases/download/v20251002.162335/emdawnwebgpu_pkg-v20251002.162335.zip";
+      sha512 = "ed15672c2c495a77c764929e6979f4e155bf8b9c46dee5b0f234f3208a708bc2b846d89eef345b725d03454b56d549531f48fc84ff2afe7627d14115893b0fb0";
+    }} -d $out
+  '';
+
   # the graphics frameworks and AppKit compiled for wasm file by file on Argon's graphics recipe, every error
   # kept. The image and font libraries' headers are the native ones here, only to measure. Never fails.
   graphicsSurveyWasm = pkgs.runCommand "puredarwin-graphics-survey-wasm" { nativeBuildInputs = [ emcc pkgs.python3 ]; } ''
@@ -849,6 +1020,13 @@ in
   fribidi-wasm = fribidiWasm;
   graphics-survey-wasm = graphicsSurveyWasm;
   appkit-wasm = appkitWasm;
+  llvm-wasm = llvmWasm;
+  air2spv-wasm = air2spvWasm;
+  air2spv-check-wasm = air2spvWasmCheck;
+  emdawnwebgpu-wasm = emdawnwebgpu;
+  tint-wasm = tintWasm;
+  spv2wgsl-wasm = spv2wgslWasm;
+  wgsl-check-wasm = wgslCheck;
   web-hello-wasm = webHello;
   web-check-wasm = webCheck;
   web-gl-wasm = webGL;

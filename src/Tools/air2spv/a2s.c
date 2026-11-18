@@ -334,6 +334,22 @@ static void run_passes(struct a2s *a, const char *passes) {
   }
 }
 
+// whether the module's OpVariable id is an Input or Output variable, the only ones SPIR-V 1.3 lists on an entry point
+static int io_variable(const struct spv *s, uint32_t id) {
+  const struct spv_buf *g = &s->globals;
+
+  for (size_t i = 0; i < g->n;) {
+    uint32_t count = g->w[i] >> 16, op = g->w[i] & 0xffff;
+
+    if (count == 0)
+      break;
+    if (op == SpvOpVariable && count >= 4 && g->w[i + 2] == id)
+      return g->w[i + 3] == SpvStorageClassInput || g->w[i + 3] == SpvStorageClassOutput;
+    i += count;
+  }
+  return 0;
+}
+
 static void pc_block(struct a2s *a, struct spv_buf *out) {
   uint32_t ut = spv_t_uint(&a->s), m[A2S_MAX_PC], st, var, pt;
   unsigned n = a->r->npc, k;
@@ -351,9 +367,15 @@ static void pc_block(struct a2s *a, struct spv_buf *out) {
     spv_mdeco(&a->s, st, k, SpvDecorationOffset, 1, a->opt->pc_base + 4 * k);
   }
 
-  var = spv_var(&a->s, spv_t_ptr(&a->s, SpvStorageClassPushConstant, st), SpvStorageClassPushConstant);
+  SpvStorageClass sc = a->opt->pc_uniform_binding ? SpvStorageClassUniform : SpvStorageClassPushConstant;
+
+  var = spv_var(&a->s, spv_t_ptr(&a->s, sc, st), sc);
+  if (a->opt->pc_uniform_binding) {
+    spv_deco(&a->s, var, SpvDecorationDescriptorSet, 1, a->opt->set);
+    spv_deco(&a->s, var, SpvDecorationBinding, 1, a->opt->pc_uniform_binding - 1);
+  }
   a->iface[a->niface++] = var;
-  pt = spv_t_ptr(&a->s, SpvStorageClassPushConstant, ut);
+  pt = spv_t_ptr(&a->s, sc, ut);
   for (k = 0; k < n; k++) {
     uint32_t p = spv_id(&a->s);
     spv_op(out, SpvOpAccessChain, 4, pt, p, var, spv_c_u32(&a->s, k));
@@ -451,8 +473,12 @@ static void finish(struct a2s *a, uint32_t **words, size_t *nwords) {
   w[n++] = model, w[n++] = fid;
   n += spv_str(w + n, "main");
   for (unsigned i = 0; i < a->niface && n < 200; i++) {
+    if (a->opt->webgpu && !io_variable(&a->s, a->iface[i]))
+      continue;
     w[n++] = a->iface[i];
   }
+  if (a->opt->webgpu)
+    a->s.version = 0x00010300;
   spv_emit(&a->s.entry, SpvOpEntryPoint, w, n);
 
   if (a->stage == A2S_FRAGMENT) {

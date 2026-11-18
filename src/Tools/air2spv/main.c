@@ -1,4 +1,4 @@
-// air2spv [-q] [-Q] [-n] [-D] [-s SET] [-p PCBASE] IN.metallib -o OUT.spv [-r OUT.json]: one AIR function to SPIR-V
+// air2spv [-q] [-Q] [-n] [-D] [-s SET] [-p PCBASE] [-U BINDING] IN.metallib -o OUT.spv [-r OUT.json]: one AIR function to SPIR-V
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -58,6 +58,12 @@ int main(int argc, char **argv) {
       opt.no_dynamic_index = 1;
     else if (!strcmp(argv[i], "-K"))
       opt.kill_discard = 1;
+    // -U BINDING: the push constant block as a uniform buffer at BINDING, as WebGPU has no push constants
+    else if (!strcmp(argv[i], "-U") && i + 1 < argc)
+      opt.pc_uniform_binding = (uint32_t)atoi(argv[++i]) + 1;
+    // -W: SPIR-V for Tint on the way to WebGPU (1.3, entry points list their I/O only)
+    else if (!strcmp(argv[i], "-W"))
+      opt.webgpu = 1;
     else if (!strcmp(argv[i], "-V") && i + 1 < argc)
       vin = argv[++i];
     else if (!strcmp(argv[i], "-P") && i + 1 < argc && npins < 8 && strchr(argv[i + 1], ':')) {

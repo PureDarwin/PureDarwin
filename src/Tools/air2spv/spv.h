@@ -23,6 +23,8 @@ struct spv {
   struct spv_buf keys;
   uint32_t glsl;
   uint64_t capset[2];
+  // the header's version word, 0 for SPIR-V 1.5
+  uint32_t version;
 };
 
 void spv_init(struct spv *s);

@@ -330,8 +330,8 @@ uint32_t *spv_finish(struct spv *s, size_t *nwords) {
                              &s->modes, &s->debug, &s->annot,   &s->globals, &s->funcs };
 
   put(&out, SpvMagicNumber);
-  // SPIR-V 1.5, what Vulkan 1.2 consumes
-  put(&out, 0x00010500);
+  // SPIR-V 1.5, what Vulkan 1.2 consumes, unless the module asked for another
+  put(&out, s->version ? s->version : 0x00010500);
   put(&out, 0);
   put(&out, s->bound);
   put(&out, 0);

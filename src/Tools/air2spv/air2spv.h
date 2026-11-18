@@ -139,6 +139,12 @@ struct a2s_options {
   // OpenGL backends without shader storage buffers: read-only Metal buffers as bounded std140 uint arrays (one word per 16 bytes),
   // indexed by Metal slot. A used slot needs a nonzero length, and wide storage-buffer views are disabled.
   const uint32_t *uniform_words;
+  // WebGPU has no push constants: when nonzero the push constant block is a uniform buffer at binding
+  // pc_uniform_binding - 1 of the stage's set, same words at the same offsets
+  uint32_t pc_uniform_binding;
+  // SPIR-V for Tint's reader, on the way to WebGPU: version 1.3, whose entry points list only their input
+  // and output variables (Tint keeps a reference to every listed variable and only drops those for I/O)
+  int webgpu;
 };
 
 struct a2s_pin {
