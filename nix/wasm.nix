@@ -137,8 +137,44 @@ let
     [ "$res" = "value 41 more 42 block 42 class Root" ]
     mkdir -p $out; cp smoke.js smoke.wasm $out/
   '';
+
+  # ICU for CoreFoundation's strings, locales and calendars. ICU cross-builds in two steps: its
+  # tools natively first, then the library with emscripten against them (--with-cross-build).
+  # Static libraries. The data stays a separate .dat file, loaded at run time from emscripten's file system,
+  # since genccode can only write ELF or gcc assembly. A trimmed data file can replace it later.
+  icuWasm = pkgs.stdenv.mkDerivation {
+    pname = "puredarwin-icu-wasm";
+    inherit (pkgs.icu) version src;
+    nativeBuildInputs = [ emcc pkgs.python3 ];
+    dontStrip = true;
+    dontConfigure = true;
+    buildPhase = ''
+      runHook preBuild
+      ${emSetup}
+      top=$PWD
+      mkdir native && cd native
+      ../source/configure --disable-tests --disable-samples --disable-extras > configure.log
+      make -j$NIX_BUILD_CORES > make.log
+      cd $top
+      # configure does not know emscripten, the linux makefile fragment fits it, as ICU's own error suggests
+      cp source/config/mh-linux source/config/mh-unknown
+      mkdir wasm && cd wasm
+      emconfigure ../source/configure --host=wasm32-unknown-emscripten --with-cross-build=$top/native \
+        --enable-static --disable-shared --disable-tests --disable-samples --disable-extras --disable-tools \
+        --with-data-packaging=archive --prefix=$out > configure.log
+      emmake make -j$NIX_BUILD_CORES > make.log 2>&1 || { grep -v 'warning:\|note:' make.log | tail -40; exit 1; }
+      runHook postBuild
+    '';
+    installPhase = ''
+      runHook preInstall
+      # the build phase left the shell in the wasm build directory
+      emmake make install > install.log
+      runHook postInstall
+    '';
+  };
 in
 {
+  icu-wasm = icuWasm;
   emscripten-cache-wasm = emCache;
   libobjc2-wasm = libobjc2Wasm;
   objc-smoke-wasm = objcSmokeWasm;
