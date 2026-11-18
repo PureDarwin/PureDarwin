@@ -348,7 +348,7 @@ UInt32 IOVirtIONet::outputPacket(mbuf_t m, void *param)
     return ret;
 }
 
-// one frame onto the tx ring, the lock held; a full ring gets a bounded spin to drain, never a sleep
+// puts one frame on the tx ring, called with the lock held. A full ring is drained with a bounded spin, never a sleep
 UInt32 IOVirtIONet::queueTx(const void *data, size_t len)
 {
     for (unsigned spins = 0; ; spins++) {

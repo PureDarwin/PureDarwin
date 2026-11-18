@@ -14,7 +14,7 @@
 }:
 
 # dtrace(1) and libdtrace from Apple's dtrace-413, CDDL with some APSL files, kept as their own component.
-# Built without CoreSymbolication (Apple's dtrace_host configuration); libdwarf and ctfconvert are left out.
+# Built without CoreSymbolication, as Apple's dtrace_host configuration is. libdwarf and ctfconvert are not built.
 stdenv.mkDerivation {
   pname = "puredarwin-dtrace";
   version = "413";

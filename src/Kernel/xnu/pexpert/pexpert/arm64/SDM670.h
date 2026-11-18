@@ -7,7 +7,7 @@
 
 // QUP1 SE4, the usb-c sideband debug uart: start.s writes a byte here before the MMU is on
 #define PD_EARLY_GENI_UART_PHYS   0xa90000
-// define to route EL1 faults to start.s's dump before xnu has a console; off now that the console is up
+// define this to send EL1 faults to start.s's dump before xnu has a console. Off now that the console works
 // #define PD_EARLY_FAULT_CATCH
 
 #endif /* ! _PEXPERT_ARM_SDM670_H */

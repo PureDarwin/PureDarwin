@@ -704,7 +704,8 @@ UInt32 AppleUSBEHCI::qhSpeedCaps(USBDeviceAddress address, bool control)
     }
 }
 
-// mult, and for a split device its translator; a periodic split starts in microframe 0, completes in 2-4
+// the mult field and, for a split device, its transaction translator. A periodic split starts in
+// microframe 0 and completes in microframes 2 to 4
 UInt32 AppleUSBEHCI::qhSplitCaps(USBDeviceAddress address, bool periodic)
 {
     UInt32 caps = 1U << kEHCIQHMultShift;

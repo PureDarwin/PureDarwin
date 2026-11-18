@@ -130,7 +130,7 @@ events_eventfd(unsigned initial, int flags)
 
     if (flags & ~(1 | 0x800 | 0x80000))
         return -22;
-    // PDEventFD's device is a real kernel fd, so it survives SCM_RIGHTS; the socket pair is the fallback
+    // PDEventFD's device is a real kernel fd, so it survives SCM_RIGHTS. The socket pair is only a fallback
     fd = open("/dev/eventfd", O_RDWR | (flags & 0x800 ? O_NONBLOCK : 0) | (flags & 0x80000 ? O_CLOEXEC : 0));
     if (fd >= 0) {
         if (ioctl((int)fd, PD_EVENTFD_SETUP, &setup) == 0)

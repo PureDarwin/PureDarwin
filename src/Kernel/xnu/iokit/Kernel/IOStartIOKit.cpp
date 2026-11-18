@@ -79,7 +79,7 @@ IOKitInitializeTime( void )
 
 	IOService::waitForService(
 		IOService::resourceMatching("IORTC"), &t );
-	// a short settle for storage still matching; root mount waits for the boot volume itself, and
+	// a short wait for storage that is still matching. Root mount waits for the boot volume by itself, and
 	// drivers waiting on BSD (the network family) keep the registry busy until bsd_init, so never longer
 	{
 		mach_timespec_t q = { 2, 0 };

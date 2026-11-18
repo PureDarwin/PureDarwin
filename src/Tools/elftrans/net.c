@@ -228,7 +228,7 @@ wait_fd(int fd, short events)
 
 // reads want bytes into iov, waiting for the rest once part of a message is in. The first call may bring
 // the message's control data, into control (capacity *control_len, then the length received). A short count
-// is the peer closing; -1 only when nothing of the message was taken
+// means the peer closed. -1 means nothing of the message was taken
 static ssize_t
 seq_fill(int fd, const struct iovec *iov, int count, size_t want, int flags, int committed, void *control,
          socklen_t *control_len)
@@ -336,7 +336,8 @@ net_seq_send(int fd, const struct iovec *iov, int count, const void *control, so
 }
 
 // one message in. A buffer shorter than the message takes its start and drops the rest, with MSG_TRUNC in
-// *msg_flags; want_real returns the message's length instead (Linux's MSG_TRUNC flag). 0 is the peer gone.
+// *msg_flags. With want_real it returns the message's full length instead (Linux's MSG_TRUNC flag). 0 means
+// the peer is gone.
 // MSG_PEEK looks at the bytes already queued and brings no control data
 ssize_t
 net_seq_recv(int fd, const struct iovec *iov, int count, void *control, socklen_t *control_len, int flags,
@@ -369,7 +370,7 @@ net_seq_recv(int fd, const struct iovec *iov, int count, void *control, socklen_
         memcpy(v + 1, iov, count * sizeof(*iov));
         m.msg_iov = v;
         m.msg_iovlen = count + 1;
-        // the length can be half in; it is a matter of microseconds
+        // the length field may have only partly arrived, so retry for the few microseconds the rest takes
         for (int tries = 0;; tries++) {
             got = recvmsg(fd, &m, flags & (MSG_PEEK | MSG_DONTWAIT));
             if (got < 0 || got == 0 || got >= 4 || tries > 1000)
