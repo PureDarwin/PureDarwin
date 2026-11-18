@@ -77,6 +77,7 @@ static NSConnection *_servingConnection = nil;
 static NSMutableDictionary *_clientConnections = nil;
 
 @interface NSConnection (Private)
+- (void)_invalidateNotifying:(BOOL)notify;
 - (NSData *)_handleRequestWithIdentifier:(SInt32)identifier data:(NSData *)data;
 - (NSData *)_sendRequestWithIdentifier:(SInt32)identifier data:(NSData *)data;
 - (void)_sendOnewayRequestWithIdentifier:(SInt32)identifier data:(NSData *)data;
@@ -578,7 +579,9 @@ static CFDataRef _connectionCallback(CFMessagePortRef local, SInt32 identifier,
 }
 
 - (void)dealloc {
-    [self invalidate];
+    // torn down without the notification: posting self from dealloc hands observers and the autorelease
+    // pool an object that is freed before they let go of it
+    [self _invalidateNotifying:NO];
     [_registeredName release];
     [_rootObject release];
     [_rootProxy release];
@@ -754,6 +757,10 @@ static BOOL isThisHost(NSString *host) {
 }
 
 - (void)invalidate {
+    [self _invalidateNotifying:YES];
+}
+
+- (void)_invalidateNotifying:(BOOL)notify {
     /* Breaks the proxy/connection retain cycle set up in
      * -[NSDistantObject _initWithConnection:]. */
     if (_rootProxy != nil) {
@@ -794,8 +801,9 @@ static BOOL isThisHost(NSString *host) {
         _remotePort = NULL;
     }
 
-    [[NSNotificationCenter defaultCenter] postNotificationName:NSConnectionDidDieNotification
-                                                        object:self];
+    if (notify)
+        [[NSNotificationCenter defaultCenter] postNotificationName:NSConnectionDidDieNotification
+                                                            object:self];
 }
 
 - (NSData *)_sendRequestWithIdentifier:(SInt32)identifier data:(NSData *)data {
