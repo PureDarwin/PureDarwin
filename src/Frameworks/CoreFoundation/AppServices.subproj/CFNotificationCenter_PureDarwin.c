@@ -19,7 +19,12 @@
 extern uint32_t notify_post(const char *name);
 extern uint32_t notify_register_dispatch(const char *name, int *out_token, dispatch_queue_t queue, void (^handler)(int token));
 extern uint32_t notify_cancel(int token);
+#if __has_include(<os/lock.h>)
 #include <os/lock.h>
+#else
+/* CF's own lock stands in where the system has none */
+#include "CFInternal.h"
+#endif
 #include <stdlib.h>
 
 typedef enum { CenterLocal, CenterDarwin, CenterDistributed } CenterKind;
@@ -61,7 +66,12 @@ static CFNotificationCenterRef createCenter(CenterKind kind) {
         CFNotificationCenterGetTypeID(), sizeof(struct __CFNotificationCenter) - sizeof(CFRuntimeBase), NULL);
 
     c->kind = kind;
+#if __has_include(<os/lock.h>)
     c->lock = OS_UNFAIR_LOCK_INIT;
+#else
+    /* the fallback lock is a pthread mutex, its initializer only works in a declaration */
+    pthread_mutex_init(&c->lock, NULL);
+#endif
     return c;
 }
 

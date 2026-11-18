@@ -93,6 +93,14 @@
 #define TARGET_OS_BSD          0
 #define TARGET_OS_ANDROID      0
 #define TARGET_OS_CYGWIN       0
+#elif __EMSCRIPTEN__
+/* the browser build: emscripten's libc is musl, so the Linux paths fit it best */
+#define TARGET_OS_DARWIN       0
+#define TARGET_OS_LINUX        1
+#define TARGET_OS_WINDOWS      0
+#define TARGET_OS_BSD          0
+#define TARGET_OS_ANDROID      0
+#define TARGET_OS_CYGWIN       0
 #elif __CYGWIN__
 #define TARGET_OS_DARWIN       0
 #define TARGET_OS_LINUX        1
@@ -221,12 +229,26 @@
 #define TARGET_CPU_MIPS64       0
 #define TARGET_CPU_S390X        0
 #define TARGET_CPU_RISCV64      1
+#elif __wasm32__
+#define TARGET_CPU_PPC          0
+#define TARGET_CPU_PPC64        0
+#define TARGET_CPU_X86          0
+#define TARGET_CPU_X86_64       0
+#define TARGET_CPU_ARM          0
+#define TARGET_CPU_ARM64        0
+#define TARGET_CPU_MIPS         0
+#define TARGET_CPU_MIPS64       0
+#define TARGET_CPU_S390X        0
+#define TARGET_CPU_WASM32       1
 #else
 #error unknown architecture
 #endif
 
 #ifndef TARGET_CPU_RISCV64
 #define TARGET_CPU_RISCV64      0
+#endif
+#ifndef TARGET_CPU_WASM32
+#define TARGET_CPU_WASM32       0
 #endif
 
 #if __LITTLE_ENDIAN__

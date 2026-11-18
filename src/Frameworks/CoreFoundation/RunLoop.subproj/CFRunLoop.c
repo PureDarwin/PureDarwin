@@ -120,9 +120,13 @@ DISPATCH_EXPORT void _dispatch_main_queue_callback_4CF(void * _Null_unspecified)
 
 #include <dlfcn.h>
 #include <poll.h>
+#if defined(__EMSCRIPTEN__)
+#include "CFRunLoopWeb.h"
+#else
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <sys/timerfd.h>
+#endif
 
 dispatch_runloop_handle_t _dispatch_get_main_queue_port_4CF(void);
 extern void _dispatch_main_queue_callback_4CF(void *_Null_unspecified msg);

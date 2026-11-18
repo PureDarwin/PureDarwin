@@ -35,7 +35,7 @@
 #define VC_EXTRALEAN
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
-#else
+#elif __has_include(<fts.h>)
 #include <fts.h>
 #endif
 #if __has_include(<unistd.h>)
@@ -67,8 +67,13 @@
 #include <errno.h>
 #include <features.h>
 #include <termios.h>
+/* major(), minor() and lstat() are used below, whatever the includer brought in */
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
 
-#if __GLIBC_PREREQ(2, 28) == 0
+#if !defined(__GLIBC_PREREQ)
+/* musl, as in the browser build, has statx */
+#elif __GLIBC_PREREQ(2, 28) == 0
 // required for statx() system call, glibc >=2.28 wraps the kernel function
 #include <sys/syscall.h>
 #include <sys/types.h>
@@ -488,7 +493,7 @@ CF_CROSS_PLATFORM_EXPORT int _CFOpenFile(const char *path, int opts);
 static inline int _direntNameLength(struct dirent *entry) {
 #ifdef _D_EXACT_NAMLEN  // defined on Linux
     return _D_EXACT_NAMLEN(entry);
-#elif TARGET_OS_ANDROID
+#elif TARGET_OS_ANDROID || defined(__EMSCRIPTEN__)
     return strlen(entry->d_name);
 #else
     return entry->d_namlen;

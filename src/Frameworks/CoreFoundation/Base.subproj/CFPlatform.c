@@ -175,7 +175,12 @@ const char *_CFProcessPath(void) {
 #endif
 
 Boolean _CFIsMainThread(void) {
+#if defined(__EMSCRIPTEN__)
+    /* a page runs CF on one thread, the browser's */
+    return true;
+#else
     return syscall(SYS_gettid) == getpid();
+#endif
 }
 
 const char *_CFProcessPath(void) {

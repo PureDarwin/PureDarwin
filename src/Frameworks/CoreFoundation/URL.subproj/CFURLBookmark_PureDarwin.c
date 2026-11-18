@@ -6,6 +6,9 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <sys/stat.h>
 #include <sys/mount.h>
+#if __has_include(<sys/statfs.h>)
+#include <sys/statfs.h>
+#endif
 #include <sys/syscall.h>
 #include <errno.h>
 #include <fcntl.h>

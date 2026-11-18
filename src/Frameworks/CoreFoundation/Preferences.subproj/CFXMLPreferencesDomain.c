@@ -16,6 +16,7 @@
 #include <CoreFoundation/CFDate.h>
 #include "CFInternal.h"
 #include <time.h>
+#include <sys/stat.h>
 #if TARGET_OS_OSX
 #include <unistd.h>
 #include <stdio.h>

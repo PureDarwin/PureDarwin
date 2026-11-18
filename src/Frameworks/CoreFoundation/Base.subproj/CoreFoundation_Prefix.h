@@ -217,7 +217,8 @@ strlcat(char * dst, const char * src, size_t maxlen) {
 }
 #endif
 
-#if !TARGET_OS_CYGWIN
+/* emscripten's musl declares issetugid itself, a macro here would mangle that declaration */
+#if !TARGET_OS_CYGWIN && !defined(__EMSCRIPTEN__)
 #define issetugid() 0
 #endif
 

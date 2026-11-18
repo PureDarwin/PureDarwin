@@ -310,9 +310,16 @@ static void *__CFDataAllocate(CFDataRef data, CFIndex size, Boolean clear) {
 
 
 // PD_DATA_TRACE=1: count CFData objects of 1 MB or more until they are deallocated, with where they came from
+#if __has_include(<execinfo.h>)
 #include <execinfo.h>
+#else
+/* no unwinder to ask, the trace still counts objects */
+static int backtrace(void **frames, int max) { (void)frames; (void)max; return 0; }
+#endif
 #include <dlfcn.h>
+#if __has_include(<os/lock.h>)
 #include <os/lock.h>
+#endif
 static os_unfair_lock __CFDataTraceLock = OS_UNFAIR_LOCK_INIT;
 static CFMutableSetRef __CFDataTraced;
 static long __CFDataTraceLive, __CFDataTraceMade;
