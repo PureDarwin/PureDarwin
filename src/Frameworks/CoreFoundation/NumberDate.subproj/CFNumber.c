@@ -436,6 +436,20 @@ static _CF_CONSTANT_OBJECT_BACKING struct __CFNumber __kCFNumberFloat64One = {
 };
 static const CFNumberRef kCFNumberFloat64One = &__kCFNumberFloat64One;
 
+#if ARGON_LIBOBJC2 && defined(__EMSCRIPTEN__)
+CF_PRIVATE void __CFNumberFixStaticISAs(const char *name, uintptr_t real) {
+    if (strcmp(name, "__NSCFBoolean") == 0) {
+        ((CFRuntimeBase *)&__kCFBooleanTrue)->_cfisa = real;
+        ((CFRuntimeBase *)&__kCFBooleanFalse)->_cfisa = real;
+    } else if (strcmp(name, "__NSCFNumber") == 0) {
+        const void *numbers[] = { &__kCFNumberNaN, &__kCFNumberNegativeInfinity, &__kCFNumberPositiveInfinity,
+            &__kCFNumberFloat32Zero, &__kCFNumberFloat32One, &__kCFNumberFloat64Zero, &__kCFNumberFloat64One };
+        for (size_t i = 0; i < sizeof(numbers) / sizeof(numbers[0]); i++)
+            ((CFRuntimeBase *)numbers[i])->_cfisa = real;
+    }
+}
+#endif
+
 static const struct {
     uint16_t canonicalType:5;	// canonical fixed-width type
     uint16_t floatBit:1;	// is float

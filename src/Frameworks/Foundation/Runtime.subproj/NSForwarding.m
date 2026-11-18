@@ -317,7 +317,7 @@ static void _NSForwardingStretHandler(void *returnBuffer, id target, SEL selecto
 
 @end
 
-#if ARGON_LIBOBJC2
+#if ARGON_LIBOBJC2 && defined(NS_HAVE_FORWARDING_TRAMPOLINE)
 #include <objc/hooks.h>
 
 static IMP _NSForwardIMPForSelector(id receiver, SEL selector) {

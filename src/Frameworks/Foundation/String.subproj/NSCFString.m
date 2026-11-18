@@ -25,7 +25,10 @@ extern CFStringRef _NSCopyFormattingDescription(void *value, const void *locale)
  * ___CFConstantStringClassReference, so that symbol has to *be* a class.
  * CoreFoundation only references it (CFRuntime.c) - Foundation owns the class,
  * matching Apple, where __NSCFConstantString lives in Foundation. */
-#if ARGON_LIBOBJC2
+#if ARGON_LIBOBJC2 && defined(__EMSCRIPTEN__)
+// wasm objects cannot carry an assembler alias, a C alias names the same storage. The 1.9 ABI's class has no dot
+extern int __CFConstantStringClassReference[1] __attribute__((alias("_OBJC_CLASS_NSCFString")));
+#elif ARGON_LIBOBJC2
 // ELF has no underscore prefix, and libobjc2 names the class ._OBJC_CLASS_NSCFString
 __asm__(".globl __CFConstantStringClassReference\n\t"
         ".set __CFConstantStringClassReference, ._OBJC_CLASS_NSCFString");
@@ -514,6 +517,9 @@ static void __NSCFStringBridgeInit(void) {
     _CFRuntimeBridgeClasses(CFStringGetTypeID(), "NSCFString");
     /* CF_IS_OBJC compares an object's isa against this to spot a constant
      * string; left NULL it treats every literal as a foreign ObjC object. */
+#if !defined(__EMSCRIPTEN__)
+    // on wasm CFRuntime sets it once the runtime has built the real class
     __CFConstantStringClassReferencePtr = __CFConstantStringClassReference;
+#endif
 }
 #endif

@@ -3,6 +3,7 @@
 
 // PD has no Apple event transport between processes, only events the process dispatches itself arrive
 #import <Foundation/NSAppleEventManager.h>
+#include <CoreFoundation/CFObjCMessage.h>
 #import <Foundation/NSDictionary.h>
 #import <Foundation/NSValue.h>
 #import <Foundation/NSString.h>
@@ -81,7 +82,7 @@ static NSNumber *handlerKey(AEEventClass eventClass, AEEventID eventID) {
 
     _currentEvent = [event retain];
     _currentReply = [reply retain];
-    ((void (*)(id, SEL, id, id))objc_msgSend)(entry->_handler, entry->_selector, event, reply);
+    CF_MSGSEND(void (*)(id, SEL, id, id), entry->_handler, entry->_selector, event, reply);
     [_currentEvent release];
     [_currentReply release];
     _currentEvent = savedEvent;

@@ -7,6 +7,7 @@
  */
 
 #import <Foundation/NSNotification.h>
+#include <CoreFoundation/CFObjCMessage.h>
 #import <Foundation/NSOperation.h>
 #import <Foundation/NSString.h>
 #import <Foundation/NSDictionary.h>
@@ -238,7 +239,7 @@ OBJC_EXPORT id objc_loadWeakRetained(id *location);
                 continue;
             }
         }
-        ((void (*)(id, SEL, id))objc_msgSend)(target, entry->_selector,
+        CF_MSGSEND(void (*)(id, SEL, id), target, entry->_selector,
                                               notification);
         if (entry->_zeroing) {
             [target release];

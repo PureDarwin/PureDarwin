@@ -30,7 +30,8 @@ let
   # libobjc2 tells a registered selector (an index) from an unregistered one (a name pointer) by
   # comparing the word with the table size, so no data may sit at a low address. Static data and
   # the heap start at 16 MB instead of emscripten's 1 KB.
-  emLinkFlags = "-sGLOBAL_BASE=16777216 -sINITIAL_MEMORY=67108864 -sALLOW_MEMORY_GROWTH=1";
+  # nil messages make typed functions at run time (libobjc2-web), which needs a table that can grow
+  emLinkFlags = "-sGLOBAL_BASE=16777216 -sINITIAL_MEMORY=67108864 -sALLOW_MEMORY_GROWTH=1 -sALLOW_TABLE_GROWTH";
 
   # GNUstep's Objective-C runtime (MIT). Apple's objc4 needs Mach-O images and per-arch msgSend assembly,
   # neither of which wasm has. The GNUstep ABI looks a method up and calls it through a plain pointer.
@@ -59,6 +60,20 @@ let
       grep -q '__objc_exec_class(struct objc_module_abi_8 \*module, \.\.\.)' loader.c
       grep -q 'objc_lookup_class(const char \*name, \.\.\.)$' class_table.c
       grep -q '^BOOL objc_resolve_class(Class);' dtable.c
+      # the runtime calls +load, +initialize and the C++ ivar hooks through IMP, which is variadic in
+      # libobjc2's headers. Those methods are void (id, SEL), so each call goes through that type instead
+      sed -i 's/m->imp((id)class, loadSel);/((void (*)(id, SEL))m->imp)((id)class, loadSel);/' class_table.c
+      sed -i 's/initializeSlot->imp((id)class, initializeSel);/((void (*)(id, SEL))initializeSlot->imp)((id)class, initializeSel);/' dtable.c
+      sed -i 's/currentClass->cxx_destruct(obj, cxx_destruct);/((void (*)(id, SEL))currentClass->cxx_destruct)(obj, cxx_destruct);/' runtime.c
+      sed -i 's/cls->cxx_construct(obj, cxx_construct);/((void (*)(id, SEL))cls->cxx_construct)(obj, cxx_construct);/' runtime.c
+      grep -q '((void (\*)(id, SEL))m->imp)' class_table.c
+      grep -q '((void (\*)(id, SEL))initializeSlot->imp)' dtable.c
+      [ $(grep -c '((void (\*)(id, SEL))c[a-zA-Z]*->cxx_' runtime.c) = 2 ]
+      # messages to nil answer with a zero method of the call's own wasm type (src/Libraries/libobjc2-web)
+      cp ${../src/Libraries/libobjc2-web/nil_wasm.c} nil_wasm.c
+      sed -i 's/^\tsendmsg2.c$/\tsendmsg2.c\n\tnil_wasm.c/' CMakeLists.txt
+      grep -q '^	nil_wasm.c$' CMakeLists.txt
+      python3 ${../src/Libraries/libobjc2-web/patch_sendmsg.py}
       cat > block_to_imp_wasm.c <<'EOF'
     // blocks cannot become methods without writable code, which wasm does not have
     #include "objc/runtime.h"
@@ -292,6 +307,188 @@ let
     mkdir -p $out; cp smoke.js smoke.wasm $out/
   '';
 
+  # libffi (MIT) for NSInvocation. Its wasm32 port calls through emscripten's JS glue, 64-bit values as BigInt
+  ffiWasm = pkgs.stdenv.mkDerivation {
+    pname = "puredarwin-libffi-wasm";
+    inherit (pkgs.libffi) version src;
+    nativeBuildInputs = [ emcc pkgs.python3 ];
+    dontStrip = true;
+    configurePhase = ''
+      ${emSetup}
+      emconfigure ./configure --host=wasm32-unknown-emscripten --prefix=$out --enable-static --disable-shared \
+        --disable-dependency-tracking --disable-builddir --disable-multi-os-directory --disable-raw-api --disable-docs \
+        CFLAGS="-O2 -DWASM_BIGINT"
+    '';
+    buildPhase = "emmake make -j$NIX_BUILD_CORES";
+    installPhase = "emmake make install";
+  };
+
+  # Foundation (MPL-2.0) on the Argon recipe for the page, as three static libraries: the objc compat layer,
+  # CoreFoundation built as Objective-C so its objects bridge to Foundation classes, and Foundation itself
+  foundationWasm = pkgs.runCommand "puredarwin-foundation-wasm" { nativeBuildInputs = [ emcc pkgs.python3 ]; } ''
+    ${emSetup}
+    top=${lib.fileset.toSource { root = ../.; fileset = lib.fileset.unions [ ../src/Frameworks/CoreFoundation
+      ../src/Frameworks/Foundation ../linux/objc-compat ../src/Libraries/libweb-compat ../nix/pkgs/apple/foundation.nix ]; }}
+    cf=$top/src/Frameworks/CoreFoundation
+    compat=$top/linux/objc-compat
+    web=$top/src/Libraries/libweb-compat
+    mkdir -p inc/CoreFoundation inc/Foundation $out/lib $out/include
+    for h in $cf/*/*.h $cf/Base.subproj/SwiftRuntime/*.h; do ln -sf $h inc/CoreFoundation/; done
+    find $top/src/Frameworks/Foundation -name '*.h' -exec ln -sf {} inc/Foundation/ \;
+    cp $cf/Base.subproj/SwiftRuntime/TargetConditionals.h inc/
+    objc="-O2 ${objcFlags} -fno-objc-arc -D__PUREDARWIN__=1 -DARGON_LIBOBJC2=1 -D_GNU_SOURCE -DDEPLOYMENT_RUNTIME_OBJC=1 \
+      -DINCLUDE_OBJC=1 -I${libobjc2Wasm}/include -I${dispatchWebWasm}/include -I${icuWasm}/include -I${ffiWasm}/include \
+      -I$web/include -Wno-everything"
+    # every file is tried, so one build shows every error left
+    bad=0
+    cc() { lib=$1; lang=$2; f=$3; shift 3; mkdir -p obj/$lib
+      emcc -x $lang $objc "$@" -c $f -o obj/$lib/$(basename $(dirname $f))_$(basename $f).o 2> err.log || { bad=1; grep error: err.log; }; }
+    for f in $compat/NSObject.m $compat/weak-compat.m; do cc compat objective-c $f -I$compat/include; done
+    for f in $compat/darwin-compat.c $web/web_compat.c; do cc compat c $f -I$compat/include; done
+    # the .m files are the toll-free bridge's classes (__NSCFType, NSNull, the CFNumber and CFBoolean classes)
+    for f in $cf/*/*.c $cf/Bridging.subproj/*.m; do
+      case $f in */CFXMLNode.c|*/CFXMLParser.c|*/CFURLBookmark_PureDarwin.c|*/CFURLResources_PureDarwin.c) continue ;; esac
+      cc cf objective-c $f -std=gnu11 -fdollars-in-identifiers -fno-common -DCF_BUILDING_CF=1 -DU_SHOW_DRAFT_API=1 \
+        -include $cf/Base.subproj/CoreFoundation_Prefix.h -Iinc -Iinc/CoreFoundation -I$compat/include
+    done
+    srcs=$(sed -n '/mmSrcs = \[/,/\];/p' $top/nix/pkgs/apple/foundation.nix | grep -o '"[^"]*"' | tr -d '"')
+    for s in $srcs String.subproj/NSConstantString; do
+      case $s in RunLoop.subproj/NSPort|RunLoop.subproj/NSPortMessage|URL.subproj/NSNetServices|XML.subproj/*|*/NSAppleEvent*) continue ;; esac
+      cc foundation objective-c $top/src/Frameworks/Foundation/$s.m -include argon-darwin.h -I$compat/include \
+        -Iinc -Iinc/Foundation -Iinc/CoreFoundation
+    done
+    [ $bad = 0 ]
+    emar rcs $out/lib/libargonobjc.a obj/compat/*.o
+    emar rcs $out/lib/libCoreFoundation.a obj/cf/*.o
+    emar rcs $out/lib/libFoundation.a obj/foundation/*.o
+    mkdir -p $out/include/CoreFoundation $out/include/Foundation
+    cp -L inc/CoreFoundation/*.h $out/include/CoreFoundation/
+    cp -L inc/Foundation/*.h $out/include/Foundation/
+    cp inc/TargetConditionals.h $out/include/
+    cp -r $compat/include $out/include/argon-compat
+    cp -r $web/include/. $out/include/
+  '';
+
+  # everything an Objective-C program for the page links. The 1.9 ABI finds classes by name at run time, so no
+  # symbol pulls a class's object out of an archive: the frameworks go in whole, as -ObjC does on Darwin
+  foundationLibs = "-Wl,--whole-archive ${foundationWasm}/lib/libFoundation.a ${foundationWasm}/lib/libCoreFoundation.a"
+    + " ${foundationWasm}/lib/libargonobjc.a -Wl,--no-whole-archive ${dispatchWebWasm}/lib/libdispatch.a ${libobjc2Wasm}/lib/libobjc.a"
+    + " ${ffiWasm}/lib/libffi.a ${icuWasm}/lib/libicui18n.a ${icuWasm}/lib/libicuuc.a ${icuWasm}/lib/libicudata.a"
+    # libffi's call glue is JavaScript and works on the wasm stack through these emscripten helpers
+    + " -sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=\\$stackSave,\\$stackRestore,\\$stackAlloc,\\$addFunction";
+
+  # ICU's data is a file in the page's file system, ICU_DATA says where
+  icuPreJs = pkgs.writeText "icu-pre.js" "Module.preRun = (Module.preRun || []).concat(() => { ENV.ICU_DATA = '/icu'; });";
+  icuEmbed = "--embed-file ${icuWasm}/share/icu/${icuWasm.version}/icudt76l.dat@/icu/icudt76l.dat --pre-js ${icuPreJs}";
+
+  # literals, formatting, collections, CF bridging, NSInvocation and a timer on the run loop, under node
+  foundationSmokeWasm = pkgs.runCommand "puredarwin-foundation-smoke-wasm" { nativeBuildInputs = [ emcc pkgs.nodejs pkgs.python3 ]; } ''
+    ${emSetup}
+    set +e +o pipefail
+    cat > smoke.m <<'EOF'
+    #import <Foundation/Foundation.h>
+    #include <stdio.h>
+    @interface Probe : NSObject
+    @property int fired;
+    - (int)add:(int)a to:(int)b;
+    - (void)tick:(NSTimer *)t;
+    @end
+    @implementation Probe
+    - (int)add:(int)a to:(int)b { return a + b; }
+    - (void)tick:(NSTimer *)t { self.fired++; }
+    @end
+    int main(void)
+    {
+        NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+        NSString *s = [NSString stringWithFormat:@"%@ %d", @"hello", 42];
+        NSArray *a = [NSArray arrayWithObjects:@"b", @"a", @"c", nil];
+        NSString *sorted = [[a sortedArrayUsingSelector:@selector(compare:)] componentsJoinedByString:@","];
+        NSDictionary *d = [NSDictionary dictionaryWithObject:[NSNumber numberWithInt:7] forKey:@"k"];
+        CFStringRef cf = CFStringCreateWithCString(NULL, "bridged", kCFStringEncodingUTF8);
+        NSString *ns = (NSString *)cf;
+        Probe *p = [[Probe alloc] init];
+        NSMethodSignature *sig = [p methodSignatureForSelector:@selector(add:to:)];
+        NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+        int x = 40, y = 2, r = 0;
+        [inv setTarget:p]; [inv setSelector:@selector(add:to:)];
+        [inv setArgument:&x atIndex:2]; [inv setArgument:&y atIndex:3];
+        [inv invoke]; [inv getReturnValue:&r];
+        [NSTimer scheduledTimerWithTimeInterval:0 target:p selector:@selector(tick:) userInfo:nil repeats:NO];
+        // timers fire from the page's event loop, which runs once main hands it back: report from a later turn
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 50 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            printf("%s | %s | %d | %s %lu | invoke %d | timer %d\n", [s UTF8String], [sorted UTF8String],
+                [[d objectForKey:@"k"] intValue], [[ns uppercaseString] UTF8String], (unsigned long)[ns length], r, p.fired);
+            exit(0);
+        });
+        dispatch_main();
+    }
+    EOF
+    emcc -O1 ${objcFlags} -fno-objc-arc -DARGON_LIBOBJC2=1 -include argon-darwin.h -I${foundationWasm}/include \
+      -I${foundationWasm}/include/argon-compat -I${foundationWasm}/include/Foundation -I${foundationWasm}/include/CoreFoundation \
+      -I${libobjc2Wasm}/include -I${dispatchWebWasm}/include -Wno-everything smoke.m ${foundationLibs} \
+      ${icuEmbed} ${emLinkFlags} -fwasm-exceptions -sWASM_BIGINT -sERROR_ON_UNDEFINED_SYMBOLS=1 --profiling-funcs -g -gsource-map -o smoke.js 2>&1 | grep -v "^warning" | head -80
+    [ -f smoke.js ] || exit 1
+    res=$(node --enable-source-maps smoke.js 2>&1)
+    echo "$res" | head -60
+    [ "$res" = "hello 42 | a,b,c | 7 | BRIDGED 7 | invoke 42 | timer 1" ] || exit 1
+    mkdir -p $out; cp smoke.js smoke.wasm $out/
+  '';
+
+  # Foundation on the Argon recipe (linux/nix/packages.nix): its objc-compat shim, CF built as Objective-C
+  # so CF objects bridge to Foundation classes, then Foundation's own sources. Every file is tried and every
+  # error kept, so one build maps the port. Never fails, it is a measurement.
+  foundationSurveyWasm = pkgs.runCommand "puredarwin-foundation-survey-wasm" { nativeBuildInputs = [ emcc pkgs.python3 ]; } ''
+    ${emSetup}
+    set +e +o pipefail
+    # only what the survey reads, not the whole tree
+    top=${lib.fileset.toSource { root = ../.; fileset = lib.fileset.unions [ ../src/Frameworks/CoreFoundation
+      ../src/Frameworks/Foundation ../linux/objc-compat ../src/Libraries/libweb-compat ../nix/pkgs/apple/foundation.nix ]; }}
+    web=$top/src/Libraries/libweb-compat
+    cf=$top/src/Frameworks/CoreFoundation
+    compat=$top/linux/objc-compat
+    mkdir -p inc/CoreFoundation inc/Foundation logs $out
+    for h in $cf/*/*.h $cf/Base.subproj/SwiftRuntime/*.h; do ln -sf $h inc/CoreFoundation/; done
+    find $top/src/Frameworks/Foundation -name '*.h' -exec ln -sf {} inc/Foundation/ \;
+    cp $cf/Base.subproj/SwiftRuntime/TargetConditionals.h inc/
+    objc="-fobjc-runtime=gnustep-1.9 -fblocks -fno-objc-arc -D__PUREDARWIN__=1 -DARGON_LIBOBJC2=1 -D_GNU_SOURCE \
+      -DDEPLOYMENT_RUNTIME_OBJC=1 -DINCLUDE_OBJC=1 -I${libobjc2Wasm}/include -I${dispatchWebWasm}/include \
+      -I${icuWasm}/include -I${ffiWasm}/include -Wno-everything"
+    try() {
+      layer=$1; lang=$2; f=$3; shift 3
+      log=logs/$layer-$(basename $f).log
+      if emcc -x $lang $objc "$@" -c $f -o /dev/null > $log 2>&1; then echo "ok   $layer $(basename $f)" >> $out/files.txt
+      else echo "FAIL $layer $(basename $f): $(grep -m1 'error:' $log | sed 's/^[^ ]* //')" >> $out/files.txt; fi
+    }
+    # Argon's inotify notify(3) and $ARGON_ROOT redirection have no meaning in a page, libweb-compat stands in
+    for f in $compat/NSObject.m $compat/weak-compat.m; do try compat objective-c $f -I$web/include -I$compat/include; done
+    for f in $compat/darwin-compat.c $web/web_compat.c; do try compat c $f -I$web/include -I$compat/include; done
+    cfflags="-std=gnu11 -fdollars-in-identifiers -fno-common -DCF_BUILDING_CF=1 -DU_SHOW_DRAFT_API=1 \
+      -include $cf/Base.subproj/CoreFoundation_Prefix.h -Iinc -Iinc/CoreFoundation -I$web/include -I$compat/include"
+    for f in $cf/*/*.c; do
+      case $f in */CFXMLNode.c|*/CFXMLParser.c|*/CFURLBookmark_PureDarwin.c|*/CFURLResources_PureDarwin.c) continue ;; esac
+      try cf objective-c $f $cfflags
+    done
+    srcs=$(sed -n '/mmSrcs = \[/,/\];/p' $top/nix/pkgs/apple/foundation.nix | grep -o '"[^"]*"' | tr -d '"')
+    for s in $srcs String.subproj/NSConstantString; do
+      # Argon's Darwin-only skips, plus XML (libxml2 is not built for wasm yet) and Apple events
+      case $s in RunLoop.subproj/NSPort|RunLoop.subproj/NSPortMessage|URL.subproj/NSNetServices|XML.subproj/*|*/NSAppleEvent*) continue ;; esac
+      try foundation objective-c $top/src/Frameworks/Foundation/$s.m -include argon-darwin.h -I$web/include -I$compat/include \
+        -Iinc -Iinc/Foundation -Iinc/CoreFoundation
+    done
+    {
+      for l in compat cf foundation; do
+        echo "$l: $(grep -c "^ok   $l " $out/files.txt) ok, $(grep -c "^FAIL $l " $out/files.txt) failed"
+      done
+      echo; echo "all errors by cause:"
+      cat logs/*.log | grep 'error:' | sed 's/^[^ ]* error: //' | sed "s/'[^']*'/'X'/g" | sort | uniq -c | sort -rn | head -40
+      echo; echo "missing headers:"
+      cat logs/*.log | grep "fatal error: '" | sed "s/.*fatal error: '\([^']*\)'.*/\1/" | sort | uniq -c | sort -rn
+      echo; echo "names:"
+      cat logs/*.log | grep -o "unknown type name '[^']*'\|undeclared identifier '[^']*'\|undeclared function '[^']*'\|no member named '[^']*' in '[^']*'" | sort | uniq -c | sort -rn | head -50
+    } > $out/summary.txt
+    cp -r logs $out/
+  '';
+
   # every CoreFoundation source compiled for wasm on its own, to see the whole port at once: the files that
   # build, and for the rest the first error of each, counted by cause. Never fails, it is a measurement.
   cfSurveyWasm = pkgs.runCommand "puredarwin-cf-survey-wasm" { nativeBuildInputs = [ emcc pkgs.python3 ]; } ''
@@ -327,6 +524,10 @@ let
 in
 {
   cf-survey-wasm = cfSurveyWasm;
+  foundation-wasm = foundationWasm;
+  foundation-smoke-wasm = foundationSmokeWasm;
+  libffi-wasm = ffiWasm;
+  foundation-survey-wasm = foundationSurveyWasm;
   corefoundation-wasm = cfWasm;
   cf-smoke-wasm = cfSmokeWasm;
   dispatch-web-wasm = dispatchWebWasm;

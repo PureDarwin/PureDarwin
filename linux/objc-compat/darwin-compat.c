@@ -27,8 +27,19 @@ static void argon_capture_args(int argc, char **argv, char **envp)
     }
 }
 
+#if defined(__EMSCRIPTEN__)
+// wasm constructors take no arguments, and a page has no command line: the program keeps a fixed name
+static char argon_page_name[] = "page";
+__attribute__((constructor))
+static void argon_capture_page(void)
+{
+    (void)argon_capture_args;
+    argon_progname = argon_page_name;
+}
+#else
 __attribute__((section(".init_array"), used))
 static void (*argon_capture_args_entry)(int, char **, char **) = argon_capture_args;
+#endif
 
 int *_NSGetArgc(void) { return &argon_argc; }
 char ***_NSGetArgv(void) { return &argon_argv; }
@@ -40,7 +51,12 @@ void setprogname(const char *name) { argon_progname = (char *)name; }
 
 int pthread_main_np(void)
 {
+#if defined(__EMSCRIPTEN__)
+    // a page runs everything on the browser's one thread
+    return 1;
+#else
     return syscall(SYS_gettid) == getpid();
+#endif
 }
 
 // libobjc2 records no image per class, the loader knows which object holds its storage

@@ -114,8 +114,11 @@
 #import <Foundation/NSProgress.h>
 #import <Foundation/NSUserActivity.h>
 #import <Foundation/NSUserNotification.h>
+/* Apple events are a Carbon service, the browser build has neither */
+#if !defined(__EMSCRIPTEN__)
 #import <Foundation/NSAppleEventDescriptor.h>
 #import <Foundation/NSAppleEventManager.h>
+#endif
 #import <Foundation/NSXPCConnection.h>
 
 #endif /* ! __FOUNDATION_FOUNDATION__ */

@@ -127,6 +127,7 @@ add_framework(CoreFoundation
                 Base.subproj/CFRuntime.h
                 Base.subproj/CFRuntime_Internal.h
                 Base.subproj/ForFoundationOnly.h
+                Base.subproj/CFObjCMessage.h
                 Base.subproj/ForSwiftFoundationOnly.h
                 # Collections
                 Collections.subproj/CFBasicHash.h
@@ -190,6 +191,7 @@ add_framework(CoreFoundation
                 Base.subproj/CFPriv.h
                 Base.subproj/CFRuntime.h
                 Base.subproj/ForFoundationOnly.h
+                Base.subproj/CFObjCMessage.h
                 Base.subproj/ForSwiftFoundationOnly.h
                 Locale.subproj/CFCalendar_Internal.h
                 Locale.subproj/CFDateComponents.h

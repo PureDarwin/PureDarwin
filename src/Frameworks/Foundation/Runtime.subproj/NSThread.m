@@ -7,6 +7,7 @@
  */
 
 #include <execinfo.h>
+#include <CoreFoundation/CFObjCMessage.h>
 #import <Foundation/NSValue.h>
 #import <Foundation/NSThread-Private.h>
 #import <Foundation/NSAutoreleasePool.h>
@@ -53,7 +54,7 @@ static void *startDetachedThread(void *context) {
     NSAutoreleasePool *pool = [NSAutoreleasePool new];
 
     [NSThread currentThread];
-    ((void (*)(id, SEL, id))objc_msgSend)(info->target, info->selector,
+    CF_MSGSEND(void (*)(id, SEL, id), info->target, info->selector,
         info->object);
 
     [info->object release];
@@ -133,7 +134,7 @@ static void *startThreadObject(void *context) {
     _executing = YES;
 
     if (_target != nil && _selector != NULL) {
-        ((void (*)(id, SEL, id))objc_msgSend)(_target, _selector, _argument);
+        CF_MSGSEND(void (*)(id, SEL, id), _target, _selector, _argument);
     }
 
     _executing = NO;
@@ -311,7 +312,7 @@ id NSThreadSharedInstanceDoNotCreate(NSString *className) {
     /* Already there, or no main run loop to hop to: just call it. Hopping in
      * the first case would deadlock a waitUntilDone:YES against itself. */
     if (main == NULL || [NSThread isMainThread]) {
-        ((void (*)(id, SEL, id))objc_msgSend)(self, selector, object);
+        CF_MSGSEND(void (*)(id, SEL, id), self, selector, object);
         return;
     }
 
@@ -320,7 +321,7 @@ id NSThreadSharedInstanceDoNotCreate(NSString *className) {
         id argument = [object retain];
 
         CFRunLoopPerformBlock(main, kCFRunLoopCommonModes, ^{
-            ((void (*)(id, SEL, id))objc_msgSend)(target, selector, argument);
+            CF_MSGSEND(void (*)(id, SEL, id), target, selector, argument);
             [argument release];
             [target release];
         });
@@ -331,7 +332,7 @@ id NSThreadSharedInstanceDoNotCreate(NSString *className) {
     dispatch_semaphore_t done = dispatch_semaphore_create(0);
 
     CFRunLoopPerformBlock(main, kCFRunLoopCommonModes, ^{
-        ((void (*)(id, SEL, id))objc_msgSend)(self, selector, object);
+        CF_MSGSEND(void (*)(id, SEL, id), self, selector, object);
         dispatch_semaphore_signal(done);
     });
     CFRunLoopWakeUp(main);

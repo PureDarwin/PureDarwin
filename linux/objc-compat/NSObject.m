@@ -2,6 +2,8 @@
 // Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 
 #import <objc/NSObject.h>
+// the compat layer builds before CoreFoundation is installed, so its header comes from the tree
+#include "../../src/Frameworks/CoreFoundation/Base.subproj/CFObjCMessage.h"
 #include <objc/runtime.h>
 #include <objc/objc-arc.h>
 #include <objc/hooks.h>
@@ -157,22 +159,22 @@ struct argon_cf_hooks argon_cf;
 
 - (id)performSelector:(SEL)aSelector
 {
-    return ((id (*)(id, SEL))objc_msgSend)(self, aSelector);
+    return CF_MSGSEND(id (*)(id, SEL), self, aSelector);
 }
 
 - (id)performSelector:(SEL)aSelector withObject:(id)object
 {
-    return ((id (*)(id, SEL, id))objc_msgSend)(self, aSelector, object);
+    return CF_MSGSEND(id (*)(id, SEL, id), self, aSelector, object);
 }
 
 - (id)performSelector:(SEL)aSelector withObject:(id)object1 withObject:(id)object2
 {
-    return ((id (*)(id, SEL, id, id))objc_msgSend)(self, aSelector, object1, object2);
+    return CF_MSGSEND(id (*)(id, SEL, id, id), self, aSelector, object1, object2);
 }
 
 + (id)performSelector:(SEL)aSelector
 {
-    return ((id (*)(id, SEL))objc_msgSend)(self, aSelector);
+    return CF_MSGSEND(id (*)(id, SEL), self, aSelector);
 }
 
 - (id)copy { return [(id)self copyWithZone:NULL]; }
@@ -194,11 +196,11 @@ static void argon_unrecognized(const char *kind, const char *cls, SEL aSelector,
     snprintf(reason, sizeof(reason), "%s[%s %s]: unrecognized selector sent to %s %p", kind, cls,
              sel_getName(aSelector), kind[0] == '-' ? "instance" : "class", object);
     if (exception != Nil && string != Nil) {
-        id name = ((id (*)(id, SEL, const char *))objc_msgSend)((id)string, sel_registerName("stringWithUTF8String:"), "NSInvalidArgumentException");
-        id text = ((id (*)(id, SEL, const char *))objc_msgSend)((id)string, sel_registerName("stringWithUTF8String:"), reason);
-        id e = ((id (*)(id, SEL, id, id, id))objc_msgSend)((id)exception, sel_registerName("exceptionWithName:reason:userInfo:"), name, text, nil);
+        id name = CF_MSGSEND(id (*)(id, SEL, const char *), (id)string, sel_registerName("stringWithUTF8String:"), "NSInvalidArgumentException");
+        id text = CF_MSGSEND(id (*)(id, SEL, const char *), (id)string, sel_registerName("stringWithUTF8String:"), reason);
+        id e = CF_MSGSEND(id (*)(id, SEL, id, id, id), (id)exception, sel_registerName("exceptionWithName:reason:userInfo:"), name, text, nil);
 
-        ((void (*)(id, SEL))objc_msgSend)(e, sel_registerName("raise"));
+        CF_MSGSEND(void (*)(id, SEL), e, sel_registerName("raise"));
     }
     fprintf(stderr, "%s\n", reason);
     abort();

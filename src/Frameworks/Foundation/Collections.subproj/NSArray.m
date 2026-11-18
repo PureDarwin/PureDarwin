@@ -7,6 +7,7 @@
  */
 
 #import <Foundation/NSArray.h>
+#include <CoreFoundation/CFObjCMessage.h>
 #import <Foundation/NSIndexSet.h>
 #import <Foundation/NSSortDescriptor.h>
 #import <Foundation/NSException.h>
@@ -33,8 +34,8 @@ extern int __CFConstantStringClassReference[];
 
 static BOOL ns_array_value_is_constant_string(const void *value) {
 #if ARGON_LIBOBJC2
-    // libobjc2 tags small objects in the low three bits, they have no isa to read
-    if ((uintptr_t)value & 7) {
+    // libobjc2 tags small objects in the low three bits (bit 0 on 32-bit), they have no isa to read
+    if ((uintptr_t)value & (sizeof(void *) == 8 ? 7 : 1)) {
         return NO;
     }
 #endif
@@ -85,7 +86,7 @@ static CFComparisonResult ns_array_compare(const void *left,
                                            const void *right,
                                            void *context) {
     SEL selector = (SEL)context;
-    return (CFComparisonResult)((NSInteger (*)(id, SEL, id))objc_msgSend)(
+    return (CFComparisonResult)CF_MSGSEND(NSInteger (*)(id, SEL, id), 
         (id)left, selector, (id)right);
 }
 
@@ -524,7 +525,7 @@ static void __NSArrayAbstract(id self, SEL _cmd) {
 
     for (CFIndex index = 0; index < count; ++index) {
         id value = (id)CFArrayGetValueAtIndex((CFArrayRef)self, index);
-        ((void (*)(id, SEL))objc_msgSend)(value, selector);
+        CF_MSGSEND(void (*)(id, SEL), value, selector);
     }
 }
 
@@ -533,7 +534,7 @@ static void __NSArrayAbstract(id self, SEL _cmd) {
 
     for (CFIndex index = 0; index < count; ++index) {
         id value = (id)CFArrayGetValueAtIndex((CFArrayRef)self, index);
-        ((void (*)(id, SEL, id))objc_msgSend)(value, selector, object);
+        CF_MSGSEND(void (*)(id, SEL, id), value, selector, object);
     }
 }
 

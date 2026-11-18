@@ -5,7 +5,67 @@
 
 #import <Foundation/NSString.h>
 
-#if ARGON_LIBOBJC2
+#if ARGON_LIBOBJC2 && defined(__OBJC_GNUSTEP_RUNTIME_ABI__) && __OBJC_GNUSTEP_RUNTIME_ABI__ < 20
+#include <string.h>
+
+// clang's gnustep-1 literal, as the wasm build uses: NUL-terminated UTF-8 and its length in bytes
+@interface NSConstantString : NSString {
+    const char *_data;
+    unsigned int _bytes;
+}
+@end
+
+@implementation NSConstantString
+
+// ASCII literals index directly, anything else goes through a decoded copy
+- (BOOL)_isASCII
+{
+    for (unsigned int i = 0; i < _bytes; i++)
+        if ((unsigned char)_data[i] >= 0x80)
+            return NO;
+    return YES;
+}
+
+- (NSString *)_decoded
+{
+    return [NSString stringWithUTF8String:_data];
+}
+
+- (NSUInteger)length
+{
+    return [self _isASCII] ? _bytes : [[self _decoded] length];
+}
+
+- (unichar)characterAtIndex:(NSUInteger)index
+{
+    return [self _isASCII] ? (unichar)(unsigned char)_data[index] : [[self _decoded] characterAtIndex:index];
+}
+
+- (void)getCharacters:(unichar *)buffer range:(NSRange)range
+{
+    if (![self _isASCII]) {
+        [[self _decoded] getCharacters:buffer range:range];
+        return;
+    }
+    for (NSUInteger i = 0; i < range.length; i++)
+        buffer[i] = (unsigned char)_data[range.location + i];
+}
+
+- (const char *)UTF8String
+{
+    return _data;
+}
+
+// literals live in the binary for the life of the process
+- (id)retain { return self; }
+- (oneway void)release {}
+- (id)autorelease { return self; }
+- (NSUInteger)retainCount { return (NSUInteger)-1; }
+- (id)copyWithZone:(NSZone *)zone { return self; }
+
+@end
+
+#elif ARGON_LIBOBJC2
 #include <string.h>
 
 // clang's gnustep-2 literal: flags give the encoding, length counts UTF-16 units, size counts bytes

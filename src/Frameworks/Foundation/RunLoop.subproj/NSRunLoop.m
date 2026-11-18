@@ -7,6 +7,7 @@
  */
 
 #import <Foundation/NSRunLoop.h>
+#include <CoreFoundation/CFObjCMessage.h>
 #import <Foundation/NSPort.h>
 #import <Foundation/NSSelectInputSource.h>
 #import <Foundation/NSArray.h>
@@ -408,7 +409,7 @@ static NSMutableArray *pendingPerforms(void) {
     @synchronized (pendingPerforms()) {
         [pendingPerforms() removeObjectIdenticalTo:self];
     }
-    ((void (*)(id, SEL, id))objc_msgSend)(_target, _selector, _argument);
+    CF_MSGSEND(void (*)(id, SEL, id), _target, _selector, _argument);
     [self release];
 }
 

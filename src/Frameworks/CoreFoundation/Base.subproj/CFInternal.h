@@ -133,6 +133,9 @@ typedef struct os_log_s *os_log_t;
 // We want to eventually note that some objects are immortal to the Swift runtime, but this stopgap lets things work while we work to make an ABI for them.
 #if DEPLOYMENT_RUNTIME_SWIFT
 #define _CF_CONSTANT_OBJECT_BACKING // We don't support this on Swift
+#elif ARGON_LIBOBJC2 && defined(__EMSCRIPTEN__)
+/* on wasm the runtime rebuilds every class at load, so these objects get their real class then (CFRuntime.c) */
+#define _CF_CONSTANT_OBJECT_BACKING
 #else
 #define _CF_CONSTANT_OBJECT_BACKING const
 #endif

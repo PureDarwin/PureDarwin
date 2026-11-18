@@ -7,6 +7,7 @@
  */
 
 #import <Foundation/NSSortDescriptor.h>
+#include <CoreFoundation/CFObjCMessage.h>
 #import <Foundation/NSString.h>
 #import <Foundation/NSKeyValueCoding.h>
 #include <objc/message.h>
@@ -72,7 +73,7 @@
     id right = (_key != nil) ? [second valueForKey:_key] : second;
 
     NSComparisonResult result =
-        ((NSComparisonResult (*)(id, SEL, id))objc_msgSend)(left, _selector, right);
+        CF_MSGSEND(NSComparisonResult (*)(id, SEL, id), left, _selector, right);
 
     return _ascending ? result : -result;
 }

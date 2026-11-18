@@ -814,6 +814,19 @@ DECLARE_STATIC_CLASS_REF(NSNull);
 static struct __CFNull _CF_CONSTANT_OBJECT_BACKING __kCFNull = {
     INIT_CFRUNTIME_BASE_WITH_CLASS(NSNull, _kCFRuntimeIDCFNull)
 };
+
+#if ARGON_LIBOBJC2 && defined(__EMSCRIPTEN__)
+CF_PRIVATE void __CFBaseFixStaticISAs(const char *name, uintptr_t real) {
+    if (strcmp(name, "__NSCFType") == 0) {
+        ((CFRuntimeBase *)&__kCFAllocatorMalloc)->_cfisa = real;
+        ((CFRuntimeBase *)&__kCFAllocatorMallocZone)->_cfisa = real;
+        ((CFRuntimeBase *)&__kCFAllocatorSystemDefault)->_cfisa = real;
+        ((CFRuntimeBase *)&__kCFAllocatorNull)->_cfisa = real;
+    } else if (strcmp(name, "NSNull") == 0) {
+        ((CFRuntimeBase *)&__kCFNull)->_cfisa = real;
+    }
+}
+#endif
 const CFNullRef kCFNull = &__kCFNull;
 
 static CFStringRef __CFNullCopyDescription(CFTypeRef cf) {

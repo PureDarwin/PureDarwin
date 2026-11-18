@@ -38,7 +38,7 @@ static void forget(id *location)
     id old = *location;
     struct argon_weak_obj **entry;
 
-    if (old == nil || ((uintptr_t)old & 7))
+    if (old == nil || ((uintptr_t)old & (sizeof(void *) == 8 ? 7 : 1)))
         return;
     entry = find(old);
     if (*entry == NULL)
@@ -65,7 +65,7 @@ id argon_storeWeak(id *location, id object)
     forget(location);
     *location = object;
     // tagged pointers are never deallocated, there is nothing to zero later
-    if (object != nil && !((uintptr_t)object & 7)) {
+    if (object != nil && !((uintptr_t)object & (sizeof(void *) == 8 ? 7 : 1))) {
         struct argon_weak_obj **entry = find(object);
         struct argon_weak_loc *loc = malloc(sizeof(*loc));
 

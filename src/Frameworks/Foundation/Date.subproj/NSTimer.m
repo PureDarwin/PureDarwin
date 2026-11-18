@@ -7,6 +7,7 @@
  */
 
 #import <Foundation/NSTimer.h>
+#include <CoreFoundation/CFObjCMessage.h>
 #import <Foundation/NSDate.h>
 
 #include <dispatch/dispatch.h>
@@ -184,7 +185,7 @@
     if (_block != nil)
         _block(self);
     else if (_target != nil && _selector != NULL)
-        ((void (*)(id, SEL, id))objc_msgSend)(_target, _selector, self);
+        CF_MSGSEND(void (*)(id, SEL, id), _target, _selector, self);
     else
         return;
     if (_repeats) {

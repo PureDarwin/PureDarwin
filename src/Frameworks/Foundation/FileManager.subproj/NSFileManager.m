@@ -29,6 +29,19 @@
 #include <pwd.h>
 #include <grp.h>
 
+#if defined(__linux__) || defined(__EMSCRIPTEN__)
+// Linux's stat names its times st_mtim and st_ctim, and has neither a birth time nor BSD file flags.
+// Creation falls back to the change time, and with no flags a file is never immutable or append-only.
+#define st_mtimespec st_mtim
+#define st_ctimespec st_ctim
+#define st_birthtimespec st_ctim
+#define st_flags st_mode
+#define UF_IMMUTABLE 0
+#define SF_IMMUTABLE 0
+#define UF_APPEND 0
+#define SF_APPEND 0
+#endif
+
 NSString *const NSFileSize = @"NSFileSize";
 NSString *const NSFileType = @"NSFileType";
 NSString *const NSFileOwnerAccountID = @"NSFileOwnerAccountID";
@@ -639,8 +652,8 @@ static BOOL _copyFileBytes(const char *from, const char *to, mode_t mode,
     }
 
     unsigned long long blockSize = (unsigned long long)info.f_bsize;
-    // glibc spells the fsid words __val
-#if defined(__linux__)
+    // glibc and musl spell the fsid words __val
+#if defined(__linux__) || defined(__EMSCRIPTEN__)
     unsigned long fsNumber = (unsigned long)info.f_fsid.__val[0];
 #else
     unsigned long fsNumber = (unsigned long)info.f_fsid.val[0];

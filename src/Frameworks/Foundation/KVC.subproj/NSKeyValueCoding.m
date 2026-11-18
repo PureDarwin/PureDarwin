@@ -7,6 +7,7 @@
  */
 
 #import <Foundation/NSKeyValueCoding.h>
+#include <CoreFoundation/CFObjCMessage.h>
 #import <Foundation/NSKeyValueObserving.h>
 #import <Foundation/NSString.h>
 #import <Foundation/NSArray.h>
@@ -77,31 +78,31 @@ static id boxedReturnValue(id self, SEL selector) {
     switch (type[0]) {
         case '@':
         case '#':
-            return ((id (*)(id, SEL))objc_msgSend)(self, selector);
+            return CF_MSGSEND(id (*)(id, SEL), self, selector);
         case 'c':
-            return [NSNumber numberWithChar:((char (*)(id, SEL))objc_msgSend)(self, selector)];
+            return [NSNumber numberWithChar:CF_MSGSEND(char (*)(id, SEL), self, selector)];
         case 'i':
-            return [NSNumber numberWithInt:((int (*)(id, SEL))objc_msgSend)(self, selector)];
+            return [NSNumber numberWithInt:CF_MSGSEND(int (*)(id, SEL), self, selector)];
         case 's':
-            return [NSNumber numberWithShort:((short (*)(id, SEL))objc_msgSend)(self, selector)];
+            return [NSNumber numberWithShort:CF_MSGSEND(short (*)(id, SEL), self, selector)];
         case 'l':
         case 'q':
-            return [NSNumber numberWithLongLong:((long long (*)(id, SEL))objc_msgSend)(self, selector)];
+            return [NSNumber numberWithLongLong:CF_MSGSEND(long long (*)(id, SEL), self, selector)];
         case 'C':
-            return [NSNumber numberWithUnsignedChar:((unsigned char (*)(id, SEL))objc_msgSend)(self, selector)];
+            return [NSNumber numberWithUnsignedChar:CF_MSGSEND(unsigned char (*)(id, SEL), self, selector)];
         case 'I':
-            return [NSNumber numberWithUnsignedInt:((unsigned (*)(id, SEL))objc_msgSend)(self, selector)];
+            return [NSNumber numberWithUnsignedInt:CF_MSGSEND(unsigned (*)(id, SEL), self, selector)];
         case 'S':
-            return [NSNumber numberWithUnsignedShort:((unsigned short (*)(id, SEL))objc_msgSend)(self, selector)];
+            return [NSNumber numberWithUnsignedShort:CF_MSGSEND(unsigned short (*)(id, SEL), self, selector)];
         case 'L':
         case 'Q':
-            return [NSNumber numberWithUnsignedLongLong:((unsigned long long (*)(id, SEL))objc_msgSend)(self, selector)];
+            return [NSNumber numberWithUnsignedLongLong:CF_MSGSEND(unsigned long long (*)(id, SEL), self, selector)];
         case 'f':
-            return [NSNumber numberWithFloat:((float (*)(id, SEL))objc_msgSend)(self, selector)];
+            return [NSNumber numberWithFloat:CF_MSGSEND(float (*)(id, SEL), self, selector)];
         case 'd':
-            return [NSNumber numberWithDouble:((double (*)(id, SEL))objc_msgSend)(self, selector)];
+            return [NSNumber numberWithDouble:CF_MSGSEND(double (*)(id, SEL), self, selector)];
         case 'B':
-            return [NSNumber numberWithBool:((BOOL (*)(id, SEL))objc_msgSend)(self, selector)];
+            return [NSNumber numberWithBool:CF_MSGSEND(BOOL (*)(id, SEL), self, selector)];
         case '{': {
             // structs such as CGPoint and CGRect come back in an NSValue of their own type
             NSMethodSignature *signature = [self methodSignatureForSelector:selector];
@@ -220,7 +221,7 @@ static BOOL setThroughSetter(id self, SEL setter, id value, NSString *key) {
 
     if ([self respondsToSelector:setter]) {
         if (!setThroughSetter(self, setter, value, key))
-            ((void (*)(id, SEL, id))objc_msgSend)(self, setter, value);
+            CF_MSGSEND(void (*)(id, SEL, id), self, setter, value);
         if (notifies) {
             [self didChangeValueForKey:key];
         }

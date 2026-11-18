@@ -138,6 +138,11 @@ static CFUUIDRef __CFUUIDCreateWithBytesPrimitive(CFAllocatorRef allocator, CFUU
 #else
 #include <uuid/uuid.h>
 #endif
+#if defined(__EMSCRIPTEN__)
+/* emscripten's uuid.h declares only uuid_generate, libweb-compat provides these two */
+void uuid_generate_random(uuid_t out);
+void uuid_generate_time(uuid_t out);
+#endif
 #endif
 
 CFUUIDRef CFUUIDCreate(CFAllocatorRef alloc) {

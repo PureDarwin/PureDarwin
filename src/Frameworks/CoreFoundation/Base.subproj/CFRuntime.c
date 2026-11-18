@@ -21,6 +21,7 @@
 #define CF_OBJC_DISPATCH_ENABLED 1
 
 #include <CoreFoundation/CFBase.h>
+#include "CFObjCMessage.h"
 #include <CoreFoundation/CFRuntime.h>
 #include "CFRuntime_Internal.h"
 #include "CFInternal.h"
@@ -405,6 +406,65 @@ CF_PRIVATE uintptr_t __CFResolveObjCClass(CFTypeID typeID) {
         __CFUnlock(&__CFBigRuntimeFunnel);
     }
     return (uintptr_t)cls;
+}
+#endif
+
+#if ARGON_LIBOBJC2 && defined(__EMSCRIPTEN__)
+#include <objc/hooks.h>
+
+/* The 1.9 ABI's loader builds a new class for every class the compiler emitted, so CF's constant strings
+ * and static objects, whose isa is the compiler's copy, are pointed at the new one as each class loads.
+ * clang puts every CFSTR constant in the cfstring segment, the linker marks where it starts and stops. */
+// the layout clang's __builtin___CFStringMakeConstantString emits
+struct __CFWebConstString {
+    CFRuntimeBase _base;
+    const uint8_t *_ptr;
+    uint32_t _length;
+};
+extern struct __CFWebConstString __start_cfstring[] __attribute__((weak));
+extern struct __CFWebConstString __stop_cfstring[] __attribute__((weak));
+CF_EXPORT void *__CFConstantStringClassReferencePtr;
+// CFBase.c and CFNumber.c point their static objects of class name at the class the runtime built
+CF_PRIVATE void __CFBaseFixStaticISAs(const char *name, uintptr_t real);
+CF_PRIVATE void __CFNumberFixStaticISAs(const char *name, uintptr_t real);
+
+static void (*__CFPreviousLoadCallback)(Class, struct objc_category *);
+
+static void __CFFixStaticISAs(Class cls) {
+    const char *name = class_getName(cls);
+    uintptr_t real = (uintptr_t)cls;
+    if (strcmp(name, "NSCFString") == 0) {
+        for (struct __CFWebConstString *str = __start_cfstring; str && str < __stop_cfstring; str++)
+            if (str->_base._cfisa == (uintptr_t)__CFConstantStringClassReference)
+                str->_base._cfisa = real;
+        __CFConstantStringClassReferencePtr = cls;
+    } else if (strcmp(name, "__NSCFType") != 0 && strcmp(name, "NSNull") != 0 && strcmp(name, "__NSCFBoolean") != 0 &&
+               strcmp(name, "__NSCFNumber") != 0) {
+        return;
+    }
+    __CFBaseFixStaticISAs(name, real);
+    __CFNumberFixStaticISAs(name, real);
+    __CFAddCFOwnedClass(real);
+}
+
+static void __CFClassLoaded(Class cls, struct objc_category *category) {
+    if (category == NULL)
+        __CFFixStaticISAs(cls);
+    if (__CFPreviousLoadCallback)
+        __CFPreviousLoadCallback(cls, category);
+}
+
+// classes loaded before this runs are fixed now, the rest as the runtime loads them
+__attribute__((constructor))
+static void __CFInstallLoadCallback(void) {
+    static const char *const names[] = { "NSCFString", "__NSCFType", "NSNull", "__NSCFBoolean", "__NSCFNumber" };
+    __CFPreviousLoadCallback = _objc_load_callback;
+    _objc_load_callback = __CFClassLoaded;
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        Class cls = objc_getClass(names[i]);
+        if (cls != Nil)
+            __CFFixStaticISAs(cls);
+    }
 }
 #endif
 
@@ -1199,7 +1259,7 @@ CF_PRIVATE CFStringRef __CFCopyFormattingDescription(CFTypeRef cf, CFDictionaryR
 #if ARGON_LIBOBJC2
     // libobjc2 string literals and other ObjC objects reach CF's own formats, they describe themselves
     if (CFTYPE_IS_OBJC(cf)) {
-        CFStringRef description = ((CFStringRef (*)(const void *, SEL))objc_msgSend)(cf, sel_registerName("description"));
+        CFStringRef description = CF_MSGSEND(CFStringRef (*)(const void *, SEL), cf, sel_registerName("description"));
         return description ? CFStringCreateCopy(kCFAllocatorSystemDefault, description) : NULL;
     }
 #endif

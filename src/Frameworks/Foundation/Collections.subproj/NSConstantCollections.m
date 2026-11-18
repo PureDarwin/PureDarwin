@@ -20,7 +20,9 @@ typedef struct { void *isa; NSUInteger options; NSUInteger count; const id *keys
 @interface NSConstantDictionary : NSDictionary
 @end
 
-#if ARGON_LIBOBJC2
+#if ARGON_LIBOBJC2 && defined(__OBJC_GNUSTEP_RUNTIME_ABI__) && __OBJC_GNUSTEP_RUNTIME_ABI__ < 20
+extern char __NSConstantArrayClass __asm__("_OBJC_CLASS_NSConstantArray");
+#elif ARGON_LIBOBJC2
 extern char __NSConstantArrayClass __asm__("._OBJC_CLASS_NSConstantArray");
 #else
 extern char __NSConstantArrayClass __asm__("_OBJC_CLASS_$_NSConstantArray");

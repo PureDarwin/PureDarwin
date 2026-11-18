@@ -11,7 +11,13 @@ extern "C" {
 
 // libobjc2 keeps small objects in the low three pointer bits on 64-bit
 #define OBJC_HAVE_TAGGED_POINTERS 1
+// libobjc2 tags small objects in the low three bits on 64-bit and only in bit 0 on 32-bit, where objects
+// are 4-byte aligned and bit 2 is part of an ordinary address (wasm32)
+#if __LP64__
 static inline bool _objc_isTaggedPointer(const void *ptr) { return ((uintptr_t)ptr & 7) != 0; }
+#else
+static inline bool _objc_isTaggedPointer(const void *ptr) { return ((uintptr_t)ptr & 1) != 0; }
+#endif
 
 // plain isa pointers, no packed bits to mask off
 static const uintptr_t objc_debug_isa_class_mask = ~(uintptr_t)0;

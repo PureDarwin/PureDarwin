@@ -7,6 +7,7 @@
  */
 
 #import <Foundation/NSUndoManager.h>
+#include <CoreFoundation/CFObjCMessage.h>
 #import <Foundation/NSArray.h>
 #import <Foundation/NSString.h>
 #import <Foundation/NSNumber.h>
@@ -48,7 +49,7 @@ NSString *const NSUndoManagerWillUndoChangeNotification = @"NSUndoManagerWillUnd
         [_invocation invoke];
         return;
     }
-    ((void (*)(id, SEL, id))objc_msgSend)(_target, _selector, _object);
+    CF_MSGSEND(void (*)(id, SEL, id), _target, _selector, _object);
 }
 
 @end

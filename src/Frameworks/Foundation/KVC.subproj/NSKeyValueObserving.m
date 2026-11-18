@@ -7,6 +7,7 @@
  */
 
 #import <Foundation/NSKeyValueObserving.h>
+#include <CoreFoundation/CFObjCMessage.h>
 #import <Foundation/NSKeyValueCoding.h>
 #import <Foundation/NSString.h>
 #import <Foundation/NSArray.h>
@@ -141,7 +142,7 @@ static NSMutableDictionary *dependentKeysByClass(void) {
         SEL selector = NSSelectorFromString(name);
 
         if ([self respondsToSelector:selector]) {
-            NSSet *keys = ((NSSet *(*)(id, SEL))objc_msgSend)(self, selector);
+            NSSet *keys = CF_MSGSEND(NSSet *(*)(id, SEL), self, selector);
 
             if (keys != nil) {
                 if (result == nil)

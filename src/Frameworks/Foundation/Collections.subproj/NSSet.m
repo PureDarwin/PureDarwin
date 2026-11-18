@@ -22,8 +22,8 @@ extern int __CFConstantStringClassReference[];
 
 static BOOL ns_set_value_is_constant_string(const void *value) {
 #if ARGON_LIBOBJC2
-    // libobjc2 tags small objects in the low three bits, they have no isa to read
-    if ((uintptr_t)value & 7) {
+    // libobjc2 tags small objects in the low three bits (bit 0 on 32-bit), they have no isa to read
+    if ((uintptr_t)value & (sizeof(void *) == 8 ? 7 : 1)) {
         return NO;
     }
 #endif
