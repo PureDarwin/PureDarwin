@@ -8,7 +8,7 @@ PureDarwin builds Darwin from Apple's open source releases and fills the gaps wi
 
 ## What PureDarwin does today
 
-- **Targets.** x86_64 PCs and laptops, arm64 under QEMU, the Raspberry Pi 3 and the iPad 6. Apple M1 (t8103) bring-up is in progress.
+- **Targets.** x86_64 PCs and laptops, and arm64 under QEMU. On arm64 hardware: the NVIDIA Jetson TX1, the Lenovo ThinkPad X13s, the Orange Pi Zero 3 (no Wi-Fi or GPU, its Mali driver is GPL) and the Orange Pi Zero 4 (no Wi-Fi). Apple A-series devices: the iPhone 6s (A9) under the Inferno emulator, with iPad 6 (A10) support being brought over. Apple M1 (t8103) bring-up is in progress.
 - **Desktop.** A Wayland desktop (Argon, on our neuswc and neuwld compositor work) with its own applications, and X11.
 - **Cocoa frameworks.** PureDarwin's own AppKit, Foundation, CoreFoundation, CoreGraphics, CoreText, QuartzCore and OpenGL, enough to run unmodified macOS applications. The stock macOS build of Firefox has run unmodified since October 2026.
 - **Graphics.** AMD, Intel and nouveau GPUs through our in-kernel FreeBSD/Linux compatibility layer (fbsdkpi), Vulkan through Mesa, and NVIDIA Maxwell, Pascal and Volta cards on NVIDIA's own 580 driver through PDNVLoader.
