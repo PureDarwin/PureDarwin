@@ -1,3 +1,5 @@
+// RavynXHCIUSBBus.cpp - IOUSBController over RavynXHCIPort for USB devices the port does not handle itself
+// Copyright (c) 2026 The PureDarwin Project (Vali0004), SPDX-License-Identifier: MIT
 #include "RavynXHCIUSBBus.h"
 #include "RavynXHCIPort.h"
 #include <IOKit/IOBufferMemoryDescriptor.h>

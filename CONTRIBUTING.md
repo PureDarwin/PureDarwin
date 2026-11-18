@@ -170,6 +170,19 @@ Concretely, if you used a model:
   confidently and with a tidy explanation, is the single most common failure mode of
   assisted contributions. Read `git log` and `git blame` on what you are touching.
 
+### AI-generated communication
+
+Code may be assisted. Pull request descriptions, issues and review replies may not.
+Write them yourself, in your own words, however short or imperfect your English is.
+
+A few plain sentences that you wrote tell us far more than a long, polished summary
+from a model. Generated descriptions are padded, sound confident about things nobody
+checked, and make us read more to learn less. If a description or issue reads as
+generated, we will ask you to rewrite it before anyone reviews the change.
+
+Translation tools are fine if English is not your first language. The content and the
+thinking must be yours.
+
 ### How this is enforced
 
 There is no detector and we are not going to pretend otherwise. What happens instead is
@@ -216,11 +229,15 @@ actioned.
 ## Pull requests
 
 * One logical change per pull request.
+* Write the description yourself (see "AI-generated communication"). Short is fine.
 * Keep formatting and cleanup commits separate from functional ones.
 * Say what you tested, on which target, and how.
 * If the change is hardware-specific, say which machine.
 
 ## Reporting bugs
+
+Write the report yourself. Logs and console output should be pasted as they are, but
+the description of what you did and what went wrong must be in your own words.
 
 Include the target, the image, whether it was QEMU or real hardware, the boot-args in
 use, and the console output as text where you can get it. A report of a boot that stops

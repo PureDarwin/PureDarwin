@@ -1,0 +1,144 @@
+PureDarwin
+==========
+
+Copyright (c) 2007-Present The PureDarwin Project and its contributors.
+
+PureDarwin is a buildable, bootable operating system built on Apple's open
+source Darwin releases. The PureDarwin Project fills the gaps those releases
+leave with its own code: drivers, kernel extensions, frameworks, the desktop,
+the Nix build and the system images. This file says what in this tree is
+PureDarwin's own work, what comes from other projects, and how a fork or
+derived work should credit it.
+
+The licence of any single file is the one stated in that file (its SPDX line
+and copyright notice). Nothing in this file changes the licence of any file.
+
+
+1. PureDarwin's own work
+------------------------
+
+Files carrying "Copyright (c) <year> The PureDarwin Project" (or "PureDarwin
+Project") were written for PureDarwin. As a rule, new PureDarwin code is under
+"MPL-2.0 OR BSD-2-Clause", and code added inside a component with its own
+licence takes that component's licence. This is a description of the project's
+practice, not a grant: the SPDX line and notice in each file are what decide
+its licence, and where they differ from this paragraph, the file wins. The
+project's BSD-style licence text is PUREDARWIN_LICENSE.txt.
+
+This includes, among others:
+
+- The kernel: PureDarwin's XNU build and ports (xnu-12377 and earlier), the
+  kernel collection tooling, the in-kernel FreeBSD/Linux compatibility layer
+  (fbsdkpi) and the glue that runs drivers on it.
+- Drivers and kernel extensions with the PD prefix (PDArmPlatformExpert,
+  PDIOSurface, PDGOP, PDAmdGPU, PDNVLoader, PDNVUVM, PDDRM*, PDACPIPlatform and
+  the rest), the ext4 driver, and the Ravyn* storage and USB drivers described
+  in section 3.
+- The frameworks PureDarwin implements or completes: AppKit, Foundation,
+  CoreFoundation, CoreGraphics, CoreText, QuartzCore, OpenGL/CGL, Metal and
+  the others under src/Frameworks, as far as their files carry PureDarwin's
+  notice (see section 2 for Cocotron).
+- The desktop: the Argon session, the Wayland compositor work on neuswc and
+  neuwld, and the applications under src/Userspace.
+- Running unmodified Mach-O applications built for macOS (for example the
+  stock macOS build of Firefox, first running in October 2026) on these
+  frameworks, and running Linux binaries through elftrans.
+- The Nix build (flake.nix, nix/) and every image target it produces.
+
+PureDarwin's bundle identifiers (org.puredarwin.*), its PD/pd naming, its boot
+arguments and its install paths identify this project's work. A fork may of
+course rename them, but renamed PureDarwin code is still PureDarwin's work and
+should be credited as such (section 4).
+
+
+2. Work from other projects
+---------------------------
+
+Each of these keeps its own copyright and licence notices, which must not be
+removed.
+
+- Apple Inc., NeXT Computer and Apple's open source releases: XNU, the IOKit
+  families, libSystem, dyld, objc4 and the other Darwin components.
+  Apple Public Source License 2.0 and the licences stated in each file
+  (APPLE_LICENSE.txt, APPLE_DRIVER_LICENSE.txt).
+- Cocotron (Christopher J. Lloyd and contributors): the original base of
+  several Cocoa frameworks. MIT.
+- FreeBSD: the LinuxKPI layer and other kernel code used by fbsdkpi.
+  BSD-2-Clause and BSD-3-Clause.
+- Haiku: the FreeBSD network compatibility code and headers used by fbsdkpi.
+  MIT.
+- ravynOS (Zoe Knox and contributors): RavynAHCIPort and the code RavynXHCIPort
+  started from (section 3). MIT.
+- LLVM: the compiler, libc++, libc++abi and libunwind.
+  Apache-2.0 WITH LLVM-exception.
+- Wayland, wayland-protocols, wlroots, sway, neuswc and neuwld under
+  src/ThirdParty: their own licences, as stated in each project.
+- Mesa, drm-kmod and NVIDIA's driver package are fetched by the Nix build and
+  are not stored in this tree. NVIDIA's closed resource manager is loaded
+  unmodified by PDNVLoader and is never redistributed in modified form.
+
+Some kernel files are dual-licensed by their authors (for example
+"GPL-2.0 OR BSD-3-Clause" or "GPL-2.0-only OR MIT"). PureDarwin uses them under
+the permissive option. GPL-only driver code (the Linux-derived DRM drivers in
+drm-kmod) is not part of PureDarwin's own code and is not stored in this
+tree: it is fetched at build time and built as optional kernel extensions.
+That separation is how the project keeps GPL code out of its own sources. It
+is not a statement that distributing those extensions, or a kernel collection
+or image that includes them, is compatible with the GPL or with the licences of
+the other components. Anyone distributing such builds has to assess that for
+themselves.
+
+
+3. RavynXHCIPort and RavynAHCIPort
+----------------------------------
+
+RavynAHCIPort is ravynOS's AHCI driver, written by Zoe Knox (ravynOS, April
+2026). PureDarwin's changes to it went back to ravynOS in its pull request #561
+(9 July 2026).
+
+RavynXHCIPort is a USB (xHCI) host controller and mass storage driver written
+for PureDarwin by Vali0004, starting from the structure of RavynAHCIPort. It
+was added here on 10 July 2026 (ee1a459d3) and contributed to ravynOS two days
+later, in its pull request #564 (12 July 2026). Its files keep the ravynOS
+notice of the code it was derived from. It is PureDarwin's work, shared with
+ravynOS, not a driver taken from ravynOS.
+
+
+4. Forks and derived works
+--------------------------
+
+PureDarwin is open source and forks are welcome. This section has two parts,
+and they are different in kind.
+
+4a. What the licences require
+
+What you must do depends on the licence of each file you take (section 1,
+section 2 and the file's own notice), and on how you distribute it. In
+summary, and only as a summary of those licences:
+
+- Preserve copyright and licence notices, and provide licence texts, as
+  required by each applicable licence.
+- For files under MPL-2.0, when you distribute them or programs built from
+  them, make the source of those files, including your changes to them,
+  available under MPL-2.0 as that licence requires.
+- Follow the terms of any third-party file as its own licence states them.
+
+The licences themselves are what bind, not this summary. Renaming identifiers,
+bundle names or paths does not change them.
+
+4b. What the project asks
+
+These go beyond the licences and are a request, not a legal condition. They are
+how we would like PureDarwin's work to be represented:
+
+- Keep every copyright notice, licence notice and SPDX line in the files you
+  take, even where a licence would allow less.
+- Say plainly, wherever you describe your system (READMEs, release notes,
+  announcements and posts), that it is based on PureDarwin, and which of the
+  features you show come from PureDarwin and which are new in your work.
+- Name the PureDarwin revision you started from.
+- Send fixes back upstream where you can. Pull requests are welcome
+  (CONTRIBUTING.md).
+
+The project's history is the record of who did what. Its git log is public at
+https://github.com/PureDarwin/PureDarwin.

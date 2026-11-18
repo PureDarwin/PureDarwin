@@ -7,7 +7,7 @@
     <key>CFBundleExecutable</key>
     <string>RavynXHCIPort</string>
     <key>CFBundleGetInfoString</key>
-    <string>1.0.0, Copyright (C) 2026 ravynOS Project. All rights reserved.</string>
+    <string>1.0.0, Copyright (C) 2026 ravynOS Project and The PureDarwin Project. All rights reserved.</string>
     <key>CFBundleIdentifier</key>
     <string>com.ravynos.driver.RavynXHCIPort</string>
     <key>CFBundleInfoDictionaryVersion</key>

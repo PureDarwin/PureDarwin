@@ -1,3 +1,5 @@
+// RavynXHCIUSBBus.h - IOUSBController over RavynXHCIPort for USB devices the port does not handle itself
+// Copyright (c) 2026 The PureDarwin Project (Vali0004), SPDX-License-Identifier: MIT
 // bulk, interrupt IN and isochronous endpoints get a ring each (no interrupt OUT), USBDeviceAddress is the slot ID
 // RavynXHCIUSBBus: IOUSBController over RavynXHCIPort's slot primitives for devices it doesn't special-case.
 // bulk and interrupt IN endpoints get a ring each (no isoc or interrupt OUT), USBDeviceAddress is the slot ID
