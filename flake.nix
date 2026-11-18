@@ -2757,5 +2757,33 @@
       legacyPackages = forAllSystems (system: (mkSystem system).legacyPackages);
       apps = forAllSystems (system: (mkSystem system).apps);
       devShells = forAllSystems (system: (mkSystem system).devShells);
+
+      # what Hydra builds (hydra.lab004.dev, also the binary cache): the release images, named as nix/release.nix
+      # says, and the checks that need no hardware. nix build .#hydraJobs.release.wayland
+      hydraJobs =
+        let
+          system = "x86_64-linux";
+          pkgs = nixpkgs.legacyPackages.${system};
+          out = mkSystem system;
+          rel = import ./nix/release.nix { inherit (pkgs) lib runCommand zstd; inherit self; };
+          # image output -> release target name and architecture
+          releases = {
+            full = { image = "image"; arch = "x86_64"; };
+            minimal = { image = "image-minimal"; arch = "x86_64"; };
+            wayland = { image = "image-wayland"; arch = "x86_64"; };
+            arm64-virt-minimal = { image = "image-arm64-virt-minimal"; arch = "arm64"; };
+            rpi3 = { image = "image-arm64-bcm2837"; arch = "arm64"; };
+          };
+        in
+        {
+          release = builtins.mapAttrs (target: r: rel.mkRelease {
+            inherit target;
+            inherit (r) arch;
+            image = out.packages.${r.image};
+          }) releases;
+          checks = {
+            inherit (out.legacyPackages.pd.wasm32) web-check web-check-gl wgsl-check;
+          };
+        };
     };
 }

@@ -29,6 +29,8 @@
 , rootfsTarball ? false
 , testAudioFile ? null
 , imageFileName ? "puredarwin.img"
+# the release version in SystemVersion.plist, the one release file names carry (nix/version.nix)
+, pdRelease ? import ./nix/version.nix
 , efiBinary ? "BOOTX64.EFI"
 , extraLoaders ? [ ]
 , netbootOnly ? false
@@ -638,15 +640,15 @@ EOF
 <plist version="1.0">
 <dict>
 	<key>ProductBuildVersion</key>
-	<string>25F74</string>
+	<string>${pdRelease.build}</string>
 	<key>ProductCopyright</key>
 	<string>1983-2026 PureDarwin. All rights reserved.</string>
 	<key>ProductName</key>
 	<string>PureDarwin</string>
 	<key>ProductUserVisibleVersion</key>
-	<string>26.5</string>
+	<string>${pdRelease.version}</string>
 	<key>ProductVersion</key>
-	<string>26.5</string>
+	<string>${pdRelease.version}</string>
 </dict>
 </plist>
 EOF

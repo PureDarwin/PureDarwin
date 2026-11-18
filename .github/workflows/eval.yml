@@ -1,18 +1,18 @@
 name: Evaluate
 
-# Evaluation-only CI. Nothing here builds a derivation, so it needs no Apple SDK
-# and no secrets, which means it also runs on pull requests from forks.
+# Evaluation-only CI. Nothing here builds a derivation and it needs no secrets,
+# so it also runs on pull requests from forks.
 #
 # What it catches: flake outputs that stop evaluating. That is the common way a
 # change breaks the tree without the author noticing, because it is easy to
 # refactor the flake so x86_64 still evaluates and one arm64 target no longer
-# does. Actual builds need the SDK and happen elsewhere.
+# does. The builds happen on Hydra (hydra.lab004.dev) and in browser.yml.
 
 on:
   pull_request:
-    branches: [next, main]
+    branches: [main]
   push:
-    branches: [next]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -81,12 +81,10 @@ jobs:
         run: |
           set -euo pipefail
           targets="
-            kernel kexts kc userland libSystem
-            image image-minimal image-minimal-debug image-wayland image-hfs
-            kernel-arm64-virt kexts-arm64 kc-arm64 image-arm64-virt-minimal
-            kernel-arm64-t8010 kc-arm64-t8010 ramdisk-arm64-t8010
-            kernel-arm64-bcm2837 kc-arm64-bcm2837 image-arm64-bcm2837
-            kernel-arm32-bcm2835 prelinked-arm32-bcm2835
+            image image-minimal image-wayland image-wayland-minimal image-hfs image-apfs image-debug
+            image-installer image-nvidia
+            image-arm64-virt image-arm64-virt-minimal image-arm64-virt-wayland
+            image-arm64-bcm2837 image-arm64-t8103 ramdisk-arm64-t8010
           "
           failed=0
           for target in $targets; do
@@ -98,6 +96,15 @@ jobs:
             fi
           done
           exit $failed
+
+      # the jobs Hydra builds: every release image and check must evaluate
+      - name: Hydra jobs evaluate
+        run: |
+          set -euo pipefail
+          for job in $(nix eval --raw .#hydraJobs --apply 'j: builtins.concatStringsSep " " (builtins.concatLists (map (g: map (n: g + "." + n) (builtins.attrNames j.${g})) (builtins.attrNames j)))'); do
+            nix eval --raw ".#hydraJobs.$job.drvPath" >/dev/null
+            echo "ok    $job"
+          done
 
       - name: Runners evaluate
         run: |

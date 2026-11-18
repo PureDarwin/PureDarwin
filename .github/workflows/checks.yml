@@ -1,0 +1,115 @@
+name: Pull request checks
+
+# Cheap checks on every pull request: no Nix, no builds, a few seconds. They hold
+# pull requests to the rules in CONTRIBUTING.md that a script can see.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened]
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  commits:
+    name: Commit messages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # one line, "Area: what changed", no body, no semicolons, no co-author trailers
+      - name: Check every commit in the pull request
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          failed=0
+          for c in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            subject=$(git log -1 --format=%s "$c")
+            body=$(git log -1 --format=%b "$c")
+            short=$(git rev-parse --short "$c")
+            problems=""
+            [ -n "$body" ] && problems="$problems, has a body (subject line only)"
+            case "$subject" in *";"*) problems="$problems, semicolon in the subject" ;; esac
+            # "Area: what changed" is the usual form, not a rule: a warning only
+            echo "$subject" | grep -Eq '^[A-Za-z0-9_./+ -]+(, [A-Za-z0-9_./+ -]+)*: .+' \
+              || echo "::warning::$short \"$subject\" is not in the usual \"Area: what changed\" form"
+            [ ${#subject} -gt 100 ] && problems="$problems, subject longer than 100 characters"
+            git log -1 --format=%B "$c" | grep -qi '^co-authored-by:' && problems="$problems, Co-Authored-By trailer"
+            if [ -n "$problems" ]; then
+              echo "::error::$short \"$subject\"${problems}"
+              failed=1
+            else
+              echo "ok    $short $subject"
+            fi
+          done
+          exit $failed
+
+  description:
+    name: Pull request description
+    runs-on: ubuntu-latest
+    steps:
+      # the template's sections are filled in by the author (CONTRIBUTING.md, AI-generated communication)
+      - name: Check the description
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          failed=0
+          # the template's prompts and comments do not count as text
+          text=$(printf '%s\n' "$BODY" | sed -e 's/<!--.*-->//g' -e '/^_.*_$/d' -e '/^- *$/d' -e '/^- \[ \] *$/d')
+          section() {
+            printf '%s\n' "$text" | awk -v h="## $1" '$0 == h {on=1; next} /^## / {on=0} on' | tr -d '[:space:]'
+          }
+          for s in Purpose "Proposed changes" Testing; do
+            if [ -z "$(section "$s")" ]; then
+              echo "::error::the \"$s\" section of the description is empty"
+              failed=1
+            else
+              echo "ok    $s"
+            fi
+          done
+          exit $failed
+
+  files:
+    name: Changed files
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: ASCII documentation, headers on new sources
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          failed=0
+          # documents stay plain ASCII
+          for f in $(git diff --name-only --diff-filter=AM "$BASE" "$HEAD" -- '*.md' 'NOTICE' '*.txt'); do
+            if grep -nP '[^\x00-\x7F]' "$f" >/dev/null; then
+              echo "::error file=$f::non-ASCII characters"
+              failed=1
+            fi
+          done
+          # a new source file says what it is and whose it is: a copyright line and an SPDX line near the top
+          for f in $(git diff --name-only --diff-filter=A "$BASE" "$HEAD" -- '*.c' '*.cc' '*.cpp' '*.h' '*.hpp' '*.m' '*.mm' '*.nix'); do
+            case "$f" in src/ThirdParty/*|external/*|patches/*) continue ;; esac
+            top=$(head -n 15 "$f")
+            if ! printf '%s\n' "$top" | grep -qi 'copyright' || ! printf '%s\n' "$top" | grep -q 'SPDX-License-Identifier'; then
+              echo "::error file=$f::new file without a copyright and SPDX line in its first lines"
+              failed=1
+            fi
+          done
+          exit $failed

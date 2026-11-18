@@ -1,0 +1,56 @@
+name: Browser tests
+
+# AppKit, CGL and the Metal shader path built for the browser with emscripten and
+# run in headless Chromium (src/Tests/web/check.mjs). It needs no secrets, so it
+# runs on pull requests from forks too. hydra.lab004.dev builds the
+# same jobs (hydraJobs.checks) and is the binary cache, so a run only builds what
+# the pull request changed.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: browser-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    name: ${{ matrix.check }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [web-check, web-check-gl, wgsl-check]
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+            extra-substituters = https://hydra.lab004.dev
+            extra-trusted-public-keys = hydra.lab004.dev-1:gPXVaEarmWgIFDuqmpf+9gXetBCC9jxzkZg+CZ8cC+M=
+
+      - name: Build and run ${{ matrix.check }}
+        run: nix build -L --show-trace .#hydraJobs.checks.${{ matrix.check }}
+
+      # the screenshots the check took, for a look at what the page drew
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.check }}
+          path: result/
+          if-no-files-found: ignore
