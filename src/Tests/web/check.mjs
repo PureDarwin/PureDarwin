@@ -1,14 +1,15 @@
-// check.mjs - load an AppKit page in headless Chromium, click its button, and check the app saw the click
+// check.mjs - load an AppKit page in headless Chromium and check it works: a click, or a GL frame
 // Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 //
-// node check.mjs CHROMIUM PAGE_DIR OUT_DIR: serves PAGE_DIR, writes before.png and after.png to OUT_DIR,
-// and exits 0 only when the page printed PD-READY and then PD-CLICK 1 for a click on the button.
+// node check.mjs CHROMIUM PAGE_DIR OUT_DIR [MODE]: serves PAGE_DIR and writes screenshots to OUT_DIR.
+// click (the default): PD-READY, then PD-CLICK 1 for a click on the button, before.png and after.png.
+// gl: PD-READY, and a PD-GL-PIXEL at the view's centre that is not the clear colour, gl.png.
 import { spawn } from 'node:child_process';
 import { writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const [chromium, pageDir, outDir] = process.argv.slice(2);
+const [chromium, pageDir, outDir, mode = 'click'] = process.argv.slice(2);
 const httpPort = 8000 + Math.floor(Math.random() * 1000);
 const devtoolsPort = 9300 + Math.floor(Math.random() * 600);
 const fail = (why) => { console.error('FAIL ' + why); cleanup(); process.exit(1); };
@@ -79,6 +80,22 @@ await send('Page.navigate', { url: `http://127.0.0.1:${httpPort}/index.html` });
 if (!(await waitForLine('PD-READY', 90000)))
     fail('the app never printed PD-READY');
 await sleep(500);
+
+if (mode === 'gl') {
+    // the view clears to (25, 51, 153), its centre is inside the triangle
+    const line = await waitForLine('PD-GL-PIXEL', 10000);
+    if (!line)
+        fail('the GL view never reported its centre pixel');
+    const [r, g, b] = line.split(' ').slice(1).map(Number);
+    const isClear = Math.abs(r - 25) < 8 && Math.abs(g - 51) < 8 && Math.abs(b - 153) < 8;
+    await screenshot('gl.png');
+    if (isClear || r + g + b === 0)
+        fail(`the triangle was not drawn, the centre is ${r},${g},${b}`);
+    console.log('PASS');
+    cleanup();
+    process.exit(0);
+}
+
 await screenshot('before.png');
 
 // the button sits 20 points in from the window's left edge and 40 up from its bottom, 160 by 32

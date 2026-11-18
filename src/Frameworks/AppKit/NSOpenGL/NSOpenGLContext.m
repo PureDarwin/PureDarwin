@@ -261,6 +261,22 @@ static CGImageRef _createImageFromDrawable(CGLContextObj context) {
    uint8_t *pixels=malloc(rowBytes*size[1]);
    uint8_t *flipped=malloc(rowBytes*size[1]);
 
+#if defined(__EMSCRIPTEN__)
+   // WebGL reads only RGBA bytes and has no read buffer to choose: read those and swap red and blue into BGRA
+   (void)readBuffer;
+   drawBuffer=0;
+   (void)rowLength;
+   glGetIntegerv(GL_PACK_ALIGNMENT,&alignment);
+   glPixelStorei(GL_PACK_ALIGNMENT,4);
+   glReadPixels(0,0,size[0],size[1],GL_RGBA,GL_UNSIGNED_BYTE,pixels);
+   glPixelStorei(GL_PACK_ALIGNMENT,alignment);
+   for(size_t i=0;i<(size_t)size[0]*size[1];i++){
+    uint8_t red=pixels[i*4];
+
+    pixels[i*4]=pixels[i*4+2];
+    pixels[i*4+2]=red;
+   }
+#else
    // the buffer the frame was drawn to: Mesa's pbuffers read the front one by default
    glGetIntegerv(GL_READ_BUFFER,&readBuffer);
    glGetIntegerv(GL_DRAW_BUFFER,&drawBuffer);
@@ -273,6 +289,7 @@ static CGImageRef _createImageFromDrawable(CGLContextObj context) {
    glPixelStorei(GL_PACK_ALIGNMENT,alignment);
    glPixelStorei(GL_PACK_ROW_LENGTH,rowLength);
    glReadBuffer(readBuffer);
+#endif
 
    // PD_GL_TRACE=1 logs each frame's size and how much of it was drawn
    if(getenv("PD_GL_TRACE")){

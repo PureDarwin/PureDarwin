@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PureDarwin AppKit</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #3a6ea5; font: 14px system-ui, sans-serif; }
+  #pd-status { position: fixed; bottom: 8px; left: 8px; color: #fff; opacity: .8; z-index: 1000000000; }
+</style>
+</head>
+<body>
+<div id="pd-screen" style="position:fixed;inset:0;overflow:hidden"></div>
+<div id="pd-status">loading</div>
+<script>
+  // the page's console carries the app's stdout, a headless check reads it from there
+  var Module = {
+    print: function(text) { console.log(text); },
+    printErr: function(text) { console.warn(text); },
+    setStatus: function(text) { document.getElementById('pd-status').textContent = text || 'running'; },
+    monitorRunDependencies: function(left) { if (!left) Module.setStatus('running'); }
+  };
+</script>
+<script src="gl.js"></script>
+</body>
+</html>

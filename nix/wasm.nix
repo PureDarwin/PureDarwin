@@ -711,22 +711,25 @@ let
     cp ${icuWasm}/share/icu/${icuWasm.version}/icudt76l.dat $out/icu/
   '';
 
-  # an AppKit window in a page (src/Tests/web/hello): open index.html from a web server
-  webHello = pkgs.runCommand "puredarwin-web-hello" { nativeBuildInputs = [ emcc pkgs.python3 ]; } ''
+  # an AppKit program from src/Tests/web/NAME as a page: open index.html from a web server
+  webPage = name: pkgs.runCommand "puredarwin-web-${name}" { nativeBuildInputs = [ emcc pkgs.python3 ]; } ''
     ${emSetup}
     set +e +o pipefail
-    src=${../src/Tests/web/hello}
+    src=${../src/Tests/web + "/${name}"}
     A=${appkitWasm}/include
     F=${foundationWasm}/include
     emcc -O1 ${objcFlags} -fno-objc-arc -DARGON_LIBOBJC2=1 -include argon-darwin.h -I$F/argon-compat -I$F -I$F/Foundation \
       -I$F/CoreFoundation -I$A -I$A/AppKit -I$A/Onyx2D -I$A/CoreGraphics -I${libobjc2Wasm}/include -I${dispatchWebWasm}/include \
       -Wno-everything $src/main.m ${appkitLibs} --preload-file ${pageFiles}@/ --pre-js ${icuPreJs} \
       ${emLinkFlags} -fexceptions -sLEGACY_GL_EMULATION=1 -sWASM_BIGINT -sERROR_ON_UNDEFINED_SYMBOLS=1 --profiling-funcs \
-      -sEXPORTED_RUNTIME_METHODS=UTF8ToString -Wl,--error-limit=0 -o hello.js 2>&1 | grep -v "^warning" | head -400
-    [ -f hello.js ] || exit 1
+      -sEXPORTED_RUNTIME_METHODS=UTF8ToString -Wl,--error-limit=0 -o ${name}.js 2>&1 | grep -v "^warning" | head -400
+    [ -f ${name}.js ] || exit 1
     mkdir -p $out
-    cp hello.js hello.wasm hello.data $src/index.html $out/
+    cp ${name}.js ${name}.wasm ${name}.data $src/index.html $out/
   '';
+
+  webHello = webPage "hello";
+  webGL = webPage "gl";
 
   # the hello page in headless Chromium: it must come up and see a click on its button (src/Tests/web/check.mjs).
   # The screenshots before and after the click are the output, for a person reading CI.
@@ -734,6 +737,14 @@ let
     export HOME=$TMPDIR
     mkdir -p $out
     node ${../src/Tests/web/check.mjs} ${pkgs.chromium}/bin/chromium ${webHello} $out 2>&1 | tee $out/log.txt
+    grep -q '^PASS$' $out/log.txt
+  '';
+
+  # the GL page: an NSOpenGLView's triangle through CGL on WebGL, read back into the window
+  webCheckGL = pkgs.runCommand "puredarwin-web-check-gl" { nativeBuildInputs = [ pkgs.chromium pkgs.nodejs pkgs.python3 ]; } ''
+    export HOME=$TMPDIR
+    mkdir -p $out
+    node ${../src/Tests/web/check.mjs} ${pkgs.chromium}/bin/chromium ${webGL} $out gl 2>&1 | tee $out/log.txt
     grep -q '^PASS$' $out/log.txt
   '';
 
@@ -840,6 +851,8 @@ in
   appkit-wasm = appkitWasm;
   web-hello-wasm = webHello;
   web-check-wasm = webCheck;
+  web-gl-wasm = webGL;
+  web-check-gl-wasm = webCheckGL;
   foundation-wasm = foundationWasm;
   foundation-smoke-wasm = foundationSmokeWasm;
   libffi-wasm = ffiWasm;
