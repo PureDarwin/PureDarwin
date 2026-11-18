@@ -235,6 +235,20 @@ wpa_ioctl(struct ifnet *ifp, int type, void *data, int len)
 	return error;
 }
 
+// a key that was never set is no error here
+static int
+wpa_ioctl_quiet(struct ifnet *ifp, int type, void *data, int len)
+{
+	struct ieee80211req ireq;
+
+	memset(&ireq, 0, sizeof(ireq));
+	strlcpy(ireq.i_name, ifp->if_xname, sizeof(ireq.i_name));
+	ireq.i_type = type;
+	ireq.i_len = len;
+	ireq.i_data = data;
+	return ifp->if_ioctl(ifp, SIOCS80211, (caddr_t)&ireq);
+}
+
 static int
 cipher_for_suite(uint8_t suite)
 {
@@ -523,10 +537,31 @@ pd_wpa_configure(struct ieee80211vap *vap, const uint8_t *pmk,
 	return 0;
 }
 
+// as wpa_supplicant does on a disconnect, so a rejoin never starts on the last session's keys
+static void
+delete_keys(struct ieee80211vap *vap)
+{
+	struct ieee80211req_del_key dk;
+	struct ieee80211_node *ni = vap->iv_bss;
+
+	if (ni != NULL) {
+		memset(&dk, 0, sizeof(dk));
+		dk.idk_keyix = (uint8_t)IEEE80211_KEYIX_NONE;
+		memcpy(dk.idk_macaddr, ni->ni_macaddr, IEEE80211_ADDR_LEN);
+		wpa_ioctl_quiet(vap->iv_ifp, IEEE80211_IOC_DELKEY, &dk, sizeof(dk));
+	}
+	for (int i = 0; i < IEEE80211_WEP_NKID; i++) {
+		memset(&dk, 0, sizeof(dk));
+		dk.idk_keyix = i;
+		wpa_ioctl_quiet(vap->iv_ifp, IEEE80211_IOC_DELKEY, &dk, sizeof(dk));
+	}
+}
+
 void
 pd_wpa_reset(struct ieee80211vap *vap)
 {
 	wpa_init();
+	delete_keys(vap);
 	mtx_lock(&sWpaLock);
 	struct pd_wpa *wpa = wpa_for(vap, false);
 	if (wpa != NULL) {
