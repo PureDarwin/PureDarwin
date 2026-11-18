@@ -2772,7 +2772,6 @@
             minimal = { image = "image-minimal"; arch = "x86_64"; };
             wayland = { image = "image-wayland"; arch = "x86_64"; };
             arm64-virt-minimal = { image = "image-arm64-virt-minimal"; arch = "arm64"; };
-            rpi3 = { image = "image-arm64-bcm2837"; arch = "arm64"; };
           };
         in
         {
