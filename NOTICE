@@ -61,10 +61,27 @@ removed.
   families, libSystem, dyld, objc4 and the other Darwin components.
   Apple Public Source License 2.0 and the licences stated in each file
   (APPLE_LICENSE.txt, APPLE_DRIVER_LICENSE.txt).
+  Apple publishes these releases at https://github.com/apple-oss-distributions,
+  one repository per component, with a tag for each release.
+  Their sources are copied into this tree rather than pulled in as submodules,
+  so that one tree builds the whole system, and PureDarwin's changes are made
+  in place. The few components the Nix build fetches instead are pinned to an
+  exact release in their package under nix/. Section 2a lists where each
+  component in this tree came from.
+- NeoDarwin: dyld, through its dyld4linux, and corecrypto, which PureDarwin
+  carries as an MPL-2.0 fork in external/corecrypto.
+- NextBSD (iXsystems): libxpc under src/Libraries/XPC. BSD-2-Clause.
+- Darling: the corecrypto sources under src/Libraries/libSystem/corecrypto,
+  which Security.framework builds its private copy from. GPL-3.0-or-later.
+  They were imported by another contributor before the project stopped taking
+  GPL code, and are being replaced by the MPL-2.0 corecrypto fork in the
+  NeoDarwin entry above.
+- uACPI (Daniil Tatianin): the ACPI implementation PDACPIPlatform is built on,
+  under src/Kernel/Extensions/PDACPIPlatform/uacpi. MIT.
 - Cocotron (Christopher J. Lloyd and contributors): the original base of
   several Cocoa frameworks. MIT.
-- FreeBSD: the LinuxKPI layer and other kernel code used by fbsdkpi.
-  BSD-2-Clause and BSD-3-Clause.
+- FreeBSD: the LinuxKPI layer and other kernel code used by fbsdkpi, and libnv
+  under src/Libraries/XPC. BSD-2-Clause and BSD-3-Clause.
 - Haiku: the FreeBSD network compatibility code and headers used by fbsdkpi.
   MIT.
 - ravynOS (Zoe Knox and contributors): RavynAHCIPort and the code RavynXHCIPort
@@ -82,11 +99,105 @@ Some kernel files are dual-licensed by their authors (for example
 the permissive option. GPL-only driver code (the Linux-derived DRM drivers in
 drm-kmod) is not part of PureDarwin's own code and is not stored in this
 tree: it is fetched at build time and built as optional kernel extensions.
-That separation is how the project keeps GPL code out of its own sources. It
+That separation is how the project keeps GPL code out of its own sources. The
+one exception still in this tree is the Darling corecrypto above, which
+predates that rule and is being removed. It
 is not a statement that distributing those extensions, or a kernel collection
 or image that includes them, is compatible with the GPL or with the licences of
 the other components. Anyone distributing such builds has to assess that for
 themselves.
+
+
+2a. Where the Apple components came from
+-----------------------------------------
+
+Each entry names the release a directory was taken from. "Recorded" means the
+import commit or the directory's .version file names it. "Closest" means the
+release that has the most files byte-identical to this tree's, found by
+comparing every tagged release in Apple's repository for that component. The
+count after it is identical files out of the directory's files. Files
+PureDarwin changed no longer match, so a low count means heavy changes, not a
+different source. Work from projects other than Apple is listed in section 2.
+
+Recorded:
+
+- src/Kernel/xnu: xnu-12377.121.6 (5620 of 6229). First read in as
+  xnu-7195.50.7.100.1 in 2021.
+- src/Libraries/libSystem/libc: Libc-1439.141.1 (1264 of 1907).
+- src/Libraries/libSystem/libmalloc: libmalloc-317.140.5 (280 of 297).
+- src/Libraries/libSystem/libplatform: libplatform-254.40.4 (102 of 127).
+- src/Libraries/libSystem/pthread and src/Kernel/Extensions/pthread:
+  libpthread-454.80.2 (170 of 186).
+- src/Libraries/architecture: architecture-279 (20 of 22).
+- src/Userspace/dtrace: read in from dtrace-370.40.1 and dtrace-375, closest
+  now dtrace-409 (150 of 152).
+- src/Kernel/Extensions/IOATAFamily: IOATAFamily-256.40.1 (18 of 26).
+- src/Kernel/Extensions/IOPCIFamily: IOPCIFamily-428.120.4 (12 of 29).
+- src/Kernel/Extensions/IOStorageFamily: recorded as IOStorageFamily-260.100.1
+  (24 of 61), closest now IOStorageFamily-218.250.3 (33 of 61).
+
+Closest:
+
+- src/Libraries/libSystem/libsystem_kernel: xnu-7195.121.3 (191 of 276).
+- src/Kernel/libkmod: xnu-10002.1.13 (4 of 5).
+- src/Libraries/libSystem/libdispatch: libdispatch-1271.40.12 (162 of 180).
+- src/Libraries/objc4: objc4-818.2 (326 of 363).
+- src/Libraries/CommonCrypto: CommonCrypto-60178.100.1 (89 of 113).
+- src/Libraries/Security: Security-59754.120.12 (615 of 674).
+- src/Libraries/SystemConfiguration and src/Libraries/libSystemConfiguration:
+  configd-1109.101.1 (219 of 238, 25 of 28).
+- src/Libraries/bootp: bootp-413.100.4 (159 of 166).
+- src/Libraries/eap8021x: eap8021x-304.100.1 (2 of 2).
+- src/Libraries/ppp: ppp-1003.0.0.0.1 (3 of 3).
+- src/Libraries/syslog: syslog-385 (26 of 37).
+- src/Libraries/DiskArbitration: DiskArbitration-342.120.1 (63 of 70).
+- src/Libraries/IOKit: IOKitUser-1845.100.19 (68 of 98).
+- src/Libraries/libresolv: libresolv-67.40.1 (32 of 39).
+- src/Libraries/AvailabilityVersions: AvailabilityVersions-157.2 (14 of 27).
+- src/Libraries/XPC/libinfo: Libinfo-542.40.3 (33 of 49).
+- src/Libraries/XPC/notify: Libnotify-279.40.4 (15 of 25).
+- src/Libraries/XPC/launchd: launchd-842.92.1 (15 of 46).
+- src/Userspace/netstat: network_cmds-741.100.2 (21 of 26).
+- src/Userspace/ping: network_cmds-596 (5 of 6).
+- src/Userspace/system_cmds: system_cmds-854.100.3 (7 of 15).
+- src/Userspace/msdos_cmds: msdosfs-435.100.6 (13 of 17).
+- src/Kernel/Extensions/msdosfs: msdosfs-411.0.5 (12 of 16).
+- src/Kernel/Extensions/hfs: hfs-556.100.11 (65 of 72).
+- src/Kernel/Extensions/HFSEncodings: hfs-522.0.9 (5 of 7).
+- src/Kernel/Extensions/IOCDStorageFamily: IOCDStorageFamily-58 (13 of 14).
+- src/Kernel/Extensions/IODVDStorageFamily: IODVDStorageFamily-41.1 (11 of 12).
+- src/Kernel/Extensions/IOBDStorageFamily: IOBDStorageFamily-20.100.1
+  (11 of 12).
+- src/Kernel/Extensions/IOSCSIArchitectureModelFamily:
+  IOSCSIArchitectureModelFamily-139.0.2 (70 of 70).
+- src/Kernel/Extensions/AppleIntelPIIXATA: AppleIntelPIIXATA-250.0.4
+  (8 of 13).
+- src/Kernel/Extensions/IONetworkingFamily: IONetworkingFamily-151.40.1
+  (47 of 50).
+- src/Kernel/Extensions/IOGraphicsFamily and IONDRVSupport: IOGraphics-576.1
+  (35 of 46, 11 of 12).
+- src/Kernel/Extensions/IOAudioFamily: IOAudioFamily-700.2 (29 of 46).
+- src/Kernel/Extensions/IOHIDFamily: IOHIDFamily-1446.140.2 (200 of 295).
+- src/Kernel/Extensions/IOSerialFamily: IOSerialFamily-91 (8 of 8).
+- src/Kernel/Extensions/IOACPIFamily: IOACPIFamily-8 (5 of 8).
+
+Through other projects:
+
+- src/Libraries/dyld: NeoDarwin's dyld4linux. Its Apple base is closest to
+  dyld-852.2 (118 of 171).
+- src/Kernel/Extensions/IOUSBFamily: ravynOS's copy of Apple's IOUSBFamily,
+  whose last Apple release is IOUSBFamily-630.4.5. More of its files match
+  ravynOS (25 of 65) than that release (19 of 65).
+- src/Kernel/Extensions/ApplePS2Controller, AppleAPIC and AppleI386PCI: the
+  copies ravynOS carries. AppleAPIC was first added from an older
+  darwinbuild-based repository whose release could not be determined.
+- src/Kernel/Extensions/cd9660: ported from xnu-1228, which still contained
+  it.
+
+Not determined: src/Kernel/Extensions/AppleI386GenericPlatform (added in
+2021), IOATABlockStorage, AppleFileSystemDriver, src/Libraries/libdarwin,
+src/Libraries/libSystem/libdyld and src/Userspace/ioreg. None of them matches
+a tagged Apple release or ravynOS closely enough to name one.
 
 
 3. RavynXHCIPort and RavynAHCIPort
