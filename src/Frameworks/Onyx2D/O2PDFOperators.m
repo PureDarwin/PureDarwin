@@ -850,18 +850,18 @@ void O2PDF_render_Q(O2PDFScanner *scanner,void *info) {
 // Append rectangle to path
 void O2PDF_render_re(O2PDFScanner *scanner,void *info) {
    O2Context *context=kgContextFromInfo(info);
-   O2Rect     rect;
+   O2PDFReal x,y,width,height;
 
-   if(!O2PDFScannerPopNumber(scanner,&rect.size.height))
+   if(!O2PDFScannerPopNumber(scanner,&height))
     return;
-   if(!O2PDFScannerPopNumber(scanner,&rect.size.width))
+   if(!O2PDFScannerPopNumber(scanner,&width))
     return;
-   if(!O2PDFScannerPopNumber(scanner,&rect.origin.y))
+   if(!O2PDFScannerPopNumber(scanner,&y))
     return;
-   if(!O2PDFScannerPopNumber(scanner,&rect.origin.x))
+   if(!O2PDFScannerPopNumber(scanner,&x))
     return;
 
-   O2ContextAddRect(context,rect);
+   O2ContextAddRect(context,O2RectMake(x,y,width,height));
 }
 
 // setrgbcolor, Set RGB color for stroking operations

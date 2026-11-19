@@ -353,6 +353,69 @@ static void testPDF(void)
     CFRelease(data);
 }
 
+static void testPDFRectangle(void)
+{
+    // A symmetric 32 by 32 page containing one red PDF `re` operator.
+    static const char fixture[] =
+        "%PDF-1.4\n"
+        "1 0 obj\n"
+        "<< /Type /Catalog /Pages 2 0 R >>\n"
+        "endobj\n"
+        "2 0 obj\n"
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>\n"
+        "endobj\n"
+        "3 0 obj\n"
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 32 32]\n"
+        "/Resources << >> /Contents 4 0 R >>\n"
+        "endobj\n"
+        "4 0 obj\n"
+        "<< /Length 24 >>\n"
+        "stream\n"
+        "1 0 0 rg\n"
+        "7 7 18 18 re\n"
+        "f\n"
+        "endstream\n"
+        "endobj\n"
+        "xref\n"
+        "0 5\n"
+        "0000000000 65535 f \n"
+        "0000000009 00000 n \n"
+        "0000000058 00000 n \n"
+        "0000000115 00000 n \n"
+        "0000000217 00000 n \n"
+        "trailer\n"
+        "<< /Size 5 /Root 1 0 R >>\n"
+        "startxref\n"
+        "290\n"
+        "%%EOF\n";
+    CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, fixture, sizeof(fixture) - 1, NULL);
+    CGPDFDocumentRef document = provider ? CGPDFDocumentCreateWithProvider(provider) : NULL;
+    if (provider)
+        CGDataProviderRelease(provider);
+    CHECK(document != NULL, "open the PDF rectangle fixture");
+    if (document == NULL)
+        return;
+
+    CGPDFPageRef page = CGPDFDocumentGetPage(document, 1);
+    unsigned char pixels[32 * 32 * 4] = { 0 };
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(pixels, 32, 32, 8, 32 * 4, space,
+        kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(space);
+    CHECK(page != NULL && context != NULL, "PDF page and RGBA bitmap available");
+    if (page && context) {
+        CGContextDrawPDFPage(context, page);
+        const unsigned char *inside = &pixels[(16 * 32 + 16) * 4];
+        const unsigned char *outside = &pixels[(3 * 32 + 3) * 4];
+        CHECK(inside[0] == 255 && inside[1] == 0 && inside[2] == 0 && inside[3] == 255 && outside[3] == 0,
+            "PDF rectangle center RGBA %u,%u,%u,%u, outside alpha %u",
+            inside[0], inside[1], inside[2], inside[3], outside[3]);
+    }
+    if (context)
+        CGContextRelease(context);
+    CGPDFDocumentRelease(document);
+}
+
 static void testWindowsAndDisplays(void)
 {
     CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID);
@@ -434,6 +497,7 @@ int main(int argc, char **argv)
     testColors();
     testGeometry();
     testPDF();
+    testPDFRectangle();
     testWindowsAndDisplays();
 
     printf("CGTEST %s, %d failure(s)\n", failures == 0 ? "PASS" : "FAIL", failures);
