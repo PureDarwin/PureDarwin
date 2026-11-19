@@ -39,7 +39,8 @@ stdenv.mkDerivation {
     # falls back to these automatically when TERMINFO lookups fail. xterm and
     # xterm-256color cover the terminal this system actually has (PD's xterm
     # build); vt100/vt220/linux/ansi are cheap, common fallbacks for whatever
-    # TERM the serial/kernel console sets (observed: vt220).
+    # TERM the serial/kernel console sets (observed: vt220). Include the
+    # 256-color descriptions used by tmux and GNU Screen for remote sessions.
     ./configure \
       --host=${targetTriple} \
       --build=$(cc -dumpmachine) \
@@ -56,7 +57,7 @@ stdenv.mkDerivation {
       --disable-db-install \
       --disable-stripping \
       --enable-widec \
-      --with-fallbacks=xterm,xterm-256color,linux,vt100,vt220,ansi \
+      --with-fallbacks=xterm,xterm-256color,linux,vt100,vt220,ansi,tmux-256color,screen-256color \
       --with-terminfo-dirs=/usr/share/terminfo \
       --with-default-terminfo-dir=/usr/share/terminfo
 
