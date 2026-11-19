@@ -76,7 +76,8 @@ stdenv.mkDerivation {
     # swiftc keeps its clang module cache under $HOME
     export HOME=$TMPDIR
     W=$TMPDIR/w
-    R=$W/sysroot
+    # Give ld64 the SDK version without using digits in the sandbox path.
+    R=$W/MacOSX14.5.sdk
     mkdir -p $W
 
     # sysroot: the PD SDK plus the PD dylibs and framework headers Swift imports
