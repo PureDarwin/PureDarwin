@@ -137,8 +137,7 @@ static inline id __NSAutoreleaseCF(CFTypeRef cf) {
 }
 
 - (NSString *)bundleIdentifier {
-    CFStringRef identifier = CFBundleGetIdentifier(_bundle);
-    return identifier == NULL ? nil : (NSString *)CFRetain(identifier);
+    return (__bridge NSString *)CFBundleGetIdentifier(_bundle);
 }
 
 - (NSURL *)executableURL {
