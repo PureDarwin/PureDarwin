@@ -1,6 +1,7 @@
 // pdnv_dev.c - /dev/nvidiactl and /dev/nvidiaN: opens, the interface layer's own ioctls, the rest to rm_ioctl
 // Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 #include <IOKit/IOLib.h>
+#include <kern/thread.h>
 #include <IOKit/IOLocks.h>
 #include <kern/thread_call.h>
 #include <sys/conf.h>
@@ -71,6 +72,12 @@ struct pdnv_file {
 	IOLock *sel_lock;
 	thread_call_t wake_call;
 	struct selinfo ev_sel;
+
+	// the resource manager's references from nv_get_file_private, under sLock. Linux's fget holds the file, not
+	// the descriptor, so the descriptor closes while the RM still has the file: closed says that happened, and
+	// the last nv_put_file_private then does what the close would have
+	int holds;
+	NvBool closed;
 };
 
 static int sMajor = -1;
@@ -196,25 +203,13 @@ nv_open(dev_t dev, int flags, int devtype, proc_t p)
 	return 0;
 }
 
-static int
-nv_close(dev_t dev, int flags, int devtype, proc_t p)
+// what closing a descriptor of a GPU or the control node ends: the RM's state for it, then the record. The slot
+// is gone already
+static void
+file_release(struct pdnv_file *f)
 {
-	struct pdnv_file *f = slot_file(dev);
 	nvidia_stack_t *sp = NULL;
 
-	(void)flags;
-	(void)devtype;
-	(void)p;
-	if (f == NULL)
-		return 0;
-	if (f->kms != NULL) {
-		pdnvkms_close(f->kms);
-		IOLockLock(sLock);
-		sSlots[SLOT(dev)] = NULL;
-		IOLockUnlock(sLock);
-		IOFree(f, sizeof(*f));
-		return 0;
-	}
 	// posts still running against this descriptor finish first, as nvidia_close waits for them
 	while (__atomic_load_n(&f->nvfp.event_posting_refcount, __ATOMIC_ACQUIRE) != 0)
 		IOSleep(1);
@@ -230,9 +225,6 @@ nv_close(dev_t dev, int flags, int devtype, proc_t p)
 		if (f->mmap.memArea.pRanges != NULL)
 			os_free_mem(f->mmap.memArea.pRanges);
 	}
-	IOLockLock(sLock);
-	sSlots[SLOT(dev)] = NULL;
-	IOLockUnlock(sLock);
 	thread_call_cancel_wait(f->wake_call);
 	thread_call_free(f->wake_call);
 	IOLockLock(f->sel_lock);
@@ -241,6 +233,46 @@ nv_close(dev_t dev, int flags, int devtype, proc_t p)
 	IOLockFree(f->sel_lock);
 	IOSimpleLockFree(f->ev_lock);
 	IOFree(f, sizeof(*f));
+}
+
+// the last put of a descriptor that is closed already comes from inside the RM: the release, which calls back into
+// it, runs on its own thread, as Linux defers the final fput
+static void
+file_release_thread(void *arg, wait_result_t wr)
+{
+	(void)wr;
+	file_release(arg);
+	thread_terminate(current_thread());
+}
+
+static int
+nv_close(dev_t dev, int flags, int devtype, proc_t p)
+{
+	struct pdnv_file *f = slot_file(dev);
+
+	(void)flags;
+	(void)devtype;
+	(void)p;
+	if (f == NULL)
+		return 0;
+	if (f->kms != NULL) {
+		pdnvkms_close(f->kms);
+		IOLockLock(sLock);
+		sSlots[SLOT(dev)] = NULL;
+		IOLockUnlock(sLock);
+		IOFree(f, sizeof(*f));
+		return 0;
+	}
+	IOLockLock(sLock);
+	sSlots[SLOT(dev)] = NULL;
+	if (f->holds > 0) {
+		// the RM still has it from another descriptor's ioctl: the last nv_put_file_private releases it
+		f->closed = NV_TRUE;
+		IOLockUnlock(sLock);
+		return 0;
+	}
+	IOLockUnlock(sLock);
+	file_release(f);
 	return 0;
 }
 
@@ -740,20 +772,38 @@ nv_get_file_private(NvS32 fd, NvBool ctl, void **os_private)
 		if (major(rdev) == sMajor && (ctl ? NODE(rdev) == PDNV_CTL_NODE : NODE(rdev) < PDNV_MAX_GPUS))
 			f = slot_file(rdev);
 	}
-	if (f == NULL) {
-		file_drop(fd);
-		return NULL;
+	if (f != NULL) {
+		// the file is held until nv_put_file_private, the descriptor only while it is looked up: holding the
+		// descriptor would keep its close() draining for as long as the RM keeps the file
+		IOLockLock(sLock);
+		f->holds++;
+		IOLockUnlock(sLock);
 	}
-	// the descriptor stays held until nv_put_file_private
-	*os_private = (void *)(uintptr_t)(fd + 1);
+	file_drop(fd);
+	if (f == NULL)
+		return NULL;
+	*os_private = f;
 	return &f->nvfp;
 }
 
 void NV_API_CALL
 nv_put_file_private(void *os_private)
 {
-	if (os_private != NULL)
-		file_drop((int)(uintptr_t)os_private - 1);
+	struct pdnv_file *f = os_private;
+	NvBool last;
+	thread_t t;
+
+	if (f == NULL)
+		return;
+	IOLockLock(sLock);
+	last = --f->holds == 0 && f->closed;
+	IOLockUnlock(sLock);
+	if (!last)
+		return;
+	if (kernel_thread_start(file_release_thread, f, &t) == KERN_SUCCESS)
+		thread_deallocate(t);
+	else
+		IOLog("PDNVLoader: no thread to release a closed descriptor, its state stays\n");
 }
 
 // whether the calling process has this GPU's node open, as the Linux layer walks its descriptors.
