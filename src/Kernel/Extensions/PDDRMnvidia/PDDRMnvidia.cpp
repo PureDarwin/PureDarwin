@@ -7,6 +7,7 @@
 
 #include "../../fbsdkpi/pd/pd_fbsd_attach.h"
 #include "../../fbsdkpi/xnu/pd_fbsd_xnu.h"
+#include "../../fbsdkpi/pd/pd_fbsd_driver.h"
 
 extern "C" {
 // PDNVLoader's, which this kext links against
@@ -56,7 +57,11 @@ PDDRMnvidia::start(IOService *provider)
 	IOLockLock(sStartLock);
 	void *dev = NULL;
 	int err = -1;
-	if (pd_fbsd_attach_pci_device(pci) != NULL && (dev = pd_nvdrm_claimed_device()) != NULL) {
+	// the shared layer runs this driver's sysinits and probes with its own record, one attach at a time
+	pd_fbsd_driver_enter(pd_fbsd_driver_record());
+	void *attached = pd_fbsd_attach_pci_device(pci);
+	pd_fbsd_driver_leave();
+	if (attached != NULL && (dev = pd_nvdrm_claimed_device()) != NULL) {
 		pdnv_gpu_set_os_device(i, dev);
 		err = pd_nvdrm_add_gpu(pdnv_gpu_id(i));
 	}
