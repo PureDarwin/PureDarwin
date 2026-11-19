@@ -21,11 +21,12 @@ stdenv.mkDerivation {
 
   nativeBuildInputs = [ makeWrapper ];
   buildInputs = [ llvm clang ];
+  # the plugin takes clang's symbols from the clang that loads it, macOS ld wants that said
 
   buildPhase = ''
     runHook preBuild
     CXXFLAGS="-std=c++17 -O2 -fno-rtti -Wall -Wno-unused-parameter -I${lib.getDev clang}/include -I${lib.getDev llvm}/include"
-    $CXX $CXXFLAGS -fPIC -shared plugin.cpp -o mslc-plugin.so
+    $CXX $CXXFLAGS -fPIC -shared plugin.cpp -o mslc-plugin.so${lib.optionalString stdenv.hostPlatform.isDarwin " -Wl,-undefined,dynamic_lookup"}
     $CXX $CXXFLAGS airify.cpp -o airify -L${lib.getLib llvm}/lib -lLLVM
     runHook postBuild
   '';
@@ -45,6 +46,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "Prototype MSL to AIR compiler feeding air2spv";
-    platforms = platforms.linux;
+    platforms = platforms.linux ++ platforms.darwin;
   };
 }

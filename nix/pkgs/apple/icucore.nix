@@ -25,6 +25,7 @@ stdenv.mkDerivation {
 
   nativeBuildInputs = [ stdenv.cc ];
 
+  # a mac build host runs the x86_64 configure tests through rosetta, an explicit --build keeps it a cross build
   configurePhase = ''
     runHook preConfigure
 
@@ -52,7 +53,7 @@ stdenv.mkDerivation {
       CXXFLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include ${lib.optionalString (!isArmv6) "-mmacosx-version-min=26.5"} ${lib.optionalString isArmv6 "-O1"}" \
       LDFLAGS="-fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib ${lib.optionalString (!isArmv6) "-Wl,-platform_version,macos,26.5,26.5 -Wl,-fixup_chains"} -L${libcxxabiDylib}/usr/lib -L${libcxxDylib}/usr/lib -lc++ -lSystem ${lib.optionalString (compilerRt != null) "${compilerRt}/lib/libcompiler_rt.a"}" \
       ../source/configure \
-        --host=${targetTriple} \
+        --host=${targetTriple}${lib.optionalString stdenv.buildPlatform.isDarwin " --build=${stdenv.buildPlatform.config}"} \
         --with-cross-build=$PWD/../native-build \
         --disable-renaming \
         --disable-tests --disable-samples --disable-extras --disable-icuio \
