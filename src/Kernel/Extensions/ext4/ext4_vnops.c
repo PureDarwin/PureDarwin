@@ -524,9 +524,12 @@ ext4_dir_drop_htree(struct ext4node *dep)
 
 	if ((flags & EXT4_INDEX_FL) == 0)
 		return;
+	// the blocks first: with the journal both land in the caller's transaction, without it a crash in between
+	// leaves the flag over plain blocks, which Linux searches linearly and e2fsck clears. The other order leaves
+	// a plain directory whose index blocks have no checksum tail, which Linux will not read
+	ext4_dir_unindex_blocks(dep);
 	dep->e_raw.i_flags = le32(flags & ~EXT4_INDEX_FL);
 	(void)ext4_write_inode(dep->e_mount, dep->e_ino, &dep->e_raw);
-	ext4_dir_unindex_blocks(dep);
 }
 
 static int
