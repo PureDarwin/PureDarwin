@@ -555,9 +555,8 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
         [line drawAtPoint:NSMakePoint(x, y) withAttributes:a];
         y += lh;
     }
-    return y;
-
     [self noteContentBottom:y];
+    return y;
 }
 
 - (CGFloat)lead:(NSString *)s at:(CGFloat)y

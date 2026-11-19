@@ -90,11 +90,16 @@ cmd_list(void)
 static int
 cmd_add(int argc, char **argv)
 {
-	const char *name = argv[0], *real = NULL, *shell = "/bin/zsh", *password = NULL;
-	char pw[256];
-	uid_t uid = 0;
-	int ch, admin = 0;
+        const char *name, *real = NULL, *shell = "/bin/zsh", *password = NULL;
+        char pw[256];
+        uid_t uid = 0;
+        int ch, admin = 0;
 
+        if (argc < 1)
+                usage();
+
+        name = argv[0];
+		
 	need_root();
 	optind = 1;
 	while ((ch = getopt(argc, argv, "n:u:s:p:a")) != -1) {
