@@ -612,7 +612,12 @@ let
 
   linuxPackages =
     let
-      makeXnuLoaderHostBuild = loader: crossPkgs:
+      # the x86-only boot programs (BIOS stage, 32-bit UEFI) come from the x86_64-linux set on any other
+      # host: nixpkgs has i686 and BIOS packages only on x86, and they are small enough for any x86 builder
+      x86System = if pkgs.stdenv.buildPlatform.isx86 then system else "x86_64-linux";
+      x86Pkgs = if pkgs.stdenv.buildPlatform.isx86 then pkgs else import pkgs.path { system = x86System; };
+      makeXnuLoaderHostBuild = makeXnuLoaderBuildOn pkgs;
+      makeXnuLoaderBuildOn = pkgs: loader: crossPkgs:
         let
           efiInputTarget =
             if crossPkgs.stdenv.hostPlatform.isx86_64
@@ -655,7 +660,7 @@ let
       # 32-bit UEFI on a 64-bit CPU: the firmware loads only IA32 PE images,
       # while the kernel it boots stays x86_64. Built from the i686 set so
       # libgcc, gnu-efi and binutils are all 32-bit.
-      xnuLoaderIa32 = makeXnuLoaderHostBuild xnu-loader.packages.${system}.ia32 pkgs.pkgsi686Linux;
+      xnuLoaderIa32 = makeXnuLoaderBuildOn x86Pkgs xnu-loader.packages.${x86System}.ia32 x86Pkgs.pkgsi686Linux;
       kcBuild = pkgs.callPackage ./pkgs/toolchain/kc.nix {
         kernel = kernelBuild;
         inherit kernelSource;
@@ -765,7 +770,7 @@ let
         imageFileName = "puredarwin-builder.img";
         rootMB = 16384;
       };
-      legacyBoot = xnu-loader.packages.${system}.legacy-boot.override {
+      legacyBoot = xnu-loader.packages.${x86System}.legacy-boot.override {
         stage2Lba = 34;
       };
       imageHfsBuild = pkgs.callPackage ../image.nix {
@@ -2223,6 +2228,7 @@ EOF
       image-builder = imageBuilderBuild;
       # the 32-bit uefi loader, so other images can carry it next to BOOTX64.EFI
       xnu-loader-ia32 = xnuLoaderIa32;
+      inherit x86System;
       xorg = pd.xorg;
       libxcvt = pd.libxcvt;
       userland = pd.userland;

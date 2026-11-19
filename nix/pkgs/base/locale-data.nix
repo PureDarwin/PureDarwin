@@ -93,7 +93,9 @@ stdenv.mkDerivation {
       > $l/C.UTF-8/LC_TIME
 
     # the system-wide language and region, CFLocale and bundle lookup read them from the global domain
-    install -Dm644 /dev/stdin $out/Library/Preferences/.GlobalPreferences.plist <<'EOF'
+    # macOS hosts refuse install from /dev/stdin as a file replaced mid-copy
+    mkdir -p $out/Library/Preferences
+    cat > $out/Library/Preferences/.GlobalPreferences.plist <<'EOF'
     <?xml version="1.0" encoding="UTF-8"?>
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
     <plist version="1.0">
@@ -107,6 +109,7 @@ stdenv.mkDerivation {
     </dict>
     </plist>
     EOF
+    chmod 644 $out/Library/Preferences/.GlobalPreferences.plist
     runHook postInstall
   '';
 

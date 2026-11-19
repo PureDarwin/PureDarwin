@@ -98,23 +98,34 @@ static inline id __NSAutoreleaseCF(CFTypeRef cf) {
         return nil;
     }
 
+    if ([path length] == 0) {
+        [self release];
+        return nil;
+    }
+
     CFURLRef url = CFURLCreateWithFileSystemPath(kCFAllocatorDefault,
                                                  (CFStringRef)path,
                                                  kCFURLPOSIXPathStyle, true);
     if (url == NULL) {
+        [self release];
         return nil;
     }
 
     _bundle = CFBundleCreate(kCFAllocatorDefault, url);
     CFRelease(url);
 
-    return _bundle != NULL ? self : nil;
+    if (_bundle == NULL) {
+        [self release];
+        return nil;
+    }
+    return self;
 }
 
 - (void)dealloc {
     if (_bundle != NULL) {
         CFRelease(_bundle);
     }
+    [super dealloc];
 }
 
 - (NSString *)bundlePath {
