@@ -71,11 +71,9 @@ removed.
 - NeoDarwin: dyld, through its dyld4linux, and corecrypto, which PureDarwin
   carries as an MPL-2.0 fork in external/corecrypto.
 - NextBSD (iXsystems): libxpc under src/Libraries/XPC. BSD-2-Clause.
-- Darling: the corecrypto sources under src/Libraries/libSystem/corecrypto,
-  which Security.framework builds its private copy from. GPL-3.0-or-later.
-  They were imported by another contributor before the project stopped taking
-  GPL code, and are being replaced by the MPL-2.0 corecrypto fork in the
-  NeoDarwin entry above.
+- OpenSSL: libcrypto and libssl, built by the Nix build and not stored in this
+  tree. Security.framework links them privately, for TLS, CMS and PKCS#12, and
+  the corecrypto fork's elliptic-curve operations use libcrypto. Apache-2.0.
 - uACPI (Daniil Tatianin): the ACPI implementation PDACPIPlatform is built on,
   under src/Kernel/Extensions/PDACPIPlatform/uacpi. MIT.
 - Cocotron (Christopher J. Lloyd and contributors): the original base of
@@ -99,9 +97,7 @@ Some kernel files are dual-licensed by their authors (for example
 the permissive option. GPL-only driver code (the Linux-derived DRM drivers in
 drm-kmod) is not part of PureDarwin's own code and is not stored in this
 tree: it is fetched at build time and built as optional kernel extensions.
-That separation is how the project keeps GPL code out of its own sources. The
-one exception still in this tree is the Darling corecrypto above, which
-predates that rule and is being removed. It
+That separation is how the project keeps GPL code out of its own sources. It
 is not a statement that distributing those extensions, or a kernel collection
 or image that includes them, is compatible with the GPL or with the licences of
 the other components. Anyone distributing such builds has to assess that for
