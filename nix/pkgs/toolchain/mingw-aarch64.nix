@@ -4,25 +4,27 @@
 }:
 
 let
-  patchedNixpkgs = pkgs.applyPatches {
-    name = "nixpkgs-mingw-aarch64-atomics-fix";
-    src = pkgs.path;
-    postPatch = ''
-      substituteInPlace pkgs/development/compilers/llvm/common/compiler-rt/default.nix \
-        --replace-fail \
-          'withAtomicsPthread ? lib.versionAtLeast release_version "19" && stdenv.cc.libc != null,' \
-          'withAtomicsPthread ? lib.versionAtLeast release_version "19" && stdenv.cc.libc != null && !stdenv.hostPlatform.isWindows,' \
-        --replace-fail \
-          'withAtomicsLib ? stdenv.hostPlatform.hasSharedLibraries,' \
-          'withAtomicsLib ? stdenv.hostPlatform.hasSharedLibraries && !stdenv.hostPlatform.isWindows,'
-    '';
-  };
+  # compiler-rt for a Windows host: no atomics library and no pthread atomics. nixpkgs turns both on for
+  # LLVM 19+, and neither builds for mingw. The two arguments set as nixpkgs' defaults would have them for
+  # Windows, so the derivations are the same, without importing a patched nixpkgs (which flake check
+  # --no-build cannot evaluate)
+  noWindowsAtomics = rt:
+    if rt.stdenv.hostPlatform.isWindows
+    then rt.override { withAtomicsPthread = false; withAtomicsLib = false; }
+    else rt;
+  fixCompilerRt = llvm: llvm.overrideScope (f: p: {
+    compiler-rt-libc = noWindowsAtomics p.compiler-rt-libc;
+    compiler-rt-no-libc = noWindowsAtomics p.compiler-rt-no-libc;
+  });
 
   # Applied to both the cross set and the build-host set: the cross stdenv's
   # compiler comes from buildPackages, so pinning only one leaves the other.
-  pinLlvm = final: prev: { llvmPackages = prev."llvmPackages_${llvmVersion}"; };
+  pinLlvm = final: prev:
+    let llvm = fixCompilerRt prev."llvmPackages_${llvmVersion}";
+    # the versioned name too: the cross compiler's own compiler-rt comes from it
+    in { llvmPackages = llvm; "llvmPackages_${llvmVersion}" = llvm; };
 
-  crossPkgs = import patchedNixpkgs {
+  crossPkgs = import pkgs.path {
     # `system` explicitly: flake evaluation is pure, so the nested import cannot
     # fall back to builtins.currentSystem.
     inherit system;
