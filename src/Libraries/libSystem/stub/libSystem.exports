@@ -868,6 +868,8 @@ _scalbn
 _os_log_create
 ___udivti3
 ___muldc3
+___mulsc3
+___divsc3
 ___divti3
 _proc_pid_rusage
 _acosf
@@ -1326,6 +1328,7 @@ _strncpy
 _strtof
 _strtold
 _vsnprintf
+_vsnprintf_l
 _getsockname
 _gethostname
 _getpgrp
