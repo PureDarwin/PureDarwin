@@ -164,6 +164,8 @@ APPKIT_EXPORT NSString *const NSImageHintInterpolation;
 
 @interface NSTextField (ModernTextField)
 + (instancetype)labelWithString:(NSString *)stringValue;
++ (instancetype)wrappingLabelWithString:(NSString *)stringValue;
++ (instancetype)labelWithAttributedString:(NSAttributedString *)attributedStringValue;
 @end
 
 @interface NSScreen (ModernScreen)

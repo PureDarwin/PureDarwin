@@ -576,6 +576,27 @@ static char PDBezelColorKey, PDImageHugsTitleKey;
     return label;
 }
 
+// a label that wraps its text at word boundaries and can be selected, as crash reporters and alerts use
++ (instancetype)wrappingLabelWithString:(NSString *)stringValue
+{
+    NSTextField *label = [self labelWithString:stringValue];
+
+    [label setSelectable:YES];
+    [[label cell] setWraps:YES];
+    [[label cell] setLineBreakMode:NSLineBreakByWordWrapping];
+    return label;
+}
+
++ (instancetype)labelWithAttributedString:(NSAttributedString *)attributedStringValue
+{
+    NSTextField *label = [self labelWithString:@""];
+
+    if (attributedStringValue != nil)
+        [label setAttributedStringValue:attributedStringValue];
+    [label sizeToFit];
+    return label;
+}
+
 @end
 
 @implementation NSScreen (ModernScreen)
