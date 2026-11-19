@@ -282,6 +282,16 @@ static void displayReconfigured(CGDirectDisplayID display, CGDisplayChangeSummar
     if(check==event)
      break;
    }
+   // a marker that is not queued: nil discards every matching event, one already taken off the queue those older than it
+   if(count<0){
+    count=[_eventQueue count];
+    while(--count>=0){
+     NSEvent *older=[_eventQueue objectAtIndex:count];
+
+     if((NSEventMaskFromType([older type])&mask) && (event==nil || [older timestamp]<[event timestamp]))
+      [_eventQueue removeObjectAtIndex:count];
+    }
+   }
 
    while(--count>=0){
     NSEvent *older=[_eventQueue objectAtIndex:count];
