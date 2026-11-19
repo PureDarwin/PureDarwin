@@ -12,6 +12,7 @@
 #include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -58,26 +59,66 @@ read_plist(const char *path, CFOptionFlags opts)
 static int
 write_file(const char *path, const UInt8 *bytes, CFIndex len, mode_t mode)
 {
-        char tmp[1100];
-        int fd;
+        char *tmp = NULL;
+        char *dir = NULL;
+        char *slash;
+        int fd = -1;
+        int dir_fd = -1;
+        int renamed = 0;
+        int saved_errno;
 
-        if (len < 0) {
+        if (len < 0 || path == NULL || path[0] == '\0' ||
+            (len > 0 && bytes == NULL)) {
                 errno = EINVAL;
+            	return -1;
+		}
+
+        /*
+         * Build a unique temporary filename beside the destination.
+         * mkstemp() creates it exclusively with restrictive permissions.
+         */
+        size_t path_len = strlen(path);
+
+        if (path_len > SIZE_MAX - sizeof(".tmp.XXXXXX")) {
+                errno = ENAMETOOLONG;
                 return -1;
         }
 
-        snprintf(tmp, sizeof(tmp), "%s.tmp", path);
-        fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, mode);
+        tmp = malloc(path_len + sizeof(".tmp.XXXXXX"));
+        dir = strdup(path);
+
+        if (tmp == NULL || dir == NULL)
+                goto fail;
+
+        memcpy(tmp, path, path_len);
+        memcpy(tmp + path_len, ".tmp.XXXXXX", sizeof(".tmp.XXXXXX"));
+
+        /*
+         * Determine the containing directory for the durability fsync.
+         */
+        slash = strrchr(dir, '/');
+
+        if (slash == NULL) {
+                free(dir);
+                dir = strdup(".");
+                if (dir == NULL)
+                        goto fail;
+        } else if (slash == dir) {
+                slash[1] = '\0';
+        } else {
+                *slash = '\0';
+        }
+
+        dir_fd = open(dir, O_RDONLY);
+        if (dir_fd < 0)
+                goto fail;
+
+        fd = mkstemp(tmp);
         if (fd < 0)
-                return -1;
+                goto fail;
 
-        if (fchmod(fd, mode) != 0) {
-                int saved_errno = errno;
-                close(fd);
-                unlink(tmp);
-                errno = saved_errno;
-                return -1;
-        }
+        if (fchmod(fd, mode) != 0)
+                goto fail;
 
         size_t offset = 0;
         size_t total = (size_t)len;
@@ -89,34 +130,66 @@ write_file(const char *path, const UInt8 *bytes, CFIndex len, mode_t mode)
                         continue;
 
                 if (written <= 0) {
-                        int saved_errno = written < 0 ? errno : EIO;
-                        close(fd);
-                        unlink(tmp);
-                        errno = saved_errno;
-                        return -1;
+                        if (written == 0)
+                                errno = EIO;
+                        goto fail;
                 }
 
                 offset += (size_t)written;
         }
 
-        if (fsync(fd) != 0) {
-                int saved_errno = errno;
-                close(fd);
-                unlink(tmp);
-                errno = saved_errno;
-                return -1;
-        }
+        /* Make the new file's contents durable before publishing it. */
+        if (fsync(fd) != 0)
+                goto fail;
 
         if (close(fd) != 0) {
-                int saved_errno = errno;
-                unlink(tmp);
-                errno = saved_errno;
-                return -1;
+                fd = -1;
+                goto fail;
+        }
+        fd = -1;
+
+        /* Atomically replace the destination. */
+        if (rename(tmp, path) != 0)
+                goto fail;
+
+        renamed = 1;
+
+        /*
+         * Make the directory-entry change durable as well.
+         */
+        if (fsync(dir_fd) != 0)
+                goto fail;
+
+        if (close(dir_fd) != 0) {
+            saved_errno = errno;
+            free(dir);
+            free(tmp);
+            errno = saved_errno;
+            return -1;
         }
 
-        return rename(tmp, path);
-}
+        free(dir);
+        free(tmp);
+        return 0;
 
+fail:
+        saved_errno = errno;
+
+        if (fd >= 0)
+                close(fd);
+
+        if (!renamed && tmp != NULL)
+                unlink(tmp);
+
+        if (dir_fd >= 0)
+                close(dir_fd);
+
+        free(dir);
+        free(tmp);
+
+        errno = saved_errno;
+        return -1;
+}
 static int
 write_plist(const char *path, CFPropertyListRef plist, mode_t mode)
 {
