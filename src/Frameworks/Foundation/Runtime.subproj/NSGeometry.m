@@ -9,6 +9,7 @@
 #import <Foundation/NSGeometry.h>
 #import <Foundation/NSString.h>
 #import <Foundation/NSCoder.h>
+#include <math.h>
 #include <stdio.h>
 #include <stddef.h>
 
@@ -17,16 +18,8 @@ const NSSize NSZeroSize = { 0, 0 };
 const NSRect NSZeroRect = { { 0, 0 }, { 0, 0 } };
 
 NSRect NSIntersectionRect(NSRect a, NSRect b) {
-    if (!NSIntersectsRect(a, b)) {
-        return NSZeroRect;
-    }
-
-    CGFloat minX = NSMinX(a) > NSMinX(b) ? NSMinX(a) : NSMinX(b);
-    CGFloat minY = NSMinY(a) > NSMinY(b) ? NSMinY(a) : NSMinY(b);
-    CGFloat maxX = NSMaxX(a) < NSMaxX(b) ? NSMaxX(a) : NSMaxX(b);
-    CGFloat maxY = NSMaxY(a) < NSMaxY(b) ? NSMaxY(a) : NSMaxY(b);
-
-    return NSMakeRect(minX, minY, maxX - minX, maxY - minY);
+    NSRect result;
+    return _NSRectIntersection(a, b, &result) ? result : NSZeroRect;
 }
 
 NSRect NSUnionRect(NSRect a, NSRect b) {

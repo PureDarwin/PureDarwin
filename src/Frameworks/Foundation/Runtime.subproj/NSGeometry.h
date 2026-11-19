@@ -11,6 +11,7 @@
 
 #import <Foundation/NSObjCRuntime.h>
 #include <math.h>
+#include <stddef.h>
 
 /* The geometry types belong to CoreFoundation, as on Darwin; NSPoint and
  * friends are aliases of them so CG and NS code share one layout. */
@@ -145,12 +146,41 @@ NS_INLINE BOOL NSContainsRect(NSRect a, NSRect b) {
         && NSMaxX(b) <= NSMaxX(a) && NSMaxY(b) <= NSMaxY(a);
 }
 
-NS_INLINE BOOL NSIntersectsRect(NSRect a, NSRect b) {
-    if (NSIsEmptyRect(a) || NSIsEmptyRect(b)) {
+NS_INLINE CGFloat _NSIntersectionMaxEdge(CGFloat origin, CGFloat length) {
+    // An axis that overflowed in both directions can have an indeterminate length.
+    if (origin == -INFINITY && (length == INFINITY || isnan(length))) {
+        return INFINITY;
+    }
+    return origin + length;
+}
+
+NS_INLINE BOOL _NSRectIntersection(NSRect a, NSRect b, NSRect *result) {
+    CGFloat maxAX = _NSIntersectionMaxEdge(NSMinX(a), NSWidth(a));
+    CGFloat maxAY = _NSIntersectionMaxEdge(NSMinY(a), NSHeight(a));
+    CGFloat maxBX = _NSIntersectionMaxEdge(NSMinX(b), NSWidth(b));
+    CGFloat maxBY = _NSIntersectionMaxEdge(NSMinY(b), NSHeight(b));
+
+    if (!(maxAX > NSMinX(a) && maxAY > NSMinY(a) &&
+          maxBX > NSMinX(b) && maxBY > NSMinY(b))) {
         return NO;
     }
-    return NSMaxX(a) > NSMinX(b) && NSMaxX(b) > NSMinX(a)
-        && NSMaxY(a) > NSMinY(b) && NSMaxY(b) > NSMinY(a);
+
+    CGFloat minX = NSMinX(a) > NSMinX(b) ? NSMinX(a) : NSMinX(b);
+    CGFloat minY = NSMinY(a) > NSMinY(b) ? NSMinY(a) : NSMinY(b);
+    CGFloat maxX = maxAX < maxBX ? maxAX : maxBX;
+    CGFloat maxY = maxAY < maxBY ? maxAY : maxBY;
+
+    if (!(maxX > minX && maxY > minY)) {
+        return NO;
+    }
+    if (result != NULL) {
+        *result = NSMakeRect(minX, minY, maxX - minX, maxY - minY);
+    }
+    return YES;
+}
+
+NS_INLINE BOOL NSIntersectsRect(NSRect a, NSRect b) {
+    return _NSRectIntersection(a, b, NULL);
 }
 
 FOUNDATION_EXPORT NSRect NSIntersectionRect(NSRect a, NSRect b);
