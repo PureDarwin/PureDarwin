@@ -70,6 +70,7 @@ stdenvNoCC.mkDerivation {
   meta = {
     description = "NVIDIA 580 driver objects and userland, unmodified, for PDNVLoader and elftrans";
     homepage = "https://www.nvidia.com/";
-    platforms = [ "x86_64-linux" ];
+    # the payload is x86_64, unpacking it runs on any Linux build host
+    platforms = lib.platforms.linux;
   };
 }

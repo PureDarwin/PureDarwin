@@ -36,6 +36,7 @@ stdenv.mkDerivation rec {
   meta = {
     description = "Debian's Microsoft-signed 32-bit UEFI shim and MokManager";
     license = lib.licenses.bsd2;
-    platforms = [ "x86_64-linux" ];
+    # the payload is ia32, unpacking it runs on any Linux build host
+    platforms = lib.platforms.linux;
   };
 }
