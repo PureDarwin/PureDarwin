@@ -441,3 +441,31 @@ OSStatus PMServerCreatePrinterList(void *server, CFArrayRef *printerList)
     *printerList = CFArrayCreate(NULL, NULL, 0, &kCFTypeArrayCallBacks);
     return kPMNoError;
 }
+
+// a settings value by key, kept with the rest; the lock flag means nothing without a print dialog to honour it
+OSStatus PMPrintSettingsSetValue(PMPrintSettings settings, CFStringRef key, CFTypeRef value, Boolean locked)
+{
+    (void)locked;
+    if (!isKind(settings, CFSTR("settings")) || key == NULL)
+        return kPMInvalidParameter;
+    if (value != NULL)
+        CFDictionarySetValue(settings, key, value);
+    else
+        CFDictionaryRemoveValue(settings, key);
+    return kPMNoError;
+}
+
+OSStatus PMPrintSettingsGetValue(PMPrintSettings settings, CFStringRef key, CFTypeRef *value)
+{
+    if (!isKind(settings, CFSTR("settings")) || key == NULL || value == NULL)
+        return kPMInvalidParameter;
+    *value = CFDictionaryGetValue(settings, key);
+    return *value != NULL ? kPMNoError : kPMInvalidParameter;
+}
+
+// a PDF handed to a PDF workflow item: there are no workflows here
+OSStatus PMWorkflowSubmitPDFWithSettings(CFURLRef workflowItem, PMPrintSettings settings, CFURLRef pdfFile)
+{
+    (void)workflowItem; (void)settings; (void)pdfFile;
+    return kPMInvalidParameter;
+}

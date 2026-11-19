@@ -571,3 +571,46 @@ typedef NS_ENUM(NSInteger, ASAuthorizationWebBrowserPublicKeyCredentialManagerAu
 }
 
 @end
+
+// web authentication sessions: a browser registers to handle them, none are ever started here
+NSString *const ASWebAuthenticationSessionErrorDomain = @"com.apple.AuthenticationServices.WebAuthenticationSession";
+
+@interface ASWebAuthenticationSessionRequest : NSObject
+@end
+
+@implementation ASWebAuthenticationSessionRequest
+@end
+
+@interface ASWebAuthenticationSessionWebBrowserSessionManager : NSObject {
+    id _sessionHandler;
+}
+@end
+
+@implementation ASWebAuthenticationSessionWebBrowserSessionManager
+
++ (instancetype)sharedManager
+{
+    static ASWebAuthenticationSessionWebBrowserSessionManager *shared;
+    static dispatch_once_t once;
+
+    dispatch_once(&once, ^{ shared = [[self alloc] init]; });
+    return shared;
+}
+
+- (id)sessionHandler
+{
+    return _sessionHandler;
+}
+
+- (void)setSessionHandler:(id)handler
+{
+    _sessionHandler = handler;  // weak, as Apple's
+}
+
+// the browser was not started by an authentication session: nothing here starts one
+- (BOOL)wasLaunchedByAuthenticationServices
+{
+    return NO;
+}
+
+@end

@@ -8,6 +8,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 #import <CoreGraphics/CoreGraphics.h>
 #import <Onyx2D/O2PDFDocument.h>
+#import <Foundation/NSData.h>
 
 CGPDFDocumentRef CGPDFDocumentRetain(CGPDFDocumentRef self) {
    return [self retain];
@@ -19,6 +20,22 @@ void CGPDFDocumentRelease(CGPDFDocumentRef self) {
 
 CGPDFDocumentRef CGPDFDocumentCreateWithProvider(CGDataProviderRef provider) {
    return [[O2PDFDocument alloc] initWithDataProvider:provider];
+}
+
+// the file the URL names, read whole, as a provider over its data
+CGPDFDocumentRef CGPDFDocumentCreateWithURL(CFURLRef url) {
+   NSData *data = url != NULL ? [NSData dataWithContentsOfURL:(NSURL *)url] : nil;
+   CGDataProviderRef provider;
+   CGPDFDocumentRef document;
+
+   if (data == nil)
+      return NULL;
+   provider = CGDataProviderCreateWithCFData((CFDataRef)data);
+   if (provider == NULL)
+      return NULL;
+   document = CGPDFDocumentCreateWithProvider(provider);
+   CGDataProviderRelease(provider);
+   return document;
 }
 
 size_t CGPDFDocumentGetNumberOfPages(CGPDFDocumentRef self) {
