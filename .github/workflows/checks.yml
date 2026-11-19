@@ -6,7 +6,8 @@ name: Pull request checks
 on:
   pull_request:
     branches: [main]
-    types: [opened, edited, synchronize, reopened]
+    # labeled and unlabeled: commit-body-ok changes the commit check's answer
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
 
 concurrency:
   group: checks-${{ github.workflow }}-${{ github.ref }}
@@ -25,20 +26,33 @@ jobs:
         with:
           fetch-depth: 0
 
-      # one line, "Area: what changed", no body, no semicolons, no co-author trailers
+      # one line, "Area: what changed", no semicolons, no co-author trailers. Below the subject only
+      # trailers such as Assisted-by or Signed-off-by. A maintainer accepts any other body with the
+      # commit-body-ok label
       - name: Check every commit in the pull request
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
+          BODY_OK: ${{ contains(github.event.pull_request.labels.*.name, 'commit-body-ok') }}
         run: |
           set -euo pipefail
+          trailer='^((assisted|signed-off|reviewed|tested|reported|suggested)-by|fixes|closes):[[:space:]]'
+          freeform='^assisted[[:space:]]+by[[:space:]]'
           failed=0
           for c in $(git rev-list --no-merges "$BASE..$HEAD"); do
             subject=$(git log -1 --format=%s "$c")
-            body=$(git log -1 --format=%b "$c")
+            # the body, blank lines and accepted trailers dropped
+            body=$(git log -1 --format=%b "$c" | grep -v '^[[:space:]]*$' |
+              grep -viE "$trailer" | grep -viE "$freeform" || true)
             short=$(git rev-parse --short "$c")
             problems=""
-            [ -n "$body" ] && problems="$problems, has a body (subject line only)"
+            if [ -n "$body" ]; then
+              if [ "$BODY_OK" = "true" ]; then
+                echo "body accepted by label: $short $subject"
+              else
+                problems="$problems, has a body (subject and trailers only, or ask for the commit-body-ok label)"
+              fi
+            fi
             case "$subject" in *";"*) problems="$problems, semicolon in the subject" ;; esac
             # "Area: what changed" is the usual form, not a rule: a warning only
             echo "$subject" | grep -Eq '^[A-Za-z0-9_./+ -]+(, [A-Za-z0-9_./+ -]+)*: .+' \

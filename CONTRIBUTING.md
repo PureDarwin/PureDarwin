@@ -237,9 +237,9 @@ actioned.
 * Write the description yourself (see "AI-generated communication"). Short is fine.
 * Keep formatting and cleanup commits separate from functional ones.
 * Commit messages are a subject line. Below it, only trailers such as `Assisted-by:` or
-  `Signed-off-by:`. Put everything else in the pull request description. A check enforces
-  this. When a body earns its place, for example how a change was tested, a maintainer can
-  accept it with the `commit-body-ok` label.
+  `Signed-off-by:`, but not `Co-authored-by:`. Put everything else in the pull request
+  description. A check enforces this. When a body earns its place, for example how a
+  change was tested, a maintainer can accept it with the `commit-body-ok` label.
 * Say what you tested, on which target, and how.
 * If the change is hardware-specific, say which machine.
 
