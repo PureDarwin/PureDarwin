@@ -61,7 +61,7 @@ void pda_remove_from_all_groups(const char *user);
 
 // a whole new account: record, home folder and admin membership, 0 or -1 with errno
 // real and shell may be NULL, uid 0 picks the next free one
-int pda_create_user(const char *name, const char *real, uid_t uid, const char *shell, const char *password, int admin);
+int pda_create_user(const char *name, const char *real, uid_t uid, const char *shell, const char *password, int admin, int local_only);
 
 // the record and its group memberships, and the home under /Users when remove_home is set
 int pda_remove_user(const char *name, int remove_home);
