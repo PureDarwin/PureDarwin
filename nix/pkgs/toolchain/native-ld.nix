@@ -149,6 +149,8 @@ EOF
     cp build-nix-native/tools/cctools/ld64/src/ld/ld $out/bin/ld.real
     cat > $out/bin/ld <<'EOF'
 #!/bin/sh
+# Keep N_OSO debug map timestamps independent of object file mtimes.
+export ZERO_AR_DATE=1
 ulimit -s unlimited 2>/dev/null || true
 exec "$(dirname "$0")/ld.real" "$@"
 EOF
