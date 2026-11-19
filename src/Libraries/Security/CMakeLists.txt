@@ -144,7 +144,7 @@ target_include_directories(Security PRIVATE
     ${PUREDARWIN_OPENSSL_PREFIX}/include
     ${PUREDARWIN_LIBOBJC_PREFIX}/usr/include
     ${PUREDARWIN_FOUNDATION_PREFIX}/usr/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/corecrypto/include
+    ${PD_CORECRYPTO_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/../CommonCrypto/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../CommonCrypto/include/Private
     ${CMAKE_CURRENT_SOURCE_DIR}/../XPC/libxpc/include
@@ -218,13 +218,15 @@ target_link_options(Security PRIVATE
     -Wl,-hidden-lcrypto
     -lSystem)
 
-file(GLOB _sec_cc ${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/corecrypto/src/*.c)
-add_library(security_corecrypto OBJECT
-    ${_sec_cc}
-    ${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/corecrypto/cc_user_stub.c)
+# the framework's private corecrypto, from the external corecrypto tree libSystem's comes from, with the
+# asymmetric components Security's keys use (the kext's RSA verify, and the stubs for the rest)
+if(NOT PD_CORECRYPTO_DIR)
+    message(FATAL_ERROR "Security needs PD_CORECRYPTO_DIR, the external corecrypto tree")
+endif()
+pd_corecrypto_sources(_sec_cc ${PD_CORECRYPTO_COMPONENTS} ${PD_CORECRYPTO_SECURITY_COMPONENTS})
+add_library(security_corecrypto OBJECT ${_sec_cc})
 target_include_directories(security_corecrypto PRIVATE
-    $<TARGET_PROPERTY:Security,INCLUDE_DIRECTORIES>
-    ${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/corecrypto/private)
+    $<TARGET_PROPERTY:Security,INCLUDE_DIRECTORIES>)
 target_compile_definitions(security_corecrypto PRIVATE
     __DARWIN_ONLY_UNIX_CONFORMANCE=1 PRIVATE=1)
 # ccdes.c falls off the end of a non-void function; clang 21 errors by default.
@@ -240,6 +242,10 @@ file(GLOB _sec_ccc
     ${CMAKE_CURRENT_SOURCE_DIR}/../CommonCrypto/lib/*.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../CommonCrypto/libcn/*.c)
 list(FILTER _sec_ccc EXCLUDE REGEX "pd_cc_digest_bridge")
+# CommonCrypto's RSA, EC, DH and BigNum: Security never calls them, and libSystem exports none of them either
+list(FILTER _sec_ccc EXCLUDE REGEX "/Common(BigNum|DH|ECCryptor|RSACryptor)\\.c$")
+# configd links three of the RSA calls from Security, they fail as key generation did before
+list(APPEND _sec_ccc ${CMAKE_CURRENT_SOURCE_DIR}/compat/pd_commoncrypto_rsa.c)
 add_library(security_commoncrypto OBJECT ${_sec_ccc})
 # CCCryptorReset_internal.h reaches for <mach-o/dyld.h>, which then wants
 # <mach-o/loader.h> out of the tree's staged mach-o headers.
@@ -249,8 +255,7 @@ target_include_directories(security_commoncrypto PRIVATE
     ${CMAKE_BINARY_DIR}/generated-headers
     ${CMAKE_SOURCE_DIR}/src/Libraries/architecture/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../CommonCrypto/lib
-    ${CMAKE_CURRENT_SOURCE_DIR}/../CommonCrypto/libcn
-    ${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/corecrypto/private)
+    ${CMAKE_CURRENT_SOURCE_DIR}/../CommonCrypto/libcn)
 target_compile_definitions(security_commoncrypto PRIVATE
     __DARWIN_ONLY_UNIX_CONFORMANCE=1 PRIVATE=1)
 target_compile_options(security_commoncrypto PRIVATE -w -nostdinc -fPIC)
