@@ -63,17 +63,20 @@ pddecor=$!
 keep /System/Library/CoreServices/MenuBar.app/Contents/MacOS/MenuBar &
 menubar=$!
 
-if [ $# -eq 0 ]; then
-    set -- /Applications/Utilities/Terminal.app/Contents/MacOS/Terminal
-fi
-# the first app is only the opening window, quitting it must leave the desktop running
-"$@" &
-
-# the install drive opens the installer too
+# Choose the opening application. Live installation media opens the installer;
+# an installed system defaults to Terminal. Explicit client arguments are preserved.
 installer="/Applications/Install PureDarwin.app/Contents/MacOS/Installer"
-if [ -f /.pd-install-media ] && [ -x "$installer" ]; then
-    "$installer" &
+
+if [ $# -eq 0 ]; then
+    if [ -f /.pd-install-media ] && [ -x "$installer" ]; then
+        set -- "$installer"
+    else
+        set -- /Applications/Utilities/Terminal.app/Contents/MacOS/Terminal
+    fi
 fi
+
+# The first app is only the opening window; quitting it must leave the desktop running.
+"$@" &
 
 wait $compositor
 kill $menubar $dock $pddecor 2>/dev/null
