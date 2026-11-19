@@ -338,7 +338,9 @@ dispatch(struct pdnv_file *f, NvU32 cmd, void *arg, NvU32 size)
 			error = EINVAL;
 			break;
 		}
-		if (((rm_numa_fn)pdnv_rm.get_gpu_numa_info)(sp, nv, api) != NV_OK) {
+		NV_STATUS numa = ((rm_numa_fn)pdnv_rm.get_gpu_numa_info)(sp, nv, api);
+		if (numa != NV_OK) {
+			IOLog("PDNVLoader: rm_get_gpu_numa_info 0x%x\n", numa);
 			error = EBUSY;
 			break;
 		}

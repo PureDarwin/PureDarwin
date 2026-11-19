@@ -338,6 +338,8 @@ PDNVLoader::initRM(struct pdelf_obj *obj)
 	pdnv_rm.perform_version_check = (void *)pdelf_export(obj, "rm_perform_version_check");
 	pdnv_rm.get_gpu_numa_info = (void *)pdelf_export(obj, "rm_get_gpu_numa_info");
 	pdnvkms.rm_kernel_rmapi_op = (void *)pdelf_export(obj, "rm_kernel_rmapi_op");
+	pdnv_uvm_link(obj);
+	pdnv_uvm_link_device_calls(obj);
 	pdnv_pci_init();
 	pdnv_work_init();
 	if (init == NULL || pdnv_rm.is_altstack_in_use == NULL) {

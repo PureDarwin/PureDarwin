@@ -564,6 +564,21 @@ os_get_cpu_frequency(void)
 	return gPEClockFrequencyInfo.cpu_frequency_hz;
 }
 
+// the kernel's version, as os_get_version_info gives Linux's release numbers and uname strings
+extern const int version_major, version_minor, version_revision;
+extern const char osrelease[], version[];
+
+NV_STATUS NV_API_CALL
+os_get_version_info(os_version_info *info)
+{
+	info->os_major_version = (NvU32)version_major;
+	info->os_minor_version = (NvU32)version_minor;
+	info->os_build_number = (NvU32)version_revision;
+	info->os_build_version_str = osrelease;
+	info->os_build_date_plus_str = version;
+	return NV_OK;
+}
+
 NvU32 NV_API_CALL
 os_get_current_process(void)
 {

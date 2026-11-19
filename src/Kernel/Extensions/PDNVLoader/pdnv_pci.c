@@ -140,6 +140,7 @@ struct pdnv_gpu {
 	nvidia_stack_t *timer_sp;   // the RC watchdog's, it runs on a thread call
 	thread_call_t rc_timer;
 	NvBool safe_to_mmap;
+	volatile SInt32 rm_bh;      // the resource manager's top half asked for its bottom half
 };
 
 typedef NvBool (*rm_isr_fn)(nvidia_stack_t *, nv_state_t *, NvU32 *);
@@ -272,6 +273,7 @@ pdnv_gpu_probe(const struct pdnv_pci_dev *info)
 	}
 	IOLog("PDNVGPU: supported, private state set up\n");
 	pdnv_stack_free(sp);
+	pdnv_uvm_gpu_add(nv);
 	return gpu;
 
 fail:
@@ -297,10 +299,16 @@ pdnv_gpu_isr(void *g)
 {
 	struct pdnv_gpu *gpu = g;
 	NvU32 need_bh = 0;
+	// nvidia-uvm's handler can sleep here (its semaphores take a sleeping mutex), so it runs in the bottom half: the
+	// filter only makes sure there is one whenever nvidia-uvm is listening
+	NvBool uvm = pdnv_uvm_listening();
+	NvBool rm = ((rm_isr_fn)pdnv_rm.isr)(gpu->isr_sp, gpu->nv, &need_bh);
 
-	if (!((rm_isr_fn)pdnv_rm.isr)(gpu->isr_sp, gpu->nv, &need_bh))
-		return 0;
-	return need_bh ? 2 : 1;
+	if (rm && need_bh)
+		OSCompareAndSwap(0, 1, &gpu->rm_bh);
+	if (uvm || (rm && need_bh))
+		return 2;
+	return rm ? 1 : 0;
 }
 
 void
@@ -308,7 +316,10 @@ pdnv_gpu_bh(void *g)
 {
 	struct pdnv_gpu *gpu = g;
 
-	((rm_bh_fn)pdnv_rm.isr_bh)(gpu->bh_sp, gpu->nv);
+	// nvidia-uvm first, as nv.c's ISR orders them: its replayable faults and access counters
+	(void)pdnv_uvm_interrupt(gpu->nv);
+	if (OSCompareAndSwap(1, 0, &gpu->rm_bh))
+		((rm_bh_fn)pdnv_rm.isr_bh)(gpu->bh_sp, gpu->nv);
 }
 
 // the adapter's start, as nv_start_device once the interrupt is in place
@@ -341,6 +352,8 @@ struct pdnv_chunk {
 
 struct pdnv_alloc {
 	volatile SInt32 refs;       // the resource manager's, and one per user mapping
+	void *user_pages;           // a process's pinned pages this was made over (nv_register_user_pages), else NULL
+	void *import_priv;
 	NvU32 cache;
 	NvU32 page_count;
 	NvU32 nchunks;
@@ -522,6 +535,12 @@ void NV_API_CALL
 nv_set_safe_to_mmap_locked(nv_state_t *nv, NvBool safe_to_mmap)
 {
 	((struct pdnv_gpu *)nv->os_state)->safe_to_mmap = safe_to_mmap;
+}
+
+NvU64
+pdnv_gpu_dma_mask(nv_state_t *nv)
+{
+	return ((struct pdnv_gpu *)nv->os_state)->dma_mask;
 }
 
 NvBool
@@ -871,4 +890,88 @@ nv_i2c_del_adapter(nv_state_t *nv, void *data)
 {
 	(void)nv;
 	(void)data;
+}
+
+// a process's memory the resource manager uses directly (cudaHostRegister, pinned host buffers). os_lock_user_pages
+// wires the range and keeps each page's address, nv_register_user_pages makes an allocation over those pages that
+// the rest of the port treats as any other, owning none of them
+void *pdnv_user_pin(uint64_t addr, uint64_t npages, int write);
+uint64_t pdnv_user_page_pa(void *h, uint64_t i);
+void pdnv_user_unpin(void *h);
+
+NV_STATUS NV_API_CALL
+os_lock_user_pages(void *address, NvU64 page_count, void **page_array, NvU32 flags)
+{
+	int write = (flags & 1) != 0;     // NV_LOCK_USER_PAGES_FLAGS_WRITE, bit 0
+	void *h;
+
+	if (page_count == 0 || page_array == NULL)
+		return NV_ERR_INVALID_ARGUMENT;
+	h = pdnv_user_pin((uint64_t)(uintptr_t)address, page_count, write);
+	if (h == NULL)
+		return NV_ERR_INVALID_ADDRESS;
+	*page_array = h;
+	return NV_OK;
+}
+
+NV_STATUS NV_API_CALL
+os_unlock_user_pages(NvU64 page_count, void *page_array, NvU32 flags)
+{
+	(void)page_count;
+	(void)flags;
+	if (page_array != NULL)
+		pdnv_user_unpin(page_array);
+	return NV_OK;
+}
+
+// user I/O memory (another device's BAR mapped into the process) is not taken
+NV_STATUS NV_API_CALL
+os_lookup_user_io_memory(void *address, NvU64 page_count, NvU64 **pte_array)
+{
+	(void)address;
+	(void)page_count;
+	(void)pte_array;
+	return NV_ERR_NOT_SUPPORTED;
+}
+
+NV_STATUS NV_API_CALL
+nv_register_user_pages(nv_state_t *nv, NvU64 page_count, NvU64 *phys_addr, void *import_priv, void **priv_data,
+    NvBool unencrypted)
+{
+	void *pinned = *priv_data;
+	struct pdnv_alloc *at;
+
+	(void)nv;
+	(void)unencrypted;
+	if (pinned == NULL || page_count == 0 || page_count > 0xffffffffull)
+		return NV_ERR_INVALID_ARGUMENT;
+	if (os_alloc_mem((void **)&at, sizeof(*at) + page_count * sizeof(at->c[0])) != NV_OK)
+		return NV_ERR_NO_MEMORY;
+	os_mem_set(at, 0, sizeof(*at) + page_count * sizeof(at->c[0]));
+	at->refs = 1;
+	// as nv.c: anonymous memory, not contiguous, its pages the process's
+	at->cache = NV_MEMORY_UNCACHED;
+	at->page_count = (NvU32)page_count;
+	at->nchunks = (NvU32)page_count;
+	at->chunk_size = PDNV_PAGE;
+	at->user_pages = pinned;
+	at->import_priv = import_priv;
+	for (NvU64 i = 0; i < page_count; i++)
+		at->c[i].pa = phys_addr[i] = pdnv_user_page_pa(pinned, i);
+	*priv_data = at;
+	return NV_OK;
+}
+
+// the allocation goes, the pinned pages and the import data go back to the resource manager, which unlocks them
+void NV_API_CALL
+nv_unregister_user_pages(nv_state_t *nv, NvU64 page_count, void **import_priv, void **priv_data)
+{
+	struct pdnv_alloc *at = *priv_data;
+
+	(void)nv;
+	(void)page_count;
+	if (import_priv != NULL)
+		*import_priv = at->import_priv;
+	*priv_data = at->user_pages;
+	pdnv_alloc_release(at);
 }

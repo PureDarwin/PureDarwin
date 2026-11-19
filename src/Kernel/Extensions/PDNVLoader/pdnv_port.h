@@ -24,7 +24,9 @@ extern "C" {
 	X(os_release_rwlock_write) \
 	X(os_get_monotonic_time_ns) X(os_get_monotonic_time_ns_hr) X(os_get_monotonic_tick_resolution_ns) \
 	X(os_get_system_time) X(os_delay_us) X(os_delay) \
-	X(os_get_cpu_count) X(os_get_cpu_number) X(os_get_cpu_frequency) \
+	X(os_get_cpu_count) X(os_get_cpu_number) X(os_get_cpu_frequency) X(os_get_version_info) \
+	X(nv_schedule_uvm_isr) X(nv_schedule_uvm_drain_p2p) X(nv_schedule_uvm_resume_p2p) \
+	X(os_lock_user_pages) X(os_unlock_user_pages) X(os_lookup_user_io_memory) X(nv_register_user_pages) X(nv_unregister_user_pages) \
 	X(os_get_current_process) X(os_get_current_process_name) X(os_get_current_thread) X(os_get_euid) \
 	X(os_is_administrator) X(os_check_access) X(os_get_current_process_flags) \
 	X(os_pci_init_handle) X(os_pci_read_byte) X(os_pci_read_word) X(os_pci_read_dword) \
@@ -64,6 +66,16 @@ struct pdnv_rm_calls {
 	void *get_gpu_numa_info;            // NV_STATUS (nvidia_stack_t *, nv_state_t *, nv_ioctl_numa_info_t *)
 };
 extern struct pdnv_rm_calls pdnv_rm;
+
+// pdnv_uvm.c: what PDNVUVM links against
+struct pdelf_obj;
+void pdnv_uvm_link(const struct pdelf_obj *obj);
+void pdnv_uvm_link_device_calls(const struct pdelf_obj *obj);
+struct nv_state_t;
+void pdnv_uvm_gpu_add(struct nv_state_t *nv);
+unsigned int pdnv_uvm_interrupt(struct nv_state_t *nv);  // NV_STATUS
+int pdnv_uvm_listening(void);
+unsigned long long pdnv_gpu_dma_mask(struct nv_state_t *nv);
 
 // pdnv_imports.c: the loader's resolver, every unported function import goes to a named trap
 struct pdelf_target;

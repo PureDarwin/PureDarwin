@@ -427,3 +427,57 @@ pdnv_unmap_runs(void *cookie)
 	if (cookie != NULL)
 		((IOMemoryMap *)cookie)->release();
 }
+
+// user memory the resource manager pins (os_lock_user_pages): the calling task's range wired through an IOKit
+// descriptor, which holds the pages until it is completed, and each page's physical address
+struct pdnv_user_pages {
+	IOMemoryDescriptor *md;
+	uint64_t npages;
+	uint64_t pa[];
+};
+
+extern "C" void *
+pdnv_user_pin(uint64_t addr, uint64_t npages, int write)
+{
+	struct pdnv_user_pages *u;
+	IOMemoryDescriptor *md;
+	size_t size = sizeof(*u) + npages * sizeof(u->pa[0]);
+
+	md = IOMemoryDescriptor::withAddressRange((mach_vm_address_t)addr, npages * PAGE_SIZE,
+	    write ? kIODirectionInOut : kIODirectionOut, current_task());
+	if (md == NULL)
+		return NULL;
+	if (md->prepare() != kIOReturnSuccess) {
+		md->release();
+		return NULL;
+	}
+	u = (struct pdnv_user_pages *)IOMallocZero(size);
+	if (u == NULL) {
+		md->complete();
+		md->release();
+		return NULL;
+	}
+	u->md = md;
+	u->npages = npages;
+	for (uint64_t i = 0; i < npages; i++)
+		u->pa[i] = md->getPhysicalSegment(i * PAGE_SIZE, NULL, kIOMemoryMapperNone);
+	return u;
+}
+
+extern "C" uint64_t
+pdnv_user_page_pa(void *h, uint64_t i)
+{
+	struct pdnv_user_pages *u = (struct pdnv_user_pages *)h;
+
+	return i < u->npages ? u->pa[i] : 0;
+}
+
+extern "C" void
+pdnv_user_unpin(void *h)
+{
+	struct pdnv_user_pages *u = (struct pdnv_user_pages *)h;
+
+	u->md->complete();
+	u->md->release();
+	IOFree(u, sizeof(*u) + u->npages * sizeof(u->pa[0]));
+}
