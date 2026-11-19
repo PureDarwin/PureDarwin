@@ -101,6 +101,10 @@ if(PUREDARWIN_ARCH STREQUAL "x86_64")
         if(PD_NVIDIA_DRM_DIR)
             add_subdirectory(PDDRMnvidia)
         endif()
+        # nvidia-uvm over linuxkpi and PDNVLoader, the CUDA side, when nix hands over its MIT sources
+        if(PD_NVIDIA_UVM_DIR)
+            add_subdirectory(PDNVUVM)
+        endif()
         # radeon for terascale and gcn 1 and 2, from the drm-kmod tree that kept it
         if(EXISTS "${PD_DRMKMOD_DIR}/drivers/gpu/drm/radeon")
             add_subdirectory(PDDRMradeon)

@@ -1802,6 +1802,19 @@
             extraCmakeFlags = [ "-DPD_DRMKMOD_DIR=${drmKmodAllSrc}" "-DPD_NVIDIA_DRM_DIR=${pd.x86_64.nvidiaDrmSrc}" ];
             ninjaFlags = [ "-k" "0" ];
           };
+          # nvidia-uvm from NVIDIA's 580 package (its MIT files) over linuxkpi and PDNVLoader, what CUDA opens
+          nvUvmBuild = mkDrmKext [ "PDNVUVM" "PDDRMnvidia" "PDNVLoader" "IOPCIFamily" ] {
+            pname = "puredarwin-nvidia-uvm";
+            # PDNVLoader too: PDNVUVM links against it, so its side of the link is checked with it
+            buildTargets = [ "PDNVUVM.kext" "PDNVLoader.kext" ];
+            enableUserspace = false;
+            installUserland = false;
+            installKernel = false;
+            installKexts = true;
+            installKextNames = [ "PDNVUVM.kext" ];
+            extraCmakeFlags = [ "-DPD_DRMKMOD_DIR=${drmKmodAllSrc}" "-DPD_NVIDIA_UVM_DIR=${pd.x86_64.nvidiaUvmSrc}" ];
+            ninjaFlags = [ "-k" "0" ];
+          };
           # gsp firmware for turing (tu1xx), ampere ga10x (ga107 is the rtx 2050) and ada ad10x, only
           # the 535.113.01 release linux 6.14's nouveau asks for. fermi needs none.
           nouveauFirmware = pkgs.runCommand "puredarwin-nouveau-firmware" { } ''
@@ -2665,8 +2678,9 @@
           # PDNVLoader in the boot collection, nvidia-drm over it in the auxiliary one with the other drm drivers
           kcNvidiaBuild = kcGpuBuild.override (old: {
             extraKexts = [ "PDNVLoader.kext" ];
-            kexts = pkgs.symlinkJoin { name = "puredarwin-kexts-nvidia"; paths = [ drmGpuKexts drmNvidiaBuild ]; };
-            auxKexts = old.auxKexts ++ [ "PDDRMnvidia.kext" ];
+            kexts = pkgs.symlinkJoin { name = "puredarwin-kexts-nvidia"; paths = [ drmGpuKexts drmNvidiaBuild nvUvmBuild ]; };
+            # nvidia-uvm beside nvidia-drm, what CUDA opens as /dev/nvidia-uvm
+            auxKexts = old.auxKexts ++ [ "PDDRMnvidia.kext" "PDNVUVM.kext" ];
           });
           # the aux KC is linked against its boot KC, the kernel refuses image-gpu's on this one
           nvidiaAuxFiles = pkgs.runCommand "puredarwin-nvidia-aux" { } ''
@@ -2712,6 +2726,7 @@
             drm-kmod-nouveau-src = drmKmodNouveauSrc;
             drm-nouveau = drmNouveauBuild;
             drm-nvidia = drmNvidiaBuild;
+            nvidia-uvm = nvUvmBuild;
             nouveau-firmware = nouveauFirmware;
             i915-firmware = i915Firmware;
             kc-gpu = kcGpuBuild;
