@@ -11,7 +11,10 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdio.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <sys/uio.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -22,6 +25,47 @@
 #define LINUX_AF_INET6 10
 
 // a Linux sockaddr as Darwin's: the family is a 16-bit field there, a length and an 8-bit family here
+// Linux's abstract socket names (a leading NUL, no file behind them) have no Darwin counterpart: each is a socket file
+// in one directory, named by the abstract name in hex, or by a hash of it when the hex would not fit sun_path
+#define ABSTRACT_DIR "/tmp/.elftrans-abstract"
+
+static void
+abstract_path(const uint8_t *name, size_t n, char *out, size_t size)
+{
+    static const char hex[] = "0123456789abcdef";
+    size_t used = (size_t)snprintf(out, size, ABSTRACT_DIR "/");
+
+    if (used + 2 * n + 1 <= size) {
+        for (size_t i = 0; i < n; i++) {
+            out[used++] = hex[name[i] >> 4];
+            out[used++] = hex[name[i] & 15];
+        }
+        out[used] = 0;
+        return;
+    }
+    // FNV-1a over the name, marked so it is never read back as hex
+    uint64_t h = 0xcbf29ce484222325ull;
+    for (size_t i = 0; i < n; i++)
+        h = (h ^ name[i]) * 0x100000001b3ull;
+    snprintf(out + used, size - used, "h%016llx", (unsigned long long)h);
+}
+
+// the abstract name behind a path abstract_path made, back into out (without the leading NUL); its length, or 0
+static size_t
+abstract_name(const char *path, uint8_t *out, size_t size)
+{
+    const char *p = path + sizeof(ABSTRACT_DIR);
+    size_t n = 0;
+
+    if (strncmp(path, ABSTRACT_DIR "/", sizeof(ABSTRACT_DIR)) || *p == 'h')
+        return 0;
+    for (; p[0] && p[1] && n < size; p += 2) {
+        int hi = p[0] <= '9' ? p[0] - '0' : p[0] - 'a' + 10, lo = p[1] <= '9' ? p[1] - '0' : p[1] - 'a' + 10;
+        out[n++] = (uint8_t)(hi << 4 | lo);
+    }
+    return n;
+}
+
 int
 net_to_native(const void *guest, uint32_t length, struct sockaddr_storage *native, socklen_t *native_length)
 {
@@ -37,9 +81,15 @@ net_to_native(const void *guest, uint32_t length, struct sockaddr_storage *nativ
         // the name runs to its first NUL: callers often pass the whole 110-byte structure
         size_t path = length > 2 && in[2] ? strnlen((const char *)in + 2, length - 2) : length - 2;
 
-        // the abstract namespace (a leading NUL) has no Darwin counterpart
-        if (path && !in[2])
-            return EOPNOTSUPP;
+        // the abstract namespace (a leading NUL): its name is every byte after the NUL, kept as a file
+        if (path && !in[2]) {
+            mkdir(ABSTRACT_DIR, 01777);
+            un->sun_family = AF_UNIX;
+            abstract_path(in + 3, length - 3, un->sun_path, sizeof(un->sun_path));
+            un->sun_len = (uint8_t)(offsetof(struct sockaddr_un, sun_path) + strlen(un->sun_path));
+            *native_length = un->sun_len;
+            return 0;
+        }
         if (path > sizeof(un->sun_path))
             return ENAMETOOLONG;
         un->sun_family = AF_UNIX;
@@ -91,10 +141,19 @@ net_to_linux(const struct sockaddr *native, socklen_t native_length, void *guest
         size_t path = native_length > offsetof(struct sockaddr_un, sun_path) ?
                           strnlen(un->sun_path, native_length - offsetof(struct sockaddr_un, sun_path)) : 0;
 
+        uint8_t name[sizeof(out) - 3];
+        size_t abstract = path ? abstract_name(un->sun_path, name, sizeof(name)) : 0;
+
         family = LINUX_AF_UNIX;
-        memcpy(out + 2, un->sun_path, path);
-        // a named socket's length counts its terminating NUL, an unnamed one is just the family
-        full = (uint32_t)(2 + (path ? path + 1 : 0));
+        if (abstract) {
+            // an abstract name read back: the leading NUL and the name, no terminator, as Linux gives it
+            memcpy(out + 3, name, abstract);
+            full = (uint32_t)(3 + abstract);
+        } else {
+            memcpy(out + 2, un->sun_path, path);
+            // a named socket's length counts its terminating NUL, an unnamed one is just the family
+            full = (uint32_t)(2 + (path ? path + 1 : 0));
+        }
     } else if (native->sa_family == AF_INET) {
         const struct sockaddr_in *sin = (const struct sockaddr_in *)native;
 
@@ -466,6 +525,10 @@ net_bind_connect(int fd, const void *address, uint32_t length, int connecting)
         return -linux_error(error);
     if (connecting)
         return connect(fd, (struct sockaddr *)&native, native_length) ? -linux_error(errno) : 0;
+    // an abstract name goes when its socket closes, its file here does not: a leftover one is taken over
+    if (native.ss_family == AF_UNIX &&
+        !strncmp(((struct sockaddr_un *)&native)->sun_path, ABSTRACT_DIR "/", sizeof(ABSTRACT_DIR)))
+        unlink(((struct sockaddr_un *)&native)->sun_path);
     return bind(fd, (struct sockaddr *)&native, native_length) ? -linux_error(errno) : 0;
 }
 

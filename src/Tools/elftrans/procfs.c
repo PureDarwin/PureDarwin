@@ -373,8 +373,8 @@ static void gen_comm(Buf *b) { put(b, "%.15s\n", comm()); }
 static void gen_pid_max(Buf *b) { put(b, "%d\n", 99999); }
 static void gen_hostname(Buf *b) { char h[256]; if (gethostname(h, sizeof(h))) strcpy(h, "localhost"); put(b, "%s\n", h); }
 
-// the majors NVIDIA's libraries look up: nvidia-caps is the major of PDNVLoader's capability nodes, there
-// only when they are
+// the majors NVIDIA's libraries look up: nvidia-caps is the major of PDNVLoader's capability nodes and
+// nvidia-uvm PDNVUVM's, each there only when its nodes are
 static void
 gen_devices(Buf *b)
 {
@@ -383,6 +383,8 @@ gen_devices(Buf *b)
     put(b, "Character devices:\n  1 mem\n  4 tty\n  5 /dev/tty\n195 nvidia-frontend\n");
     if (!stat("/dev/nvidia-caps/nvidia-cap1", &st) && S_ISCHR(st.st_mode))
         put(b, "%3d nvidia-caps\n", (int)major(st.st_rdev));
+    if (!stat("/dev/nvidia-uvm", &st) && S_ISCHR(st.st_mode))
+        put(b, "%3d nvidia-uvm\n", (int)major(st.st_rdev));
     put(b, "\nBlock devices:\n  8 sd\n");
 }
 
@@ -425,6 +427,8 @@ static const Node nodes[] = {
     { "proc/sys/vm", F_DIR, NULL, NULL },
     { "proc/sys/vm/overcommit_memory", F_FILE, NULL, "0\n" },
     { "proc/sys/vm/max_map_count", F_FILE, NULL, "65530\n" },
+    // the lowest address mmap hands out, as Linux's default: CUDA places its reservations above it
+    { "proc/sys/vm/mmap_min_addr", F_FILE, NULL, "65536\n" },
     { "proc/sys/fs", F_DIR, NULL, NULL },
     { "proc/sys/fs/file-max", F_FILE, NULL, "9223372036854775807\n" },
     { "proc/sys/fs/nr_open", F_FILE, NULL, "1048576\n" },
@@ -512,6 +516,15 @@ key_of(const char *path, char *key, size_t size, int *fdnum)
     // trailing slashes off
     for (size_t n = strlen(key); n > 1 && key[n - 1] == '/'; n--)
         key[n - 1] = 0;
+    // a thread's own files, /proc/self/task/TID/..., are the process's: comm, stat and status are what programs
+    // read there, and threads here keep no names or states of their own
+    if (!strncmp(key, "self/task/", 10)) {
+        char *end;
+
+        (void)strtol(key + 10, &end, 10);
+        if (end != key + 10 && (*end == '/' || !*end))
+            memmove(key + 4, end, strlen(end) + 1);
+    }
     if (!strncmp(key, "self/fd/", 8)) {
         char *end;
         long n = strtol(key + 8, &end, 10);
@@ -680,6 +693,12 @@ procfs_open(const char *path, int linux_flags, long *result)
         return 1;
     }
     if ((linux_flags & 3) != 0) {
+        // a thread naming itself (pthread_setname_np) writes comm: taken and dropped, threads keep no names here
+        if (!strcmp(key, "self/comm")) {
+            int fd = open("/dev/null", O_WRONLY);
+            *result = fd < 0 ? -linux_error(errno) : fd;
+            return 1;
+        }
         *result = -13;
         return 1;
     }

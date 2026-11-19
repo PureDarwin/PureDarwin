@@ -36,6 +36,15 @@
 #include "mach_exc.h"
 #include "elftrans.h"
 
+// PDNVUVM's wrapper for nvidia-uvm's ioctls, as src/Kernel/Extensions/PDNVUVM/pd_uvm_ioctl.h defines it: the two
+// must stay the same
+struct pd_uvm_ioctl {
+    uint32_t cmd;
+    uint32_t reserved;
+    uint64_t arg;
+};
+#define PD_UVM_IOCTL _IOW('U', 0x01, struct pd_uvm_ioctl)
+
 #define LINUX_MAP_NORESERVE 0x4000UL
 
 uintptr_t guest_library_bias;
@@ -381,20 +390,24 @@ linux_recvmsg(int fd, LinuxMsgHdr *guest, int linux_flags)
 }
 
 // a device number as Linux code reads it. /dev/nvidiactl and /dev/nvidiaN are PDNVLoader's clone nodes:
-// the clone slot goes and their major is NVIDIA's 195, as NVIDIA's libraries check
+// the clone slot goes and their major is NVIDIA's 195, as NVIDIA's libraries check. /dev/nvidia-uvm and
+// -tools are PDNVUVM's clone nodes: the slot goes, the major stays the one /proc/devices lists
 static void
 linux_devnum(dev_t d, uint32_t *major_out, uint32_t *minor_out)
 {
-    static int nvidia_major = -2;
+    static int nvidia_major = -2, uvm_major = -2;
     uint32_t ma = (uint32_t)major(d), mi = (uint32_t)minor(d);
 
     if (nvidia_major == -2) {
         struct stat st;
 
         nvidia_major = !stat("/dev/nvidiactl", &st) && S_ISCHR(st.st_mode) ? (int)major(st.st_rdev) : -1;
+        uvm_major = !stat("/dev/nvidia-uvm", &st) && S_ISCHR(st.st_mode) ? (int)major(st.st_rdev) : -1;
     }
     if (nvidia_major >= 0 && ma == (uint32_t)nvidia_major)
         ma = 195, mi &= 0xff;
+    else if (uvm_major >= 0 && ma == (uint32_t)uvm_major)
+        mi &= 0xff;
     *major_out = ma;
     *minor_out = mi;
 }
@@ -2266,15 +2279,28 @@ sys_setsockopt(GuestRegs *r)
         -linux_error(errno) : 0;
 }
 
-// /dev/nvidia* from PDNVLoader: the driver takes the Linux ioctls of NVIDIA's user libraries as they are
+// /dev/nvidia* from PDNVLoader: the driver takes the Linux ioctls of NVIDIA's user libraries as they are.
+// 2 for /dev/nvidia-uvm and -uvm-tools from PDNVUVM, 1 for the rest
 static int
 nvidia_device(int fd)
 {
     char path[PATH_MAX];
     struct stat st;
 
-    return !fstat(fd, &st) && S_ISCHR(st.st_mode) && fcntl(fd, F_GETPATH, path) != -1 &&
-        !strncmp(path, "/dev/nvidia", 11);
+    if (fstat(fd, &st) || !S_ISCHR(st.st_mode) || fcntl(fd, F_GETPATH, path) == -1 ||
+        strncmp(path, "/dev/nvidia", 11))
+        return 0;
+    return !strncmp(path, "/dev/nvidia-uvm", 15) ? 2 : 1;
+}
+
+// nvidia-uvm's ioctl numbers carry no size or direction, so each goes to PDNVUVM wrapped: its Linux number
+// and the argument's address, which the driver reads and writes in this process itself
+static long
+uvm_ioctl(int fd, unsigned long request, void *argument)
+{
+    struct pd_uvm_ioctl u = { .cmd = (uint32_t)request, .reserved = 0, .arg = (uint64_t)(uintptr_t)argument };
+
+    return ioctl(fd, PD_UVM_IOCTL, &u) ? -linux_error(errno) : 0;
 }
 
 // Linux puts kernel-to-user in bit 31 and user-to-kernel in bit 30, BSD the other way round. NVIDIA uses
@@ -2320,7 +2346,11 @@ sys_ioctl(GuestRegs *r)
     case 0x5450: case 0x5451:
         return fcntl(fd, F_SETFD, request == 0x5451 ? FD_CLOEXEC : 0) ? -linux_error(errno) : 0;
     default:
-        return nvidia_device(fd) ? nvidia_ioctl(fd, request, argument) : -25;
+        switch (nvidia_device(fd)) {
+        case 2: return uvm_ioctl(fd, request, argument);
+        case 1: return nvidia_ioctl(fd, request, argument);
+        default: return -25;
+        }
     }
 }
 
