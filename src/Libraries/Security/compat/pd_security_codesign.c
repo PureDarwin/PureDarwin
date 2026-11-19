@@ -550,3 +550,49 @@ OSStatus SecRequirementsCopyString(CFTypeRef input, uint32_t flags, CFStringRef 
     if (text) *text = NULL;
     return errSecUnimplemented;
 }
+
+// running code: a process is its executable's static code, found from its audit token or pid. Firefox checks its
+// own child processes this way
+#include <bsm/libbsm.h>
+#include <libproc.h>
+
+const CFStringRef kSecCodeInfoStatus = CFSTR("status");
+const CFStringRef kSecGuestAttributeAudit = CFSTR("audit");
+const CFStringRef kSecGuestAttributePid = CFSTR("pid");
+
+OSStatus SecCodeCopyGuestWithAttributes(SecCodeRef host, CFDictionaryRef attributes, SecCSFlags flags,
+    SecCodeRef *guest)
+{
+    char path[PROC_PIDPATHINFO_MAXSIZE];
+    pid_t pid = -1;
+    CFTypeRef v;
+    CFURLRef url;
+    OSStatus status;
+
+    (void)host;
+    if (guest == NULL || attributes == NULL)
+        return errSecParam;
+    *guest = NULL;
+    v = CFDictionaryGetValue(attributes, kSecGuestAttributeAudit);
+    if (v != NULL && CFGetTypeID(v) == CFDataGetTypeID() && CFDataGetLength(v) == sizeof(audit_token_t)) {
+        audit_token_t token;
+        memcpy(&token, CFDataGetBytePtr(v), sizeof(token));
+        pid = audit_token_to_pid(token);
+    } else if ((v = CFDictionaryGetValue(attributes, kSecGuestAttributePid)) != NULL
+        && CFGetTypeID(v) == CFNumberGetTypeID()) {
+        CFNumberGetValue(v, kCFNumberIntType, &pid);
+    }
+    if (pid <= 0 || proc_pidpath(pid, path, sizeof(path)) <= 0)
+        return errSecCSNoSuchCode;
+    url = CFURLCreateFromFileSystemRepresentation(NULL, (const UInt8 *)path, strlen(path), false);
+    if (url == NULL)
+        return errSecCSNoSuchCode;
+    status = SecStaticCodeCreateWithPath(url, flags, (SecStaticCodeRef *)guest);
+    CFRelease(url);
+    return status;
+}
+
+OSStatus SecCodeCheckValidity(SecCodeRef code, SecCSFlags flags, SecRequirementRef requirement)
+{
+    return SecStaticCodeCheckValidity((SecStaticCodeRef)code, flags, requirement);
+}

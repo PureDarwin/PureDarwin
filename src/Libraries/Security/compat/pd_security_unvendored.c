@@ -361,3 +361,17 @@ CFStringRef SecCopyErrorMessageString(OSStatus status, void *reserved)
  */
 const CFStringRef kSOSErrorDomain = CFSTR("com.apple.security.sos.error");
 const CFStringRef kSOSCountKey = CFSTR("numberOfErrorsDeep");
+
+// the deprecated name for SecCertificateCopyKey, which Firefox still links
+OSStatus SecCertificateCopyPublicKey(SecCertificateRef certificate, SecKeyRef *key)
+{
+    if (certificate == NULL || key == NULL)
+        return errSecParam;
+    *key = SecCertificateCopyKey(certificate);
+    return *key != NULL ? errSecSuccess : errSecDecode;
+}
+
+// the digest transform's attributes and the SHA-2 family's name
+const CFStringRef kSecDigestTypeAttribute = CFSTR("DigestType");
+const CFStringRef kSecDigestLengthAttribute = CFSTR("DigestLength");
+const CFStringRef kSecDigestSHA2 = CFSTR("SHA2");

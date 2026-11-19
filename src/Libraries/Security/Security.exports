@@ -2878,3 +2878,12 @@ _kSecCodeInfoUnique
 _CCRSACryptorExport
 _CCRSACryptorGeneratePair
 _CCRSACryptorRelease
+_kSecCodeInfoStatus
+_kSecGuestAttributeAudit
+_kSecGuestAttributePid
+_SecCodeCopyGuestWithAttributes
+_SecCodeCheckValidity
+_SecCertificateCopyPublicKey
+_kSecDigestTypeAttribute
+_kSecDigestLengthAttribute
+_kSecDigestSHA2
