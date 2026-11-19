@@ -17,34 +17,9 @@ const NSPoint NSZeroPoint = { 0, 0 };
 const NSSize NSZeroSize = { 0, 0 };
 const NSRect NSZeroRect = { { 0, 0 }, { 0, 0 } };
 
-static CGFloat intersectionMaxEdge(CGFloat origin, CGFloat length) {
-    // An axis that overflowed in both directions can have an indeterminate length.
-    if (origin == -INFINITY && (length == INFINITY || isnan(length))) {
-        return INFINITY;
-    }
-    return origin + length;
-}
-
 NSRect NSIntersectionRect(NSRect a, NSRect b) {
-    CGFloat maxAX = intersectionMaxEdge(NSMinX(a), NSWidth(a));
-    CGFloat maxAY = intersectionMaxEdge(NSMinY(a), NSHeight(a));
-    CGFloat maxBX = intersectionMaxEdge(NSMinX(b), NSWidth(b));
-    CGFloat maxBY = intersectionMaxEdge(NSMinY(b), NSHeight(b));
-
-    if (!(maxAX > NSMinX(a) && maxAY > NSMinY(a) &&
-          maxBX > NSMinX(b) && maxBY > NSMinY(b))) {
-        return NSZeroRect;
-    }
-
-    CGFloat minX = NSMinX(a) > NSMinX(b) ? NSMinX(a) : NSMinX(b);
-    CGFloat minY = NSMinY(a) > NSMinY(b) ? NSMinY(a) : NSMinY(b);
-    CGFloat maxX = maxAX < maxBX ? maxAX : maxBX;
-    CGFloat maxY = maxAY < maxBY ? maxAY : maxBY;
-
-    if (!(maxX > minX && maxY > minY)) {
-        return NSZeroRect;
-    }
-    return NSMakeRect(minX, minY, maxX - minX, maxY - minY);
+    NSRect result;
+    return _NSRectIntersection(a, b, &result) ? result : NSZeroRect;
 }
 
 NSRect NSUnionRect(NSRect a, NSRect b) {
