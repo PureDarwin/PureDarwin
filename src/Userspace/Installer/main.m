@@ -56,6 +56,22 @@ static NSDictionary *text(NSString *face, CGFloat size, NSColor *colour)
     return @{ NSFontAttributeName: font(face, size), NSForegroundColorAttributeName: colour };
 }
 
+static NSTextField *makeAccountField(BOOL secure, NSString *placeholder)
+{
+    NSTextField *field = secure
+        ? (NSTextField *)[[NSSecureTextField alloc] initWithFrame:NSZeroRect]
+        : [[NSTextField alloc] initWithFrame:NSZeroRect];
+
+    [field setPlaceholderString:placeholder];
+    [field setEditable:YES];
+    [field setSelectable:YES];
+    [field setBezeled:YES];
+    [field setDrawsBackground:YES];
+    [field setFocusRingType:NSFocusRingTypeDefault];
+
+    return [field autorelease];
+}
+
 static NSString *sizeString(unsigned long long bytes)
 {
     double gb = bytes / 1e9;
@@ -118,11 +134,12 @@ static NSColor *accent(void)
     return rgb(0xcf, 0x5f, 0x3c);
 }
 
-typedef enum { StepIntro, StepLicence, StepNetwork, StepDestination, StepType, StepInstall, StepDone, StepCount } Step;
+typedef enum { StepIntro, StepLicence, StepNetwork, StepDestination, StepType, StepInstall, StepAccount, StepDone, StepCount } Step;
 
 // translated where drawn, a static initialiser cannot call NSLocalizedString
 static NSString *const stepNames[StepCount] = { @"Introduction", @"Licence", @"Network", @"Destination", @"Installation Type",
-                                                @"Installation", @"Summary" };
+                                                @"Installation",
+    @"Administrator Account",@"Summary" };
 
 // one slice of a disk bar: kind is esp, keep, pd or free
 @interface Slice : NSObject
@@ -254,8 +271,18 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     NSString *_now;
     NSString *_error;
     NSString *_result;
+    NSTextField *_accountFullNameField;
+    NSTextField *_accountUsernameField;
+    NSSecureTextField *_accountPasswordField;
+    NSSecureTextField *_accountConfirmField;
+    BOOL _accountRunning;
+    BOOL _doneReceived;
     double _progress;
     BOOL _details;
+
+    CGFloat _scrollOffset;
+    CGFloat _contentBottom;
+    NSInteger _lastScrollStep;
 }
 @end
 
@@ -273,11 +300,39 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     _pending = [[NSMutableString alloc] init];
     _selected = -1;
     _details = YES;
+    _scrollOffset = 0;
+    _contentBottom = 0;
+    _lastScrollStep = -1;
     [self loadMachine];
     [self loadNetworks];
     _logo = [[NSImage alloc] initWithContentsOfFile:[[NSBundle mainBundle] pathForResource:@"beak-white" ofType:@"png"]];
     _mark = [[NSImage alloc] initWithContentsOfFile:[[NSBundle mainBundle] pathForResource:@"beak-mark" ofType:@"png"]];
     _footLogo = [[NSImage alloc] initWithContentsOfFile:[[NSBundle mainBundle] pathForResource:@"beak-grey" ofType:@"png"]];
+
+    _accountFullNameField = makeAccountField(
+        NO, NSLocalizedString(@"Full name", @""));
+    _accountUsernameField = makeAccountField(
+        NO, NSLocalizedString(@"Short username", @""));
+    _accountPasswordField = (NSSecureTextField *)makeAccountField(
+        YES, NSLocalizedString(@"Password", @""));
+    _accountConfirmField = (NSSecureTextField *)makeAccountField(
+        YES, NSLocalizedString(@"Confirm password", @""));
+
+    [self addSubview:_accountFullNameField];
+    [self addSubview:_accountUsernameField];
+    [self addSubview:_accountPasswordField];
+    [self addSubview:_accountConfirmField];
+
+    [_accountFullNameField setDelegate:self];
+    [_accountUsernameField setDelegate:self];
+    [_accountPasswordField setDelegate:self];
+    [_accountConfirmField setDelegate:self];
+
+    [_accountFullNameField setHidden:YES];
+    [_accountUsernameField setHidden:YES];
+    [_accountPasswordField setHidden:YES];
+    [_accountConfirmField setHidden:YES];
+
     return self;
 }
 
@@ -500,6 +555,7 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
         [line drawAtPoint:NSMakePoint(x, y) withAttributes:a];
         y += lh;
     }
+    [self noteContentBottom:y];
     return y;
 }
 
@@ -516,10 +572,17 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     return y + 20;
 }
 
+- (void)noteContentBottom:(CGFloat)y
+{
+    _contentBottom = MAX(_contentBottom, y);
+}
+
 - (void)card:(NSRect)r
 {
     [self fillRound:NSInsetRect(r, -1, -1) radius:10 colour:P.cardEdge];
     [self fillRound:r radius:9 colour:P.card];
+
+    [self noteContentBottom:NSMaxY(r)];
 }
 
 // one card row: a title with a smaller line under it, and a value or status on the right
@@ -739,12 +802,48 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
         { NSLocalizedString(@"No warranty", @""), NSLocalizedString(@"PureDarwin comes as is, without warranty of any kind. Back up anything you care about before "
           @"installing.", @"") },
     };
-    [self card:NSMakeRect(x, y, w, WIN_H - BAR_H - 16 - y)];
+    NSDictionary *headingAttrs = text(@"Inter-SemiBold", 12, P.fg);
+    NSDictionary *bodyAttrs = text(@"Inter-Regular", 12, P.lead);
+
+    // Calculate the paragraph height using the same word wrapping
+    // rules as wrap:, without drawing anything.
+    CGFloat cardBottom = y + 14;
+
+    for (size_t i = 0; i < sizeof(parts) / sizeof(parts[0]); i++) {
+        cardBottom += [parts[i].head sizeWithAttributes:headingAttrs].height;
+        cardBottom += 18;
+
+        NSMutableString *line = [NSMutableString string];
+        CGFloat lineY = cardBottom;
+
+        for (NSString *word in [parts[i].body componentsSeparatedByString:@" "]) {
+            NSString *next = [line length]
+                ? [NSString stringWithFormat:@"%@ %@", line, word]
+                : word;
+
+            if ([line length] && [next sizeWithAttributes:bodyAttrs].width > w - 32) {
+                lineY += 18;
+                [line setString:word];
+            } else {
+                [line setString:next];
+            }
+        }
+
+        if ([line length])
+            lineY += 18;
+
+        cardBottom = lineY + 10;
+    }
+
+    [self card:NSMakeRect(x, y, w, cardBottom - y + 14)];
+
     CGFloat ty = y + 14;
     for (size_t i = 0; i < sizeof(parts) / sizeof(parts[0]); i++) {
-        [parts[i].head drawAtPoint:NSMakePoint(x + 16, ty) withAttributes:text(@"Inter-SemiBold", 12, P.fg)];
-        ty = [self wrap:parts[i].body x:x + 16 y:ty + 18 width:w - 32 attrs:text(@"Inter-Regular", 12, P.lead) lineHeight:18] + 10;
+        [parts[i].head drawAtPoint:NSMakePoint(x + 16, ty) withAttributes:headingAttrs];
+        ty = [self wrap:parts[i].body x:x + 16 y:ty + 18 width:w - 32 attrs:bodyAttrs lineHeight:18] + 10;
     }
+
+    [self noteContentBottom:cardBottom + 14];
 }
 
 // a small button at the right of a row, its left edge returned for the next one
@@ -945,7 +1044,11 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
 - (void)drawInstall:(CGFloat)y
 {
     CGFloat x = [self contentX], w = [self contentW];
-    y = [self lead:NSLocalizedString(@"You can keep using the desktop while this runs. Don't remove the install drive.", @"") at:y];
+    NSString *instruction = _accountRunning
+        ? NSLocalizedString(@"Creating your administrator account. Please wait.", @"")
+        : NSLocalizedString(@"You can keep using the desktop while this runs. Don't remove the install drive.", @"");
+
+    y = [self lead:instruction at:y];
     NSDictionary *na = text(@"Inter-Regular", 12.5, P.fg), *pa = text(@"Inter-Regular", 12.5, P.muted);
     [(_now ?: NSLocalizedString(@"Preparing…", @"")) drawAtPoint:NSMakePoint(x, y) withAttributes:na];
     NSString *pct = [NSString stringWithFormat:NSLocalizedString(@"%.0f%%", @""), _progress];
@@ -984,6 +1087,67 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     }
 }
 
+
+- (void)drawAccount:(CGFloat)y
+{
+    CGFloat x = [self contentX];
+    CGFloat w = [self contentW];
+
+    y = [self lead:NSLocalizedString(
+        @"Create the first administrator account for this installation.",
+        @"") at:y];
+
+    y += 20;
+
+    NSDictionary *labelAttributes =
+        text(@"Inter-Regular", 13, P.fg);
+
+    NSArray *labels = @[
+        NSLocalizedString(@"Full name", @""),
+        NSLocalizedString(@"Username", @""),
+        NSLocalizedString(@"Password", @""),
+        NSLocalizedString(@"Confirm password", @"")
+    ];
+
+    NSArray *fields = @[
+        _accountFullNameField,
+        _accountUsernameField,
+        _accountPasswordField,
+        _accountConfirmField
+    ];
+
+    for (NSUInteger i = 0; i < [fields count]; i++) {
+        CGFloat rowY = y + i * 62;
+
+        [labels[i] drawAtPoint:NSMakePoint(x, rowY + 8)
+                withAttributes:labelAttributes];
+
+        NSTextField *field = fields[i];
+
+        NSRect fieldFrame = NSMakeRect(
+            x + 170,
+            rowY - _scrollOffset,
+            w - 170,
+            34
+        );
+
+        [field setFrame:fieldFrame];
+
+        BOOL visible =
+            NSMinY(fieldFrame) >= HEAD_H &&
+            NSMaxY(fieldFrame) <= WIN_H - BAR_H;
+
+        [field setHidden:!visible];
+    }
+
+    NSString *hint = NSLocalizedString(
+        @"This account will be added to the administrator group.",
+        @"");
+
+    [hint drawAtPoint:NSMakePoint(x, y + 4 * 62 + 8)
+       withAttributes:text(@"Inter-Regular", 11, P.muted)];
+}
+
 - (void)drawDone:(CGFloat)y
 {
     CGFloat x = [self contentX], w = [self contentW];
@@ -1008,7 +1172,7 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     [mark stroke];
     y += 98;
 
-    NSString *head = _error ? NSLocalizedString(@"The install did not finish", @"") : NSLocalizedString(@"PureDarwin is installed", @"");
+    NSString *head = _error ? NSLocalizedString(@"The install did not finish", @"") : NSLocalizedString(@"PureDarwin is ready", @"");
     NSDictionary *ha = text(@"Inter-Bold", 20, P.fg);
     [head drawAtPoint:NSMakePoint(floor(x + w / 2 - [head sizeWithAttributes:ha].width / 2), y) withAttributes:ha];
     y += 36;
@@ -1067,12 +1231,43 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     [NSLocalizedString(@"Agree", @"") drawAtPoint:NSMakePoint(NSMidX(_agreeRect) - [NSLocalizedString(@"Agree", @"") sizeWithAttributes:pa].width / 2, 93) withAttributes:pa];
 }
 
+
+- (void)controlTextDidChange:(NSNotification *)notification
+{
+    [self setNeedsDisplay:YES];
+}
+
+- (BOOL)accountFieldsValid
+{
+    NSString *realName = [[_accountFullNameField stringValue]
+        stringByTrimmingCharactersInSet:
+            [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+
+    NSString *username = [_accountUsernameField stringValue];
+    NSString *password = [_accountPasswordField stringValue];
+    NSString *confirmation = [_accountConfirmField stringValue];
+
+    if ([realName length] == 0 ||
+        [username length] == 0 ||
+        [password length] == 0)
+        return NO;
+
+    NSPredicate *validUsername = [NSPredicate predicateWithFormat:
+        @"SELF MATCHES %@", @"^[a-z_][a-z0-9_-]{0,31}$"];
+
+    if (![validUsername evaluateWithObject:username])
+        return NO;
+
+    return [password isEqualToString:confirmation];
+}
+
 - (NSString *)goTitle
 {
     switch (_step) {
     case StepNetwork: return [self connected] ? NSLocalizedString(@"Continue", @"") : NSLocalizedString(@"Continue Without a Network", @"");
     case StepType: return _useFree ? NSLocalizedString(@"Install", @"") : NSLocalizedString(@"Erase and Install", @"");
     case StepInstall: return NSLocalizedString(@"Continue", @"");
+    case StepAccount: return NSLocalizedString(@"Create Account", @"");
     case StepDone: return _error ? NSLocalizedString(@"Quit", @"") : NSLocalizedString(@"Restart", @"");
     default: return NSLocalizedString(@"Continue", @"");
     }
@@ -1084,6 +1279,8 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
         return NO;
     if (_step == StepDestination)
         return [self destinationOK];
+    if (_step == StepAccount)
+        return [self accountFieldsValid];
     return YES;
 }
 
@@ -1103,6 +1300,26 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
         return NSLocalizedString(@"Not enough free space on this disk.", @"");
     if (_step == StepType && !_useFree)
         return [NSString stringWithFormat:NSLocalizedString(@"Everything on %@ is deleted.", @""), d.name];
+    if (_step == StepAccount) {
+        NSString *name = [[_accountFullNameField stringValue]
+            stringByTrimmingCharactersInSet:
+                [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        NSString *username = [_accountUsernameField stringValue];
+        NSString *password = [_accountPasswordField stringValue];
+        NSString *confirmation = [_accountConfirmField stringValue];
+
+        if (![name length])
+            return NSLocalizedString(@"Enter the account holder's full name.", @"");
+        if (![username length])
+            return NSLocalizedString(@"Choose a username.", @"");
+        if (![self accountFieldsValid] && [password length] &&
+            ![password isEqualToString:confirmation])
+            return NSLocalizedString(@"The passwords do not match.", @"");
+        if (![password length])
+            return NSLocalizedString(@"Choose a password.", @"");
+        if (![self accountFieldsValid])
+            return NSLocalizedString(@"Use a lowercase username beginning with a letter or underscore.", @"");
+    }
     return @"";
 }
 
@@ -1146,7 +1363,9 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
             [[c colorWithAlphaComponent:0.7] setStroke];
             [ring stroke];
         }
-        [[[NSBundle mainBundle] localizedStringForKey:stepNames[i] value:nil table:nil] drawAtPoint:NSMakePoint(46, y + 5) withAttributes:text(now ? @"Inter-SemiBold" : @"Inter-Regular", 13, c)];
+        [[[NSBundle mainBundle] localizedStringForKey:stepNames[i] value:nil table:nil]
+            drawAtPoint:NSMakePoint(46, y + 5)
+            withAttributes:text(now ? @"Inter-SemiBold" : @"Inter-Regular", 13, c)];
     }
     [_footLogo drawInRect:NSMakeRect(20, WIN_H - 32, 18, 18) fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:0.55
            respectFlipped:YES hints:nil];
@@ -1157,11 +1376,43 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     NSRectFill(NSMakeRect(SIDE_W, HEAD_H - 1, WIN_W - SIDE_W, 1));
     NSRectFill(NSMakeRect(SIDE_W, WIN_H - BAR_H, WIN_W - SIDE_W, 1));
     NSString *titles[StepCount] = { NSLocalizedString(@"Welcome to PureDarwin", @""), NSLocalizedString(@"Licence", @""), NSLocalizedString(@"Connect to a Network", @""), NSLocalizedString(@"Select a Destination", @""),
-                                    NSLocalizedString(@"Installation Type", @""), NSLocalizedString(@"Installing", @""), NSLocalizedString(@"Summary", @"") };
-    [titles[_step] drawAtPoint:NSMakePoint(SIDE_W + PAD, 17) withAttributes:text(@"Inter-Bold", 14, P.fg)];
+                                    NSLocalizedString(@"Installation Type", @""), NSLocalizedString(@"Installing", @""), NSLocalizedString(@"Administrator Account", @""), NSLocalizedString(@"Summary", @"") };
+    NSString *paneTitle = (_step == StepInstall && _accountRunning)
+        ? NSLocalizedString(@"Creating Administrator Account", @"")
+        : titles[_step];
+
+    [paneTitle drawAtPoint:NSMakePoint(SIDE_W + PAD, 17)
+            withAttributes:text(@"Inter-Bold", 14, P.fg)];
     NSString *count = [NSString stringWithFormat:NSLocalizedString(@"Step %1$d of %2$d", @""), _step + 1, StepCount];
     NSDictionary *ca = text(@"Inter-Regular", 12, P.muted);
     [count drawAtPoint:NSMakePoint(WIN_W - PAD - [count sizeWithAttributes:ca].width, 18) withAttributes:ca];
+
+    BOOL showAccount = (_step == StepAccount);
+    [_accountFullNameField setHidden:!showAccount];
+    [_accountUsernameField setHidden:!showAccount];
+    [_accountPasswordField setHidden:!showAccount];
+    [_accountConfirmField setHidden:!showAccount];
+
+    if (_lastScrollStep != (NSInteger)_step) {
+        _lastScrollStep = (NSInteger)_step;
+        _scrollOffset = 0;
+    }
+
+    _contentBottom = 0;
+
+    NSRect viewport = NSMakeRect(
+        SIDE_W,
+        HEAD_H,
+        WIN_W - SIDE_W,
+        WIN_H - HEAD_H - BAR_H
+    );
+
+    [NSGraphicsContext saveGraphicsState];
+    NSRectClip(viewport);
+
+    NSAffineTransform *scrollTransform = [NSAffineTransform transform];
+    [scrollTransform translateXBy:0 yBy:-_scrollOffset];
+    [scrollTransform concat];
 
     CGFloat y = HEAD_H + 20;
     switch (_step) {
@@ -1171,7 +1422,20 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     case StepDestination: [self drawDestination:y]; break;
     case StepType: [self drawType:y]; break;
     case StepInstall: [self drawInstall:y]; break;
-    default: [self drawDone:y]; break;
+    case StepAccount: [self drawAccount:y]; break;
+    case StepDone: [self drawDone:y]; break;
+    }
+
+    [NSGraphicsContext restoreGraphicsState];
+
+    CGFloat maxScroll = MAX(
+        0,
+        _contentBottom - NSMaxY(viewport)
+    );
+
+    if (_scrollOffset > maxScroll) {
+        _scrollOffset = maxScroll;
+        [self setNeedsDisplay:YES];
     }
 
     _goRect = [self button:[self goTitle] rightEdge:WIN_W - 18 primary:YES enabled:[self goEnabled]];
@@ -1201,10 +1465,16 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
         _error = [[l substringFromIndex:6] retain];
         [_log addObject:l];
     } else if ([l hasPrefix:@"done "]) {
-        NSString *r = [l substringFromIndex:5];
-        NSRange on = [r rangeOfString:@" on "];
-        [_result release];
-        _result = [(on.location != NSNotFound ? [r substringFromIndex:NSMaxRange(on)] : r) retain];
+        _doneReceived = YES;
+
+        if (!_accountRunning) {
+            NSString *r = [l substringFromIndex:5];
+            NSRange on = [r rangeOfString:@" on "];
+            [_result release];
+            _result = [(on.location != NSNotFound
+                ? [r substringFromIndex:NSMaxRange(on)] : r) retain];
+        }
+
         _progress = 100;
     }
 }
@@ -1229,9 +1499,30 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     int status = 0;
     waitpid(_child, &status, 0);
     close(fd);
-    if (!_error && (!WIFEXITED(status) || WEXITSTATUS(status) != 0 || !_result))
-        _error = [NSLocalizedString(@"pdinstall stopped before it finished.", @"") retain];
-    _step = StepDone;
+    BOOL accountOperation = _accountRunning;
+    BOOL exitedSuccessfully = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+
+    if (!_error && (!exitedSuccessfully || !_doneReceived ||
+        (!accountOperation && !_result))) {
+        _error = [NSLocalizedString(
+            @"pdinstall stopped before it finished.", @"") retain];
+    }
+
+    if (accountOperation) {
+        _accountRunning = NO;
+        _step = StepDone;
+    } else {
+        _step = (!_error && _result) ? StepAccount : StepDone;
+
+        if (_step == StepAccount) {
+            [_accountFullNameField setHidden:NO];
+            [_accountUsernameField setHidden:NO];
+            [_accountPasswordField setHidden:NO];
+            [_accountConfirmField setHidden:NO];
+            [self.window makeFirstResponder:_accountFullNameField];
+        }
+    }
+
     [self setNeedsDisplay:YES];
 }
 
@@ -1241,6 +1532,16 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     int fds[2];
     posix_spawn_file_actions_t fa;
     const char *argv[] = { pdinstallPath(), _useFree ? "free" : "erase", [d.name UTF8String], "-y", NULL };
+
+    [_error release];
+    _error = nil;
+    [_result release];
+    _result = nil;
+    [_pending setString:@""];
+    [_log removeAllObjects];
+    _progress = 0;
+    _doneReceived = NO;
+    _accountRunning = NO;
 
     if (pipe(fds) != 0)
         return;
@@ -1266,6 +1567,89 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     dispatch_resume(_source);
 }
 
+
+- (void)startAccount
+{
+    NSString *username = [_accountUsernameField stringValue];
+    NSString *realName = [[_accountFullNameField stringValue]
+        stringByTrimmingCharactersInSet:
+            [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSString *password = [_accountPasswordField stringValue];
+
+    if (![self accountFieldsValid] || ![_result length]) {
+        _error = [NSLocalizedString(
+            @"The account details or installed partition are invalid.", @"") retain];
+        _step = StepDone;
+        return;
+    }
+
+    int fds[2];
+    posix_spawn_file_actions_t fa;
+
+    const char *argv[] = {
+        pdinstallPath(),
+        "account",
+        [_result UTF8String],
+        [username UTF8String],
+        [realName UTF8String],
+        [password UTF8String],
+        NULL
+    };
+
+    [_error release];
+    _error = nil;
+    [_pending setString:@""];
+    [_log removeAllObjects];
+    _progress = 0;
+    _doneReceived = NO;
+
+    if (pipe(fds) != 0) {
+        _error = [[NSString stringWithFormat:
+            NSLocalizedString(@"Could not create the account process pipe (%s).", @""),
+            strerror(errno)] retain];
+        _step = StepDone;
+        return;
+    }
+
+    posix_spawn_file_actions_init(&fa);
+    posix_spawn_file_actions_adddup2(&fa, fds[1], 1);
+    posix_spawn_file_actions_adddup2(&fa, fds[1], 2);
+    posix_spawn_file_actions_addclose(&fa, fds[0]);
+
+    int rc = posix_spawn(&_child, argv[0], &fa, NULL,
+        (char *const *)argv, environ);
+
+    posix_spawn_file_actions_destroy(&fa);
+    close(fds[1]);
+
+    if (rc != 0) {
+        close(fds[0]);
+        _error = [[NSString stringWithFormat:
+            NSLocalizedString(@"Account setup could not be started (%s).", @""),
+            strerror(rc)] retain];
+        _step = StepDone;
+        return;
+    }
+
+    _accountRunning = YES;
+    _step = StepInstall;
+
+    [_now release];
+    _now = [NSLocalizedString(
+        @"Creating the administrator account…", @"") retain];
+
+    int fd = fds[0];
+    _source = dispatch_source_create(
+        DISPATCH_SOURCE_TYPE_READ, (uintptr_t)fd, 0,
+        dispatch_get_main_queue());
+
+    dispatch_source_set_event_handler(_source, ^{
+        [self readInstaller:fd];
+    });
+
+    dispatch_resume(_source);
+}
+
 - (void)advance
 {
     switch (_step) {
@@ -1285,6 +1669,9 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
         break;
     case StepType:
         [self startInstall];
+        break;
+    case StepAccount:
+        [self startAccount];
         break;
     case StepDone:
         if (_error)
@@ -1337,6 +1724,45 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     [self setNeedsDisplay:YES];
 }
 
+- (void)scrollWheel:(NSEvent *)event
+{
+    if (_sheet || _step == StepInstall) {
+        [super scrollWheel:event];
+        return;
+    }
+
+    NSPoint p = [self convertPoint:[event locationInWindow] fromView:nil];
+
+    NSRect viewport = NSMakeRect(
+        SIDE_W,
+        HEAD_H,
+        WIN_W - SIDE_W,
+        WIN_H - HEAD_H - BAR_H
+    );
+
+    if (!NSPointInRect(p, viewport)) {
+        [super scrollWheel:event];
+        return;
+    }
+
+    CGFloat maxScroll = MAX(
+        0,
+        _contentBottom - NSMaxY(viewport)
+    );
+
+    CGFloat delta = [event scrollingDeltaY];
+
+    if (![event hasPreciseScrollingDeltas])
+        delta *= 18.0;
+
+    _scrollOffset = MIN(
+        maxScroll,
+        MAX(0, _scrollOffset - delta)
+    );
+
+    [self setNeedsDisplay:YES];
+}
+
 - (void)mouseDown:(NSEvent *)event
 {
     NSPoint p = [self convertPoint:[event locationInWindow] fromView:nil];
@@ -1348,8 +1774,19 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
             [self agree:NO];
         return;
     }
+    NSRect viewport = NSMakeRect(
+        SIDE_W,
+        HEAD_H,
+        WIN_W - SIDE_W,
+        WIN_H - HEAD_H - BAR_H
+    );
+
+    BOOL inContent = NSPointInRect(p, viewport);
+    NSPoint contentPoint = p;
+    contentPoint.y += _scrollOffset;
+
     for (Hit *h in [[_hits copy] autorelease]) {
-        if (NSPointInRect(p, h->rect)) {
+        if (inContent && NSPointInRect(contentPoint, h->rect)) {
             h->action();
             [self setNeedsDisplay:YES];
             return;
@@ -1363,7 +1800,10 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
         [self back];
         return;
     }
-    if (_step == StepInstall && NSPointInRect(p, _detailsRect)) {
+    if (!inContent)
+        return;
+
+    if (_step == StepInstall && NSPointInRect(contentPoint, _detailsRect)) {
         _details = !_details;
         [self setNeedsDisplay:YES];
         return;
@@ -1371,13 +1811,13 @@ static Slice *partSlice(NSString *type, unsigned long long start, unsigned long 
     if (_step != StepDestination)
         return;
     for (NSUInteger i = 0; i < MIN([_disks count], 6); i++) {
-        if (NSPointInRect(p, _diskRects[i])) {
+        if (NSPointInRect(contentPoint, _diskRects[i])) {
             [self pickDisk:(NSInteger)i];
             return;
         }
     }
     for (int m = 0; m < 2; m++) {
-        if (NSPointInRect(p, _segRects[m])) {
+        if (NSPointInRect(contentPoint, _segRects[m])) {
             [self pickMode:m == 0];
             return;
         }

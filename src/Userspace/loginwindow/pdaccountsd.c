@@ -195,7 +195,7 @@ op_add(request *r)
 		return fail(r, "The password is too short.");
 	if (real != NULL && (strchr(real, ':') || strchr(real, '\n')))
 		return fail(r, "A full name cannot hold ':' or line breaks.");
-	if (pda_create_user(user, real, 0, NULL, password, admin != NULL && strcmp(admin, "1") == 0) != 0)
+	if (pda_create_user(user, real, 0, NULL, password, admin != NULL && strcmp(admin, "1") == 0, 0) != 0)
 		return fail(r, errno == EEXIST ? "That account name is already taken." : "The account could not be created.");
 	fprintf(stderr, "pdaccountsd: uid %u added %s\n", (unsigned)r->uid, user);
 	reply(r, 1, NULL);

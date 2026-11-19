@@ -12,6 +12,7 @@
 #include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -54,25 +55,141 @@ read_plist(const char *path, CFOptionFlags opts)
 }
 
 // whole-file replace through a temporary, so a crash never leaves half a record
+
 static int
 write_file(const char *path, const UInt8 *bytes, CFIndex len, mode_t mode)
 {
-	char tmp[1100];
-	int fd;
+        char *tmp = NULL;
+        char *dir = NULL;
+        char *slash;
+        int fd = -1;
+        int dir_fd = -1;
+        int renamed = 0;
+        int saved_errno;
 
-	snprintf(tmp, sizeof(tmp), "%s.tmp", path);
-	fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, mode);
-	if (fd < 0)
-		return -1;
-	if (fchmod(fd, mode) != 0 || write(fd, bytes, (size_t)len) != len || fsync(fd) != 0) {
-		close(fd);
-		unlink(tmp);
-		return -1;
-	}
-	close(fd);
-	return rename(tmp, path);
+        if (len < 0 || path == NULL || path[0] == '\0' ||
+            (len > 0 && bytes == NULL)) {
+                errno = EINVAL;
+            	return -1;
+		}
+
+        /*
+         * Build a unique temporary filename beside the destination.
+         * mkstemp() creates it exclusively with restrictive permissions.
+         */
+        size_t path_len = strlen(path);
+
+        if (path_len > SIZE_MAX - sizeof(".tmp.XXXXXX")) {
+                errno = ENAMETOOLONG;
+                return -1;
+        }
+
+        tmp = malloc(path_len + sizeof(".tmp.XXXXXX"));
+        dir = strdup(path);
+
+        if (tmp == NULL || dir == NULL)
+                goto fail;
+
+        memcpy(tmp, path, path_len);
+        memcpy(tmp + path_len, ".tmp.XXXXXX", sizeof(".tmp.XXXXXX"));
+
+        /*
+         * Determine the containing directory for the durability fsync.
+         */
+        slash = strrchr(dir, '/');
+
+        if (slash == NULL) {
+                free(dir);
+                dir = strdup(".");
+                if (dir == NULL)
+                        goto fail;
+        } else if (slash == dir) {
+                slash[1] = '\0';
+        } else {
+                *slash = '\0';
+        }
+
+        dir_fd = open(dir, O_RDONLY);
+        if (dir_fd < 0)
+                goto fail;
+
+        fd = mkstemp(tmp);
+        if (fd < 0)
+                goto fail;
+
+        if (fchmod(fd, mode) != 0)
+                goto fail;
+
+        size_t offset = 0;
+        size_t total = (size_t)len;
+
+        while (offset < total) {
+                ssize_t written = write(fd, bytes + offset, total - offset);
+
+                if (written < 0 && errno == EINTR)
+                        continue;
+
+                if (written <= 0) {
+                        if (written == 0)
+                                errno = EIO;
+                        goto fail;
+                }
+
+                offset += (size_t)written;
+        }
+
+        /* Make the new file's contents durable before publishing it. */
+        if (fsync(fd) != 0)
+                goto fail;
+
+        if (close(fd) != 0) {
+                fd = -1;
+                goto fail;
+        }
+        fd = -1;
+
+        /* Atomically replace the destination. */
+        if (rename(tmp, path) != 0)
+                goto fail;
+
+        renamed = 1;
+
+        /*
+         * Make the directory-entry change durable as well.
+         */
+        if (fsync(dir_fd) != 0)
+                goto fail;
+
+        if (close(dir_fd) != 0) {
+            saved_errno = errno;
+            free(dir);
+            free(tmp);
+            errno = saved_errno;
+            return -1;
+        }
+
+        free(dir);
+        free(tmp);
+        return 0;
+
+fail:
+        saved_errno = errno;
+
+        if (fd >= 0)
+                close(fd);
+
+        if (!renamed && tmp != NULL)
+                unlink(tmp);
+
+        if (dir_fd >= 0)
+                close(dir_fd);
+
+        free(dir);
+        free(tmp);
+
+        errno = saved_errno;
+        return -1;
 }
-
 static int
 write_plist(const char *path, CFPropertyListRef plist, mode_t mode)
 {
@@ -86,14 +203,37 @@ write_plist(const char *path, CFPropertyListRef plist, mode_t mode)
 	return ret;
 }
 
-static void
+
+static int
 make_dirs(void)
 {
-	mkdir("/var/db/dslocal", 0755);
-	mkdir("/var/db/dslocal/nodes", 0755);
-	mkdir(PDA_NODE, 0755);
-	mkdir(PDA_USERS, 0700);
-	mkdir(PDA_GROUPS, 0755);
+        static const struct {
+                const char *path;
+                mode_t mode;
+        } dirs[] = {
+                { "/var/db/dslocal", 0755 },
+                { "/var/db/dslocal/nodes", 0755 },
+                { PDA_NODE, 0755 },
+                { PDA_USERS, 0700 },
+                { PDA_GROUPS, 0755 },
+        };
+
+        for (size_t i = 0; i < sizeof(dirs) / sizeof(dirs[0]); i++) {
+                if (mkdir(dirs[i].path, dirs[i].mode) != 0 &&
+                    errno != EEXIST)
+                        return -1;
+
+                struct stat sb;
+                if (stat(dirs[i].path, &sb) != 0)
+                        return -1;
+
+                if (!S_ISDIR(sb.st_mode)) {
+                        errno = ENOTDIR;
+                        return -1;
+                }
+        }
+
+        return 0;
 }
 
 CFMutableDictionaryRef
@@ -152,7 +292,8 @@ pda_write_user(CFDictionaryRef rec)
 
 	if (!pda_attr(rec, "name", name, sizeof(name)) || !name_ok(name))
 		return -1;
-	make_dirs();
+	if (make_dirs() != 0)
+            return -1;
 	user_path(name, path, sizeof(path));
 	if (write_plist(path, rec, 0600) != 0)
 		return -1;
@@ -359,7 +500,11 @@ pda_write_index(void)
 		}
 		CFRelease(rec);
 	}
-	make_dirs();
+	if (make_dirs() != 0) {
+            CFRelease(out);
+            CFRelease(names);
+            return -1;
+    }
 	ret = write_file(PDA_INDEX, CFDataGetBytePtr(out), CFDataGetLength(out), 0644);
 	CFRelease(out);
 	CFRelease(names);
@@ -432,7 +577,8 @@ pda_write_group(CFDictionaryRef rec)
 
 	if (!pda_attr(rec, "name", name, sizeof(name)) || !name_ok(name))
 		return -1;
-	make_dirs();
+	if (make_dirs() != 0)
+            return -1;
 	group_path(name, path, sizeof(path));
 	return write_plist(path, rec, 0644);
 }
@@ -650,51 +796,122 @@ remove_tree(const char *path)
 }
 
 int
-pda_create_user(const char *name, const char *real, uid_t uid, const char *shell, const char *password, int admin)
+pda_create_user(const char *name, const char *real, uid_t uid,
+    const char *shell, const char *password, int admin, int local_only)
 {
-	char home[1024], num[32], guid[37];
-	CFMutableDictionaryRef rec;
-	uuid_t u;
-	int ret;
+        char home[1024], num[32], guid[37];
+        CFMutableDictionaryRef rec;
+        CFMutableDictionaryRef existing;
+        uuid_t u;
+        struct stat st;
+        int ret;
+        int home_started = 0;
+        int user_write_attempted = 0;
+        int group_update_attempted = 0;
+        int saved_errno;
 
-	if (!pda_valid_name(name)) {
-		errno = EINVAL;
-		return -1;
-	}
-	if ((rec = pda_copy_user(name)) != NULL || getpwnam(name) != NULL) {
-		if (rec)
-			CFRelease(rec);
-		errno = EEXIST;
-		return -1;
-	}
-	if (uid == 0)
-		uid = pda_next_uid();
-	if (uid < PDA_FIRST_UID) {
-		errno = EINVAL;
-		return -1;
-	}
-	rec = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-	pda_set_attr(rec, "name", name);
-	snprintf(num, sizeof(num), "%u", (unsigned)uid);
-	pda_set_attr(rec, "uid", num);
-	snprintf(num, sizeof(num), "%d", PDA_STAFF_GID);
-	pda_set_attr(rec, "gid", num);
-	pda_set_attr(rec, "realname", real && *real ? real : name);
-	snprintf(home, sizeof(home), "/Users/%s", name);
-	pda_set_attr(rec, "home", home);
-	pda_set_attr(rec, "shell", shell ? shell : "/bin/zsh");
-	uuid_generate_random(u);
-	uuid_unparse_upper(u, guid);
-	pda_set_attr(rec, "generateduid", guid);
-	ret = pda_set_password(rec, password);
-	if (ret == 0)
-		ret = make_home(home, uid, PDA_STAFF_GID);
-	if (ret == 0)
-		ret = pda_write_user(rec);
-	if (ret == 0 && admin)
-		ret = pda_group_add_member("admin", name);
-	CFRelease(rec);
-	return ret;
+        if (!pda_valid_name(name)) {
+                errno = EINVAL;
+                return -1;
+        }
+
+        rec = pda_copy_user(name);
+        if (rec != NULL) {
+                CFRelease(rec);
+                errno = EEXIST;
+                return -1;
+        }
+
+        if (!local_only && getpwnam(name) != NULL) {
+                errno = EEXIST;
+                return -1;
+        }
+
+        if (uid == 0)
+                uid = pda_next_uid();
+
+        if (uid < PDA_FIRST_UID) {
+                errno = EINVAL;
+                return -1;
+        }
+
+        if (!local_only && getpwuid(uid) != NULL) {
+                errno = EEXIST;
+                return -1;
+        }
+
+        existing = pda_copy_user_by_uid(uid);
+        if (existing != NULL) {
+                CFRelease(existing);
+                errno = EEXIST;
+                return -1;
+        }
+
+        snprintf(home, sizeof(home), "/Users/%s", name);
+
+        if (lstat(home, &st) == 0) {
+                errno = EEXIST;
+                return -1;
+        }
+        if (errno != ENOENT)
+                return -1;
+
+        rec = CFDictionaryCreateMutable(NULL, 0,
+            &kCFTypeDictionaryKeyCallBacks,
+            &kCFTypeDictionaryValueCallBacks);
+
+        pda_set_attr(rec, "name", name);
+
+        snprintf(num, sizeof(num), "%u", (unsigned)uid);
+        pda_set_attr(rec, "uid", num);
+
+        snprintf(num, sizeof(num), "%d", PDA_STAFF_GID);
+        pda_set_attr(rec, "gid", num);
+
+        pda_set_attr(rec, "realname", real && *real ? real : name);
+        pda_set_attr(rec, "home", home);
+        pda_set_attr(rec, "shell", shell ? shell : "/bin/zsh");
+
+        uuid_generate_random(u);
+        uuid_unparse_upper(u, guid);
+        pda_set_attr(rec, "generateduid", guid);
+
+        ret = pda_set_password(rec, password);
+
+        if (ret == 0) {
+                home_started = 1;
+                ret = make_home(home, uid, PDA_STAFF_GID);
+        }
+
+        if (ret == 0) {
+                user_write_attempted = 1;
+                ret = pda_write_user(rec);
+        }
+
+        if (ret == 0 && admin) {
+                group_update_attempted = 1;
+                ret = pda_group_add_member("admin", name);
+        }
+
+        if (ret != 0) {
+                saved_errno = errno ? errno : EIO;
+
+                if (group_update_attempted)
+                        pda_remove_from_all_groups(name);
+
+                if (user_write_attempted)
+                        (void)pda_delete_user(name);
+
+                if (home_started)
+                        remove_tree(home);
+
+                CFRelease(rec);
+                errno = saved_errno;
+                return -1;
+        }
+
+        CFRelease(rec);
+        return 0;
 }
 
 int

@@ -18,11 +18,14 @@
 #include <unistd.h>
 #include <grp.h>
 
+static int alternate_root_mode;
+
 static void
 usage(void)
 {
 	fprintf(stderr,
 	    "usage: dsuser list\n"
+	    "       dsuser --root DIRECTORY add NAME [-n \"Real Name\"] [-u UID] [-s SHELL] [-p PASSWORD] [-a]\n"
 	    "       dsuser add NAME [-n \"Real Name\"] [-u UID] [-s SHELL] [-p PASSWORD] [-a]\n"
 	    "       dsuser passwd NAME [-p PASSWORD]\n"
 	    "       dsuser picture NAME FILE\n"
@@ -87,11 +90,16 @@ cmd_list(void)
 static int
 cmd_add(int argc, char **argv)
 {
-	const char *name = argv[0], *real = NULL, *shell = "/bin/zsh", *password = NULL;
-	char pw[256];
-	uid_t uid = 0;
-	int ch, admin = 0;
+        const char *name, *real = NULL, *shell = "/bin/zsh", *password = NULL;
+        char pw[256];
+        uid_t uid = 0;
+        int ch, admin = 0;
 
+        if (argc < 1)
+                usage();
+
+        name = argv[0];
+		
 	need_root();
 	optind = 1;
 	while ((ch = getopt(argc, argv, "n:u:s:p:a")) != -1) {
@@ -110,7 +118,7 @@ cmd_add(int argc, char **argv)
 		errx(1, "people get user IDs from %d up", PDA_FIRST_UID);
 	if (password == NULL)
 		password = ask_password(pw, sizeof(pw));
-	if (pda_create_user(name, real, uid, shell, password, admin) != 0) {
+	if (pda_create_user(name, real, uid, shell, password, admin, alternate_root_mode) != 0) {
 		if (errno == EEXIST)
 			errx(1, "%s already exists", name);
 		err(1, "couldn't add %s", name);
@@ -324,24 +332,55 @@ cmd_group(int argc, char **argv)
 int
 main(int argc, char **argv)
 {
-	if (argc < 2)
-		usage();
-	if (strcmp(argv[1], "list") == 0)
-		return cmd_list();
-	if (argc < 3)
-		usage();
-	if (strcmp(argv[1], "group") == 0)
-		return cmd_group(argc - 2, argv + 2);
-	if (strcmp(argv[1], "add") == 0)
-		return cmd_add(argc - 2, argv + 2);
-	if (strcmp(argv[1], "passwd") == 0)
-		return cmd_passwd(argc - 2, argv + 2);
-	if (strcmp(argv[1], "picture") == 0 && argc == 4)
-		return cmd_picture(argv[2], argv[3]);
-	if (strcmp(argv[1], "delete") == 0)
-		return cmd_delete(argc - 2, argv + 2);
-	if (strcmp(argv[1], "verify") == 0)
-		return cmd_verify(argv[2]);
-	usage();
-	return 2;
+        if (argc >= 2 && strcmp(argv[1], "--root") == 0) {
+                struct stat sb;
+
+                if (argc < 4 || strcmp(argv[3], "add") != 0)
+                        usage();
+
+                need_root();
+
+                if (stat(argv[2], &sb) != 0 || !S_ISDIR(sb.st_mode))
+                        errx(1, "alternate root is not a directory: %s",
+                            argv[2]);
+
+                if (chroot(argv[2]) != 0)
+                        err(1, "couldn't enter alternate root %s", argv[2]);
+
+                if (chdir("/") != 0)
+                        err(1, "couldn't change directory inside alternate root");
+
+                alternate_root_mode = 1;
+                return cmd_add(argc - 4, argv + 4);
+        }
+
+        if (argc < 2)
+                usage();
+
+        if (strcmp(argv[1], "list") == 0)
+                return cmd_list();
+
+        if (argc < 3)
+                usage();
+
+        if (strcmp(argv[1], "group") == 0)
+                return cmd_group(argc - 2, argv + 2);
+
+        if (strcmp(argv[1], "add") == 0)
+                return cmd_add(argc - 2, argv + 2);
+
+        if (strcmp(argv[1], "passwd") == 0)
+                return cmd_passwd(argc - 2, argv + 2);
+
+        if (strcmp(argv[1], "picture") == 0 && argc == 4)
+                return cmd_picture(argv[2], argv[3]);
+
+        if (strcmp(argv[1], "delete") == 0)
+                return cmd_delete(argc - 2, argv + 2);
+
+        if (strcmp(argv[1], "verify") == 0)
+                return cmd_verify(argv[2]);
+
+        usage();
+        return 2;
 }

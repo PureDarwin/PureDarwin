@@ -32,6 +32,7 @@ usage() {
 usage: pdinstall disks
        pdinstall erase <disk> [-y]        the whole disk, a new GPT with an EFI system partition
        pdinstall free <disk> [-y]         the largest free gap, beside what is already on the disk
+       pdinstall account <partition> <username> <realname> <password>
 EOF
 	exit 2
 }
@@ -259,9 +260,14 @@ cmd_free() {
 	fi
 	run gpt add -t linux-data -b "$start" -s "$size" -l PureDarwin "$disk"
 	sleep 1
-	root=$(gpt show "$disk" | awk '$3 ~ /^[0-9]+$/ { print $3 }' | sort -n | while read -r i; do
-		case " $before " in *" $i "*) ;; *) echo "$i" ;; esac
-	done | head -1)
+	root=$(gpt show "$disk" |
+        awk '$3 ~ /^[0-9]+$/ { print $3 }' |
+        sort -n |
+        while read -r i; do
+                if ! echo "$before" | tr ' ' '\n' | grep -qx "$i"; then
+                        echo "$i"
+                fi
+        done | head -1)
 	[ -n "$root" ] && [ -b "/dev/${disk}s${root}" ] || fail "the new partition did not appear"
 	format_root "${disk}s${root}"
 	copy_system
@@ -269,9 +275,76 @@ cmd_free() {
 	finish "$disk" "$esp" "$root"
 }
 
+
+# Create the first administrator account in the installed system.
+# The partition argument is the installed ext4 root partition, e.g. disk2s2.
+cmd_account() {
+    partition=$1
+    username=$2
+    realname=$3
+    password=$4
+
+    [ -n "$partition" ] && [ -n "$username" ] &&
+            [ -n "$realname" ] && [ -n "$password" ] ||
+            fail "account requires partition, username, real name and password"
+
+    case "$partition" in
+            disk[0-9]*s[0-9]*) ;;
+            *) fail "invalid root partition: $partition" ;;
+    esac
+
+    [ -b "/dev/$partition" ] || fail "no partition /dev/$partition"
+
+    : > "$LOG"
+    say "step Preparing the installed system"
+    say "progress 10"
+
+    mkdir -p "$TARGET"
+    run mount -t ext4 "/dev/$partition" "$TARGET"
+
+    # Use dsuser from the live installer environment. Its --root mode
+    # changes the process root before writing account data.
+    dsuser=""
+    for candidate in \
+            /usr/sbin/dsuser \
+            /usr/bin/dsuser \
+            /sbin/dsuser \
+            /bin/dsuser
+    do
+            if [ -x "$candidate" ]; then
+                    dsuser=$candidate
+                    break
+            fi
+    done
+
+    [ -n "$dsuser" ] || fail "dsuser was not found in the live installer"
+
+    say "step Creating the administrator account"
+    say "progress 40"
+    say "run dsuser --root $TARGET add $username -n [real name] -p [redacted] -a"
+
+    "$dsuser" --root "$TARGET" add "$username" \
+            -n "$realname" -p "$password" -a >> "$LOG" 2>&1 || {
+                    status=$?
+                    unset password
+                    fail "dsuser failed to create the administrator account (exit $status)"
+            }
+
+    unset password
+
+    say "step Finalizing account setup"
+    say "progress 85"
+
+    umount "$TARGET" || fail "could not unmount the installed system"
+
+    say "progress 100"
+    say "done Administrator account created for $username"
+}
+
 case "$1" in
 disks) cmd_disks ;;
 erase) shift; cmd_erase "$@" ;;
 free) shift; cmd_free "$@" ;;
+account) shift; cmd_account "$@" ;;
 *) usage ;;
 esac
