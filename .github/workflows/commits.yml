@@ -1,0 +1,60 @@
+name: Commits
+
+# Commit messages are a subject line. Below it, only trailers: Assisted-by (or a plain
+# "assisted by <model>" line), Signed-off-by, Co-authored-by and the like. Anything else
+# in the body fails this check. A maintainer can accept a body that earns its place, such
+# as how a change was tested, by adding the commit-body-ok label to the pull request.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  messages:
+    name: Commit messages
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Subject lines and trailers only
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          BODY_OK: ${{ contains(github.event.pull_request.labels.*.name, 'commit-body-ok') }}
+        run: |
+          set -euo pipefail
+          trailer='^((assisted|signed-off|co-authored|reviewed|tested|reported|suggested)-by|fixes|closes):[[:space:]]'
+          freeform='^assisted[[:space:]]+by[[:space:]]'
+          bad=0
+          for c in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            subject=$(git log -1 --format=%s "$c")
+            if [ -z "$subject" ]; then
+              echo "::error::$c has no subject line"
+              bad=1
+              continue
+            fi
+            # everything after the subject, blank lines and accepted trailers dropped
+            extra=$(git log -1 --format=%b "$c" | grep -v '^[[:space:]]*$' |
+              grep -viE "$trailer" | grep -viE "$freeform" || true)
+            if [ -n "$extra" ]; then
+              if [ "$BODY_OK" = "true" ]; then
+                echo "body accepted by label: $c $subject"
+              else
+                echo "::error::$c \"$subject\" has a commit body. Put the details in the pull request description, or ask a maintainer for the commit-body-ok label."
+                printf '%s\n' "$extra" | sed 's/^/    /'
+                bad=1
+              fi
+            else
+              echo "ok    $c $subject"
+            fi
+          done
+          exit $bad
