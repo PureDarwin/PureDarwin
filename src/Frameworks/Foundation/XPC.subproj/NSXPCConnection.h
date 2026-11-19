@@ -76,4 +76,21 @@ typedef NS_OPTIONS(NSUInteger, NSXPCConnectionOptions) {
 
 @end
 
+// what a listener hands out for others to connect to it
+@interface NSXPCListenerEndpoint : NSObject
+@end
+
+// a listener for XPC connections: there is no service bootstrap for it here, so it never receives one
+@interface NSXPCListener : NSObject
++ (NSXPCListener *)serviceListener;
++ (NSXPCListener *)anonymousListener;
+- (instancetype)initWithMachServiceName:(NSString *)name;
+@property(assign) id delegate;
+@property(readonly, retain) NSXPCListenerEndpoint *endpoint;
+- (void)resume;
+- (void)suspend;
+- (void)invalidate;
+@end
+
+
 #endif /* NSXPCConnection_h */

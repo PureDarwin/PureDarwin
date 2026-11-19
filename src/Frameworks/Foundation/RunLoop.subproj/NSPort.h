@@ -73,4 +73,11 @@ FOUNDATION_EXPORT NSString * const NSPortDidBecomeInvalidNotification;
 
 @end
 
+// a port over a socket: there is no socket transport for distributed objects here, so none can be made
+@interface NSSocketPort : NSPort
+- (instancetype)initWithTCPPort:(unsigned short)port;
+- (instancetype)initRemoteWithTCPPort:(unsigned short)port host:(NSString *)hostName;
+@end
+
+
 #endif /* NSPort_h */

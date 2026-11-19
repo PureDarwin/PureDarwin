@@ -252,3 +252,28 @@ static void portCallback(CFMachPortRef cfPort, void *msg, CFIndex size, void *in
 }
 
 @end
+
+@implementation NSSocketPort
+
+- (instancetype)init
+{
+    [self release];
+    return nil;
+}
+
+- (instancetype)initWithTCPPort:(unsigned short)port
+{
+    (void)port;
+    [self release];
+    return nil;
+}
+
+- (instancetype)initRemoteWithTCPPort:(unsigned short)port host:(NSString *)hostName
+{
+    (void)port;
+    (void)hostName;
+    [self release];
+    return nil;
+}
+
+@end

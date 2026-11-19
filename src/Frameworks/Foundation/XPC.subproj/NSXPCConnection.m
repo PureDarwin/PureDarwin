@@ -202,3 +202,59 @@
 }
 
 @end
+
+@implementation NSXPCListenerEndpoint
+@end
+
+@implementation NSXPCListener {
+    NSString *_name;
+    NSXPCListenerEndpoint *_endpoint;
+}
+
+@synthesize delegate = _delegate;
+
++ (NSXPCListener *)serviceListener
+{
+    return [[[self alloc] initWithMachServiceName:nil] autorelease];
+}
+
++ (NSXPCListener *)anonymousListener
+{
+    return [[[self alloc] initWithMachServiceName:nil] autorelease];
+}
+
+- (instancetype)initWithMachServiceName:(NSString *)name
+{
+    if ((self = [super init]) != nil) {
+        _name = [name copy];
+        _endpoint = [[NSXPCListenerEndpoint alloc] init];
+    }
+    return self;
+}
+
+- (void)dealloc
+{
+    [_name release];
+    [_endpoint release];
+    [super dealloc];
+}
+
+- (NSXPCListenerEndpoint *)endpoint
+{
+    return _endpoint;
+}
+
+// nothing connects: resuming starts no service and invalidating has nothing to close
+- (void)resume
+{
+}
+
+- (void)suspend
+{
+}
+
+- (void)invalidate
+{
+}
+
+@end
