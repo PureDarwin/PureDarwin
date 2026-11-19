@@ -8,6 +8,7 @@
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOLib.h>
 #include <libkern/c++/OSData.h>
+#include <libkern/OSAtomic.h>
 
 /* AIC registers; see pexpert/pexpert/arm/AIC.h for the full map. */
 #define kAICInfo                 0x0004
@@ -240,6 +241,8 @@ PDAppleAIC::handleInterrupt(void * /*refCon*/, IOService * /*nub*/, int /*source
 
 		IOInterruptVector *vector = &vectors[irq];
 		vector->interruptActive = 1;
+		// Pair with the wait in disableInterrupt and unregisterInterrupt.
+		OSMemoryBarrier();
 
 		if (!vector->interruptDisabledSoft && vector->interruptRegistered) {
 			vector->handler(vector->target, vector->refCon,
@@ -249,6 +252,7 @@ PDAppleAIC::handleInterrupt(void * /*refCon*/, IOService * /*nub*/, int /*source
 			disableVectorHard(irq, vector);
 		}
 
+		OSMemoryBarrier();
 		vector->interruptActive = 0;
 	}
 
