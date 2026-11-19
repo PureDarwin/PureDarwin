@@ -2615,7 +2615,7 @@
             imageFileName = "puredarwin.img";
             # one disk for every x86 firmware: BIOS through the MBR stages, 64-bit UEFI by BOOTX64.EFI and 32-bit
             # UEFI by BOOTIA32.EFI on the same ESP, each picks its own; the kernel and KC are x86_64 either way
-            legacyBoot = xnu-loader.packages.${system}.legacy-boot.override { stage2Lba = 34; };
+            legacyBoot = xnu-loader.packages.${linuxPackages.x86System}.legacy-boot.override { stage2Lba = 34; };
             extraLoaders = (old.extraLoaders or [ ]) ++ [
               { loader = linuxPackages.xnu-loader-ia32; efiBinary = "BOOTIA32.EFI"; }
             ];
