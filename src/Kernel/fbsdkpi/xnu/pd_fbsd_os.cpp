@@ -586,6 +586,16 @@ pdos_pci_bar_map(void *dev, int bar, uint64_t *size, uint64_t *phys)
 	return (uint64_t)m->va;
 }
 
+// the bar's size as IOPCIFamily found it at boot, 0 for one it did not assign
+uint64_t
+pdos_pci_bar_size(void *dev, int bar)
+{
+	IOPCIDevice *pci = (IOPCIDevice *)dev;
+	IODeviceMemory *mem = pci->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0 + bar * 4);
+
+	return mem != NULL ? mem->getLength() : 0;
+}
+
 void
 pdos_pci_bar_unmap(void *dev, int bar)
 {

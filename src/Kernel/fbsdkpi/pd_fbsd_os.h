@@ -109,6 +109,7 @@ void pdos_pci_write(void *dev, uint32_t off, int size, uint32_t val);
 int pdos_pci_location(void *dev, uint8_t *bus, uint8_t *slot, uint8_t *func);
 int pdos_pci_enumerate(void **devs, int max);
 uint64_t pdos_pci_bar_map(void *dev, int bar, uint64_t *size, uint64_t *phys);
+uint64_t pdos_pci_bar_size(void *dev, int bar);
 void pdos_pci_bar_unmap(void *dev, int bar);
 uint32_t pdos_pci_io_read(void *dev, uint32_t port, int size);
 void pdos_pci_io_write(void *dev, uint32_t port, int size, uint32_t val);

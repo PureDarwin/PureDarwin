@@ -257,54 +257,84 @@ pd_pci_module(void)
 	return &sPciModule;
 }
 
-// fills the bars by reading and sizing them, since haiku's pci_info carries
-// the host addresses the compat bus code maps
+// a bar's size mask by writing ones to it, for one IOPCIFamily did not size. Decoding is off meanwhile, so this is
+// only for a bar nothing uses yet
+static uint64
+probe_bar(void *dev, uint16 reg, bool is64)
+{
+	uint16 command = pdos_pci_read(dev, PCI_command, 2);
+	uint32 value = pdos_pci_read(dev, reg, 4);
+	uint32 high = is64 ? pdos_pci_read(dev, reg + 4, 4) : 0;
+	uint64 mask;
+
+	pdos_pci_write(dev, PCI_command, 2, command & ~(PCI_command_io | PCI_command_memory));
+	pdos_pci_write(dev, reg, 4, 0xffffffff);
+	mask = pdos_pci_read(dev, reg, 4);
+	pdos_pci_write(dev, reg, 4, value);
+	if (is64) {
+		pdos_pci_write(dev, reg + 4, 4, 0xffffffff);
+		mask |= (uint64)pdos_pci_read(dev, reg + 4, 4) << 32;
+		pdos_pci_write(dev, reg + 4, 4, high);
+	}
+	pdos_pci_write(dev, PCI_command, 2, command);
+	return mask;
+}
+
+// fills the bars, since haiku's pci_info carries the host addresses the compat bus code maps. The sizes are
+// IOPCIFamily's: sizing a bar turns decoding off, and a device another driver already runs (a GPU the resource
+// manager drives, now attached for nvidia-uvm) faults on every access it makes meanwhile
 static void
 fill_bars(void *dev, pci_info *info)
 {
 	uint16 command = pdos_pci_read(dev, PCI_command, 2);
-	pdos_pci_write(dev, PCI_command, 2,
-		command & ~(PCI_command_io | PCI_command_memory));
+
 	for (int bar = 0; bar < 6; bar++) {
 		uint16 reg = PCI_base_registers + bar * 4;
 		uint32 value = pdos_pci_read(dev, reg, 4);
-		pdos_pci_write(dev, reg, 4, 0xffffffff);
-		uint32 mask = pdos_pci_read(dev, reg, 4);
-		pdos_pci_write(dev, reg, 4, value);
+		bool io = (value & PCI_address_space) != 0;
+		bool is64 = !io && (value & PCI_address_type) == PCI_address_type_64 && bar < 5;
+		uint32 high = is64 ? pdos_pci_read(dev, reg + 4, 4) : 0;
+		uint64 size = pdos_pci_bar_size(dev, bar);
 
 		info->u.h0.base_registers_pci[bar] = value;
-		if (mask == 0 || mask == 0xffffffff) {
+		if (size == 0) {
+			uint64 mask = probe_bar(dev, reg, is64);
+			uint32 low = (uint32)mask;
+			if (low == 0 || low == 0xffffffff)
+				size = 0;
+			else if (io)
+				size = (~(low & PCI_address_io_mask) + 1) & 0xffff;
+			else if (is64)
+				size = ~(mask & ~(uint64)~PCI_address_memory_32_mask) + 1;
+			else
+				size = (uint32)(~(low & PCI_address_memory_32_mask) + 1);
+		}
+		if (size == 0) {
 			info->u.h0.base_registers[bar] = 0;
 			info->u.h0.base_register_sizes[bar] = 0;
 			info->u.h0.base_register_flags[bar] = 0;
 			continue;
 		}
-		if ((value & PCI_address_space) != 0) {
+		if (io) {
 			info->u.h0.base_registers[bar] = value & PCI_address_io_mask;
-			info->u.h0.base_register_sizes[bar] = (~(mask & PCI_address_io_mask) + 1) & 0xffff;
+			info->u.h0.base_register_sizes[bar] = (uint32)size;
 			info->u.h0.base_register_flags[bar] = value & ~PCI_address_io_mask;
 			continue;
 		}
 		info->u.h0.base_registers[bar] = value & PCI_address_memory_32_mask;
-		info->u.h0.base_register_sizes[bar] = ~(mask & PCI_address_memory_32_mask) + 1;
+		info->u.h0.base_register_sizes[bar] = (uint32)size;
 		info->u.h0.base_register_flags[bar] = value & ~PCI_address_memory_32_mask;
-		if ((value & PCI_address_type) == PCI_address_type_64 && bar < 5) {
-			// the upper half lives in the next register, sized the same way
-			uint32 high = pdos_pci_read(dev, reg + 4, 4);
-			pdos_pci_write(dev, reg + 4, 4, 0xffffffff);
-			uint32 highMask = pdos_pci_read(dev, reg + 4, 4);
-			pdos_pci_write(dev, reg + 4, 4, high);
-			// both halves size one 64-bit window, a 4 GB or larger bar has no bits in the low half
-			uint64 size64 = ~(((uint64)highMask << 32) | (mask & PCI_address_memory_32_mask)) + 1;
-			info->u.h0.base_register_sizes[bar] = (uint32)size64;
+		if (is64) {
+			// both halves describe one 64-bit window, a 4 GB or larger bar has no size bits in the low half
 			bar++;
 			info->u.h0.base_registers_pci[bar] = high;
 			info->u.h0.base_registers[bar] = high;
-			info->u.h0.base_register_sizes[bar] = (uint32)(size64 >> 32);
+			info->u.h0.base_register_sizes[bar] = (uint32)(size >> 32);
 			info->u.h0.base_register_flags[bar] = 0;
 		}
 	}
-	pdos_pci_write(dev, PCI_command, 2, command | PCI_command_memory | PCI_command_master);
+	if ((command & (PCI_command_memory | PCI_command_master)) != (PCI_command_memory | PCI_command_master))
+		pdos_pci_write(dev, PCI_command, 2, command | PCI_command_memory | PCI_command_master);
 }
 
 status_t
