@@ -1500,9 +1500,20 @@ static void pdRunOnMain(void (^work)(void))
    return opened;
 }
 
+// whether the one application has finished launching, for didLaunch
+static BOOL sFinishedLaunching;
+
+// an application that runs its own event loop, as Firefox does, says it has launched here rather than through -run
+-(void)didLaunch {
+   if(!sFinishedLaunching)
+      [self finishLaunching];
+}
+
 -(void)finishLaunching {
    NSAutoreleasePool *pool=[NSAutoreleasePool new];
    BOOL               needsUntitled=YES;
+
+   sFinishedLaunching=YES;
 
    [self _listenForOtherApplications];
 

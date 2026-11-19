@@ -2,9 +2,10 @@
 // Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 
 #import <Foundation/NSObject.h>
+#import <Foundation/NSGeometry.h>
 #import <AppKit/AppKitExport.h>
 
-@class NSString, NSArray, NSImage, NSURL;
+@class NSString, NSArray, NSImage, NSURL, NSView;
 
 typedef NSString *NSSharingServiceName;
 
@@ -32,3 +33,13 @@ APPKIT_EXPORT NSString *const NSSharingServiceNameCloudSharing;
 - (BOOL)canPerformWithItems:(NSArray *)items;
 - (void)performWithItems:(NSArray *)items;
 @end
+
+// the picker of sharing services for some items: there are none here, so it shows nothing
+@protocol NSSharingServicePickerDelegate;
+@interface NSSharingServicePicker : NSObject
+- (instancetype)initWithItems:(NSArray *)items;
+@property(assign) id delegate;
+- (void)showRelativeToRect:(NSRect)rect ofView:(NSView *)view preferredEdge:(NSRectEdge)preferredEdge;
+- (void)close;
+@end
+

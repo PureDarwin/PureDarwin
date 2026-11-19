@@ -86,3 +86,34 @@ NSString *const NSSharingServiceNameCloudSharing = @"com.apple.share.CloudSharin
 }
 
 @end
+
+@implementation NSSharingServicePicker {
+    NSArray *_items;
+}
+
+@synthesize delegate = _delegate;
+
+- (instancetype)initWithItems:(NSArray *)items
+{
+    if ((self = [super init]) != nil)
+        _items = [items copy];
+    return self;
+}
+
+- (void)dealloc
+{
+    [_items release];
+    [super dealloc];
+}
+
+// no services, so no menu to show
+- (void)showRelativeToRect:(NSRect)rect ofView:(NSView *)view preferredEdge:(NSRectEdge)preferredEdge
+{
+    (void)rect; (void)view; (void)preferredEdge;
+}
+
+- (void)close
+{
+}
+
+@end
