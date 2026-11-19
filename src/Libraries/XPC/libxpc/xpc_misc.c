@@ -189,13 +189,24 @@ xpc_copy_description_level(xpc_object_t obj, struct sbuf *sbuf, int level)
 		memcpy(id, xpc_uuid_get_bytes(obj), sizeof(uuid_t));
 		uuid_unparse_upper(id, uuid_str);
 		sbuf_printf(sbuf, "%s\n", uuid_str);
-		free(uuid_str);
 	} else if (xo->xo_xpc_type == XPC_TYPE_ENDPOINT) {
 		sbuf_printf(sbuf, "<%lld>\n", xo->xo_int);
 	} else if (xo->xo_xpc_type == XPC_TYPE_NULL) {
 		sbuf_printf(sbuf, "<null>\n");
+	} else if (xo->xo_xpc_type == XPC_TYPE_DOUBLE) {
+		sbuf_printf(sbuf, "%g\n", xpc_double_get_value(obj));
+	} else if (xo->xo_xpc_type == XPC_TYPE_DATA) {
+		// the length and the first bytes, as Apple's description has them
+		size_t len = xpc_data_get_length(obj);
+		const uint8_t *bytes = xpc_data_get_bytes_ptr(obj);
+		sbuf_printf(sbuf, "<%zu bytes>", len);
+		for (size_t i = 0; bytes != NULL && i < len && i < 32; i++)
+			sbuf_printf(sbuf, "%s%02x", i == 0 ? " " : "", bytes[i]);
+		sbuf_printf(sbuf, "%s\n", len > 32 ? "..." : "");
 	} else {
-		xpc_api_misuse("Unknown XPC type");
+		// a file descriptor, shared memory, a connection or an activity: described by its type alone, a
+		// description never ends the process
+		sbuf_printf(sbuf, "<%s>\n", _xpc_get_type_name(obj));
 	}
 }
 

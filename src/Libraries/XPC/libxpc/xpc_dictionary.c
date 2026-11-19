@@ -90,6 +90,8 @@ nv2xpc(const nvlist_t *nv, mach_port_t (^port_deserializer)(int64_t port_id))
 				double *value = (double *)nvlist_get_binary(nv, "double", &value_size);
 				xpc_assert(value_size == sizeof(double), "nvlist data of type double has incorrect size (expected %lu, got %zu)", sizeof(double), value_size);
 				return xpc_double_create(*value);
+			} else if (strcmp(type, "null") == 0) {
+				return xpc_null_create();
 			} else {
 				xpc_api_misuse("Unexpected NVLIST_XPC_TYPE in dictionary: %s", type);
 			}
@@ -239,6 +241,12 @@ xpc2nv_primitive(nvlist_t *nv, const char *key, xpc_object_t value, int64_t (^po
 		inner_nv = nvlist_create_dictionary(0);
 		nvlist_add_string(inner_nv, NVLIST_XPC_TYPE, "double");
 		nvlist_add_binary(inner_nv, "double", &xotmp->xo_u.d, sizeof(double));
+		nvlist_add_nvlist(nv, key, inner_nv);
+		nvlist_destroy(inner_nv);
+	} else if (xotmp->xo_xpc_type == XPC_TYPE_NULL) {
+		// a type tag with no value, which the receiving side turns back into the null object
+		inner_nv = nvlist_create_dictionary(0);
+		nvlist_add_string(inner_nv, NVLIST_XPC_TYPE, "null");
 		nvlist_add_nvlist(nv, key, inner_nv);
 		nvlist_destroy(inner_nv);
 	} else {
