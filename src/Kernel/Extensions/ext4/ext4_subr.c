@@ -602,6 +602,8 @@ ext4_alloc_inode_locked(struct ext4mount *emp, enum vtype type,
 				continue;
 			ext4_bitmap_set(map, i);
 			ext4_inode_bitmap_csum_set(emp, &gd, map);
+			// map is bp's data: count the never-used inodes before ext4_meta_bwrite() releases bp
+			ext4_gd_note_inode_used(emp, &gd, map);
 			error = ext4_meta_bwrite(emp, bp);
 			if (error)
 				return error;
@@ -609,7 +611,6 @@ ext4_alloc_inode_locked(struct ext4mount *emp, enum vtype type,
 			if (type == VDIR)
 				ext4_gd_add_used_dirs(emp, &gd, 1);
 			ext4_gd_clear_flag(&gd, EXT4_BG_INODE_UNINIT);
-			ext4_gd_note_inode_used(emp, &gd, map);
 			error = ext4_write_group_desc(emp, grp, &gd);
 			if (error)
 				return error;

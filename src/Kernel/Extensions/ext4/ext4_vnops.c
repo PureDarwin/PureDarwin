@@ -451,6 +451,70 @@ ext4_vtype_to_ft(enum vtype type)
 }
 
 /*
+ * The index blocks of a directory that stops being indexed. An HTREE root is
+ * ".", ".." and the index in the rest of the block; an interior node is one empty entry over
+ * the whole block. Neither has the checksum tail of an ordinary directory block (the index
+ * carries its own), so with metadata_csum a directory left like that is "corrupted" for
+ * e2fsck and unreadable for Linux (no space for the leaf checksum). The last entry of every
+ * such block gives up 12 bytes for the tail, the old index bytes are cleared, the block is
+ * checksummed as the plain directory block it now is. The caller holds em_fs_lock.
+ */
+static void
+ext4_dir_unindex_blocks(struct ext4node *dep)
+{
+	struct ext4mount *emp = dep->e_mount;
+	uint32_t bs = emp->em_blocksize;
+	uint64_t off;
+
+	if (!emp->em_has_metadata_csum)
+		return;
+	for (off = 0; off < dep->e_size; off += bs) {
+		struct ext4_dir_entry_2 *de = NULL;
+		uint64_t pblk = 0;
+		buf_t bp = NULL;
+		uint32_t p = 0, keep;
+		uint16_t reclen = 0;
+		char *data;
+
+		if (ext4_bmap(emp, dep->e_ino, &dep->e_raw, (uint32_t)(off / bs), &pblk) != 0 || pblk == 0)
+			continue;
+		if (ext4_blkread(emp, pblk, &bp) != 0)
+			continue;
+		data = (char *)buf_dataptr(bp);
+		if (ext4_dir_block_has_tail(emp, data)) {
+			buf_brelse(bp);
+			continue;
+		}
+		// the last entry of the chain: the one that ends with the block
+		while (p < bs) {
+			de = (struct ext4_dir_entry_2 *)(data + p);
+			reclen = le16(de->rec_len);
+			if (reclen < 8 || (reclen & 3) != 0 || p + reclen > bs) {
+				de = NULL;
+				break;
+			}
+			if (p + reclen == bs)
+				break;
+			p += reclen;
+		}
+		keep = de == NULL ? 0 : de->inode == 0 ? 12 : ext4_dir_rec_len(de->name_len);
+		if (de == NULL || p + reclen != bs || reclen < keep + EXT4_DIR_ENTRY_TAIL_SIZE) {
+			E4LOG("unindex: directory %llu block %llu has no room for a checksum tail, left as it is",
+			    (unsigned long long)dep->e_ino, (unsigned long long)(off / bs));
+			buf_brelse(bp);
+			continue;
+		}
+		if (de->inode == 0)
+			de->name_len = 0;
+		memset((char *)de + (de->inode == 0 ? 8 : keep), 0, reclen - (de->inode == 0 ? 8 : keep));
+		de->rec_len = le16((uint16_t)(reclen - EXT4_DIR_ENTRY_TAIL_SIZE));
+		ext4_dir_block_init_tail(emp, data);
+		ext4_dir_block_csum_set(emp, dep->e_ino, &dep->e_raw, data);
+		(void)ext4_meta_bwrite(emp, bp);
+	}
+}
+
+/*
  * Give up a directory's HTREE index before changing its contents.
  */
 static void
@@ -462,6 +526,7 @@ ext4_dir_drop_htree(struct ext4node *dep)
 		return;
 	dep->e_raw.i_flags = le32(flags & ~EXT4_INDEX_FL);
 	(void)ext4_write_inode(dep->e_mount, dep->e_ino, &dep->e_raw);
+	ext4_dir_unindex_blocks(dep);
 }
 
 static int
@@ -1185,11 +1250,15 @@ ext4_ensure_block(struct ext4node *ep, uint32_t lblk, uint64_t *pblk_out)
 	return ext4_ensure_block_alloc(ep, lblk, pblk_out, NULL);
 }
 
-// map every hole block of [lblk, lblk+count); the caller holds em_fs_lock
+// map every hole block of [lblk, lblk+count); the caller holds em_fs_lock.
+// *done is how many blocks from lblk on are backed when it returns, also on an error
 static int
-ext4_alloc_range(struct ext4node *ep, uint32_t lblk, uint32_t count, bool *grew)
+ext4_alloc_range(struct ext4node *ep, uint32_t lblk, uint32_t count, bool *grew, uint32_t *done)
 {
 	struct ext4mount *emp = ep->e_mount;
+	uint32_t first = lblk;
+
+	*done = 0;
 
 	while (count > 0) {
 		uint64_t pblk = 0;
@@ -1213,10 +1282,12 @@ ext4_alloc_range(struct ext4node *ep, uint32_t lblk, uint32_t count, bool *grew)
 				if (error)
 					return error;
 				*grew = true;
+				*done = lblk + i + 1 - first;
 			}
 		}
 		lblk += run;
 		count -= run;
+		*done = lblk - first;
 	}
 	return 0;
 }
@@ -1267,18 +1338,24 @@ ext4_vnop_write_impl(struct vnop_write_args *ap)
 	last_lblk = (uint32_t)((end - 1) / bs);
 	mapped_end = (uint64_t)offset;
 	while (lblk <= last_lblk) {
-		uint32_t n = last_lblk - lblk + 1;
+		uint32_t n = last_lblk - lblk + 1, done = 0;
 		bool grew = false;
 
 		if (n > 64)
 			n = 64;
 		ext4_fs_lock(emp);
-		error = ext4_alloc_range(ep, lblk, n, &grew);
+		error = ext4_alloc_range(ep, lblk, n, &grew, &done);
 		if (grew)
 			(void)ext4_write_inode(emp, ep->e_ino, &ep->e_raw);
 		ext4_fs_unlock(emp);
-		if (error)
+		if (error) {
+			// the blocks this step did back before the filesystem filled up are written too:
+			// counting only whole steps left up to 63 allocated blocks past the end of the
+			// file, which e2fsck reports as a wrong i_size
+			if (done != 0)
+				mapped_end = (uint64_t)(lblk + done) * bs;
 			break;
+		}
 		lblk += n;
 		mapped_end = (uint64_t)lblk * bs;
 		if (lblk == 0)
@@ -2218,6 +2295,19 @@ ext4_vnop_blockmap_impl(struct vnop_blockmap_args *ap)
 	lblk = (uint32_t)(ap->a_foffset / bs);
 	boff = (uint32_t)(ap->a_foffset % bs);
 	bytes = ap->a_size ? ap->a_size : bs;
+	if (ap->a_flags & VNODE_WRITE) {
+		uint64_t limit = ext4_pageout_limit(ep);
+
+		if (ep->e_freed)
+			return ENOENT;
+		if ((uint64_t)ap->a_foffset >= limit)
+			return EINVAL;
+		/* cluster_io rounds the request to PAGE_SIZE. Allocate only
+		 * the fs blocks containing actual file data (or the active
+		 * extending write); a_run lets it stop after the valid tail. */
+		if ((uint64_t)bytes > limit - (uint64_t)ap->a_foffset)
+			bytes = (size_t)(limit - (uint64_t)ap->a_foffset);
+	}
 	want_blocks = (uint32_t)((boff + bytes + bs - 1) / bs);
 
 	error = ext4_bmap_run(emp, ep->e_ino, &ep->e_raw, lblk, want_blocks, &pblk, &run, &unwritten);
@@ -2225,10 +2315,11 @@ ext4_vnop_blockmap_impl(struct vnop_blockmap_args *ap)
 		return error;
 	if ((pblk == 0 || unwritten) && (ap->a_flags & VNODE_WRITE)) {
 		bool grew = false;
+		uint32_t done = 0;
 
 		if (ep->e_freed)
 			return ENOENT;
-		error = ext4_alloc_range(ep, lblk, want_blocks, &grew);
+		error = ext4_alloc_range(ep, lblk, want_blocks, &grew, &done);
 		if (grew)
 			(void)ext4_write_inode(emp, ep->e_ino, &ep->e_raw);
 		if (error)
