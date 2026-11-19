@@ -38,4 +38,4 @@ See [Getting Started](https://www.puredarwin.org/handbook/getting-started.html) 
 
 ## Contributing
 
-Development happens on `next`, and releases are frozen onto `main`. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request, and `CODING_STYLE.md` for how code should look.
+Development happens on `main`. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request, and `CODING_STYLE.md` for how code should look.

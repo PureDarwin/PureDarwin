@@ -1,14 +1,16 @@
 # Contributing to PureDarwin
 
 Thanks for wanting to help. This document covers what we accept, from whom, and under
-what conditions. Read it before opening a pull request; some categories of change are
-closed without review, and it is better that you know that now than after the work.
+what conditions. Read it before opening a pull request. A few kinds of change need a
+conversation first, and it is better that you know that now than after the work.
 
-Those categories, and the reasoning behind each, are:
+Those kinds of change, and the reasoning behind each, are:
 
-* [Kernel and system-library changes from first-time contributors](#what-new-contributors-may-work-on),
-  with an [exemption for additive libSystem integration](#the-libsystem-exemption).
-* [Code whose licensing is unknown or unassured](#provenance-and-licensing).
+* [Kernel and system-library changes from new contributors](#what-new-contributors-may-work-on),
+  which should be discussed before the work, with an
+  [exemption for additive libSystem integration](#the-libsystem-exemption).
+* [Code whose licensing is unknown or unassured](#provenance-and-licensing), which we
+  cannot take at all.
 * [Changes the submitter cannot explain or defend in review](#how-this-is-enforced),
   whether or not a model was involved.
 
@@ -16,11 +18,10 @@ Those categories, and the reasoning behind each, are:
 
 ## Branches
 
-Development happens on `next`. Each release is frozen onto `main`.
+Development happens on `main`. Open pull requests against `main`.
 
-Open pull requests against `next`. `main` is the last frozen release and is not a
-development branch. When the tree is in the shape a release needs, `next` is merged to
-`main` and frozen there, so cleanup and stabilisation work also goes to `next`.
+Releases are built from `main` by Hydra, and each release image is named after the
+commit it was built from (see the README), so there is no separate release branch.
 
 ## What new contributors may work on
 
@@ -30,8 +31,10 @@ Packaging is where new contributors are genuinely useful immediately: porting so
 fixing a build, adding an arm64 variant, getting something onto an image. It is also
 where a mistake is cheap and easy to review.
 
-**First-time contributors may not modify existing kernel or system-library
-implementations. Changes in those areas will be closed without review.**
+**If you are new to the tree, talk to us before changing existing kernel or
+system-library implementations.** Open an issue or ask in Discord first, and describe
+what you want to change and why. A pull request in these areas that arrives without
+that conversation may be closed and redirected to one, rather than reviewed as is.
 
 This is not a judgement of your ability. It is about blast radius. These components all
 depend on each other, and a one-line change in libSystem can take out the entire
@@ -40,21 +43,23 @@ each of them a pain to trace back. That is the normal outcome, not the worst cas
 it is often only visible on real hardware, weeks later. Reviewing such a change
 properly costs more than writing it.
 
-The way in is the same as it is anywhere: do the packaging work, be around, and the
-restriction stops applying.
+This is a request to coordinate, not a wall. Someone who already knows Darwin and comes
+with a well-explained change is welcome to raise it on day one. The way in is the same
+as it is anywhere: do some work, be around, and the request to ask first stops
+applying.
 
-### How the restriction lifts
+### When to stop asking first
 
-It lifts on maintainer judgement, not on a counter. There is no number of merged pull
+That is maintainer judgement, not a counter. There is no number of merged pull
 requests that earns access to the kernel, and one merged package is not a
-qualification for XNU surgery. It lifts once we know how you work:
+qualification for XNU surgery. It changes once we know how you work:
 
-* you have shipped a few changes;
-* your patches do what you said they do;
-* you responded to review;
+* you have shipped a few changes
+* your patches do what you said they do
+* you responded to review
 * you know the tree well enough to know what is dangerous in it.
 
-It also lifts by area rather than all at once. Someone trusted in the graphics stack is
+It also changes by area rather than all at once. Someone trusted in the graphics stack is
 not thereby trusted in the VM subsystem, and neither are we, which is why this is a
 conversation rather than a permission bit.
 
@@ -71,8 +76,8 @@ well-explained patch against you for existing.
 
 ### The libSystem exemption
 
-Additive libSystem integration work is exempt from the restriction on kernel and
-system-library changes.
+Additive libSystem integration work does not need a conversation first, even from a
+new contributor.
 
 Adding an existing library or component to the libSystem build, to its exports, or to
 the integration machinery around it is permitted, **provided the contribution does not
@@ -81,7 +86,7 @@ modify the underlying library's behaviour.**
 The distinction matters. Wiring up a component that already exists, or exporting a
 symbol that is already implemented, is integration work: it is mechanical, it is
 reviewable, and missing exports are one of our most common recurring bugs. Changing
-what that component does is an implementation change, and the restriction applies.
+what that component does is an implementation change, and the section above applies.
 
 If you are unsure which side of the line your change falls on, ask before you write it.
 
