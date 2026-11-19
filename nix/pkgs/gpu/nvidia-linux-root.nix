@@ -44,6 +44,9 @@ runCommand "puredarwin-nvidia-linux-root" { } ''
   ${wrap "vulkaninfo" vkenv "${vulkan-tools}/bin/vulkaninfo"}
   ${wrap "pdvkhead" vkenv "${pdnvvk}/bin/pdvkhead"}
   ${wrap "pdvktri" vkenv "${pdnvvk}/bin/pdvktri"}
+  ${wrap "pdvkfill" vkenv "${pdnvvk}/bin/pdvkfill"}
+  # the CUDA driver API on NVIDIA's libcuda: needs PDNVUVM's /dev/nvidia-uvm
+  ${wrap "pdcuda" "LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:${nv}" "${pdnvvk}/bin/pdcuda"}
   # the vtest server PD's venus driver reaches with VN_DEBUG=vtest: vulkan for darwin programs on NVIDIA's driver
   ${wrap "virgl_test_server" "${vkenv} LD_LIBRARY_PATH=${vulkan-loader}/lib:${nv}:${xlibs}" "${virglrenderer}/bin/virgl_test_server"}
 ''
