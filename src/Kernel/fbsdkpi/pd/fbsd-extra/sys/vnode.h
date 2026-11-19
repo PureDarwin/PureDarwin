@@ -9,6 +9,8 @@ struct vnode {
 	void *v_data;
 	struct cdev *v_rdev;
 	int v_type;
+	// Linux's inode->i_mapping, set by the driver that makes the vnode
+	struct address_space *i_mapping;
 };
 #define VCHR 4
 static inline int vget(struct vnode *vp, int flags) { return 0; }

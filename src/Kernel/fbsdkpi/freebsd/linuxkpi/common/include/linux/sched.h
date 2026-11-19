@@ -91,7 +91,12 @@ struct task_struct {
 	struct task_struct *group_leader;
 	unsigned rcu_section[TS_RCU_TYPE_MAX];
 	unsigned int fpu_ctx_level;
+	/* PD: Linux's PF_* flags (only PF_KTHREAD is kept) and stack, which nvidia-uvm reads */
+	unsigned int flags;
+	void *stack;
 };
+
+#define	PF_KTHREAD	0x00200000	/* PD: set on tasks linuxkpi starts as kernel threads */
 
 struct task_struct *__lkpi_current(void);
 #define	current	(__lkpi_current())

@@ -70,8 +70,11 @@ MALLOC_DECLARE(M_KMALLOC);
 #define	kfree_const(ptr)		kfree(ptr)
 #define kfree_async(ptr)		kfree(ptr)		/* drm-kmod 5.4 compat */
 #define	vzalloc(size)			__vmalloc(size, GFP_KERNEL | __GFP_NOWARN | __GFP_ZERO, 0)
-#define	vfree(arg)			kfree(arg)
-#define	kvfree(arg)			kfree(arg)
+/* PD: vmalloc blocks are recorded so is_vmalloc_addr can answer, vfree drops the record */
+void pd_lkpi_vfree(const void *);
+void pd_lkpi_kvfree(const void *);
+#define	vfree(arg)			pd_lkpi_vfree(arg)
+#define	kvfree(arg)			pd_lkpi_kvfree(arg)
 #define	vmalloc_node(size, node)	__vmalloc_node(size, GFP_KERNEL, node)
 #define	vmalloc_user(size)		__vmalloc(size, GFP_KERNEL | __GFP_ZERO, 0)
 #define	vmalloc(size)			__vmalloc(size, GFP_KERNEL, 0)
@@ -236,17 +239,18 @@ krealloc_array(void *ptr, size_t n, size_t size, gfp_t flags)
 /*
  * vmalloc/kvalloc functions.
  */
+void *pd_lkpi_vmalloc(size_t size, gfp_t flags);
+
 static inline void *
 __vmalloc(size_t size, gfp_t flags, int other)
 {
-	return (malloc(size, M_KMALLOC, linux_check_m_flags(flags)));
+	return (pd_lkpi_vmalloc(size, flags));
 }
 
 static inline void *
 __vmalloc_node(size_t size, gfp_t flags, int node)
 {
-	return (malloc_domainset(size, M_KMALLOC,
-	    linux_get_vm_domain_set(node), linux_check_m_flags(flags)));
+	return (pd_lkpi_vmalloc(size, flags));
 }
 
 static inline void *

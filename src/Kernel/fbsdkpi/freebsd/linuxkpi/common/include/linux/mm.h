@@ -145,6 +145,8 @@ struct vm_operations_struct {
 	void    (*close) (struct vm_area_struct *);
 	int     (*fault) (struct vm_fault *);
 	int	(*access) (struct vm_area_struct *, unsigned long, void *, int, int);
+	/* PD: Linux's write fault on a read-only page, which nvidia-uvm handles as a fault */
+	int	(*page_mkwrite) (struct vm_fault *);
 };
 
 struct sysinfo {

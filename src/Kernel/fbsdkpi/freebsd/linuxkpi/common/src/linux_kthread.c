@@ -134,6 +134,7 @@ linux_kthread_setup_and_run(struct thread *td, linux_task_fn_t *task_fn, void *a
 	task = td->td_lkpi_task;
 	task->task_fn = task_fn;
 	task->task_data = arg;
+	task->flags |= PF_KTHREAD;
 
 	thread_lock(td);
 	/* make sure the scheduler priority is raised */

@@ -85,6 +85,21 @@ _sema_wait(struct sema *sema, const char *file, int line)
 	mtx_unlock(&sema->sema_mtx);
 }
 
+// takes the semaphore if it is free: 1 taken, 0 not, as FreeBSD's. linuxkpi's down_trylock is this
+int
+_sema_trywait(struct sema *sema, const char *file, int line)
+{
+	int taken = 0;
+
+	mtx_lock(&sema->sema_mtx);
+	if (sema->sema_value > 0) {
+		sema->sema_value--;
+		taken = 1;
+	}
+	mtx_unlock(&sema->sema_mtx);
+	return taken;
+}
+
 // no debugfs, callers ignore the returned dentries
 struct dentry *
 debugfs_create_dir(const char *name, struct dentry *parent)

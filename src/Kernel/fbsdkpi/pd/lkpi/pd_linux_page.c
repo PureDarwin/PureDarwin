@@ -230,10 +230,76 @@ linux_free_kmem(vm_offset_t addr, unsigned int order)
 		linux_free_pages(page, order);
 }
 
+// vmalloc is malloc here, so the blocks it hands out are recorded: is_vmalloc_addr answers for any address inside
+// one, as Linux's does for its vmalloc range, and vfree drops the record. vmalloc blocks are few and large
+struct pd_vmalloc_block {
+	struct pd_vmalloc_block *next;
+	uintptr_t start, end;
+};
+static struct pd_vmalloc_block *pd_vmalloc_blocks;
+static struct mtx pd_vmalloc_lock;
+
+void *
+pd_lkpi_vmalloc(size_t size, gfp_t flags)
+{
+	struct pd_vmalloc_block *b;
+	void *p;
+
+	p = malloc(size, M_KMALLOC, linux_check_m_flags(flags));
+	if (p == NULL)
+		return NULL;
+	b = malloc(sizeof(*b), M_KMALLOC, M_WAITOK);
+	b->start = (uintptr_t)p;
+	b->end = (uintptr_t)p + size;
+	mtx_lock(&pd_vmalloc_lock);
+	b->next = pd_vmalloc_blocks;
+	pd_vmalloc_blocks = b;
+	mtx_unlock(&pd_vmalloc_lock);
+	return p;
+}
+
 int
 is_vmalloc_addr(const void *addr)
 {
-	return false;
+	uintptr_t a = (uintptr_t)addr;
+	struct pd_vmalloc_block *b;
+	int found = 0;
+
+	mtx_lock(&pd_vmalloc_lock);
+	for (b = pd_vmalloc_blocks; b != NULL && !found; b = b->next)
+		found = a >= b->start && a < b->end;
+	mtx_unlock(&pd_vmalloc_lock);
+	return found;
+}
+
+void
+pd_lkpi_vfree(const void *addr)
+{
+	struct pd_vmalloc_block **pb, *b = NULL;
+
+	if (addr == NULL)
+		return;
+	mtx_lock(&pd_vmalloc_lock);
+	for (pb = &pd_vmalloc_blocks; *pb != NULL; pb = &(*pb)->next) {
+		if ((*pb)->start == (uintptr_t)addr) {
+			b = *pb;
+			*pb = b->next;
+			break;
+		}
+	}
+	mtx_unlock(&pd_vmalloc_lock);
+	free(b, M_KMALLOC);
+	free(__DECONST(void *, addr), M_KMALLOC);
+}
+
+// kvmalloc memory may be either kind
+void
+pd_lkpi_kvfree(const void *addr)
+{
+	if (is_vmalloc_addr(addr))
+		pd_lkpi_vfree(addr);
+	else
+		kfree(addr);
 }
 
 void *
@@ -427,6 +493,7 @@ static void
 lkpi_page_init(void *arg)
 {
 	mtx_init(&pd_page_lock, "lkpi pages", NULL, MTX_DEF);
+	mtx_init(&pd_vmalloc_lock, "pd vmalloc", NULL, MTX_DEF);
 }
 SYSINIT(lkpi_page, SI_SUB_LOCK, SI_ORDER_ANY, lkpi_page_init, NULL);
 

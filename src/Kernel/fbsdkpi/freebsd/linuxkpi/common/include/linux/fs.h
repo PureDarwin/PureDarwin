@@ -112,6 +112,9 @@ struct linux_file {
 	struct linux_cdev *f_cdev;
 
 	struct rcu_head	rcu;
+
+	/* PD: the address space of the file's pages, which nvidia-uvm keeps per open file */
+	struct address_space *f_mapping;
 };
 
 #define	file		linux_file
