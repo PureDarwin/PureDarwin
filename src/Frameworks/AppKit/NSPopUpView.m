@@ -50,7 +50,7 @@ static const float kMenuInitialClickThreshold = .3f;
 {
     NSArray * items = [[self menu] itemArray];
 
-    NSMutableArray *visibleArray = [[[NSMutableArray init] alloc] autorelease];
+    NSMutableArray *visibleArray = [NSMutableArray array];
 
     for(NSMenuItem *item in items) {
         if( ![item isHidden]) {

@@ -284,7 +284,9 @@ static void displayReconfigured(CGDirectDisplayID display, CGDisplayChangeSummar
    }
 
    while(--count>=0){
-    if(NSEventMaskFromType([event type])&mask)
+    NSEvent *older=[_eventQueue objectAtIndex:count];
+
+    if(NSEventMaskFromType([older type])&mask)
      [_eventQueue removeObjectAtIndex:count];
    }
 
