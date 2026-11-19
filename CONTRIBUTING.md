@@ -177,8 +177,9 @@ Concretely, if you used a model:
 
 ### AI-generated communication
 
-Code may be assisted. Pull request descriptions, issues and review replies may not.
-Write them yourself, in your own words, however short or imperfect your English is.
+Code may be assisted. Pull request descriptions, issues and review replies may not,
+except from automated pull requests (below). Write them yourself, in your own words,
+however short or imperfect your English is.
 
 A few plain sentences that you wrote tell us far more than a long, polished summary
 from a model. Generated descriptions are padded, sound confident about things nobody
@@ -187,6 +188,20 @@ generated, we will ask you to rewrite it before anyone reviews the change.
 
 Translation tools are fine if English is not your first language. The content and the
 thinking must be yours.
+
+### Automated pull requests
+
+If a tool or agent prepares and opens pull requests for you, its descriptions and
+replies may be generated too, on these conditions:
+
+* **Batch them.** Put related fixes in one pull request, for example every fix to one
+  framework or subsystem, not one pull request per fix. Review time and CI are both
+  limited, and a stream of small pull requests uses up both. A run of single-fix
+  pull requests will be closed with a request to combine them.
+* **Say so in the description**, so reviewers know what they are reading.
+* **Everything above about code still applies.** You have reviewed every change in the
+  batch and can answer questions about any of it.
+* **When a maintainer asks you something directly, answer it yourself.**
 
 ### How this is enforced
 
