@@ -1003,6 +1003,7 @@ ${lib.optionalString (ramdiskPrune != []) ''
     ramdisk_img="$PWD/ramdisk.img"
     fakeroot bash <<FAKESCRIPT
     chown -R 0:0 "$staging"
+    chmod 4755 "$staging/usr/bin/sudo"
     mke2fs -q -F -t ext4 \
       -b 4096 \
       -O ^orphan_file \
@@ -1084,6 +1085,7 @@ ${lib.optionalString (rootFsType == "hfs") ''
     printf 'PDHFSRT1' | dd of=root.img bs=1 seek=$((1024 + 104)) conv=notrunc status=none
     printf 'PDHFSRT1' | dd of=root.img bs=1 seek=$((root_size * 512 - 1024 + 104)) conv=notrunc status=none
 
+    chmod 4755 "$staging/usr/bin/sudo"
     tar --format=ustar --owner=0 --group=0 --hard-dereference \
       -cf staging.tar -C "$staging" .
     if ! hfsplus root.img untar staging.tar > untar.log 2>&1; then
@@ -1107,6 +1109,7 @@ ${lib.optionalString (rootFsType == "apfs") ''
     mkapfs -L PDROOT root.img
     fakeroot bash <<FAKESCRIPT
     chown -R 0:0 "$staging"
+    chmod 4755 "$staging/usr/bin/sudo"
     apfsrw populate root.img "$staging"
 FAKESCRIPT
     # the boot volume has to be the System role, mkapfs leaves it None and nothing matches boot-uuid
@@ -1120,6 +1123,7 @@ ${lib.optionalString (rootFsType == "ext4") ''
     # not root. That breaks anything that checks for root ownership. This fixes that issue.
     fakeroot bash <<FAKESCRIPT
     chown -R 0:0 "$staging"
+    chmod 4755 "$staging/usr/bin/sudo"
 ${lib.optionalString (defaultUser != null) ''
     chown -R ${toString (defaultUser.uid or 501)}:20 "$staging/Users/${defaultUser.name}"
 ''}    mke2fs -q -F -t ext4 \

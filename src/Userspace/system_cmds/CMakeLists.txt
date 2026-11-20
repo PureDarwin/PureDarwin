@@ -40,3 +40,22 @@ target_include_directories(passwd PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/passwd.tpr
 foreach(_pd_ctl reboot halt poweroff shutdown)
     add_system_cmd(${_pd_ctl} pd_shutdown.c)
 endforeach()
+if(NOT PUREDARWIN_COREFOUNDATION_PREFIX AND DEFINED ENV{PUREDARWIN_COREFOUNDATION_PREFIX})
+    set(PUREDARWIN_COREFOUNDATION_PREFIX "$ENV{PUREDARWIN_COREFOUNDATION_PREFIX}")
+endif()
+if(NOT PUREDARWIN_COREFOUNDATION_PREFIX)
+    message(FATAL_ERROR "PUREDARWIN_COREFOUNDATION_PREFIX must point to the CoreFoundation install prefix")
+endif()
+
+add_system_cmd(sudo sudo.c ../loginwindow/pdaccounts.c)
+target_include_directories(sudo PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../loginwindow"
+    "${CMAKE_SOURCE_DIR}/src/Libraries/CommonCrypto/include"
+    "${PUREDARWIN_COREFOUNDATION_PREFIX}/include"
+)
+target_compile_options(sudo PRIVATE
+    -F${PUREDARWIN_COREFOUNDATION_PREFIX}/System/Library/Frameworks
+)
+target_link_options(sudo PRIVATE
+    "${PUREDARWIN_COREFOUNDATION_PREFIX}/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
+)
