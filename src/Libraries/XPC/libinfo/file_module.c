@@ -1211,7 +1211,9 @@ _fsi_get_user(si_mod_t *si, const char *name, uid_t uid, int which)
 		f = fopen(_PATH_MASTERPASSWD, "r");
 		_fsi_get_validation(si, VALIDATION_MASTER_PASSWD, _PATH_MASTERPASSWD, f, &va, &vb);
 	}
-	else
+	/* a root process that may not read master.passwd, as a sandboxed one may not (macOS asks the directory
+	 * service, which no sandbox stops), gets the accounts from passwd as anyone else does */
+	if (f == NULL)
 	{
 		f = fopen(_PATH_PASSWD, "r");
 		_fsi_get_validation(si, VALIDATION_PASSWD, _PATH_PASSWD, f, &va, &vb);
