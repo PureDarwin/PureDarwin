@@ -512,8 +512,13 @@ static int ensureConnected(void) {
 
     /* launchd starts clients and the compositor independently. Match the
      * standalone Wayland probe's startup tolerance so an AppKit process does
-     * not fail merely because neuswc has not created its socket yet. */
-    for (unsigned attempt = 0; attempt < 1200; ++attempt) {
+     * not fail merely because neuswc has not created its socket yet. A
+     * process outside the desktop session (no WAYLAND_DISPLAY, which
+     * argon-session exports to its clients), such as a headless run from a
+     * shell, has no compositor coming: it tries for a second, not a minute. */
+    unsigned attempts = getenv("WAYLAND_DISPLAY") != NULL ? 1200 : 20;
+
+    for (unsigned attempt = 0; attempt < attempts; ++attempt) {
         ws.display = wl_display_connect(NULL);
         if (ws.display != NULL) {
             break;
