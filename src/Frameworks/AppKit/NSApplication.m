@@ -16,6 +16,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <Foundation/NSSelectInputSource.h>
 #import <Foundation/NSConnection.h>
 #import <AppKit/NSApplication.h>
+#include <dlfcn.h>
 #include <errno.h>
 #import <AppKit/NSWindow-Private.h>
 #import <AppKit/NSPanel.h>
@@ -665,6 +666,15 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
     if(NSApp)
         NSAssert(!NSApp, @"NSApplication is a singleton");
     NSApp=[self retain];
+
+    // TransformProcessType asked for a policy before this object existed, and does not make it itself
+    {
+        long *pending = (long *)dlsym(RTLD_DEFAULT, "PDHIPendingActivationPolicy");
+        if (pending != NULL && *pending >= 0) {
+            [self setActivationPolicy:(NSApplicationActivationPolicy)*pending];
+            *pending = -1;
+        }
+    }
 
     if(pipe(_machEventPipe) != 0) {
         NSLog(@"pipe: %s", strerror(errno));
@@ -1500,20 +1510,9 @@ static void pdRunOnMain(void (^work)(void))
    return opened;
 }
 
-// whether the one application has finished launching, for didLaunch
-static BOOL sFinishedLaunching;
-
-// an application that runs its own event loop, as Firefox does, says it has launched here rather than through -run
--(void)didLaunch {
-   if(!sFinishedLaunching)
-      [self finishLaunching];
-}
-
 -(void)finishLaunching {
    NSAutoreleasePool *pool=[NSAutoreleasePool new];
    BOOL               needsUntitled=YES;
-
-   sFinishedLaunching=YES;
 
    [self _listenForOtherApplications];
 

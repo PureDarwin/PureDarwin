@@ -8,6 +8,7 @@
 #include <MacTypes.h>
 #include <objc/message.h>
 #include <objc/runtime.h>
+#include <dlfcn.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
@@ -242,18 +243,25 @@ OSErr GetProcessInformation(const ProcessSerialNumber *psn, ProcessInfoRec *info
     return noErr;
 }
 
+// the application object if one exists. Never +sharedApplication: that would make a plain NSApplication before
+// an application has made its own subclass, as Firefox's GeckoNSApplication is made after TransformProcessType
 static id sharedApp(void)
 {
-    Class cls = objc_getClass("NSApplication");
-    return cls ? ((id (*)(id, SEL))objc_msgSend)((id)cls, sel_registerName("sharedApplication")) : nil;
+    id *app = (id *)dlsym(RTLD_DEFAULT, "NSApp");
+
+    return app != NULL ? *app : nil;
 }
+
+// TransformProcessType's activation policy, asked for before the application object exists: NSApplication's init
+// takes it from here, -1 for none
+long PDHIPendingActivationPolicy = -1;
 
 OSStatus SetFrontProcess(const ProcessSerialNumber *psn)
 {
     if (!isCurrent(psn))
         return procNotFound;
     // without AppKit there is no window to bring forward
-    id app = objc_getClass("NSApplication") ? sharedApp() : nil;
+    id app = sharedApp();
     if (app == nil)
         return procNotFound;
     ((void (*)(id, SEL, BOOL))objc_msgSend)(app, sel_registerName("activateIgnoringOtherApps:"), YES);
@@ -272,9 +280,11 @@ OSStatus TransformProcessType(const ProcessSerialNumber *psn, UInt32 transformSt
     case kProcessTransformToBackgroundApplication: policy = 2; break;
     default: return paramErr;
     }
-    id app = objc_getClass("NSApplication") ? sharedApp() : nil;
-    if (app == nil)
-        return procNotFound;
+    id app = sharedApp();
+    if (app == nil) {
+        PDHIPendingActivationPolicy = policy;
+        return noErr;
+    }
     BOOL ok = ((BOOL (*)(id, SEL, long))objc_msgSend)(app, sel_registerName("setActivationPolicy:"), policy);
     return ok ? noErr : paramErr;
 }
