@@ -240,11 +240,11 @@ bool RavynHDAudio::setupCorbRirb()
     wreg32(HDA_RIRBLBASE, (uint32_t)(rirbPhys & 0xFFFFFFFFu));
     wreg32(HDA_RIRBUBASE, (uint32_t)(rirbPhys >> 32));
 
-    // 32 CORB entries / 64 RIRB entries -> size-select value 1 ("16
-    // entries" tier doesn't fit either count exactly on all controllers;
-    // request the largest supported tier, 256 entries, and just use the
-    // first kHDACorbEntries/kHDARirbEntries of it - simplest to reason
-    // about and every controller we target supports 256).
+    // Size select 0x02: 256 entries, the tier every controller we target
+    // supports. The controller wraps CORBRP and RIRBWP at 256, so both
+    // rings are that long (kHDACorbEntries/kHDARirbEntries): a shorter ring
+    // has the controller fetch verbs from, and write responses to, the
+    // memory after the buffer once our pointer wraps.
     wreg8(HDA_CORBSIZE, 0x02);
     wreg8(HDA_RIRBSIZE, 0x02);
 

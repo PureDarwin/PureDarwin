@@ -23,8 +23,9 @@
 
 class RavynHDAudioEngine;
 
-#define kHDACorbEntries   32   // CORBSIZE=00 -> 2 entries is min; we request 256B/4=64 max, but keep it simple: 32 verbs at a time is plenty
-#define kHDARirbEntries   64
+// the rings are as long as CORBSIZE/RIRBSIZE 0x02 tells the controller: it wraps its pointers at 256 entries
+#define kHDACorbEntries   256
+#define kHDARirbEntries   256
 #define kHDABDLEntries    4
 #define kHDARingBufBytes  (256 * 1024)   // ~1.37s of buffering at 48kHz/16bit/stereo
 
