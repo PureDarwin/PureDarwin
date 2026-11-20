@@ -35,7 +35,8 @@ struct node {
 	size_t capacity;
 };
 
-enum value_kind { VALUE_NONE, VALUE_STRING, VALUE_BOOL };
+// an operation is a value too: profiles pass (deny default) and the like into their own functions
+enum value_kind { VALUE_NONE, VALUE_STRING, VALUE_BOOL, VALUE_OPERATION };
 
 struct value {
 	enum value_kind kind;
@@ -70,6 +71,10 @@ struct compiler {
 	struct function *functions;
 	size_t function_count;
 	size_t function_capacity;
+	// strings expressions made (string-append, regex-quote), kept until the end since bindings point into them
+	char **made;
+	size_t made_count;
+	size_t made_capacity;
 	// parsed imports, kept until the end since bindings point into them
 	struct node **imports;
 	size_t import_count;
@@ -400,6 +405,106 @@ lookup_param(struct compiler *c, const char *name)
 	return v;
 }
 
+static bool lookup_operation(const char *name, uint32_t *ops);
+static const struct function *lookup_function(struct compiler *c, const char *name);
+static bool push_binding(struct compiler *c, int line, const char *name, struct value v);
+
+// a string an expression made, owned by the compiler until it finishes
+static const char *
+keep_made(struct compiler *c, char *s)
+{
+	if (s == NULL) {
+		return NULL;
+	}
+	if (c->made_count == c->made_capacity) {
+		size_t capacity = c->made_capacity ? c->made_capacity * 2 : 16;
+		char **p = realloc(c->made, capacity * sizeof(*p));
+
+		if (p == NULL) {
+			free(s);
+			return NULL;
+		}
+		c->made = p;
+		c->made_capacity = capacity;
+	}
+	c->made[c->made_count++] = s;
+	return s;
+}
+
+static struct value eval(struct compiler *c, const struct node *n);
+
+// the string expressions of the profile language: concatenation, comparison, a test, and quoting for a regex
+static bool
+eval_string_form(struct compiler *c, const struct node *n, struct value *out)
+{
+	const char *head = n->items[0]->text;
+
+	if (strcmp(head, "string-append") == 0) {
+		size_t length = 0;
+		char *s;
+
+		for (size_t i = 1; i < n->count; i++) {
+			struct value part = eval(c, n->items[i]);
+			if (part.kind != VALUE_STRING) {
+				fail(c, n->line, "string-append expects strings");
+				return true;
+			}
+			length += strlen(part.string);
+		}
+		s = malloc(length + 1);
+		if (s == NULL) {
+			fail(c, n->line, "out of memory");
+			return true;
+		}
+		s[0] = '\0';
+		for (size_t i = 1; i < n->count; i++) {
+			strcat(s, eval(c, n->items[i]).string);
+		}
+		out->kind = VALUE_STRING;
+		out->string = keep_made(c, s);
+		return true;
+	}
+	if (strcmp(head, "string=?") == 0 && n->count == 3) {
+		struct value a = eval(c, n->items[1]), b = eval(c, n->items[2]);
+
+		out->kind = VALUE_BOOL;
+		out->boolean = a.kind == VALUE_STRING && b.kind == VALUE_STRING && strcmp(a.string, b.string) == 0;
+		return true;
+	}
+	if (strcmp(head, "string?") == 0 && n->count == 2) {
+		out->kind = VALUE_BOOL;
+		out->boolean = eval(c, n->items[1]).kind == VALUE_STRING;
+		return true;
+	}
+	if (strcmp(head, "regex-quote") == 0 && n->count == 2) {
+		struct value v = eval(c, n->items[1]);
+		const char *special = "\\^$.|?*+()[]{}";
+		char *s, *d;
+
+		if (v.kind != VALUE_STRING) {
+			fail(c, n->line, "regex-quote expects a string");
+			return true;
+		}
+		s = malloc(strlen(v.string) * 2 + 1);
+		if (s == NULL) {
+			fail(c, n->line, "out of memory");
+			return true;
+		}
+		d = s;
+		for (const char *p = v.string; *p; p++) {
+			if (strchr(special, *p) != NULL) {
+				*d++ = '\\';
+			}
+			*d++ = *p;
+		}
+		*d = '\0';
+		out->kind = VALUE_STRING;
+		out->string = keep_made(c, s);
+		return true;
+	}
+	return false;
+}
+
 static struct value
 eval(struct compiler *c, const struct node *n)
 {
@@ -421,6 +526,16 @@ eval(struct compiler *c, const struct node *n)
 				return c->bindings[i].value;
 			}
 		}
+		// an operation's name, as an argument: (moz-deny default) hands default to a function that denies it
+		{
+			uint32_t bits;
+
+			if (lookup_operation(n->text, &bits)) {
+				v.kind = VALUE_OPERATION;
+				v.string = n->text;
+				return v;
+			}
+		}
 		fail(c, n->line, "unbound variable '%s'", n->text);
 		return v;
 	case NODE_LIST:
@@ -433,6 +548,9 @@ eval(struct compiler *c, const struct node *n)
 				return v;
 			}
 			return lookup_param(c, key.string);
+		}
+		if (n->count >= 1 && n->items[0]->type == NODE_SYMBOL && eval_string_form(c, n, &v)) {
+			return v;
 		}
 		fail(c, n->line, "unsupported expression");
 		return v;
@@ -596,7 +714,8 @@ static const char *const non_path_filters[] = {
 	"iokit-property", "iokit-user-client-class", "iokit-registry-entry-class",
 	"sysctl-name", "sysctl-name-prefix", "target", "notification-name",
 	"global-name-prefix", "global-name-regex", "socket-domain", "socket-type",
-	"socket-protocol", "nvram-variable", "right-name", "signing-identifier",
+	"socket-protocol", "nvram-variable", "right-name", "signing-identifier", "control-name",
+	"kext-bundle-id", "appleevent-destination", "iokit-user-client-class-prefix",
 };
 
 static bool
@@ -649,10 +768,28 @@ compile_filter(struct compiler *c, const struct node *f, uint32_t ops, uint8_t a
 		return;
 	}
 	if (strcmp(name, "require-all") == 0) {
-		if (f->count == 2) {
-			compile_filter(c, f->items[1], ops, action, depth + 1);
+		// a rule holds one filter: the filters this sandbox does not enforce (socket domains, mach names and the
+		// like) narrow nothing it checks, so the one filter it does enforce stands for all of them
+		const struct node *checked = NULL;
+		size_t checked_count = 0;
+
+		for (size_t i = 1; i < f->count; i++) {
+			const struct node *part = f->items[i];
+
+			if (part->type == NODE_LIST && part->count > 0 && part->items[0]->type == NODE_SYMBOL &&
+			    is_non_path_filter(part->items[0]->text)) {
+				continue;
+			}
+			checked = part;
+			checked_count++;
+		}
+		if (checked_count == 0) {
+			return;
+		}
+		if (checked_count == 1) {
+			compile_filter(c, checked, ops, action, depth + 1);
 		} else {
-			fail(c, f->line, "require-all with several filters is not supported");
+			fail(c, f->line, "require-all with several enforced filters is not supported");
 		}
 		return;
 	}
@@ -673,6 +810,29 @@ compile_filter(struct compiler *c, const struct node *f, uint32_t ops, uint8_t a
 		filter = SB_FILTER_SUBPATH;
 	} else if (strcmp(name, "regex") == 0 || strcmp(name, "path-regex") == 0) {
 		filter = SB_FILTER_REGEX;
+	} else if (lookup_function(c, name) != NULL) {
+		// a profile's own function that makes a filter, as Firefox's (home-subpath "/Library") makes a subpath:
+		// its arguments are bound and its last form is the filter
+		const struct function *fn = lookup_function(c, name);
+		const struct node *signature = fn->form->items[1];
+		size_t saved = c->binding_count;
+
+		if (f->count != signature->count || fn->form->count < 3) {
+			fail(c, f->line, "%s expects %zu arguments", fn->name, signature->count - 1);
+			return;
+		}
+		for (size_t i = 1; i < f->count && !c->failed; i++) {
+			struct value v = eval(c, f->items[i]);
+
+			if (!c->failed) {
+				push_binding(c, f->line, signature->items[i]->text, v);
+			}
+		}
+		if (!c->failed) {
+			compile_filter(c, fn->form->items[fn->form->count - 1], ops, action, depth + 1);
+		}
+		c->binding_count = saved;
+		return;
 	} else {
 		fail(c, f->line, "unsupported filter '%s'", name);
 		return;
@@ -736,6 +896,22 @@ lookup_operation(const char *name, uint32_t *ops)
 	return false;
 }
 
+// an operation named in a rule: its own name, or a variable bound to an operation, as a function's parameter is
+static bool
+resolve_operation(struct compiler *c, const char *name, uint32_t *ops)
+{
+	if (lookup_operation(name, ops)) {
+		return true;
+	}
+	for (size_t i = c->binding_count; i-- > 0;) {
+		if (strcmp(c->bindings[i].name, name) == 0) {
+			return c->bindings[i].value.kind == VALUE_OPERATION &&
+			    lookup_operation(c->bindings[i].value.string, ops);
+		}
+	}
+	return false;
+}
+
 static void
 compile_rule(struct compiler *c, const struct node *form, uint8_t action)
 {
@@ -746,7 +922,7 @@ compile_rule(struct compiler *c, const struct node *form, uint8_t action)
 	for (; i < form->count && form->items[i]->type == NODE_SYMBOL; i++) {
 		uint32_t bits;
 
-		if (!lookup_operation(form->items[i]->text, &bits)) {
+		if (!resolve_operation(c, form->items[i]->text, &bits)) {
 			fail(c, form->items[i]->line, "unknown operation '%s'", form->items[i]->text);
 			return;
 		}
@@ -1139,6 +1315,10 @@ sbpl_compile(const char *source, const char *const parameters[], const char *imp
 		node_free(c.imports[i]);
 	}
 	free(c.imports);
+	for (size_t i = 0; i < c.made_count; i++) {
+		free(c.made[i]);
+	}
+	free(c.made);
 	free(c.functions);
 	free(c.bindings);
 	free(c.rules);
