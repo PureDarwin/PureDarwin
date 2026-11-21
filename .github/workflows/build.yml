@@ -1,4 +1,4 @@
-name: Build minimal image
+name: Build full image
 
 on:
 #  Don't enable due to workflow limits & schedule can only run on the default branch
@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   image-minimal:
-    name: Build image-minimal
+    name: Build image-full
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
@@ -37,11 +37,11 @@ jobs:
       # the release file, named puredarwin-<target>-<version>.<date>.<time>.<commit>-<arch>.img.zst
       # (nix/release.nix). Hydra builds these on every push to main, this job is for a build by hand
       - name: Build the minimal release image
-        run: nix build -L .#hydraJobs.release.minimal
+        run: nix build -L .#hydraJobs.release.full
 
       - name: Upload image
         uses: actions/upload-artifact@v4
         with:
-          name: puredarwin-minimal
+          name: puredarwin-full
           path: result/puredarwin-*
           if-no-files-found: error
