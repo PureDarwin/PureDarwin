@@ -8,6 +8,7 @@
  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 #import "O2Font_FT.h"
 #import <Onyx2D/O2Font_freetype.h>
+#import FT_TRUETYPE_TABLES_H
 #include <stdlib.h>
 
 O2FontRef O2FontCreateWithFontName_platform(NSString *name) {
@@ -183,6 +184,37 @@ FcConfig *O2FontSharedFontConfig() {
 
     _advances[glyph]=_face->glyph->advance.x/(float)(2<<5);
    }
+}
+
+-(NSData *)copyTableForTag:(uint32_t)tag {
+   FT_ULong length=0;
+
+   if(FT_Load_Sfnt_Table(_face,tag,0,NULL,&length)!=0 || length==0)
+    return nil;
+
+   NSMutableData *data=[[NSMutableData alloc] initWithLength:length];
+
+   if(FT_Load_Sfnt_Table(_face,tag,0,[data mutableBytes],&length)!=0){
+    [data release];
+    return nil;
+   }
+   return data;
+}
+
+-(NSArray *)copyTableTags {
+   NSMutableArray *result=[[NSMutableArray alloc] init];
+   FT_ULong count=0;
+
+   if(FT_Sfnt_Table_Info(_face,0,NULL,&count)!=0)
+    return result;
+
+   for(FT_UInt i=0;i<count;i++){
+    FT_ULong tag=0,length=0;
+
+    if(FT_Sfnt_Table_Info(_face,i,&tag,&length)==0)
+     [result addObject:[NSNumber numberWithUnsignedInt:(uint32_t)tag]];
+   }
+   return result;
 }
 
 -(NSCharacterSet *)coveredCharacterSet {
