@@ -59,7 +59,7 @@
 , closureInfo
 , runCommand
 , nix
-, bootArgs ? "debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 -noprogress gen9_debug=1 serial_video_mirror=1 vgpu_debug=1"
+, bootArgs ? "debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 -noprogress gen9_debug=1 serial_video_mirror=1 vgpu_debug=1 pdnouveau=1"
 }:
 
 assert lib.isDerivation baseSystem;

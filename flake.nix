@@ -2786,6 +2786,7 @@
             full = { image = "image"; arch = "x86_64"; };
             minimal = { image = "image-minimal"; arch = "x86_64"; };
             wayland = { image = "image-wayland"; arch = "x86_64"; };
+            nvidia-580 = { image = "image-nvidia"; arch = "x86_64"; };
             arm64-virt-minimal = { image = "image-arm64-virt-minimal"; arch = "arm64"; };
           };
         in
