@@ -1,0 +1,331 @@
+name: Build all images main upstream
+# Full multi-target image build. Complements eval.yml (evaluation-only):
+# this one actually builds. A pure-eval gate (job `eval`) evaluates every
+# planned target BEFORE the build matrix spawns, so a missing attribute or
+# an eval error costs minutes here instead of a fleet of runners failing
+# after installing Nix. Everything needed comes from the flake itself
+# (the Apple SDK is built from in-tree XNU headers, see
+# nix/pkgs/toolchain/apple-sdk-pinned.nix), so it works without any
+# secrets; the optional Cachix push only activates when both of its
+# secrets are set, and this also runs on pull requests from forks if
+# the triggers are enabled.
+#
+# The matrix covers every image target exposed by packages.<system>:
+#   core    7 x86_64 base images (minimal/desktop/legacy...)
+#   gpu     1 x86_64 GPU image (wayland desktop)
+#   cross   0 cross-built images (arm64 virt/t8010/rpi3-class/riscv64)
+#   all    the union
+#
+# Cost warning: this branch's flake exposes 13 buildable image targets. Ubuntu runners build one
+# image each, in parallel, and upload it as an Actions artifact
+# (puredarwin-<target>). Use the `targets` input to rebuild a subset:
+#   targets: image-minimal,image-arm64-virt-minimal
+#
+# Triggers are dispatch-only for the same reason as build.yml (workflow
+# limits; schedules can only run on the default branch):
+#  pull_request:
+#    branches: [upstream-xnu-12377]
+#  push:
+#    branches: [upstream-xnu-12377]
+on:
+  workflow_dispatch:
+    inputs:
+      preset:
+        description: Which set of image targets to build
+        type: choice
+        default: core
+        options:
+          - core
+          - gpu
+          - cross
+          - all
+      targets:
+        description: Explicit comma/space-separated targets (overrides preset)
+        required: false
+        default: ''
+      ref:
+        description: Branch/ref whose source to build (checkout target)
+        required: false
+        default: 'main'
+
+concurrency:
+  group: build-all-${{ github.workflow }}-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Plan matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    env:
+      PRESET: ${{ inputs.preset }}
+      TARGETS: ${{ inputs.targets }}
+    steps:
+      - name: Compute target list
+        id: plan
+        run: |
+          set -euo pipefail
+          if [ -n "$TARGETS" ]; then
+            # Explicit list: normalise separators, drop empties, allow only
+            # [A-Za-z0-9._-] so nothing unsanitary can reach the build job.
+            targets=$(printf '%s\n' "$TARGETS" | tr ', ' '\n\n' \
+              | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' | sort -u)
+            invalid=$(printf '%s\n' "$targets" | grep -vE '^[A-Za-z0-9._-]+$' || true)
+            if [ -n "$invalid" ]; then
+              echo "::error::Invalid target name(s): $invalid"
+              exit 1
+            fi
+            json=$(printf '%s\n' "$targets" | jq -R . | jq -sc .)
+          else
+            case "$PRESET" in
+              core)
+                json='[
+                  "image", "image-debug", "image-stripped", "image-hfs",
+                  "image-minimal", "image-minimal-debug", "image-wayland"
+                ]' ;;
+              gpu)
+                json='[
+                  "image-wayland"
+                ]' ;;
+              cross)
+                json='[
+                  "image-arm64-virt", "image-arm64-virt-minimal", "image-arm64-virt-minimal-release", "image-arm64-virt-full",
+                  "image-arm64-bcm2837", "netboot-arm64-virt-minimal"
+                ]' ;;
+              all)
+                # extras: netboot tree + WSL bundles (no .img, still image-like)
+                json='[
+                  "image", "image-debug", "image-stripped", "image-hfs",
+                  "image-minimal", "image-minimal-debug", "image-wayland", "image-arm64-virt",
+                  "image-arm64-virt-minimal", "image-arm64-virt-minimal-release", "image-arm64-virt-full", "image-arm64-bcm2837",
+                  "netboot-arm64-virt-minimal"
+                ]' ;;
+              *)
+                echo "::error::Unknown preset '$PRESET'"
+                exit 1 ;;
+            esac
+          fi
+          # Normalise to one flat JSON array. `flatten` is a no-op on the flat
+          # preset/explicit lists and collapses accidental nesting. This guards
+          # against the double-wrap failure mode: running `jq -sc .` on text
+          # that is already a JSON array wraps it as [["image-minimal",...]];
+          # GitHub then expands the outer single-element array into ONE build
+          # job whose matrix.target is the whole inner array, which the run
+          # template renders as the literal word "Array" -> nix looks up
+          # ".#Array" and dies with "does not provide attribute
+          # 'packages.x86_64-linux.Array' ...".
+          json=$(printf '%s' "$json" | jq -c 'flatten | unique')
+          count=$(printf '%s' "$json" | jq length)
+          if [ "$count" -eq 0 ]; then
+            echo "::error::Target list resolved to zero targets"
+            exit 1
+          fi
+          {
+            echo "### Plan"
+            echo ""
+            echo "Preset \`${PRESET:-(custom targets)}\` — $count target(s):"
+            printf '%s\n' "$json" | jq -r '.[] | "- \(.)"'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "matrix={\"target\": $json}" >> "$GITHUB_OUTPUT"
+
+  # Pure-eval pre-check: run `nix eval .#<target>.drvPath` for every planned
+  # target (4 in parallel). drvPath forces the full derivation tree to
+  # evaluate — including cross closures — without building anything and
+  # without IFD, so the same class of errors eval.yml catches on push cannot
+  # burn build runners here. A failure marks the matrix skipped within
+  # minutes: no runner installs Nix, no job reaches nix build.
+  eval:
+    name: Eval targets (pre-check)
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 6000
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Eval every planned target
+        env:
+          MATRIX: ${{ needs.plan.outputs.matrix }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$MATRIX" | jq -r '.target[]' > targets.txt
+
+          # Eval-only coverage: derived/test image targets that never enter
+          # the build matrix (building them would be duplicate runner time)
+          # but must still evaluate clean, so breakage cannot hide here.
+          printf '%s\n' image-argon image-aux-test image-builder image-login-test image-store-minimal >> targets.txt
+          count=$(wc -l < targets.txt)
+          echo "Evaluating $count target(s) (pure eval, nothing is built)..."
+
+          # Same scalar-name guard as the build step: a matrix that ever
+          # carried a non-scalar must fail here with a readable message,
+          # not as a mangled nix attribute lookup.
+          while IFS= read -r t; do
+            case "$t" in
+              [A-Za-z0-9._-]*) ;;
+              *) echo "::error::plan produced a non-scalar target: $t" ; exit 1 ;;
+            esac
+          done < targets.txt
+
+          eval_one() {
+            t=$1
+            if drv=$(nix eval --raw ".#$t.drvPath" 2>"$t.log"); then
+              printf '%s\t%s\n' "$t" "$drv" >> ok.tsv
+            else
+              echo "$t" >> failed.txt
+            fi
+          }
+          export -f eval_one
+          # eval_one always exits 0, so xargs itself never fails — outcomes
+          # are collected in ok.tsv / failed.txt and judged below.
+          xargs -r -a targets.txt -P4 -n1 bash -c 'eval_one "$@"' _
+
+          : > summary.txt
+          if [ -s ok.tsv ]; then
+            sort ok.tsv | awk -F'\t' '{printf "%-42s %s\n", $1, $2}' >> summary.txt
+          fi
+          cat summary.txt
+
+          if [ -s failed.txt ]; then
+            while IFS= read -r t; do
+              echo "::error::Eval pre-check failed for '$t'"
+              echo "----- nix eval .#$t.drvPath -----"
+              tail -n 40 "$t.log" || true
+            done < failed.txt
+            echo "Eval pre-check: $(wc -l < failed.txt) of $count target(s) FAILED" \
+              | tee -a summary.txt
+            exit 1
+          fi
+          echo "Eval pre-check: all $count target(s) evaluated" | tee -a summary.txt
+
+      - name: Step summary
+        if: always()
+        run: |
+          {
+            echo "### Eval pre-check"
+            echo '```'
+            cat summary.txt 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Build ${{ matrix.target }}
+    # Gated on the eval pre-check too: if any target fails to evaluate,
+    # the whole matrix is skipped instead of burning 4-hour runners.
+    needs: [plan, eval]
+    runs-on: ubuntu-latest
+    timeout-minutes: 99999
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      # The runner image ships ~25 GB of preinstalled SDKs we do not need;
+      # image closures (Wayland/XFCE ones especially) are large, so reclaim
+      # the space before Nix starts writing to /nix.
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift \
+            /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/boost /usr/lib/jvm /opt/microsoft /opt/google \
+            2>/dev/null || true
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          df -h /
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+            # Let single-derivation builds (kernel, LLVM) use all runner cores.
+            cores = 0
+
+      # Binary cache: activate by setting the two secrets CACHIX_BINARY_CACHE
+      # (cache name) and CACHIX_AUTH_TOKEN (write token). Each job then pulls
+      # shared heavy dependencies (LLVM, webkitgtk, mesa, ...) from the cache
+      # instead of rebuilding them, and pushes whatever it built — visible to
+      # sibling jobs in the same matrix and to every later run. With the
+      # secrets unset the step no-ops and everything builds locally as before.
+      - name: Set up Cachix
+        uses: cachix/cachix-action@v17
+        with:
+          name: ${{ secrets.CACHIX_BINARY_CACHE }}
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+      - name: Build ${{ matrix.target }}
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          # Belt and braces: the plan step emits scalar names only, but if a
+          # non-scalar ever slipped into the matrix, GitHub would render it as
+          # the literal word "Array"/"Object" here and nix would fail hunting
+          # for a package with that name. Fail with the real explanation.
+          case "$TARGET" in
+            [A-Za-z0-9._-]*) ;;
+            *)
+              echo "::error::matrix.target must be a single target name, got: $TARGET"
+              exit 1 ;;
+          esac
+          nix build -L ".#$TARGET" --out-link result
+
+      - name: Collect outputs
+        run: |
+          set -euo pipefail
+          # -L: dereference the result symlink; some targets ship kernel,
+          # boot-args and ramdisk next to the image, or no .img at all
+          # (netboot tree, WSL bundle), so upload everything result/ holds.
+          mkdir -p "artifacts/${{ matrix.target }}"
+          cp -rL result/. "artifacts/${{ matrix.target }}/"
+          du -sh "artifacts/${{ matrix.target }}"
+
+      # upload-artifact only speaks zip+deflate (compression-level 0-9), so
+      # the zstd pass happens here instead: pack the whole result tree into
+      # one .tar.zst. zstd tops out at -22 --ultra (there is no -25); -T0
+      # uses all cores. Trade speed for size by design.
+      - name: Compress artifacts (zstd --ultra)
+        run: |
+          set -euo pipefail
+          tar -I 'zstd -22 --ultra -T0' -cf "artifacts/${{ matrix.target }}.tar.zst" \
+            -C "artifacts/${{ matrix.target }}" .
+          du -sh "artifacts/${{ matrix.target }}.tar.zst"
+
+      - name: Job summary
+        run: |
+          {
+            echo "### ${{ matrix.target }}"
+            echo '```'
+            ls -lh "artifacts/${{ matrix.target }}"
+            ls -lh "artifacts/${{ matrix.target }}.tar.zst"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: puredarwin-${{ matrix.target }}
+          path: artifacts/${{ matrix.target }}.tar.zst
+          # payload is already zstd-22'd (high entropy): deflate-9 on top
+          # gains ~0%% and costs CPU, so store it verbatim instead
+          compression-level: 9
+          retention-days: 14
+          if-no-files-found: error
