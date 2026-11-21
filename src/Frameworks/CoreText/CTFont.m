@@ -646,16 +646,13 @@ CGPathRef CTFontCreatePathForGlyph(CTFontRef self,CGGlyph glyph,const CGAffineTr
    return (CGPathRef)[self createPathForGlyph:glyph transform:(CGAffineTransform *)xform];
 }
 
-// Onyx2D has no positioned glyph call, so positions become advances from the first one
+// CTFontDrawGlyphs positions are absolute user-space origins. Onyx2D only has a
+// current-text-position glyph call, so set each origin explicitly.
 void CTFontDrawGlyphs(CTFontRef font,const CGGlyph *glyphs,const CGPoint *positions,size_t count,CGContextRef context) {
    CGFontRef graphics=[font graphicsFont];
-   CGSize advances[count>0 ? count : 1];
 
    if(count==0 || graphics==NULL || context==NULL)
     return;
-   for(size_t i=0;i+1<count;i++)
-    advances[i]=CGSizeMake(positions[i+1].x-positions[i].x,positions[i+1].y-positions[i].y);
-   advances[count-1]=CGSizeZero;
    if(ctTraceOn()){
     char line[1024],drawn[128]="?";
     size_t used=0;
@@ -687,14 +684,11 @@ void CTFontDrawGlyphs(CTFontRef font,const CGGlyph *glyphs,const CGPoint *positi
     for(size_t i=0;i<size;i++)
      before+=data[i];
    }
-   // positions go through the text matrix as on macOS, so they add to the current text position (Qt sets that and draws at zero)
-   CGPoint origin=CGContextGetTextPosition(context);
-
    CGContextSaveGState(context);
    CGContextSetFont(context,graphics);
    CGContextSetFontSize(context,CTFontGetSize(font));
-   CGContextSetTextPosition(context,origin.x+positions[0].x,origin.y+positions[0].y);
-   CGContextShowGlyphsWithAdvances(context,glyphs,advances,(unsigned)count);
+   for(size_t i=0;i<count;i++)
+    CGContextShowGlyphsAtPoint(context,positions[i].x,positions[i].y,glyphs+i,1);
    CGContextRestoreGState(context);
    if(trace){
     uint64_t after=0;
