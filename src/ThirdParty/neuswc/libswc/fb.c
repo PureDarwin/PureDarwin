@@ -190,7 +190,8 @@ blend(uint32_t background, uint32_t foreground)
 }
 
 #ifdef __PUREDARWIN__
-// ARGON_GFX=cpu|gles|auto picks the compositor's renderer; unset defaults to gles.
+// ARGON_GFX=cpu|gles|auto picks the compositor renderer
+// unset defaults to gles
 // auto takes GLES only on a GPU whose resources can be scanned out, and never a software rasteriser.
 // ARGON_GPU=soft|<render node>|<pci id>|<gallium driver> composites on that device and reads frames back.
 enum { GPU_OFF, GPU_AUTO, GPU_ON };
@@ -213,7 +214,8 @@ gpu_mode(void)
 
 	gpu.device = getenv("ARGON_GPU");
 	gpu.separate = gpu.device && *gpu.device && strcmp(gpu.device, "auto");
-	// GL is the default; set ARGON_GFX=cpu to force Pixman for comparison.
+	// gl is the default
+	// set ARGON_GFX=cpu to force Pixman for comparison
 	if (!mode || !*mode)
 		return GPU_ON;
 	if (!strcmp(mode, "cpu"))
