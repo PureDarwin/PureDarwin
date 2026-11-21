@@ -1316,6 +1316,9 @@ let
       prebuiltLibSystem = libSystemArm64Build;
       puredarwinArch = "arm64";
       inherit arm64CrossToolchain;
+      extraCmakeFlags = [
+        "-DPUREDARWIN_COREFOUNDATION_PREFIX=${coreFoundationArm64Build}"
+      ];
   }).overrideAttrs (old: {
       installPhase = ''
         runHook preInstall

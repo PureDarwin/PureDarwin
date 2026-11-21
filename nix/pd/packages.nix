@@ -2302,6 +2302,9 @@
                 installUserland = false;
                 installKernel = false;
                 prebuiltLibSystem = self.libSystem;
+                extraCmakeFlags = [
+                  "-DPUREDARWIN_COREFOUNDATION_PREFIX=${self.corefoundation}"
+                ];
               }).overrideAttrs (old: {
                 installPhase = ''
                   runHook preInstall
