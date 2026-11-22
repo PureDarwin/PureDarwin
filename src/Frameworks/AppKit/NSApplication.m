@@ -1809,6 +1809,9 @@ static void pdRunOnMain(void (^work)(void))
        waitDate=retryDate;
      }
 
+     // without a display there are no events, the run loop still has to wait
+     if(_display==nil)
+      [[NSRunLoop currentRunLoop] runMode:mode beforeDate:waitDate];
      nextEvent=[_display nextEventMatchingMask:mask untilDate:waitDate inMode:mode dequeue:dequeue];
 
      if([nextEvent type]==NSAppKitSystem)
