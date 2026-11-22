@@ -407,6 +407,7 @@ lookup_param(struct compiler *c, const char *name)
 }
 
 static bool lookup_operation(const char *name, uint32_t *ops);
+static bool truthy(struct value v);
 static const struct function *lookup_function(struct compiler *c, const char *name);
 static bool push_binding(struct compiler *c, int line, const char *name, struct value v);
 
@@ -434,7 +435,7 @@ keep_made(struct compiler *c, char *s)
 
 static struct value eval(struct compiler *c, const struct node *n);
 
-// the string and number expressions of the profile language: concatenation, comparison, tests, string->number and quoting for a regex
+// the string and number expressions of the profile language: concatenation, comparison, tests, defined?, string->number and quoting for a regex
 static bool
 eval_string_form(struct compiler *c, const struct node *n, struct value *out)
 {
@@ -475,6 +476,39 @@ eval_string_form(struct compiler *c, const struct node *n, struct value *out)
 	if (strcmp(head, "string?") == 0 && n->count == 2) {
 		out->kind = VALUE_BOOL;
 		out->boolean = eval(c, n->items[1]).kind == VALUE_STRING;
+		return true;
+	}
+	if (strcmp(head, "not") == 0 && n->count == 2) {
+		out->kind = VALUE_BOOL;
+		out->boolean = !truthy(eval(c, n->items[1]));
+		return true;
+	}
+	if (strcmp(head, "and") == 0 || strcmp(head, "or") == 0) {
+		bool is_and = head[0] == 'a';
+
+		out->kind = VALUE_BOOL;
+		out->boolean = is_and;
+		for (size_t i = 1; i < n->count && !c->failed; i++) {
+			if (truthy(eval(c, n->items[i])) != is_and) {
+				out->boolean = !is_and;
+				break;
+			}
+		}
+		return true;
+	}
+	// (defined? 'name): an operation, variable or function this compiler knows
+	if (strcmp(head, "defined?") == 0 && n->count == 2 && n->items[1]->type == NODE_SYMBOL) {
+		const char *name = n->items[1]->text;
+		uint32_t bits;
+
+		if (name[0] == '\'') {
+			name++;
+		}
+		out->kind = VALUE_BOOL;
+		out->boolean = lookup_operation(name, &bits) || lookup_function(c, name) != NULL;
+		for (size_t i = 0; i < c->binding_count && !out->boolean; i++) {
+			out->boolean = strcmp(c->bindings[i].name, name) == 0;
+		}
 		return true;
 	}
 	if (strcmp(head, "string->number") == 0 && n->count == 2) {
@@ -761,7 +795,9 @@ static const char *const non_path_filters[] = {
 	"sysctl-name", "sysctl-name-prefix", "target", "notification-name",
 	"global-name-prefix", "global-name-regex", "socket-domain", "socket-type",
 	"socket-protocol", "nvram-variable", "right-name", "signing-identifier", "control-name",
-	"kext-bundle-id", "appleevent-destination", "iokit-user-client-class-prefix",
+	"kext-bundle-id", "appleevent-destination", "iokit-user-client-class-prefix", "sysctl-name-regex", "iokit-connection",
+	// the file mode bits are not checked, a rule that needs them stands for any mode
+	"file-mode",
 };
 
 static bool
@@ -813,6 +849,10 @@ compile_filter(struct compiler *c, const struct node *f, uint32_t ops, uint8_t a
 		}
 		return;
 	}
+	// no sandbox extension is ever issued here, so a filter that needs one matches nothing
+	if (strcmp(name, "extension") == 0 || strcmp(name, "extension-class") == 0) {
+		return;
+	}
 	if (strcmp(name, "require-all") == 0) {
 		// a rule holds one filter: the filters this sandbox does not enforce (socket domains, mach names and the
 		// like) narrow nothing it checks, so the one filter it does enforce stands for all of them
@@ -822,6 +862,11 @@ compile_filter(struct compiler *c, const struct node *f, uint32_t ops, uint8_t a
 		for (size_t i = 1; i < f->count; i++) {
 			const struct node *part = f->items[i];
 
+			if (part->type == NODE_LIST && part->count > 0 && part->items[0]->type == NODE_SYMBOL &&
+			    (strcmp(part->items[0]->text, "extension") == 0 ||
+			     strcmp(part->items[0]->text, "extension-class") == 0)) {
+				return;
+			}
 			if (part->type == NODE_LIST && part->count > 0 && part->items[0]->type == NODE_SYMBOL &&
 			    is_non_path_filter(part->items[0]->text)) {
 				continue;
@@ -1254,8 +1299,33 @@ compile_form(struct compiler *c, const struct node *form, unsigned depth)
 		}
 		return;
 	}
+	if ((strcmp(head, "when") == 0 || strcmp(head, "unless") == 0) && form->count >= 2) {
+		struct value v = eval(c, form->items[1]);
+
+		if (c->failed || truthy(v) != (head[0] == 'w')) {
+			return;
+		}
+		for (size_t i = 2; i < form->count; i++) {
+			compile_form(c, form->items[i], depth + 1);
+		}
+		return;
+	}
 	if (strcmp(head, "begin") == 0) {
 		for (size_t i = 1; i < form->count; i++) {
+			compile_form(c, form->items[i], depth + 1);
+		}
+		return;
+	}
+	// (with-filter FILTER rules...): FILTER is added to each rule, one this sandbox does not enforce adds nothing
+	if (strcmp(head, "with-filter") == 0 && form->count >= 2) {
+		const struct node *f = form->items[1];
+
+		if (f->type != NODE_LIST || f->count == 0 || f->items[0]->type != NODE_SYMBOL ||
+		    !is_non_path_filter(f->items[0]->text)) {
+			fail(c, form->line, "with-filter over a filter this sandbox enforces is not supported");
+			return;
+		}
+		for (size_t i = 2; i < form->count; i++) {
 			compile_form(c, form->items[i], depth + 1);
 		}
 		return;
