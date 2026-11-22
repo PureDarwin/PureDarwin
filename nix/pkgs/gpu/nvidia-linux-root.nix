@@ -43,7 +43,8 @@ runCommand "puredarwin-nvidia-linux-root" { } ''
   ${wrap "nvidia-smi" "LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:${nv}" "${nv}/nvidia-smi"}
   ${wrap "vulkaninfo" vkenv "${vulkan-tools}/bin/vulkaninfo"}
   ${wrap "pdvkhead" vkenv "${pdnvvk}/bin/pdvkhead"}
-  ${wrap "pdvktri" vkenv "${pdnvvk}/bin/pdvktri"}
+  # pdvktri itself is the darwin triangle the venus image runs
+  ${wrap "pdvktri-linux" vkenv "${pdnvvk}/bin/pdvktri"}
   ${wrap "pdvkfill" vkenv "${pdnvvk}/bin/pdvkfill"}
   # the CUDA driver API on NVIDIA's libcuda: needs PDNVUVM's /dev/nvidia-uvm
   ${wrap "pdcuda" "LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:${nv}" "${pdnvvk}/bin/pdcuda"}

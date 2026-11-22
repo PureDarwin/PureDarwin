@@ -1,0 +1,192 @@
+venus without dma_buf export (NVIDIA's driver): back mappable memory with a shared memory file imported as a host pointer, so a vtest client can map it
+
+diff -ru a/src/venus/vkr_device.c b/src/venus/vkr_device.c
+--- a/src/venus/vkr_device.c	2026-11-22 01:35:46.490834946 +0000
++++ b/src/venus/vkr_device.c	2026-11-22 01:36:40.453199082 +0000
+@@ -132,6 +132,7 @@
+    uint32_t ext_count = args->pCreateInfo->enabledExtensionCount;
+    ext_count += physical_dev->KHR_external_memory_fd;
+    ext_count += physical_dev->EXT_external_memory_dma_buf;
++   ext_count += physical_dev->EXT_external_memory_host;
+    ext_count += physical_dev->KHR_external_fence_fd;
+    if (ext_count > args->pCreateInfo->enabledExtensionCount) {
+       exts = malloc(sizeof(*exts) * ext_count);
+@@ -147,6 +148,8 @@
+          exts[ext_count++] = "VK_KHR_external_memory_fd";
+       if (physical_dev->EXT_external_memory_dma_buf)
+          exts[ext_count++] = "VK_EXT_external_memory_dma_buf";
++      if (physical_dev->EXT_external_memory_host)
++         exts[ext_count++] = "VK_EXT_external_memory_host";
+       if (physical_dev->KHR_external_fence_fd)
+          exts[ext_count++] = "VK_KHR_external_fence_fd";
+ 
+diff -ru a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
+--- a/src/venus/vkr_device_memory.c	2026-11-22 01:35:46.491622803 +0000
++++ b/src/venus/vkr_device_memory.c	2026-11-22 01:36:40.453880636 +0000
+@@ -47,6 +47,43 @@
+    return true;
+ }
+ 
++#include <sys/mman.h>
++
++#include "util/anon_file.h"
++
++static bool
++vkr_shm_get_host_pointer_info(const VkMemoryAllocateInfo *alloc_info,
++                              int *out_fd,
++                              void **out_ptr,
++                              size_t *out_size,
++                              VkImportMemoryHostPointerInfoEXT *out_info)
++{
++   const size_t size = align(alloc_info->allocationSize, getpagesize());
++   int fd = os_create_anonymous_file(size, "vkr-shm");
++   if (fd < 0) {
++      vkr_log("shm file failed (%s)", strerror(errno));
++      return false;
++   }
++
++   void *ptr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++   if (ptr == MAP_FAILED) {
++      vkr_log("shm mmap failed (%s)", strerror(errno));
++      close(fd);
++      return false;
++   }
++
++   *out_fd = fd;
++   *out_ptr = ptr;
++   *out_size = size;
++   *out_info = (VkImportMemoryHostPointerInfoEXT){
++      .sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT,
++      .pNext = alloc_info->pNext,
++      .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,
++      .pHostPointer = ptr,
++   };
++   return true;
++}
++
+ #if defined(HAVE_LINUX_UDMABUF_H) && defined(HAVE_MEMFD_CREATE)
+ #include <fcntl.h>
+ #include <linux/udmabuf.h>
+@@ -280,6 +317,10 @@
+    uint32_t valid_fd_types = 0;
+    int udmabuf_fd = -1;
+    void *gbm_bo = NULL;
++   int shm_fd = -1;
++   void *shm_ptr = NULL;
++   size_t shm_size = 0;
++   VkImportMemoryHostPointerInfoEXT host_import_info;
+    VkExportMemoryAllocateInfo local_export_info;
+    if ((property_flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) && !res_info) {
+       /* An implementation can support dma_buf import along with opaque fd export/import.
+@@ -291,7 +332,18 @@
+          !export_info ||
+          !(export_info->handleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT);
+       const bool force_udmabuf_import = physical_dev->udmabuf_dev_fd >= 0;
+-      if (!force_udmabuf_import &&
++      /* without dma_buf export the client cannot map an opaque fd, so back the
++       * memory with a shared memory file the client maps and the driver imports
++       * as a host pointer
++       */
++      if (!force_udmabuf_import && !physical_dev->is_dma_buf_fd_export_supported &&
++          physical_dev->EXT_external_memory_host && !export_info &&
++          vkr_shm_get_host_pointer_info(alloc_info, &shm_fd, &shm_ptr, &shm_size,
++                                        &host_import_info)) {
++         alloc_info->pNext = &host_import_info;
++         alloc_info->allocationSize = shm_size;
++         valid_fd_types = 1 << VIRGL_RESOURCE_FD_SHM;
++      } else if (!force_udmabuf_import &&
+           (physical_dev->is_dma_buf_fd_export_supported ||
+            (physical_dev->is_opaque_fd_export_supported && no_dma_buf_export))) {
+          const VkExternalMemoryHandleTypeFlagBits handle_type =
+@@ -371,6 +423,10 @@
+          close(local_import_info.fd);
+       if (gbm_bo)
+          vkr_gbm_bo_destroy(gbm_bo);
++      if (shm_ptr) {
++         munmap(shm_ptr, shm_size);
++         close(shm_fd);
++      }
+       return;
+    }
+ 
+@@ -379,6 +435,9 @@
+    mem->property_flags = property_flags;
+    mem->valid_fd_types = valid_fd_types;
+    mem->udmabuf_fd = udmabuf_fd;
++   mem->shm_fd = shm_fd;
++   mem->shm_ptr = shm_ptr;
++   mem->shm_size = shm_size;
+    mem->gbm_bo = gbm_bo;
+    mem->allocation_size = alloc_info->allocationSize;
+    mem->memory_type_index = mem_type_index;
+@@ -492,6 +551,10 @@
+       vkr_gbm_bo_destroy(mem->gbm_bo);
+    if (mem->udmabuf_fd >= 0)
+       close(mem->udmabuf_fd);
++   if (mem->shm_ptr) {
++      munmap(mem->shm_ptr, mem->shm_size);
++      close(mem->shm_fd);
++   }
+ }
+ 
+ bool
+@@ -530,7 +593,20 @@
+    enum virgl_resource_fd_type fd_type;
+    VkExternalMemoryHandleTypeFlagBits handle_type;
+    struct virgl_resource_vulkan_info vulkan_info;
+-   if (blob_flags & VIRGL_RENDERER_BLOB_FLAG_USE_CROSS_DEVICE) {
++   if (mem->shm_ptr && !(blob_flags & VIRGL_RENDERER_BLOB_FLAG_USE_CROSS_DEVICE)) {
++      int shm_fd = os_dupfd_cloexec(mem->shm_fd);
++      if (shm_fd < 0) {
++         vkr_log("mem shm fd dup failed (%s)", strerror(errno));
++         return false;
++      }
++      mem->exported = true;
++      *out_blob = (struct virgl_context_blob){
++         .type = VIRGL_RESOURCE_FD_SHM,
++         .u.fd = shm_fd,
++         .map_info = VIRGL_RENDERER_MAP_CACHE_CACHED,
++      };
++      return true;
++   } else if (blob_flags & VIRGL_RENDERER_BLOB_FLAG_USE_CROSS_DEVICE) {
+       if (!can_export_dma_buf) {
+          vkr_log("mem cannot export to dma_buf for cross device blob sharing");
+          return false;
+diff -ru a/src/venus/vkr_device_memory.h b/src/venus/vkr_device_memory.h
+--- a/src/venus/vkr_device_memory.h	2026-11-22 01:35:46.490924035 +0000
++++ b/src/venus/vkr_device_memory.h	2026-11-22 01:36:40.453254929 +0000
+@@ -26,6 +26,11 @@
+    /* udmabuf backing non-external mappable memory */
+    int udmabuf_fd;
+ 
++   /* shared memory file imported as a host pointer, for a driver that exports no dma_buf */
++   int shm_fd;
++   void *shm_ptr;
++   size_t shm_size;
++
+    uint64_t allocation_size;
+    uint32_t memory_type_index;
+ 
+diff -ru a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
+--- a/src/venus/vkr_physical_device.c	2026-11-22 01:35:46.490593041 +0000
++++ b/src/venus/vkr_physical_device.c	2026-11-22 01:36:40.453034645 +0000
+@@ -273,6 +273,8 @@
+          physical_dev->KHR_external_memory_fd = true;
+       else if (!strcmp(props->extensionName, "VK_EXT_external_memory_dma_buf"))
+          physical_dev->EXT_external_memory_dma_buf = true;
++      else if (!strcmp(props->extensionName, "VK_EXT_external_memory_host"))
++         physical_dev->EXT_external_memory_host = true;
+       else if (!strcmp(props->extensionName, "VK_KHR_external_fence_fd"))
+          physical_dev->KHR_external_fence_fd = true;
+ 
+diff -ru a/src/venus/vkr_physical_device.h b/src/venus/vkr_physical_device.h
+--- a/src/venus/vkr_physical_device.h	2026-11-22 01:35:46.491007234 +0000
++++ b/src/venus/vkr_physical_device.h	2026-11-22 01:36:40.452859704 +0000
+@@ -23,6 +23,7 @@
+ 
+    bool KHR_external_memory_fd;
+    bool EXT_external_memory_dma_buf;
++   bool EXT_external_memory_host;
+ 
+    bool KHR_external_fence_fd;
+    bool KHR_external_semaphore_fd;

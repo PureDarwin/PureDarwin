@@ -897,7 +897,9 @@
   nvidiaLinuxRoot = callPackage ../pkgs/gpu/nvidia-linux-root.nix {
     libxcb = pkgs.libxcb;
       vulkan-tools = pkgs.vulkan-tools;
-    virglrenderer = pkgs.virglrenderer;
+    virglrenderer = pkgs.virglrenderer.overrideAttrs (o: {
+      patches = (o.patches or [ ]) ++ [ ../pkgs/gpu/virglrenderer-host-pointer.patch ];
+    });
     vulkan-loader = pkgs.vulkan-loader;
   };
   objcTest = callPackage ../pkgs/apple/objc-test.nix {
