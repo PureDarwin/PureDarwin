@@ -553,6 +553,17 @@ NSString *const NSImageNameApplicationIcon=@"NSApplicationIcon";
    return nil;
 }
 
+// the representation that best fills rect, an empty rect means the image's own size
+-(NSImageRep *)bestRepresentationForRect:(NSRect)rect context:(NSGraphicsContext *)context hints:(NSDictionary *)hints {
+   NSSize size=rect.size;
+
+   (void)context;
+   (void)hints;
+   if(size.width==0 || size.height==0)
+    size=[self size];
+   return [self _bestUncachedFallbackCachedRepresentationForDevice:nil size:size];
+}
+
 -(NSImageRep *)bestRepresentationForDevice:(NSDictionary *)device {
    if(device==nil)
     device=[[NSGraphicsContext currentContext] deviceDescription];

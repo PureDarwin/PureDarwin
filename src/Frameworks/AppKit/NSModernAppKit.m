@@ -308,7 +308,20 @@ static char PDSeparatorStyleKey, PDAnimationBehaviorKey;
 
 static char PDAccessibilityLabelKey, PDLayoutDirectionKey;
 
+static char PDClipsToBoundsKey;
+
 @implementation NSView (ModernView)
+
+// stored only: views are drawn clipped to their bounds whatever this says
+- (BOOL)clipsToBounds
+{
+    return PDGetInteger(self, &PDClipsToBoundsKey, NO);
+}
+
+- (void)setClipsToBounds:(BOOL)clips
+{
+    PDSetInteger(self, &PDClipsToBoundsKey, clips);
+}
 
 - (NSEdgeInsets)safeAreaInsets
 {
@@ -423,6 +436,67 @@ static char PDContextMenuPlugInsKey;
     [[NSNotificationCenter defaultCenter] postNotificationName:NSMenuWillSendActionNotification object:self
                                                       userInfo:@{ @"MenuItem" : item }];
     [NSApp sendAction:[item action] to:[item target] from:item];
+}
+
+@end
+
+static char PDSectionHeaderKey, PDSubtitleKey, PDKeyWhenHiddenKey, PDKeyLocalizationKey, PDKeyMirroringKey;
+
+@implementation NSMenuItem (ModernMenuItem)
+
+// a disabled title that heads the items after it
++ (NSMenuItem *)sectionHeaderWithTitle:(NSString *)title
+{
+    NSMenuItem *item = [[[NSMenuItem alloc] initWithTitle:title action:NULL keyEquivalent:@""] autorelease];
+
+    [item setEnabled:NO];
+    PDSetInteger(item, &PDSectionHeaderKey, YES);
+    return item;
+}
+
+- (BOOL)isSectionHeader
+{
+    return PDGetInteger(self, &PDSectionHeaderKey, NO);
+}
+
+- (NSString *)subtitle
+{
+    return PDGet(self, &PDSubtitleKey);
+}
+
+- (void)setSubtitle:(NSString *)subtitle
+{
+    PDSet(self, &PDSubtitleKey, [[subtitle copy] autorelease]);
+}
+
+- (BOOL)allowsKeyEquivalentWhenHidden
+{
+    return PDGetInteger(self, &PDKeyWhenHiddenKey, NO);
+}
+
+- (void)setAllowsKeyEquivalentWhenHidden:(BOOL)allows
+{
+    PDSetInteger(self, &PDKeyWhenHiddenKey, allows);
+}
+
+- (BOOL)allowsAutomaticKeyEquivalentLocalization
+{
+    return PDGetInteger(self, &PDKeyLocalizationKey, YES);
+}
+
+- (void)setAllowsAutomaticKeyEquivalentLocalization:(BOOL)allows
+{
+    PDSetInteger(self, &PDKeyLocalizationKey, allows);
+}
+
+- (BOOL)allowsAutomaticKeyEquivalentMirroring
+{
+    return PDGetInteger(self, &PDKeyMirroringKey, YES);
+}
+
+- (void)setAllowsAutomaticKeyEquivalentMirroring:(BOOL)allows
+{
+    PDSetInteger(self, &PDKeyMirroringKey, allows);
 }
 
 @end

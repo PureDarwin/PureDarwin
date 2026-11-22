@@ -680,6 +680,17 @@ NSString* NSImageCompressionFactor = @"NSImageCompressionFactor";
    return YES;
 }
 
+// the colour space the samples are in, from the rep's colour space name
+-(NSColorSpace *)colorSpace {
+   if([_colorSpaceName isEqualToString:NSDeviceWhiteColorSpace] || [_colorSpaceName isEqualToString:NSDeviceBlackColorSpace])
+    return [NSColorSpace deviceGrayColorSpace];
+   if([_colorSpaceName isEqualToString:NSCalibratedWhiteColorSpace] || [_colorSpaceName isEqualToString:NSCalibratedBlackColorSpace])
+    return [NSColorSpace genericGrayColorSpace];
+   if([_colorSpaceName isEqualToString:NSCalibratedRGBColorSpace])
+    return [NSColorSpace genericRGBColorSpace];
+   return [NSColorSpace deviceRGBColorSpace];
+}
+
 -(CGColorSpaceRef)CGColorSpace {
    if([_colorSpaceName isEqualToString:NSDeviceRGBColorSpace])
     return (CGColorSpaceRef)[(id)CGColorSpaceCreateDeviceRGB() autorelease];

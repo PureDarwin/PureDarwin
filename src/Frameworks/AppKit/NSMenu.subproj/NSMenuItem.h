@@ -28,6 +28,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     NSInteger _indentationLevel;
     BOOL _enabled;
     BOOL _hidden;
+    BOOL _alternate;
     int _state;
     id _representedObject;
     NSImage *_image;
@@ -68,6 +69,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - (BOOL)isSeparatorItem;
 - (BOOL)isEnabled;
 - (BOOL)isHidden;
+- (BOOL)isAlternate;
 
 - (void)setTitle:(NSString *)title;
 - (void)setAttributedTitle:(NSAttributedString *)title;
@@ -88,6 +90,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - (void)setSubmenu:(NSMenu *)submenu;
 - (void)setEnabled:(BOOL)flag;
 - (void)setHidden:(BOOL)flag;
+- (void)setAlternate:(BOOL)flag;
 - (void)setDBusItemID:(int)tag;
 
 - (NSString *)_keyEquivalentDescription;

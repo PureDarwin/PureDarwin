@@ -217,6 +217,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return _enabled;
 }
 
+// an item shown in place of the one before it while its modifier keys are held
+-(BOOL)isAlternate {
+   return _alternate;
+}
+
 -(BOOL)isHidden {
     return _hidden;
 }
@@ -317,6 +322,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     return;
    _enabled=flag;
    [[self menu] itemChanged:self];
+}
+
+-(void)setAlternate:(BOOL)flag {
+   _alternate=flag;
 }
 
 -(void)setHidden:(BOOL)flag {

@@ -90,6 +90,12 @@ FOUNDATION_EXPORT char *NSUnicodeToSymbol(const unichar *characters,unsigned len
 
 @end
 
+// the struct-returning messages CoreText sends the font object behind a CTFontRef
+@protocol PDCoreTextFont
+-(CGAffineTransform)_ctMatrix;
+-(CGRect)boundingRect;
+@end
+
 @implementation NSFont
 
 static NSNibFontNameTranslator* _nibFontTranslator = nil;
@@ -413,6 +419,22 @@ static NSLock *_cacheLock=nil;
    CGFontRelease(_cgFont);
    [_ctFont release];
    [super dealloc];
+}
+
+// struct returns cannot be forwarded, so CoreText's ones are passed on here
+-(CGAffineTransform)_ctMatrix {
+   return [(id<PDCoreTextFont>)_ctFont _ctMatrix];
+}
+
+-(CGRect)boundingRect {
+   return [(id<PDCoreTextFont>)_ctFont boundingRect];
+}
+
+// an NSFont is a CTFontRef on macOS: CoreText's own messages go to the font it wraps
+-(id)forwardingTargetForSelector:(SEL)selector {
+   if(_ctFont!=NULL && [(id)_ctFont respondsToSelector:selector])
+    return (id)_ctFont;
+   return [super forwardingTargetForSelector:selector];
 }
 
 +(NSFont *)fontWithName:(NSString *)name size:(CGFloat)size {
