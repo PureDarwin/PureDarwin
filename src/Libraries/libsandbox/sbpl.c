@@ -36,12 +36,13 @@ struct node {
 };
 
 // an operation is a value too: profiles pass (deny default) and the like into their own functions
-enum value_kind { VALUE_NONE, VALUE_STRING, VALUE_BOOL, VALUE_OPERATION };
+enum value_kind { VALUE_NONE, VALUE_STRING, VALUE_BOOL, VALUE_OPERATION, VALUE_NUMBER };
 
 struct value {
 	enum value_kind kind;
 	const char *string;
 	bool boolean;
+	long number;
 };
 
 struct binding {
@@ -433,7 +434,7 @@ keep_made(struct compiler *c, char *s)
 
 static struct value eval(struct compiler *c, const struct node *n);
 
-// the string expressions of the profile language: concatenation, comparison, a test, and quoting for a regex
+// the string and number expressions of the profile language: concatenation, comparison, tests, string->number and quoting for a regex
 static bool
 eval_string_form(struct compiler *c, const struct node *n, struct value *out)
 {
@@ -474,6 +475,40 @@ eval_string_form(struct compiler *c, const struct node *n, struct value *out)
 	if (strcmp(head, "string?") == 0 && n->count == 2) {
 		out->kind = VALUE_BOOL;
 		out->boolean = eval(c, n->items[1]).kind == VALUE_STRING;
+		return true;
+	}
+	if (strcmp(head, "string->number") == 0 && n->count == 2) {
+		struct value v = eval(c, n->items[1]);
+		char *end;
+
+		// not a number reads as #f, as in Scheme
+		out->kind = VALUE_BOOL;
+		out->boolean = false;
+		if (v.kind == VALUE_STRING && v.string[0] != '\0') {
+			long number = strtol(v.string, &end, 10);
+			if (*end == '\0') {
+				out->kind = VALUE_NUMBER;
+				out->number = number;
+			}
+		}
+		return true;
+	}
+	if ((strcmp(head, "=") == 0 || strcmp(head, "<") == 0 || strcmp(head, ">") == 0 ||
+	     strcmp(head, "<=") == 0 || strcmp(head, ">=") == 0) && n->count == 3) {
+		struct value a = eval(c, n->items[1]), b = eval(c, n->items[2]);
+
+		if (a.kind != VALUE_NUMBER || b.kind != VALUE_NUMBER) {
+			fail(c, n->line, "%s expects numbers", head);
+			return true;
+		}
+		out->kind = VALUE_BOOL;
+		switch (head[0] == '=' ? 0 : head[1] == '=' ? (head[0] == '<' ? 1 : 2) : (head[0] == '<' ? 3 : 4)) {
+		case 0: out->boolean = a.number == b.number; break;
+		case 1: out->boolean = a.number <= b.number; break;
+		case 2: out->boolean = a.number >= b.number; break;
+		case 3: out->boolean = a.number < b.number; break;
+		default: out->boolean = a.number > b.number; break;
+		}
 		return true;
 	}
 	if (strcmp(head, "regex-quote") == 0 && n->count == 2) {
@@ -526,6 +561,17 @@ eval(struct compiler *c, const struct node *n)
 				return c->bindings[i].value;
 			}
 		}
+		// a number literal
+		{
+			char *end;
+			long number = strtol(n->text, &end, 10);
+
+			if (end != n->text && *end == '\0') {
+				v.kind = VALUE_NUMBER;
+				v.number = number;
+				return v;
+			}
+		}
 		// an operation's name, as an argument: (moz-deny default) hands default to a function that denies it
 		{
 			uint32_t bits;
@@ -561,7 +607,7 @@ eval(struct compiler *c, const struct node *n)
 static bool
 truthy(struct value v)
 {
-	return v.kind == VALUE_STRING || (v.kind == VALUE_BOOL && v.boolean);
+	return v.kind == VALUE_STRING || v.kind == VALUE_NUMBER || (v.kind == VALUE_BOOL && v.boolean);
 }
 
 static void
