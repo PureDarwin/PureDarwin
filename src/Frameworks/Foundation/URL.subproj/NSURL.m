@@ -53,6 +53,71 @@ static inline id __NSAutoreleaseCF(CFTypeRef cf) {
     return [(NSString *)CFURLCopyFileSystemPath((CFURLRef)self, kCFURLPOSIXPathStyle) autorelease];
 }
 
+// resource values are CF's, an unknown key answers YES with a nil value as on macOS
+- (BOOL)getResourceValue:(id *)value forKey:(NSString *)key error:(NSError **)error {
+    CFTypeRef result = NULL;
+    CFErrorRef cfError = NULL;
+
+    if (!CFURLCopyResourcePropertyForKey((CFURLRef)self, (CFStringRef)key, &result, &cfError)) {
+        if (error != NULL)
+            *error = __NSAutoreleaseCF(cfError);
+        else if (cfError != NULL)
+            CFRelease(cfError);
+        return NO;
+    }
+    if (value != NULL)
+        *value = __NSAutoreleaseCF(result);
+    else if (result != NULL)
+        CFRelease(result);
+    return YES;
+}
+
+- (nullable NSDictionary *)resourceValuesForKeys:(NSArray *)keys error:(NSError **)error {
+    CFErrorRef cfError = NULL;
+    CFDictionaryRef values = CFURLCopyResourcePropertiesForKeys((CFURLRef)self, (CFArrayRef)keys, &cfError);
+
+    if (values == NULL) {
+        if (error != NULL)
+            *error = __NSAutoreleaseCF(cfError);
+        else if (cfError != NULL)
+            CFRelease(cfError);
+        return nil;
+    }
+    return __NSAutoreleaseCF(values);
+}
+
+- (BOOL)setResourceValue:(id)value forKey:(NSString *)key error:(NSError **)error {
+    CFErrorRef cfError = NULL;
+
+    if (CFURLSetResourcePropertyForKey((CFURLRef)self, (CFStringRef)key, (CFTypeRef)value, &cfError))
+        return YES;
+    if (error != NULL)
+        *error = __NSAutoreleaseCF(cfError);
+    else if (cfError != NULL)
+        CFRelease(cfError);
+    return NO;
+}
+
+- (BOOL)setResourceValues:(NSDictionary *)values error:(NSError **)error {
+    CFErrorRef cfError = NULL;
+
+    if (CFURLSetResourcePropertiesForKeys((CFURLRef)self, (CFDictionaryRef)values, &cfError))
+        return YES;
+    if (error != NULL)
+        *error = __NSAutoreleaseCF(cfError);
+    else if (cfError != NULL)
+        CFRelease(cfError);
+    return NO;
+}
+
+// nothing is cached, every request asks the file system
+- (void)removeAllCachedResourceValues {
+}
+
+- (void)removeCachedResourceValueForKey:(NSString *)key {
+    (void)key;
+}
+
 - (BOOL)isFileURL {
     CFStringRef scheme = CFURLCopyScheme((CFURLRef)self);
     if (scheme == NULL) {
