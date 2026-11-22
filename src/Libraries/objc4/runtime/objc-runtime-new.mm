@@ -2606,7 +2606,9 @@ static void validateAlreadyRealizedClass(Class cls) {
         class_rw_t *rw = cls->data();
         size_t rwSize = malloc_size(rw);
 
-        if (rwSize != sizeof(class_rw_t))
+        // a zone may hand out more than was asked for, PartitionAlloc's 32-byte slot holds 40,
+        // so only a smaller size, 0 for a pointer no zone owns, means corrupt
+        if (rwSize < sizeof(class_rw_t))
             _objc_fatal("realized class %p has corrupt data pointer %p", cls, rw);
     }
 #endif
