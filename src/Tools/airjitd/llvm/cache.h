@@ -1,3 +1,6 @@
+// cache.h - compiled stages on disk, keyed by daemon build and bitcode
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef AIRJITD_LLVM_CACHE_H
 #define AIRJITD_LLVM_CACHE_H
 

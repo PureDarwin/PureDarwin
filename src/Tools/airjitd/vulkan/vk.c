@@ -1,3 +1,5 @@
+// vk.c - the Vulkan executor
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 // the Vulkan executor. Jobs keep the CPU path's contract: everything a job reads is in the bridge at the request's offsets, and what it writes goes back there.
 // The loader is opened at run time, so a daemon built with this file still starts where no Vulkan exists
 #define VK_NO_PROTOTYPES

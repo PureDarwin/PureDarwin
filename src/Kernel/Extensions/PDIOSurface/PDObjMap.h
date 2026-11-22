@@ -1,3 +1,6 @@
+// PDObjMap.h - guest object ids to records, one map per id space
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef PD_OBJMAP_H
 #define PD_OBJMAP_H
 

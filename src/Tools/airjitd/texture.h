@@ -1,3 +1,6 @@
+// texture.h - pixel formats as the kext numbers them, and texture access
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef AIRJITD_TEXTURE_H
 #define AIRJITD_TEXTURE_H
 

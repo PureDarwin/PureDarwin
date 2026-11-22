@@ -7,7 +7,7 @@
 	<key>CFBundleExecutable</key>
 	<string>PDIOSurface</string>
 	<key>CFBundleGetInfoString</key>
-	<string>1.0.0, Copyright (C) 2026 PureDarwin Project. All rights reserved.</string>
+	<string>1.0.0, Copyright (C) 2026 The PureDarwin Project</string>
 	<key>CFBundleIdentifier</key>
 	<string>org.puredarwin.driver.PDIOSurface</string>
 	<key>CFBundleInfoDictionaryVersion</key>

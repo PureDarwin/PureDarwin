@@ -1,3 +1,6 @@
+// log.c - log lines to the kext's IOLog or stderr
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>

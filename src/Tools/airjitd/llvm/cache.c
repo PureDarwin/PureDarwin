@@ -1,3 +1,6 @@
+// cache.c - the on-disk cache of compiled stages
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef __APPLE__
 #define _GNU_SOURCE
 #endif

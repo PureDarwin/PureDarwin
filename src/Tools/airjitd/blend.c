@@ -1,3 +1,6 @@
+// blend.c - the fixed-function blend on the CPU path
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #include "blend.h"
 
 float pd_blend_constant[4];

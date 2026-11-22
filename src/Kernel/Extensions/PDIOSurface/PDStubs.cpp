@@ -1,4 +1,5 @@
-// small placeholder services: AppleARMIODevice, Bluetooth HCI and the M2 scaler drivers
+// PDStubs.cpp - small placeholder services: AppleARMIODevice, Bluetooth HCI and the M2 scaler drivers
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 
 #include "PDIOSurface.h"
 

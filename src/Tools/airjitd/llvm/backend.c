@@ -1,3 +1,6 @@
+// backend.c - the LLVM backend: AIR bitcode to native code for the CPU path
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #include <llvm-c/BitReader.h>
 #include <llvm-c/Core.h>
 #include <llvm-c/Error.h>

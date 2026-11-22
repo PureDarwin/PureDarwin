@@ -1,3 +1,6 @@
+// stage.c - a stage's parameters, bindings and outputs
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #include "stage.h"
 
 #include <string.h>

@@ -1,3 +1,6 @@
+// static_llvm_shim.c - libSystem calls the statically linked LLVM build needs
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #include <fcntl.h>
 #include <mach/mach.h>
 #include <setjmp.h>

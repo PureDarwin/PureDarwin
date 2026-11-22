@@ -1,3 +1,6 @@
+// metallib.h - one function's bitcode and entry point inside a metallib
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef AIRJITD_METALLIB_H
 #define AIRJITD_METALLIB_H
 

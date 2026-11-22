@@ -1,3 +1,6 @@
+// tile.h - runs a tile kernel over every tile of the pass
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef AIRJITD_TILE_H
 #define AIRJITD_TILE_H
 

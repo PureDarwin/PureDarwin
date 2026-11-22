@@ -1,3 +1,6 @@
+// exec.h - compiling stages and running jobs
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef AIRJITD_EXEC_H
 #define AIRJITD_EXEC_H
 

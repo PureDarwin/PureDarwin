@@ -1,3 +1,6 @@
+// PDIOSurface.h - IOSurfaceRoot for WindowServer, shared declarations of the kext
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #pragma once
 // IOSurfaceRoot for WindowServer, which otherwise spins on an IONameMatch lookup for it.
 // The client interface is learned by observation, unknown external methods succeed

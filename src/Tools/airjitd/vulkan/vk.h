@@ -1,3 +1,6 @@
+// vk.h - the Vulkan executor: a job's shaders through air2spv on the GPU
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef AIRJITD_VK_H
 #define AIRJITD_VK_H
 

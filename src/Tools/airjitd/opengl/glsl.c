@@ -1,3 +1,6 @@
+// glsl.c - SPIR-V to GLSL for the OpenGL executor
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #include "glsl.h"
 
 unsigned pd_glsl_draw_version = 150;

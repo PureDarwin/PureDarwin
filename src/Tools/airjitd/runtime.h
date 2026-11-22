@@ -1,3 +1,6 @@
+// runtime.h - the runtime shader calls use on the CPU path
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef AIRJITD_RUNTIME_H
 #define AIRJITD_RUNTIME_H
 

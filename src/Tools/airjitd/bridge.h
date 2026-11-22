@@ -1,3 +1,6 @@
+// bridge.h - shared memory with PDIOSurface, must match the kext
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef AIRJITD_BRIDGE_H
 #define AIRJITD_BRIDGE_H
 

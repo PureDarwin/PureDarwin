@@ -1,3 +1,6 @@
+// airjitd.h - daemon-wide declarations: error codes and logging
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef AIRJITD_H
 #define AIRJITD_H
 

@@ -1,4 +1,5 @@
-// paravirtual display services: display nub, framebuffer, mobile framebuffer, CLCD and their helpers
+// PDDisplay.cpp - paravirtual display services: display nub, framebuffer, mobile framebuffer, CLCD and their helpers
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 
 #include "PDIOSurface.h"
 

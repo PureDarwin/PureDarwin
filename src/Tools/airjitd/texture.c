@@ -1,3 +1,6 @@
+// texture.c - texture loads, stores and sampling on the CPU path
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #include "texture.h"
 
 #include "airjitd.h"

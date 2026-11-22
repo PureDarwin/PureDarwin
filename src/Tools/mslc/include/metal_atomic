@@ -1,2 +1,4 @@
-// metal_atomic for mslc: the atomics live in metal_stdlib
+// metal_atomic - metal_atomic for mslc
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #include <metal_stdlib>

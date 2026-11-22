@@ -1,4 +1,5 @@
-// PDAccelerator, AppleParavirtGPU and the submit path: bridge, events, async jobs and command stream execution
+// PDAccelerator.cpp - PDAccelerator, AppleParavirtGPU and the submit path: bridge, events, async jobs and command streams
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 
 #include "PDIOSurface.h"
 

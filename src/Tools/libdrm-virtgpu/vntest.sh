@@ -1,4 +1,6 @@
 #!/bin/sh
+# vntest.sh - vulkaninfo and the offscreen triangle on venus and every other ICD
+# Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 # vntest: vulkaninfo and the offscreen triangle on venus, then the triangle on every other icd for comparison
 PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin; export PATH
 icds=/usr/share/vulkan/icd.d

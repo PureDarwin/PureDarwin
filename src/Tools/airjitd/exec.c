@@ -1,3 +1,6 @@
+// exec.c - runs a job on the GPU executor or the CPU path
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #include "exec.h"
 
 #include <stdio.h>

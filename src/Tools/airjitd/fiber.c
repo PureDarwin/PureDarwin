@@ -1,3 +1,5 @@
+// fiber.c - a minimal stack switch for the compute fibers
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 // a minimal stack switch for the compute fibers: callee-saved registers on the old stack, then the
 // new stack's. ucontext is deprecated on Darwin and missing from PD's libSystem export list
 #include "fiber.h"

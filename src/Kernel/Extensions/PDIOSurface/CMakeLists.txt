@@ -1,4 +1,6 @@
-# IOSurfaceRoot service for WindowServer, interface learned by observing client calls
+# CMakeLists.txt - IOSurfaceRoot service for WindowServer, interface learned by observing client calls
+# Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 add_kext_bundle(PDIOSurface.kext INFO_PLIST Info.plist KERNEL_PRIVATE
     BUNDLE_IDENTIFIER org.puredarwin.driver.PDIOSurface BUNDLE_VERSION 1.0.0)
 set_property(TARGET PDIOSurface.kext PROPERTY OUTPUT_NAME PDIOSurface)

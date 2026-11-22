@@ -1,3 +1,6 @@
+// tile.c - tile kernels over a render pass on the CPU path
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #include "tile.h"
 
 #include <dispatch/dispatch.h>

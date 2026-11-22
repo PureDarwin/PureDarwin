@@ -1,3 +1,5 @@
+// dump.c - dumps a job's target, textures and attachments as PPMs
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 // airjitddump=ID[,ID...]: a job running one of the IDs dumps its target, textures and attachments to
 // /private/var/tmp as PPMs. airjitddumpafter=SECONDS waits that long after boot
 #include <stdio.h>

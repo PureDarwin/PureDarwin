@@ -1,3 +1,5 @@
+// plugin.cpp - mslc clang plugin: MSL attributes and address spaces
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 // mslc clang plugin: MSL attributes ([[buffer(0)]], [[stage_in]] ...) and per entry function an annotate("E|...")
 // descriptor that airify turns into the AIR entry function and its air.* metadata
 #include "clang/AST/ASTConsumer.h"

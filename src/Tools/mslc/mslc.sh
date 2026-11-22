@@ -1,4 +1,6 @@
 #!/bin/sh
+# mslc.sh - MSL source to AIR through clang, the mslc plugin and airify
+# Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 # mslc IN.metal -o OUT.metallib [-e ENTRY] [-S OUT.ll] [-D NAME[=V]]... [-I DIR]... [-include F]: MSL source to AIR for air2spv, through
 # clang (C++ for OpenCL, the mslc plugin, PD's metal_stdlib) and airify. CLANG, PLUGIN, AIRIFY from the environment
 # without -e the output is an MTLB library of every entry, with -e the one function blob air2spv reads

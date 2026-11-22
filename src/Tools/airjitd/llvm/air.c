@@ -1,3 +1,6 @@
+// air.c - lowers air.* calls to LLVM IR for the CPU path
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #include "air.h"
 
 #include <stdio.h>

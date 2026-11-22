@@ -1,3 +1,6 @@
+// pd_virtgpu_drm.h - the libdrm calls of mesa's venus backend, on IOVirtIOGPU's venus client
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef _PD_VIRTGPU_DRM_H
 #define _PD_VIRTGPU_DRM_H
 

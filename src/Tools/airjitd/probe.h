@@ -1,3 +1,6 @@
+// probe.h - pixel watch and row trace of scanout draws
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef AIRJITD_PROBE_H
 #define AIRJITD_PROBE_H
 

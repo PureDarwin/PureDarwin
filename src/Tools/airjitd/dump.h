@@ -1,3 +1,6 @@
+// dump.h - job dumps and replay captures
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef PD_DUMP_H
 #define PD_DUMP_H
 

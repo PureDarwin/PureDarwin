@@ -1,3 +1,6 @@
+// runtime.c - the per-thread runtime shader calls use on the CPU path
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #include "runtime.h"
 
 #include <math.h>

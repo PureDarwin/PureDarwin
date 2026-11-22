@@ -1,4 +1,5 @@
-// IOSurfaceRoot and its user client: surfaces, scanout, traps and the external method table
+// IOSurfaceRoot.cpp - IOSurfaceRoot and its user client: surfaces, scanout, traps and the external method table
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 
 #include "PDIOSurface.h"
 #include "../PDSun60iDisplay/pd_display.h"

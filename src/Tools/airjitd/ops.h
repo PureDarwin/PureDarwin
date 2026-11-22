@@ -1,3 +1,6 @@
+// ops.h - the CPU's implementation of ir.h's math ops
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef AIRJITD_OPS_H
 #define AIRJITD_OPS_H
 

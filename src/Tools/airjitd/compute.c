@@ -1,3 +1,6 @@
+// compute.c - runs compute kernels over their grid on the CPU
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #include "compute.h"
 
 #include <dispatch/dispatch.h>

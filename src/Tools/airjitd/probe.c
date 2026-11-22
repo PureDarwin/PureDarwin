@@ -1,3 +1,6 @@
+// probe.c - pixel watch and row trace of scanout draws
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #include "probe.h"
 
 #include <stdio.h>

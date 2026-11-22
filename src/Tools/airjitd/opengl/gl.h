@@ -1,3 +1,6 @@
+// gl.h - the OpenGL executor's entry points
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef AIRJITD_GL_H
 #define AIRJITD_GL_H
 

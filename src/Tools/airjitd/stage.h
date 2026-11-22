@@ -1,3 +1,6 @@
+// stage.h - what a shader parameter is bound to, from its AIR descriptor
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef AIRJITD_STAGE_H
 #define AIRJITD_STAGE_H
 

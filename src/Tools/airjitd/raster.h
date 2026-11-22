@@ -1,3 +1,6 @@
+// raster.h - runs a draw's vertex and fragment stages, blended into the target
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef AIRJITD_RASTER_H
 #define AIRJITD_RASTER_H
 

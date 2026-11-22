@@ -1,3 +1,5 @@
+// simd.h - simd/simd.h for mslc
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 // simd/simd.h for mslc: the vector and matrix types under their simd_ and vector_/matrix_ names, as headers
 // shared between an app's C code and its shaders use them
 #ifndef PD_SIMD_H

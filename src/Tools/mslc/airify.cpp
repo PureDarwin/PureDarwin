@@ -1,3 +1,5 @@
+// airify.cpp - clang's LLVM IR to AIR bitcode and metallibs
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 // airify IN.ll [-o OUT.bc] [-S OUT.ll] [-m OUT.metallib -e ENTRY]: clang's IR for an MSL file to AIR: entry
 // functions and air.* metadata, everything inlined, address spaces resolved, intrinsics as air.* calls
 #include "llvm/Analysis/TargetTransformInfo.h"

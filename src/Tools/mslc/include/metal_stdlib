@@ -1,3 +1,5 @@
+// metal_stdlib - metal_stdlib for mslc, written from the public Metal Shading Language spec
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 // metal_stdlib for mslc: PD's own, written from the public Metal Shading Language Specification.
 // clang parses MSL as C++ for OpenCL; calls to air.* are declared by name and become AIR intrinsics
 #ifndef PD_METAL_STDLIB

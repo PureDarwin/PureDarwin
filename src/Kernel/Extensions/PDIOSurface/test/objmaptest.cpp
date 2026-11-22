@@ -1,3 +1,5 @@
+// objmaptest.cpp - host tests for PDObjMap
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 // host tests for PDObjMap: lookup, release and reuse, growth to the cap, against a reference map
 // build: c++ -std=c++17 -Wall -Werror -fsanitize=address,undefined -I .. objmaptest.cpp -o objmaptest
 #include <stdio.h>

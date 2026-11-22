@@ -1,3 +1,5 @@
+// pd_virtgpu_drm.c - the libdrm calls of mesa's venus backend, on IOVirtIOGPU's venus client
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 // libdrm-virtgpu: mesa venus's libdrm calls on IOVirtIOGPU's venus client, one connection (3D context) per render
 // node fd. fences are pipes a waiter thread makes readable once retired, all mesa's simulated syncobjs need
 

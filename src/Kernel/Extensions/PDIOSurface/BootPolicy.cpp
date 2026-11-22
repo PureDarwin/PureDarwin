@@ -1,4 +1,5 @@
-// BootPolicy, the SEP boot policy stand-in
+// BootPolicy.cpp - BootPolicy, the SEP boot policy stand-in
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 
 #include "PDIOSurface.h"
 

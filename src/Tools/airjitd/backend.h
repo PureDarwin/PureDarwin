@@ -1,3 +1,6 @@
+// backend.h - everything that turns AIR into something runnable
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef AIRJITD_BACKEND_H
 #define AIRJITD_BACKEND_H
 

@@ -1,3 +1,6 @@
+// compute.h - runs a kernel over its grid, one thread after another
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef AIRJITD_COMPUTE_H
 #define AIRJITD_COMPUTE_H
 

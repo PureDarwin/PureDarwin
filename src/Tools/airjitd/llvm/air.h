@@ -1,3 +1,6 @@
+// air.h - the AIR lowerings of the LLVM backend
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #ifndef AIRJITD_LLVM_AIR_H
 #define AIRJITD_LLVM_AIR_H
 

@@ -1,3 +1,5 @@
+// vnsmoke.c - the IOVirtIOGPU venus client end to end without mesa
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 // vnsmoke: the IOVirtIOGPU venus client end to end without mesa: capset, context, a mapped shmem blob the host
 // answers vkEnumerateInstanceVersion into, then export and import of that blob by a second process
 

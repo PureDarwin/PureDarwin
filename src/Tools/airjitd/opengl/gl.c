@@ -1,3 +1,6 @@
+// gl.c - the OpenGL executor
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 #define _DARWIN_C_SOURCE 1
 
 #define GL_GLEXT_PROTOTYPES

@@ -1,3 +1,5 @@
+// vnprobe.c - loads a venus ICD directly and probes it
+// Copyright (c) 2026 The PureDarwin Project, SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
 // vnprobe: a venus icd loaded directly (no loader, as airjitd does with AIRJITD_VK_ICD): instance, devices,
 // each device's name and api version, timings of each step
 #include <dlfcn.h>
