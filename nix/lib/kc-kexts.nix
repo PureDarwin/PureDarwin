@@ -58,7 +58,7 @@
     "PDFreeBSDKPIUSB.kext"
     "PDFBSDem.kext"
     "PDFBSDigc.kext"
-    # PDFBSDrge is untested, it stays out
+    "PDFBSDrge.kext"
     "PDRealtek8111.kext"
     "IO80211Family.kext"
     # links against IO80211Family, so it must come after it

@@ -666,9 +666,6 @@ let
         inherit kernelSource;
         kexts = kextsBuild;
         kcTools = kc-tools.packages.${system}.default;
-        # each fbsdkpi nic links its own copy of the layer, together they pushed this kc past the
-        # loader's 63 MiB span, PDE1000 and PDRealtek8111 still cover the common nics here
-        excludeKexts = [ "PDFBSDem.kext" "PDFBSDigc.kext" "PDFBSDrge.kext" ];
       };
       kcDebugBuild = pkgs.callPackage ./pkgs/toolchain/kc.nix {
         kernel = kernelDebugBuild;
