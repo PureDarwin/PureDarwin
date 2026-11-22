@@ -548,6 +548,10 @@ typedef NS_ENUM(NSInteger, ASAuthorizationWebBrowserPublicKeyCredentialManagerAu
 
 @implementation ASAuthorizationWebBrowserPublicKeyCredentialManager
 
++ (BOOL)isDeviceConfiguredForPasskeys {
+    return NO;
+}
+
 - (ASAuthorizationWebBrowserPublicKeyCredentialManagerAuthorizationState)authorizationStateForPlatformCredentials {
     return ASAuthorizationWebBrowserPublicKeyCredentialManagerAuthorizationStateDenied;
 }
