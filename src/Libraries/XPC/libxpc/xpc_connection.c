@@ -578,12 +578,15 @@ xpc_connection_recv_message(void *context)
 
 		TAILQ_FOREACH(call, &conn->xc_pending, xp_link) {
 			if (call->xp_id == id) {
-				dispatch_async(call->xp_queue, ^{
-					call->xp_handler(result);
-					TAILQ_REMOVE(&conn->xc_pending, call,
-					    xp_link);
-					Block_release(call->xp_handler);
-					free(call);
+				// off the list before the reply runs: a cancel or invalidation in between would free it under the block
+				xpc_handler_t handler = call->xp_handler;
+				dispatch_queue_t queue = call->xp_queue;
+
+				TAILQ_REMOVE(&conn->xc_pending, call, xp_link);
+				free(call);
+				dispatch_async(queue, ^{
+					handler(result);
+					Block_release(handler);
 					xpc_release(result);
 				});
 				return;
