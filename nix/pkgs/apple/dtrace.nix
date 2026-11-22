@@ -72,6 +72,8 @@ stdenv.mkDerivation {
   installPhase = ''
     runHook preInstall
     mkdir -p $out/usr/sbin $out/usr/lib $out/usr/share/man/man1 $out/usr/share/licenses/dtrace
+    mkdir -p $out/usr/lib/dtrace
+    cp pd/pd_user_types.d $out/usr/lib/dtrace/
     cp dtrace $out/usr/sbin/dtrace
     cp libdtrace.dylib $out/usr/lib/libdtrace.dylib
     cp cmd/dtrace/dtrace.1 $out/usr/share/man/man1/
