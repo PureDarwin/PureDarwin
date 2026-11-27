@@ -37,7 +37,7 @@ This includes, among others:
 - The frameworks PureDarwin implements or completes: AppKit, Foundation,
   CoreFoundation, CoreGraphics, CoreText, QuartzCore, OpenGL/CGL, Metal and
   the others under src/Frameworks, as far as their files carry PureDarwin's
-  notice (see section 2 for Cocotron).
+  notice (see section 2 for Cocotron, ravynOS and NeoDarwin).
 - The desktop: the Argon session, the Wayland compositor work on neuswc and
   neuwld, and the applications under src/Userspace.
 - Running unmodified Mach-O applications built for macOS (for example the
@@ -69,21 +69,26 @@ removed.
   exact release in their package under nix/. Section 2a lists where each
   component in this tree came from.
 - NeoDarwin: dyld, through its dyld4linux, and corecrypto, which PureDarwin
-  carries as an MPL-2.0 fork in external/corecrypto.
+  carries as an MPL-2.0 fork in external/corecrypto. PureDarwin's Foundation
+  started from NeoDarwin's Foundation (Samuel Zormeister, MPL-2.0), a small
+  first version with NSObject, NSZone, the CoreFoundation start-up hook and
+  a few headers. Its notice stays on the files that came from it.
 - NextBSD (iXsystems): libxpc under src/Libraries/XPC. BSD-2-Clause.
 - OpenSSL: libcrypto and libssl, built by the Nix build and not stored in this
   tree. Security.framework links them privately, for TLS, CMS and PKCS#12, and
   the corecrypto fork's elliptic-curve operations use libcrypto. Apache-2.0.
 - uACPI (Daniil Tatianin): the ACPI implementation PDACPIPlatform is built on,
   under src/Kernel/Extensions/PDACPIPlatform/uacpi. MIT.
-- Cocotron (Christopher J. Lloyd and contributors): the original base of
-  several Cocoa frameworks. MIT.
+- Cocotron (Christopher J. W. Lloyd, Dan Knapp, Johannes Fortmann and
+  contributors): the original base of AppKit, CoreGraphics, Onyx2D, CoreText
+  and CoreData, which came into this tree through ravynOS. MIT.
 - FreeBSD: the LinuxKPI layer and other kernel code used by fbsdkpi, and libnv
   under src/Libraries/XPC. BSD-2-Clause and BSD-3-Clause.
 - Haiku: the FreeBSD network compatibility code and headers used by fbsdkpi.
   MIT.
-- ravynOS (Zoe Knox and contributors): RavynAHCIPort and the code RavynXHCIPort
-  started from (section 3). MIT.
+- ravynOS (Zoe Knox and contributors): the copies of the Cocotron frameworks
+  above, QuartzCore, RavynAHCIPort and the code RavynXHCIPort started from
+  (section 3). MIT.
 - LLVM: the compiler, libc++, libc++abi and libunwind.
   Apache-2.0 WITH LLVM-exception.
 - Wayland, wayland-protocols, wlroots, sway, neuswc and neuwld under
