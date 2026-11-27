@@ -73,10 +73,17 @@ removed.
   started from NeoDarwin's Foundation (Samuel Zormeister, MPL-2.0), a small
   first version with NSObject, NSZone, the CoreFoundation start-up hook and
   a few headers. Its notice stays on the files that came from it.
+- Darling (the Darling developers): Darling Metal, the Metal frontend, fetched
+  by the Nix build at a pinned commit and patched by
+  nix/pkgs/gpu/darling-metal-pd.patch. MPL-2.0, per file. Indium (Ella
+  Stanforth and the Darling developers): its interface headers and tests,
+  also fetched. 0BSD. airjitd and indium-pd, which put that interface on
+  the GPU, are PureDarwin's own clean-room work (section 1).
 - NextBSD (iXsystems): libxpc under src/Libraries/XPC. BSD-2-Clause.
 - OpenSSL: libcrypto and libssl, built by the Nix build and not stored in this
   tree. Security.framework links them privately, for TLS, CMS and PKCS#12, and
   the corecrypto fork's elliptic-curve operations use libcrypto. Apache-2.0.
+- xxHash (Yann Collet): in src/Tools/airjitd/vulkan/vk.c. BSD-2-Clause.
 - uACPI (Daniil Tatianin): the ACPI implementation PDACPIPlatform is built on,
   under src/Kernel/Extensions/PDACPIPlatform/uacpi. MIT.
 - Cocotron (Christopher J. W. Lloyd, Dan Knapp, Johannes Fortmann and
